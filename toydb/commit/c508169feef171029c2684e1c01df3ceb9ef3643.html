@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>raft: use node parameter for heartbeat interval - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/c508169feef171029c2684e1c01df3ceb9ef3643.html">c508169feef171029c2684e1c01df3ceb9ef3643</a>
+<b>parent</b> <a href="../commit/36c96957c589882451bff931fb6f7fd9e790e097.html">36c96957c589882451bff931fb6f7fd9e790e097</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Mon,  6 May 2024 17:06:42 +0200
+
+raft: use node parameter for heartbeat interval
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/raft/node/candidate.rs</a></td><td> | </td><td class="num">2</td><td><span class="i">++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/raft/node/follower.rs</a></td><td> | </td><td class="num">16</td><td><span class="i">+++++++++++++++</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/raft/node/leader.rs</a></td><td> | </td><td class="num">10</td><td><span class="i">++++</span><span class="d">------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">src/raft/node/mod.rs</a></td><td> | </td><td class="num">17</td><td><span class="i">++++++++++++++++</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h4">src/server.rs</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+</table></pre><pre>5 files changed, 38 insertions(+), 8 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/raft/node/candidate.rs.html">src/raft/node/candidate.rs</a> b/<a href="../file/src/raft/node/candidate.rs.html">src/raft/node/candidate.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -175,6 +175,7 @@ mod tests {
+</a>     use super::super::super::{Entry, Log, Request, ELECTION_TIMEOUT_RANGE};
+     use super::super::tests::{assert_messages, assert_node};
+     use super::*;
+<a href="#h0-0-3" id="h0-0-3" class="i">+    use crate::raft::HEARTBEAT_INTERVAL;
+</a>     use crate::storage;
+     use itertools::Itertools as _;
+     use rand::Rng as _;
+<a href="#h0-1" id="h0-1" class="h">@@ -198,6 +199,7 @@ mod tests {
+</a>             log,
+             state,
+             node_tx,
+<a href="#h0-1-3" id="h0-1-3" class="i">+            heartbeat_interval: HEARTBEAT_INTERVAL,
+</a>             election_timeout_range: ELECTION_TIMEOUT_RANGE,
+             role: Candidate::new(rand::thread_rng().gen_range(ELECTION_TIMEOUT_RANGE)),
+         };
+<b>diff --git a/<a id="h1" href="../file/src/raft/node/follower.rs.html">src/raft/node/follower.rs</a> b/<a href="../file/src/raft/node/follower.rs.html">src/raft/node/follower.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -38,11 +38,22 @@ impl RawNode&lt;Follower&gt; {
+</a>         mut log: Log,
+         state: Box&lt;dyn State&gt;,
+         node_tx: crossbeam::channel::Sender&lt;Envelope&gt;,
+<a href="#h1-0-3" id="h1-0-3" class="i">+        heartbeat_interval: Ticks,
+</a>         election_timeout_range: std::ops::Range&lt;Ticks&gt;,
+     ) -&gt; Result&lt;Self&gt; {
+         let (term, voted_for) = log.get_term()?;
+         let role = Follower::new(None, voted_for, 0);
+<a href="#h1-0-8" id="h1-0-8" class="d">-        let mut node = Self { id, peers, term, log, state, node_tx, election_timeout_range, role };
+</a><a href="#h1-0-9" id="h1-0-9" class="i">+        let mut node = Self {
+</a><a href="#h1-0-10" id="h1-0-10" class="i">+            id,
+</a><a href="#h1-0-11" id="h1-0-11" class="i">+            peers,
+</a><a href="#h1-0-12" id="h1-0-12" class="i">+            term,
+</a><a href="#h1-0-13" id="h1-0-13" class="i">+            log,
+</a><a href="#h1-0-14" id="h1-0-14" class="i">+            state,
+</a><a href="#h1-0-15" id="h1-0-15" class="i">+            node_tx,
+</a><a href="#h1-0-16" id="h1-0-16" class="i">+            heartbeat_interval,
+</a><a href="#h1-0-17" id="h1-0-17" class="i">+            election_timeout_range,
+</a><a href="#h1-0-18" id="h1-0-18" class="i">+            role,
+</a><a href="#h1-0-19" id="h1-0-19" class="i">+        };
+</a>         node.role.election_timeout = node.gen_election_timeout();
+         Ok(node)
+     }
+<a href="#h1-1" id="h1-1" class="h">@@ -281,6 +292,7 @@ pub mod tests {
+</a>     use super::super::tests::{assert_messages, assert_node};
+     use super::*;
+     use crate::error::Error;
+<a href="#h1-1-3" id="h1-1-3" class="i">+    use crate::raft::HEARTBEAT_INTERVAL;
+</a>     use crate::storage;
+     use itertools::Itertools as _;
+     use rand::Rng as _;
+<a href="#h1-2" id="h1-2" class="h">@@ -303,6 +315,7 @@ pub mod tests {
+</a>             log,
+             state,
+             node_tx,
+<a href="#h1-2-3" id="h1-2-3" class="i">+            heartbeat_interval: HEARTBEAT_INTERVAL,
+</a>             election_timeout_range: ELECTION_TIMEOUT_RANGE,
+             role: Follower::new(
+                 Some(2),
+<a href="#h1-3" id="h1-3" class="h">@@ -628,6 +641,7 @@ pub mod tests {
+</a>             log,
+             state: Box::new(TestState::new(0)),
+             node_tx,
+<a href="#h1-3-3" id="h1-3-3" class="i">+            heartbeat_interval: HEARTBEAT_INTERVAL,
+</a>             election_timeout_range: ELECTION_TIMEOUT_RANGE,
+             role: Follower::new(
+                 Some(2),
+<b>diff --git a/<a id="h2" href="../file/src/raft/node/leader.rs.html">src/raft/node/leader.rs</a> b/<a href="../file/src/raft/node/leader.rs.html">src/raft/node/leader.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -1,7 +1,4 @@
+</a><a href="#h2-0-0" id="h2-0-0" class="d">-use super::super::{
+</a><a href="#h2-0-1" id="h2-0-1" class="d">-    Envelope, Index, Message, ReadSequence, Request, RequestID, Response, Status,
+</a><a href="#h2-0-2" id="h2-0-2" class="d">-    HEARTBEAT_INTERVAL,
+</a><a href="#h2-0-3" id="h2-0-3" class="d">-};
+</a><a href="#h2-0-4" id="h2-0-4" class="i">+use super::super::{Envelope, Index, Message, ReadSequence, Request, RequestID, Response, Status};
+</a> use super::{Follower, Node, NodeID, RawNode, Role, Term, Ticks};
+ use crate::error::{Error, Result};
+ 
+<a href="#h2-1" id="h2-1" class="h">@@ -274,7 +271,7 @@ impl RawNode&lt;Leader&gt; {
+</a>         self.assert()?;
+ 
+         self.role.since_heartbeat += 1;
+<a href="#h2-1-3" id="h2-1-3" class="d">-        if self.role.since_heartbeat &gt;= HEARTBEAT_INTERVAL {
+</a><a href="#h2-1-4" id="h2-1-4" class="i">+        if self.role.since_heartbeat &gt;= self.heartbeat_interval {
+</a>             self.heartbeat()?;
+             self.role.since_heartbeat = 0;
+         }
+<a href="#h2-2" id="h2-2" class="h">@@ -408,7 +405,7 @@ impl RawNode&lt;Leader&gt; {
+</a> #[cfg(test)]
+ mod tests {
+     use super::super::super::state::tests::TestState;
+<a href="#h2-2-3" id="h2-2-3" class="d">-    use super::super::super::{Entry, Log, ELECTION_TIMEOUT_RANGE};
+</a><a href="#h2-2-4" id="h2-2-4" class="i">+    use super::super::super::{Entry, Log, ELECTION_TIMEOUT_RANGE, HEARTBEAT_INTERVAL};
+</a>     use super::super::tests::{assert_messages, assert_node};
+     use super::*;
+     use crate::storage;
+<a href="#h2-3" id="h2-3" class="h">@@ -435,6 +432,7 @@ mod tests {
+</a>             role: Leader::new(peers, log.get_last_index().0),
+             log,
+             state,
+<a href="#h2-3-3" id="h2-3-3" class="i">+            heartbeat_interval: HEARTBEAT_INTERVAL,
+</a>             election_timeout_range: ELECTION_TIMEOUT_RANGE,
+             node_tx,
+         };
+<b>diff --git a/<a id="h3" href="../file/src/raft/node/mod.rs.html">src/raft/node/mod.rs</a> b/<a href="../file/src/raft/node/mod.rs.html">src/raft/node/mod.rs</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -45,9 +45,18 @@ impl Node {
+</a>         log: Log,
+         state: Box&lt;dyn State&gt;,
+         node_tx: crossbeam::channel::Sender&lt;Envelope&gt;,
+<a href="#h3-0-3" id="h3-0-3" class="i">+        heartbeat_interval: Ticks,
+</a>         election_timeout_range: std::ops::Range&lt;Ticks&gt;,
+     ) -&gt; Result&lt;Self&gt; {
+<a href="#h3-0-6" id="h3-0-6" class="d">-        let node = RawNode::new(id, peers, log, state, node_tx, election_timeout_range)?;
+</a><a href="#h3-0-7" id="h3-0-7" class="i">+        let node = RawNode::new(
+</a><a href="#h3-0-8" id="h3-0-8" class="i">+            id,
+</a><a href="#h3-0-9" id="h3-0-9" class="i">+            peers,
+</a><a href="#h3-0-10" id="h3-0-10" class="i">+            log,
+</a><a href="#h3-0-11" id="h3-0-11" class="i">+            state,
+</a><a href="#h3-0-12" id="h3-0-12" class="i">+            node_tx,
+</a><a href="#h3-0-13" id="h3-0-13" class="i">+            heartbeat_interval,
+</a><a href="#h3-0-14" id="h3-0-14" class="i">+            election_timeout_range,
+</a><a href="#h3-0-15" id="h3-0-15" class="i">+        )?;
+</a>         if node.peers.is_empty() {
+             // If there are no peers, become leader immediately.
+             return Ok(node.into_candidate()?.into_leader()?.into());
+<a href="#h3-1" id="h3-1" class="h">@@ -125,6 +134,7 @@ pub struct RawNode&lt;R: Role = Follower&gt; {
+</a>     log: Log,
+     state: Box&lt;dyn State&gt;,
+     node_tx: crossbeam::channel::Sender&lt;Envelope&gt;,
+<a href="#h3-1-3" id="h3-1-3" class="i">+    heartbeat_interval: Ticks,
+</a>     election_timeout_range: std::ops::Range&lt;Ticks&gt;,
+     role: R,
+ }
+<a href="#h3-2" id="h3-2" class="h">@@ -139,6 +149,7 @@ impl&lt;R: Role&gt; RawNode&lt;R&gt; {
+</a>             log: self.log,
+             state: self.state,
+             node_tx: self.node_tx,
+<a href="#h3-2-3" id="h3-2-3" class="i">+            heartbeat_interval: self.heartbeat_interval,
+</a>             election_timeout_range: self.election_timeout_range,
+             role,
+         }
+<a href="#h3-3" id="h3-3" class="h">@@ -251,6 +262,7 @@ mod tests {
+</a>     pub use super::super::state::tests::TestState;
+     use super::super::{Entry, RequestID, ELECTION_TIMEOUT_RANGE};
+     use super::*;
+<a href="#h3-3-3" id="h3-3-3" class="i">+    use crate::raft::HEARTBEAT_INTERVAL;
+</a>     use crate::storage;
+     use pretty_assertions::assert_eq;
+     use std::collections::HashSet;
+<a href="#h3-4" id="h3-4" class="h">@@ -442,6 +454,7 @@ mod tests {
+</a>             term: 1,
+             log: Log::new(storage::Memory::new(), false)?,
+             state: Box::new(TestState::new(0)),
+<a href="#h3-4-3" id="h3-4-3" class="i">+            heartbeat_interval: HEARTBEAT_INTERVAL,
+</a>             election_timeout_range: ELECTION_TIMEOUT_RANGE,
+             node_tx,
+         };
+<a href="#h3-5" id="h3-5" class="h">@@ -457,6 +470,7 @@ mod tests {
+</a>             Log::new(storage::Memory::new(), false)?,
+             Box::new(TestState::new(0)),
+             node_tx,
+<a href="#h3-5-3" id="h3-5-3" class="i">+            HEARTBEAT_INTERVAL,
+</a>             ELECTION_TIMEOUT_RANGE,
+         )?;
+         match node {
+<a href="#h3-6" id="h3-6" class="h">@@ -479,6 +493,7 @@ mod tests {
+</a>             Log::new(storage::Memory::new(), false)?,
+             Box::new(TestState::new(0)),
+             node_tx,
+<a href="#h3-6-3" id="h3-6-3" class="i">+            HEARTBEAT_INTERVAL,
+</a>             ELECTION_TIMEOUT_RANGE,
+         )?;
+         match node {
+<b>diff --git a/<a id="h4" href="../file/src/server.rs.html">src/server.rs</a> b/<a href="../file/src/server.rs.html">src/server.rs</a></b>
+<a href="#h4-0" id="h4-0" class="h">@@ -57,6 +57,7 @@ impl Server {
+</a>                 raft_log,
+                 raft_state,
+                 node_tx,
+<a href="#h4-0-3" id="h4-0-3" class="i">+                raft::HEARTBEAT_INTERVAL,
+</a>                 raft::ELECTION_TIMEOUT_RANGE,
+             )?,
+             peers,
+</pre>
+</div>
+</body>
+</html>

@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>sql: short circuit LIMIT 0 nodes - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/ed8146b51fdd34189d0391f4a47de11745d7282d.html">ed8146b51fdd34189d0391f4a47de11745d7282d</a>
+<b>parent</b> <a href="../commit/a0614bb17192e469bfe98b065b60f064d18b69d2.html">a0614bb17192e469bfe98b065b60f064d18b69d2</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Tue,  9 Jul 2024 13:48:12 +0200
+
+sql: short circuit LIMIT 0 nodes
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/sql/planner/optimizer.rs</a></td><td> | </td><td class="num">5</td><td><span class="i">++</span><span class="d">---</span></td></tr>
+<tr><td class="A">A</td><td><a href="#h1">src/sql/testscripts/optimizer/short_circuit</a></td><td> | </td><td class="num">16</td><td><span class="i">++++++++++++++++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/sql/testscripts/queries/limit</a></td><td> | </td><td class="num">7</td><td><span class="i">++</span><span class="d">-----</span></td></tr>
+</table></pre><pre>3 files changed, 20 insertions(+), 8 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/sql/planner/optimizer.rs.html">src/sql/planner/optimizer.rs</a> b/<a href="../file/src/sql/planner/optimizer.rs.html">src/sql/planner/optimizer.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -295,14 +295,12 @@ pub(super) fn join_type(node: Node) -&gt; Result&lt;Node&gt; {
+</a> 
+ /// Short-circuits useless nodes and expressions, by removing them and/or
+ /// replacing them with Nothing nodes that yield no rows.
+<a href="#h0-0-3" id="h0-0-3" class="d">-///
+</a><a href="#h0-0-4" id="h0-0-4" class="d">-/// TODO: omit order by primary key, limit 0, NULL comparison.
+</a> pub(super) fn short_circuit(node: Node) -&gt; Result&lt;Node&gt; {
+     use Expression::Constant;
+     use Value::{Boolean, Null};
+ 
+     let transform = |node| match node {
+<a href="#h0-0-10" id="h0-0-10" class="d">-        // Filter nodes that always yield true are unnecessary: remove them .
+</a><a href="#h0-0-11" id="h0-0-11" class="i">+        // Filter nodes that always yield true are unnecessary: remove them.
+</a>         Node::Filter { source, predicate: Constant(Boolean(true)) } =&gt; *source,
+ 
+         // Predicates that always yield true are unnecessary: remove them.
+<a href="#h0-1" id="h0-1" class="h">@@ -323,6 +321,7 @@ pub(super) fn short_circuit(node: Node) -&gt; Result&lt;Node&gt; {
+</a>         Node::Filter { predicate: Constant(Boolean(false) | Null), .. } =&gt; Node::Nothing,
+         Node::IndexLookup { values, .. } if values.is_empty() =&gt; Node::Nothing,
+         Node::KeyLookup { keys, .. } if keys.is_empty() =&gt; Node::Nothing,
+<a href="#h0-1-3" id="h0-1-3" class="i">+        Node::Limit { limit: 0, .. } =&gt; Node::Nothing,
+</a>         Node::NestedLoopJoin { predicate: Some(Constant(Boolean(false) | Null)), .. } =&gt; {
+             Node::Nothing
+         }
+<b>diff --git a/<a id="h1" href="../file/src/sql/testscripts/optimizer/short_circuit.html">src/sql/testscripts/optimizer/short_circuit</a> b/<a href="../file/src/sql/testscripts/optimizer/short_circuit.html">src/sql/testscripts/optimizer/short_circuit</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -0,0 +1,16 @@
+</a><a href="#h1-0-0" id="h1-0-0" class="i">+# Tests the short circuiting optimizer.
+</a><a href="#h1-0-1" id="h1-0-1" class="i">+# TODO: add more test cases.
+</a><a href="#h1-0-2" id="h1-0-2" class="i">+
+</a><a href="#h1-0-3" id="h1-0-3" class="i">+&gt; CREATE TABLE test (id INT PRIMARY KEY, value STRING)
+</a><a href="#h1-0-4" id="h1-0-4" class="i">+&gt; INSERT INTO test VALUES (1, &#39;a&#39;), (2, &#39;b&#39;), (3, &#39;c&#39;)
+</a><a href="#h1-0-5" id="h1-0-5" class="i">+---
+</a><a href="#h1-0-6" id="h1-0-6" class="i">+ok
+</a><a href="#h1-0-7" id="h1-0-7" class="i">+
+</a><a href="#h1-0-8" id="h1-0-8" class="i">+# LIMIT 0 → Nothing
+</a><a href="#h1-0-9" id="h1-0-9" class="i">+[opt]&gt; SELECT * FROM test LIMIT 0
+</a><a href="#h1-0-10" id="h1-0-10" class="i">+---
+</a><a href="#h1-0-11" id="h1-0-11" class="i">+Initial:
+</a><a href="#h1-0-12" id="h1-0-12" class="i">+   Limit: 0
+</a><a href="#h1-0-13" id="h1-0-13" class="i">+   └─ Scan: test
+</a><a href="#h1-0-14" id="h1-0-14" class="i">+Short circuit:
+</a><a href="#h1-0-15" id="h1-0-15" class="i">+   Nothing
+</a><b>diff --git a/<a id="h2" href="../file/src/sql/testscripts/queries/limit.html">src/sql/testscripts/queries/limit</a> b/<a href="../file/src/sql/testscripts/queries/limit.html">src/sql/testscripts/queries/limit</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -31,8 +31,7 @@ Limit: 4
+</a> 
+ [plan]&gt; SELECT * FROM test LIMIT 0
+ ---
+<a href="#h2-0-3" id="h2-0-3" class="d">-Limit: 0
+</a><a href="#h2-0-4" id="h2-0-4" class="d">-└─ Scan: test
+</a><a href="#h2-0-5" id="h2-0-5" class="i">+Nothing
+</a> 
+ # A max i64 limit works.
+ &gt; SELECT * FROM test LIMIT 9223372036854775807
+<a href="#h2-1" id="h2-1" class="h">@@ -51,9 +50,7 @@ Limit: 1
+</a> 
+ [plan]&gt; SELECT 1, 2, 3 LIMIT 0
+ ---
+<a href="#h2-1-3" id="h2-1-3" class="d">-Limit: 0
+</a><a href="#h2-1-4" id="h2-1-4" class="d">-└─ Projection: 1, 2, 3
+</a><a href="#h2-1-5" id="h2-1-5" class="d">-   └─ EmptyRow
+</a><a href="#h2-1-6" id="h2-1-6" class="i">+Nothing
+</a> 
+ # Limits can be expressions, but only constant ones.
+ [plan]&gt; SELECT * FROM test LIMIT 1 + 1
+</pre>
+</div>
+</body>
+</html>

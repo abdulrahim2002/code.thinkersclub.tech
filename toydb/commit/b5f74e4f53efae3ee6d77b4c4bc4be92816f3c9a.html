@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>sql: moved all schema validation into schema package - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/b5f74e4f53efae3ee6d77b4c4bc4be92816f3c9a.html">b5f74e4f53efae3ee6d77b4c4bc4be92816f3c9a</a>
+<b>parent</b> <a href="../commit/9d4ba2b9569dbe515785151670caa6d22c05bb53.html">9d4ba2b9569dbe515785151670caa6d22c05bb53</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Sat, 11 Jan 2020 13:00:06 +0100
+
+sql: moved all schema validation into schema package
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/sql/engine/kv.rs</a></td><td> | </td><td class="num">47</td><td><span class="i">++++++</span><span class="d">-----------------------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/sql/types/schema.rs</a></td><td> | </td><td class="num">45</td><td><span class="i">+++++++++++++++++++++++++++++++++++++++++</span><span class="d">----</span></td></tr>
+</table></pre><pre>2 files changed, 47 insertions(+), 45 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/sql/engine/kv.rs.html">src/sql/engine/kv.rs</a> b/<a href="../file/src/sql/engine/kv.rs.html">src/sql/engine/kv.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -234,52 +234,17 @@ impl&lt;S: kv::storage::Storage&gt; super::Transaction for Transaction&lt;S&gt; {
+</a>         if self.read_table(&amp;table.name)?.is_some() {
+             return Err(Error::Value(format!(&quot;Table {} already exists&quot;, table.name)));
+         }
+<a href="#h0-0-3" id="h0-0-3" class="d">-        for column in table.references() {
+</a><a href="#h0-0-4" id="h0-0-4" class="d">-            let target = match &amp;column.references {
+</a><a href="#h0-0-5" id="h0-0-5" class="d">-                Some(target) if target == &amp;table.name =&gt; table.clone(),
+</a><a href="#h0-0-6" id="h0-0-6" class="d">-                Some(target) =&gt; self.read_table(&amp;target)?.ok_or_else(|| {
+</a><a href="#h0-0-7" id="h0-0-7" class="d">-                    Error::Value(format!(
+</a><a href="#h0-0-8" id="h0-0-8" class="d">-                        &quot;Table {} referenced by column {} does not exist&quot;,
+</a><a href="#h0-0-9" id="h0-0-9" class="d">-                        target, column.name
+</a><a href="#h0-0-10" id="h0-0-10" class="d">-                    ))
+</a><a href="#h0-0-11" id="h0-0-11" class="d">-                })?,
+</a><a href="#h0-0-12" id="h0-0-12" class="d">-                None =&gt; {
+</a><a href="#h0-0-13" id="h0-0-13" class="d">-                    return Err(Error::Internal(
+</a><a href="#h0-0-14" id="h0-0-14" class="d">-                        &quot;Table.references() returned non-reference column&quot;.into(),
+</a><a href="#h0-0-15" id="h0-0-15" class="d">-                    ))
+</a><a href="#h0-0-16" id="h0-0-16" class="d">-                }
+</a><a href="#h0-0-17" id="h0-0-17" class="d">-            };
+</a><a href="#h0-0-18" id="h0-0-18" class="d">-            if column.datatype != target.primary_key()?.datatype {
+</a><a href="#h0-0-19" id="h0-0-19" class="d">-                return Err(Error::Value(format!(
+</a><a href="#h0-0-20" id="h0-0-20" class="d">-                    &quot;Can&#39;t reference {} primary key of table {} from {} column {}&quot;,
+</a><a href="#h0-0-21" id="h0-0-21" class="d">-                    target.primary_key()?.datatype,
+</a><a href="#h0-0-22" id="h0-0-22" class="d">-                    target.name,
+</a><a href="#h0-0-23" id="h0-0-23" class="d">-                    column.datatype,
+</a><a href="#h0-0-24" id="h0-0-24" class="d">-                    column.name
+</a><a href="#h0-0-25" id="h0-0-25" class="d">-                )));
+</a><a href="#h0-0-26" id="h0-0-26" class="d">-            }
+</a><a href="#h0-0-27" id="h0-0-27" class="d">-        }
+</a><a href="#h0-0-28" id="h0-0-28" class="i">+        table.validate(self)?;
+</a>         self.txn.set(&amp;Key::Table(&amp;table.name).encode(), serialize(table)?)
+     }
+ 
+     fn delete_table(&amp;mut self, table: &amp;str) -&gt; Result&lt;(), Error&gt; {
+<a href="#h0-0-33" id="h0-0-33" class="d">-        if self.read_table(table)?.is_none() {
+</a><a href="#h0-0-34" id="h0-0-34" class="d">-            return Err(Error::Value(format!(&quot;Table {} does not exist&quot;, table)));
+</a><a href="#h0-0-35" id="h0-0-35" class="d">-        }
+</a><a href="#h0-0-36" id="h0-0-36" class="d">-        // Check for incoming references
+</a><a href="#h0-0-37" id="h0-0-37" class="d">-        // FIXME This needs to be indexed or cached
+</a><a href="#h0-0-38" id="h0-0-38" class="d">-        for source in self.list_tables()? {
+</a><a href="#h0-0-39" id="h0-0-39" class="d">-            for column in source.references() {
+</a><a href="#h0-0-40" id="h0-0-40" class="d">-                if source.name != table &amp;&amp; column.references.as_ref() == Some(&amp;table.to_string()) {
+</a><a href="#h0-0-41" id="h0-0-41" class="d">-                    return Err(Error::Value(format!(
+</a><a href="#h0-0-42" id="h0-0-42" class="d">-                        &quot;Table {} is referenced by table {} column {}&quot;,
+</a><a href="#h0-0-43" id="h0-0-43" class="d">-                        table, source.name, column.name
+</a><a href="#h0-0-44" id="h0-0-44" class="d">-                    )));
+</a><a href="#h0-0-45" id="h0-0-45" class="d">-                }
+</a><a href="#h0-0-46" id="h0-0-46" class="d">-            }
+</a><a href="#h0-0-47" id="h0-0-47" class="d">-        }
+</a><a href="#h0-0-48" id="h0-0-48" class="i">+        let table = self
+</a><a href="#h0-0-49" id="h0-0-49" class="i">+            .read_table(table)?
+</a><a href="#h0-0-50" id="h0-0-50" class="i">+            .ok_or_else(|| Error::Value(format!(&quot;Table {} does not exist&quot;, table)))?;
+</a><a href="#h0-0-51" id="h0-0-51" class="i">+        table.assert_unreferenced(self)?;
+</a>         // FIXME Needs to delete all table data as well
+<a href="#h0-0-53" id="h0-0-53" class="d">-        self.txn.delete(&amp;Key::Table(table).encode())
+</a><a href="#h0-0-54" id="h0-0-54" class="i">+        self.txn.delete(&amp;Key::Table(&amp;table.name).encode())
+</a>     }
+ 
+     fn list_tables(&amp;self) -&gt; Result&lt;Vec&lt;schema::Table&gt;, Error&gt; {
+<b>diff --git a/<a id="h1" href="../file/src/sql/types/schema.rs.html">src/sql/types/schema.rs</a> b/<a href="../file/src/sql/types/schema.rs.html">src/sql/types/schema.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -1,3 +1,4 @@
+</a><a href="#h1-0-0" id="h1-0-0" class="i">+use super::super::engine::Transaction;
+</a> use super::super::parser::lexer::Keyword;
+ use super::{DataType, Row, Value};
+ use crate::Error;
+<a href="#h1-1" id="h1-1" class="h">@@ -22,7 +23,6 @@ impl Table {
+</a>     /// Creates a new table schema
+     pub fn new(name: String, columns: Vec&lt;Column&gt;) -&gt; Result&lt;Self, Error&gt; {
+         let table = Self { name, columns };
+<a href="#h1-1-3" id="h1-1-3" class="d">-        table.validate()?;
+</a>         Ok(table)
+     }
+ 
+<a href="#h1-2" id="h1-2" class="h">@@ -45,6 +45,22 @@ impl Table {
+</a>         sql
+     }
+ 
+<a href="#h1-2-3" id="h1-2-3" class="i">+    /// Asserts that the table is not referenced by other tables, otherwise returns an error
+</a><a href="#h1-2-4" id="h1-2-4" class="i">+    // FIXME Should cache or index the data
+</a><a href="#h1-2-5" id="h1-2-5" class="i">+    pub fn assert_unreferenced(&amp;self, txn: &amp;mut dyn Transaction) -&gt; Result&lt;(), Error&gt; {
+</a><a href="#h1-2-6" id="h1-2-6" class="i">+        for source in txn.list_tables()?.into_iter().filter(|t| t.name != self.name) {
+</a><a href="#h1-2-7" id="h1-2-7" class="i">+            if let Some(column) =
+</a><a href="#h1-2-8" id="h1-2-8" class="i">+                source.columns.iter().find(|c| c.references.as_ref() == Some(&amp;self.name))
+</a><a href="#h1-2-9" id="h1-2-9" class="i">+            {
+</a><a href="#h1-2-10" id="h1-2-10" class="i">+                return Err(Error::Value(format!(
+</a><a href="#h1-2-11" id="h1-2-11" class="i">+                    &quot;Table {} is referenced by table {} column {}&quot;,
+</a><a href="#h1-2-12" id="h1-2-12" class="i">+                    self.name, source.name, column.name
+</a><a href="#h1-2-13" id="h1-2-13" class="i">+                )));
+</a><a href="#h1-2-14" id="h1-2-14" class="i">+            }
+</a><a href="#h1-2-15" id="h1-2-15" class="i">+        }
+</a><a href="#h1-2-16" id="h1-2-16" class="i">+        Ok(())
+</a><a href="#h1-2-17" id="h1-2-17" class="i">+    }
+</a><a href="#h1-2-18" id="h1-2-18" class="i">+
+</a>     /// Fetches a column by name
+     /// FIXME Should index these for performance
+     pub fn get_column(&amp;self, name: &amp;str) -&gt; Option&lt;&amp;Column&gt; {
+<a href="#h1-3" id="h1-3" class="h">@@ -159,7 +175,7 @@ impl Table {
+</a>     }
+ 
+     /// Validates the table schema
+<a href="#h1-3-3" id="h1-3-3" class="d">-    pub fn validate(&amp;self) -&gt; Result&lt;(), Error&gt; {
+</a><a href="#h1-3-4" id="h1-3-4" class="i">+    pub fn validate(&amp;self, txn: &amp;mut dyn Transaction) -&gt; Result&lt;(), Error&gt; {
+</a>         if self.columns.is_empty() {
+             return Err(Error::Value(format!(&quot;Table {} has no columns&quot;, self.name)));
+         }
+<a href="#h1-4" id="h1-4" class="h">@@ -169,7 +185,7 @@ impl Table {
+</a>             _ =&gt; return Err(Error::Value(format!(&quot;Multiple primary keys in table {}&quot;, self.name))),
+         };
+         for column in &amp;self.columns {
+<a href="#h1-4-3" id="h1-4-3" class="d">-            column.validate()?;
+</a><a href="#h1-4-4" id="h1-4-4" class="i">+            column.validate(self, txn)?;
+</a>         }
+         Ok(())
+     }
+<a href="#h1-5" id="h1-5" class="h">@@ -234,7 +250,7 @@ impl Column {
+</a>     }
+ 
+     /// Validates the column schema
+<a href="#h1-5-3" id="h1-5-3" class="d">-    pub fn validate(&amp;self) -&gt; Result&lt;(), Error&gt; {
+</a><a href="#h1-5-4" id="h1-5-4" class="i">+    pub fn validate(&amp;self, table: &amp;Table, txn: &amp;mut dyn Transaction) -&gt; Result&lt;(), Error&gt; {
+</a>         if self.primary_key &amp;&amp; self.nullable {
+             return Err(Error::Value(format!(&quot;Primary key {} cannot be nullable&quot;, self.name)));
+         }
+<a href="#h1-6" id="h1-6" class="h">@@ -261,6 +277,27 @@ impl Column {
+</a>                 self.name
+             )));
+         }
+<a href="#h1-6-3" id="h1-6-3" class="i">+        if let Some(reference) = &amp;self.references {
+</a><a href="#h1-6-4" id="h1-6-4" class="i">+            let target = if reference == &amp;table.name {
+</a><a href="#h1-6-5" id="h1-6-5" class="i">+                table.clone()
+</a><a href="#h1-6-6" id="h1-6-6" class="i">+            } else {
+</a><a href="#h1-6-7" id="h1-6-7" class="i">+                txn.read_table(reference)?.ok_or_else(|| {
+</a><a href="#h1-6-8" id="h1-6-8" class="i">+                    Error::Value(format!(
+</a><a href="#h1-6-9" id="h1-6-9" class="i">+                        &quot;Table {} referenced by column {} does not exist&quot;,
+</a><a href="#h1-6-10" id="h1-6-10" class="i">+                        reference, self.name
+</a><a href="#h1-6-11" id="h1-6-11" class="i">+                    ))
+</a><a href="#h1-6-12" id="h1-6-12" class="i">+                })?
+</a><a href="#h1-6-13" id="h1-6-13" class="i">+            };
+</a><a href="#h1-6-14" id="h1-6-14" class="i">+            if self.datatype != target.primary_key()?.datatype {
+</a><a href="#h1-6-15" id="h1-6-15" class="i">+                return Err(Error::Value(format!(
+</a><a href="#h1-6-16" id="h1-6-16" class="i">+                    &quot;Can&#39;t reference {} primary key of table {} from {} column {}&quot;,
+</a><a href="#h1-6-17" id="h1-6-17" class="i">+                    target.primary_key()?.datatype,
+</a><a href="#h1-6-18" id="h1-6-18" class="i">+                    target.name,
+</a><a href="#h1-6-19" id="h1-6-19" class="i">+                    self.datatype,
+</a><a href="#h1-6-20" id="h1-6-20" class="i">+                    self.name
+</a><a href="#h1-6-21" id="h1-6-21" class="i">+                )));
+</a><a href="#h1-6-22" id="h1-6-22" class="i">+            }
+</a><a href="#h1-6-23" id="h1-6-23" class="i">+        }
+</a>         Ok(())
+     }
+ 
+</pre>
+</div>
+</body>
+</html>

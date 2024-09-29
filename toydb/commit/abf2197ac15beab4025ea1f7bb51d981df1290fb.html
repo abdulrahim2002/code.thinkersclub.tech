@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>sql: allow setting `DEFAULT` value with `UPDATE` - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/abf2197ac15beab4025ea1f7bb51d981df1290fb.html">abf2197ac15beab4025ea1f7bb51d981df1290fb</a>
+<b>parent</b> <a href="../commit/b1fff40fdf869a5e846a5af0ba5fd8a52784973b.html">b1fff40fdf869a5e846a5af0ba5fd8a52784973b</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Tue,  9 Jul 2024 14:25:41 +0200
+
+sql: allow setting `DEFAULT` value with `UPDATE`
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">docs/sql.md</a></td><td> | </td><td class="num">4</td><td><span class="i">++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/sql/parser/ast.rs</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/sql/parser/parser.rs</a></td><td> | </td><td class="num">7</td><td><span class="i">++++++</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">src/sql/planner/planner.rs</a></td><td> | </td><td class="num">20</td><td><span class="i">+++++++++++++</span><span class="d">-------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h4">src/sql/testscripts/writes/insert_default</a></td><td> | </td><td class="num">5</td><td><span class="i">+++++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h5">src/sql/testscripts/writes/update_default</a></td><td> | </td><td class="num">13</td><td><span class="i">+++++++++</span><span class="d">----</span></td></tr>
+</table></pre><pre>6 files changed, 36 insertions(+), 15 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/docs/sql.md.html">docs/sql.md</a> b/<a href="../file/docs/sql.md.html">docs/sql.md</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -386,7 +386,7 @@ Updates rows in a table.
+</a> 
+ &lt;pre&gt;
+ UPDATE &lt;b&gt;&lt;i&gt;table_name&lt;/i&gt;&lt;/b&gt;
+<a href="#h0-0-3" id="h0-0-3" class="d">-    SET &lt;b&gt;&lt;i&gt;column_name&lt;/i&gt;&lt;/b&gt; = &lt;b&gt;&lt;i&gt;expression&lt;/i&gt;&lt;/b&gt; [, ... ]
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+    SET &lt;b&gt;&lt;i&gt;column_name&lt;/i&gt;&lt;/b&gt; = &lt;b&gt;&lt;i&gt;expression&lt;/i&gt;&lt;/b&gt; | DEFAULT [, ... ]
+</a>     [ WHERE &lt;b&gt;&lt;i&gt;predicate&lt;/i&gt;&lt;/b&gt; ]
+ &lt;/pre&gt;
+ 
+<a href="#h0-1" id="h0-1" class="h">@@ -396,7 +396,7 @@ Updates columns given by ***`column_name`*** to the corresponding ***`expression
+</a> 
+ * ***`column_name`***: a column to update. Errors if it does not exist.
+ 
+<a href="#h0-1-3" id="h0-1-3" class="d">-* ***`expression`***: an expression whose evaluated value will be set for the corresponding column and row. Expressions can refer to column values, and must evaluate to the same datatype as the updated column.
+</a><a href="#h0-1-4" id="h0-1-4" class="i">+* ***`expression`***: an expression whose evaluated value will be set for the corresponding column and row. Expressions can refer to column values, and must evaluate to the same datatype as the updated column. Using `DEFAULT` will set the column&#39;s default value, if any.
+</a> 
+ * ***`predicate`***: an expression which determines which rows to update by evaluting to `TRUE`. Must evaluate to a `BOOLEAN` or `NULL`, otherwise an error is returned.
+ 
+<b>diff --git a/<a id="h1" href="../file/src/sql/parser/ast.rs.html">src/sql/parser/ast.rs</a> b/<a href="../file/src/sql/parser/ast.rs.html">src/sql/parser/ast.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -34,7 +34,7 @@ pub enum Statement {
+</a>     },
+     Update {
+         table: String,
+<a href="#h1-0-3" id="h1-0-3" class="d">-        set: BTreeMap&lt;String, Expression&gt;, // BTreeMap for test determinism
+</a><a href="#h1-0-4" id="h1-0-4" class="i">+        set: BTreeMap&lt;String, Option&lt;Expression&gt;&gt;, // None for DEFAULT value
+</a>         r#where: Option&lt;Expression&gt;,
+     },
+     Select {
+<b>diff --git a/<a id="h2" href="../file/src/sql/parser/parser.rs.html">src/sql/parser/parser.rs</a> b/<a href="../file/src/sql/parser/parser.rs.html">src/sql/parser/parser.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -301,7 +301,12 @@ impl&lt;&#39;a&gt; Parser&lt;&#39;a&gt; {
+</a>         loop {
+             let column = self.next_ident()?;
+             self.expect(Token::Equal)?;
+<a href="#h2-0-3" id="h2-0-3" class="d">-            let expr = self.parse_expression()?;
+</a><a href="#h2-0-4" id="h2-0-4" class="i">+            let expr = if self.next_is(Keyword::Default.into()) {
+</a><a href="#h2-0-5" id="h2-0-5" class="i">+                None
+</a><a href="#h2-0-6" id="h2-0-6" class="i">+            } else {
+</a><a href="#h2-0-7" id="h2-0-7" class="i">+                Some(self.parse_expression()?)
+</a><a href="#h2-0-8" id="h2-0-8" class="i">+            };
+</a><a href="#h2-0-9" id="h2-0-9" class="i">+
+</a>             if set.contains_key(&amp;column) {
+                 return errinput!(&quot;column {column} set multiple times&quot;);
+             }
+<b>diff --git a/<a id="h3" href="../file/src/sql/planner/planner.rs.html">src/sql/planner/planner.rs</a> b/<a href="../file/src/sql/planner/planner.rs.html">src/sql/planner/planner.rs</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -118,18 +118,24 @@ impl&lt;&#39;a, C: Catalog&gt; Planner&lt;&#39;a, C&gt; {
+</a>     fn build_update(
+         &amp;self,
+         table: String,
+<a href="#h3-0-3" id="h3-0-3" class="d">-        set: BTreeMap&lt;String, ast::Expression&gt;,
+</a><a href="#h3-0-4" id="h3-0-4" class="i">+        set: BTreeMap&lt;String, Option&lt;ast::Expression&gt;&gt;,
+</a>         r#where: Option&lt;ast::Expression&gt;,
+     ) -&gt; Result&lt;Plan&gt; {
+         let table = self.catalog.must_get_table(&amp;table)?;
+         let scope = Scope::from_table(&amp;table)?;
+         let filter = r#where.map(|e| Self::build_expression(e, &amp;scope)).transpose()?;
+<a href="#h3-0-10" id="h3-0-10" class="d">-        let expressions = set
+</a><a href="#h3-0-11" id="h3-0-11" class="d">-            .into_iter()
+</a><a href="#h3-0-12" id="h3-0-12" class="d">-            .map(|(c, e)| {
+</a><a href="#h3-0-13" id="h3-0-13" class="d">-                Ok((scope.get_column_index(None, &amp;c)?, c, Self::build_expression(e, &amp;scope)?))
+</a><a href="#h3-0-14" id="h3-0-14" class="d">-            })
+</a><a href="#h3-0-15" id="h3-0-15" class="d">-            .collect::&lt;Result&lt;_&gt;&gt;()?;
+</a><a href="#h3-0-16" id="h3-0-16" class="i">+        let mut expressions = Vec::with_capacity(set.len());
+</a><a href="#h3-0-17" id="h3-0-17" class="i">+        for (column, expr) in set {
+</a><a href="#h3-0-18" id="h3-0-18" class="i">+            let index = scope.get_column_index(None, &amp;column)?;
+</a><a href="#h3-0-19" id="h3-0-19" class="i">+            let expr = match expr {
+</a><a href="#h3-0-20" id="h3-0-20" class="i">+                Some(expr) =&gt; Self::build_expression(expr, &amp;scope)?,
+</a><a href="#h3-0-21" id="h3-0-21" class="i">+                None =&gt; match &amp;table.columns[index].default {
+</a><a href="#h3-0-22" id="h3-0-22" class="i">+                    Some(default) =&gt; Expression::Constant(default.clone()),
+</a><a href="#h3-0-23" id="h3-0-23" class="i">+                    None =&gt; return errinput!(&quot;column {column} has no default value&quot;),
+</a><a href="#h3-0-24" id="h3-0-24" class="i">+                },
+</a><a href="#h3-0-25" id="h3-0-25" class="i">+            };
+</a><a href="#h3-0-26" id="h3-0-26" class="i">+            expressions.push((index, column, expr));
+</a><a href="#h3-0-27" id="h3-0-27" class="i">+        }
+</a>         Ok(Plan::Update {
+             table: table.name.clone(),
+             primary_key: table.primary_key,
+<b>diff --git a/<a id="h4" href="../file/src/sql/testscripts/writes/insert_default.html">src/sql/testscripts/writes/insert_default</a> b/<a href="../file/src/sql/testscripts/writes/insert_default.html">src/sql/testscripts/writes/insert_default</a></b>
+<a href="#h4-0" id="h4-0" class="h">@@ -62,3 +62,8 @@ ok
+</a> 5, TRUE, NULL, TRUE, 3.14, 7, foo
+ 6, TRUE, FALSE, TRUE, 3.14, 9, bar
+ 7, FALSE, NULL, NULL, NULL, NULL, NULL
+<a href="#h4-0-3" id="h4-0-3" class="i">+
+</a><a href="#h4-0-4" id="h4-0-4" class="i">+# Errors if required column isn&#39;t given.
+</a><a href="#h4-0-5" id="h4-0-5" class="i">+!&gt; INSERT INTO defaults VALUES (8)
+</a><a href="#h4-0-6" id="h4-0-6" class="i">+---
+</a><a href="#h4-0-7" id="h4-0-7" class="i">+Error: invalid input: no value given for column required with no default
+</a><b>diff --git a/<a id="h5" href="../file/src/sql/testscripts/writes/update_default.html">src/sql/testscripts/writes/update_default</a> b/<a href="../file/src/sql/testscripts/writes/update_default.html">src/sql/testscripts/writes/update_default</a></b>
+<a href="#h5-0" id="h5-0" class="h">@@ -1,5 +1,4 @@
+</a><a href="#h5-0-0" id="h5-0-0" class="d">-# UPDATE does not currently support setting DEFAULT.
+</a><a href="#h5-0-1" id="h5-0-1" class="d">-# TODO: consider adding this.
+</a><a href="#h5-0-2" id="h5-0-2" class="i">+# UPDATE can set default values.
+</a> 
+ &gt; CREATE TABLE defaults ( \
+     id INTEGER PRIMARY KEY, \
+<a href="#h5-1" id="h5-1" class="h">@@ -14,6 +13,12 @@
+</a> ---
+ ok
+ 
+<a href="#h5-1-3" id="h5-1-3" class="d">-!&gt; UPDATE defaults SET &quot;boolean&quot; = DEFAULT
+</a><a href="#h5-1-4" id="h5-1-4" class="i">+&gt; UPDATE defaults SET &quot;null&quot; = DEFAULT, &quot;boolean&quot; = DEFAULT, &quot;float&quot; = DEFAULT, &quot;integer&quot; = DEFAULT, &quot;string&quot; = DEFAULT
+</a><a href="#h5-1-5" id="h5-1-5" class="i">+&gt; SELECT * FROM defaults
+</a> ---
+<a href="#h5-1-7" id="h5-1-7" class="d">-Error: invalid input: expected expression atom, found DEFAULT
+</a><a href="#h5-1-8" id="h5-1-8" class="i">+1, TRUE, NULL, TRUE, 3.14, 7, foo
+</a><a href="#h5-1-9" id="h5-1-9" class="i">+
+</a><a href="#h5-1-10" id="h5-1-10" class="i">+# Errors on columns with no default.
+</a><a href="#h5-1-11" id="h5-1-11" class="i">+!&gt; UPDATE defaults SET required = DEFAULT
+</a><a href="#h5-1-12" id="h5-1-12" class="i">+---
+</a><a href="#h5-1-13" id="h5-1-13" class="i">+Error: invalid input: column required has no default value
+</a></pre>
+</div>
+</body>
+</html>

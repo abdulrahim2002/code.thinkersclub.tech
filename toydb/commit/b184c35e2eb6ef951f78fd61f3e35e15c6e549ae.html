@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>bin: clean up `toydump` command - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/b184c35e2eb6ef951f78fd61f3e35e15c6e549ae.html">b184c35e2eb6ef951f78fd61f3e35e15c6e549ae</a>
+<b>parent</b> <a href="../commit/703bcb2df5cf6b408a3c97cb5dbcd8990de69253.html">703bcb2df5cf6b408a3c97cb5dbcd8990de69253</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Sun, 21 Jul 2024 22:09:49 +0200
+
+bin: clean up `toydump` command
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/bin/toydump.rs</a></td><td> | </td><td class="num">66</td><td><span class="i">+++++++++++++++++++++++++++++++++++++++</span><span class="d">---------------------------</span></td></tr>
+</table></pre><pre>1 file changed, 39 insertions(+), 27 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/bin/toydump.rs.html">src/bin/toydump.rs</a> b/<a href="../file/src/bin/toydump.rs.html">src/bin/toydump.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -1,38 +1,50 @@
+</a> //! toydump is a debug tool that prints a toyDB BitCask database in
+<a href="#h0-0-1" id="h0-0-1" class="d">-//! human-readable form. It only prints live BitCask data, not garbage entries.
+</a><a href="#h0-0-2" id="h0-0-2" class="i">+//! human-readable form. It can print both the SQL database, and the Raft log
+</a><a href="#h0-0-3" id="h0-0-3" class="i">+//! (via --raft). It only outputs live BitCask data, not garbage entries.
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+
+</a> #![warn(clippy::all)]
+ 
+ use toydb::encoding::format::{self, Formatter as _};
+ use toydb::error::Result;
+ use toydb::storage::{BitCask, Engine as _};
+ 
+<a href="#h0-0-11" id="h0-0-11" class="d">-fn main() -&gt; Result&lt;()&gt; {
+</a><a href="#h0-0-12" id="h0-0-12" class="d">-    let args = clap::command!()
+</a><a href="#h0-0-13" id="h0-0-13" class="d">-        .about(&quot;Prints toyDB file contents in human-readable form.&quot;)
+</a><a href="#h0-0-14" id="h0-0-14" class="d">-        .args([
+</a><a href="#h0-0-15" id="h0-0-15" class="d">-            clap::Arg::new(&quot;raft&quot;)
+</a><a href="#h0-0-16" id="h0-0-16" class="d">-                .long(&quot;raft&quot;)
+</a><a href="#h0-0-17" id="h0-0-17" class="d">-                .num_args(0)
+</a><a href="#h0-0-18" id="h0-0-18" class="d">-                .help(&quot;file is a Raft log, not SQL database&quot;),
+</a><a href="#h0-0-19" id="h0-0-19" class="d">-            clap::Arg::new(&quot;raw&quot;).long(&quot;raw&quot;).num_args(0).help(&quot;also show raw key/value&quot;),
+</a><a href="#h0-0-20" id="h0-0-20" class="d">-            clap::Arg::new(&quot;file&quot;).required(true),
+</a><a href="#h0-0-21" id="h0-0-21" class="d">-        ])
+</a><a href="#h0-0-22" id="h0-0-22" class="d">-        .get_matches();
+</a><a href="#h0-0-23" id="h0-0-23" class="d">-    let raft: bool = *args.get_one(&quot;raft&quot;).unwrap();
+</a><a href="#h0-0-24" id="h0-0-24" class="d">-    let raw: bool = *args.get_one(&quot;raw&quot;).unwrap();
+</a><a href="#h0-0-25" id="h0-0-25" class="d">-    let file: &amp;String = args.get_one(&quot;file&quot;).unwrap();
+</a><a href="#h0-0-26" id="h0-0-26" class="i">+use clap::Parser as _;
+</a><a href="#h0-0-27" id="h0-0-27" class="i">+
+</a><a href="#h0-0-28" id="h0-0-28" class="i">+fn main() {
+</a><a href="#h0-0-29" id="h0-0-29" class="i">+    if let Err(error) = Command::parse().run() {
+</a><a href="#h0-0-30" id="h0-0-30" class="i">+        eprintln!(&quot;Error: {error}&quot;)
+</a><a href="#h0-0-31" id="h0-0-31" class="i">+    }
+</a><a href="#h0-0-32" id="h0-0-32" class="i">+}
+</a><a href="#h0-0-33" id="h0-0-33" class="i">+
+</a><a href="#h0-0-34" id="h0-0-34" class="i">+/// The toydump command.
+</a><a href="#h0-0-35" id="h0-0-35" class="i">+#[derive(clap::Parser)]
+</a><a href="#h0-0-36" id="h0-0-36" class="i">+#[command(about = &quot;Prints toyDB file contents.&quot;, version, propagate_version = true)]
+</a><a href="#h0-0-37" id="h0-0-37" class="i">+struct Command {
+</a><a href="#h0-0-38" id="h0-0-38" class="i">+    /// The BitCask file to dump (SQL database unless --raft).
+</a><a href="#h0-0-39" id="h0-0-39" class="i">+    file: String,
+</a><a href="#h0-0-40" id="h0-0-40" class="i">+    /// The file is a Raft log, not SQL database.
+</a><a href="#h0-0-41" id="h0-0-41" class="i">+    #[arg(long)]
+</a><a href="#h0-0-42" id="h0-0-42" class="i">+    raft: bool,
+</a><a href="#h0-0-43" id="h0-0-43" class="i">+    /// Also show raw key and value.
+</a><a href="#h0-0-44" id="h0-0-44" class="i">+    #[arg(long)]
+</a><a href="#h0-0-45" id="h0-0-45" class="i">+    raw: bool,
+</a><a href="#h0-0-46" id="h0-0-46" class="i">+}
+</a> 
+<a href="#h0-0-48" id="h0-0-48" class="d">-    let mut engine = BitCask::new(file.into())?;
+</a><a href="#h0-0-49" id="h0-0-49" class="d">-    let mut scan = engine.scan(..);
+</a><a href="#h0-0-50" id="h0-0-50" class="d">-    while let Some((key, value)) = scan.next().transpose()? {
+</a><a href="#h0-0-51" id="h0-0-51" class="d">-        let mut string = match raft {
+</a><a href="#h0-0-52" id="h0-0-52" class="d">-            true =&gt; format::Raft::&lt;format::SQLCommand&gt;::key_value(&amp;key, &amp;value),
+</a><a href="#h0-0-53" id="h0-0-53" class="d">-            false =&gt; format::MVCC::&lt;format::SQL&gt;::key_value(&amp;key, &amp;value),
+</a><a href="#h0-0-54" id="h0-0-54" class="d">-        };
+</a><a href="#h0-0-55" id="h0-0-55" class="d">-        if raw {
+</a><a href="#h0-0-56" id="h0-0-56" class="d">-            string = format!(&quot;{string} [{}]&quot;, format::Raw::key_value(&amp;key, &amp;value))
+</a><a href="#h0-0-57" id="h0-0-57" class="i">+impl Command {
+</a><a href="#h0-0-58" id="h0-0-58" class="i">+    /// Runs the command.
+</a><a href="#h0-0-59" id="h0-0-59" class="i">+    fn run(self) -&gt; Result&lt;()&gt; {
+</a><a href="#h0-0-60" id="h0-0-60" class="i">+        let mut engine = BitCask::new(self.file.into())?;
+</a><a href="#h0-0-61" id="h0-0-61" class="i">+        let mut scan = engine.scan(..);
+</a><a href="#h0-0-62" id="h0-0-62" class="i">+        while let Some((key, value)) = scan.next().transpose()? {
+</a><a href="#h0-0-63" id="h0-0-63" class="i">+            let mut string = match self.raft {
+</a><a href="#h0-0-64" id="h0-0-64" class="i">+                true =&gt; format::Raft::&lt;format::SQLCommand&gt;::key_value(&amp;key, &amp;value),
+</a><a href="#h0-0-65" id="h0-0-65" class="i">+                false =&gt; format::MVCC::&lt;format::SQL&gt;::key_value(&amp;key, &amp;value),
+</a><a href="#h0-0-66" id="h0-0-66" class="i">+            };
+</a><a href="#h0-0-67" id="h0-0-67" class="i">+            if self.raw {
+</a><a href="#h0-0-68" id="h0-0-68" class="i">+                string = format!(&quot;{string} [{}]&quot;, format::Raw::key_value(&amp;key, &amp;value))
+</a><a href="#h0-0-69" id="h0-0-69" class="i">+            }
+</a><a href="#h0-0-70" id="h0-0-70" class="i">+            println!(&quot;{string}&quot;);
+</a>         }
+<a href="#h0-0-72" id="h0-0-72" class="d">-        println!(&quot;{string}&quot;);
+</a><a href="#h0-0-73" id="h0-0-73" class="i">+        Ok(())
+</a>     }
+<a href="#h0-0-75" id="h0-0-75" class="d">-    Ok(())
+</a> }
+</pre>
+</div>
+</body>
+</html>

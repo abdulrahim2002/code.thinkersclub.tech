@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>server: simplify SQL server processing - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/95757afe5788446460e5cc6036b7d18c160689b6.html">95757afe5788446460e5cc6036b7d18c160689b6</a>
+<b>parent</b> <a href="../commit/542ef274ef7d0d1f0a4e11b8fc5a449f88e9b9ce.html">542ef274ef7d0d1f0a4e11b8fc5a449f88e9b9ce</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Wed, 10 Apr 2024 15:16:50 +0200
+
+server: simplify SQL server processing
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/bin/toydb.rs</a></td><td> | </td><td class="num">7</td><td><span class="i">+</span><span class="d">------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/server.rs</a></td><td> | </td><td class="num">126</td><td><span class="i">+++++++++++++++++++++++++++++++++++</span><span class="d">--------------------------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/sql/engine/mod.rs</a></td><td> | </td><td class="num">22</td><td><span class="i">+++++++++++++++++</span><span class="d">-----</span></td></tr>
+</table></pre><pre>3 files changed, 74 insertions(+), 81 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/bin/toydb.rs.html">src/bin/toydb.rs</a> b/<a href="../file/src/bin/toydb.rs.html">src/bin/toydb.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -64,12 +64,7 @@ fn main() -&gt; Result&lt;()&gt; {
+</a>         name =&gt; return Err(Error::Config(format!(&quot;Unknown SQL storage engine {}&quot;, name))),
+     };
+ 
+<a href="#h0-0-3" id="h0-0-3" class="d">-    let srv = Server::new(cfg.id, cfg.peers, raft_log, raft_state)?;
+</a><a href="#h0-0-4" id="h0-0-4" class="d">-
+</a><a href="#h0-0-5" id="h0-0-5" class="d">-    let raft_listener = std::net::TcpListener::bind(&amp;cfg.listen_raft)?;
+</a><a href="#h0-0-6" id="h0-0-6" class="d">-    let sql_listener = std::net::TcpListener::bind(&amp;cfg.listen_sql)?;
+</a><a href="#h0-0-7" id="h0-0-7" class="d">-
+</a><a href="#h0-0-8" id="h0-0-8" class="d">-    srv.serve(raft_listener, sql_listener)
+</a><a href="#h0-0-9" id="h0-0-9" class="i">+    Server::new(cfg.id, cfg.peers, raft_log, raft_state)?.serve(&amp;cfg.listen_raft, &amp;cfg.listen_sql)
+</a> }
+ 
+ #[derive(Debug, Deserialize)]
+<b>diff --git a/<a id="h1" href="../file/src/server.rs.html">src/server.rs</a> b/<a href="../file/src/server.rs.html">src/server.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -7,7 +7,7 @@ use crate::sql::execution::ResultSet;
+</a> use crate::sql::schema::{Catalog as _, Table};
+ use crate::sql::types::Row;
+ 
+<a href="#h1-0-3" id="h1-0-3" class="d">-use ::log::{debug, error, info};
+</a><a href="#h1-0-4" id="h1-0-4" class="i">+use log::{debug, error, info};
+</a> use serde_derive::{Deserialize, Serialize};
+ use std::collections::HashMap;
+ 
+<a href="#h1-1" id="h1-1" class="h">@@ -30,9 +30,11 @@ impl Server {
+</a>     /// Serves Raft and SQL requests indefinitely. Consumes the server.
+     pub fn serve(
+         self,
+<a href="#h1-1-3" id="h1-1-3" class="d">-        raft_listener: std::net::TcpListener,
+</a><a href="#h1-1-4" id="h1-1-4" class="d">-        sql_listener: std::net::TcpListener,
+</a><a href="#h1-1-5" id="h1-1-5" class="i">+        raft_addr: impl std::net::ToSocketAddrs,
+</a><a href="#h1-1-6" id="h1-1-6" class="i">+        sql_addr: impl std::net::ToSocketAddrs,
+</a>     ) -&gt; Result&lt;()&gt; {
+<a href="#h1-1-8" id="h1-1-8" class="i">+        let raft_listener = std::net::TcpListener::bind(raft_addr)?;
+</a><a href="#h1-1-9" id="h1-1-9" class="i">+        let sql_listener = std::net::TcpListener::bind(sql_addr)?;
+</a>         info!(
+             &quot;Listening on {} (SQL) and {} (Raft)&quot;,
+             sql_listener.local_addr()?,
+<a href="#h1-2" id="h1-2" class="h">@@ -42,70 +44,54 @@ impl Server {
+</a>         std::thread::scope(move |s| {
+             let (raft_tx, raft_rx) = crossbeam::channel::unbounded();
+ 
+<a href="#h1-2-3" id="h1-2-3" class="d">-            s.spawn(move || Self::serve_sql(sql_listener, raft_tx));
+</a>             s.spawn(move || self.raft.serve(raft_listener, raft_rx));
+<a href="#h1-2-5" id="h1-2-5" class="d">-            Ok(())
+</a><a href="#h1-2-6" id="h1-2-6" class="d">-        })
+</a><a href="#h1-2-7" id="h1-2-7" class="i">+            s.spawn(move || Self::sql_accept(sql_listener, raft_tx));
+</a><a href="#h1-2-8" id="h1-2-8" class="i">+        });
+</a><a href="#h1-2-9" id="h1-2-9" class="i">+
+</a><a href="#h1-2-10" id="h1-2-10" class="i">+        Ok(())
+</a>     }
+ 
+<a href="#h1-2-13" id="h1-2-13" class="d">-    /// Serves SQL clients.
+</a><a href="#h1-2-14" id="h1-2-14" class="d">-    fn serve_sql(listener: std::net::TcpListener, raft_tx: raft::ClientSender) {
+</a><a href="#h1-2-15" id="h1-2-15" class="i">+    /// Accepts new SQL client connections and spawns session threads for them.
+</a><a href="#h1-2-16" id="h1-2-16" class="i">+    fn sql_accept(listener: std::net::TcpListener, raft_tx: raft::ClientSender) {
+</a>         std::thread::scope(|s| loop {
+             let (socket, peer) = match listener.accept() {
+                 Ok(r) =&gt; r,
+                 Err(err) =&gt; {
+<a href="#h1-2-21" id="h1-2-21" class="d">-                    error!(&quot;Connection failed: {}&quot;, err);
+</a><a href="#h1-2-22" id="h1-2-22" class="i">+                    error!(&quot;Accept failed: {err}&quot;);
+</a>                     continue;
+                 }
+             };
+             let raft_tx = raft_tx.clone();
+             s.spawn(move || {
+<a href="#h1-2-28" id="h1-2-28" class="d">-                let session = Session::new(sql::engine::Raft::new(raft_tx));
+</a><a href="#h1-2-29" id="h1-2-29" class="d">-                info!(&quot;Client {} connected&quot;, peer);
+</a><a href="#h1-2-30" id="h1-2-30" class="d">-                match session.handle(socket) {
+</a><a href="#h1-2-31" id="h1-2-31" class="d">-                    Ok(()) =&gt; info!(&quot;Client {} disconnected&quot;, peer),
+</a><a href="#h1-2-32" id="h1-2-32" class="d">-                    Err(err) =&gt; error!(&quot;Client {} error: {}&quot;, peer, err),
+</a><a href="#h1-2-33" id="h1-2-33" class="i">+                debug!(&quot;Client {peer} connected&quot;);
+</a><a href="#h1-2-34" id="h1-2-34" class="i">+                match Self::sql_session(socket, raft_tx) {
+</a><a href="#h1-2-35" id="h1-2-35" class="i">+                    Ok(()) =&gt; debug!(&quot;Client {peer} disconnected&quot;),
+</a><a href="#h1-2-36" id="h1-2-36" class="i">+                    Err(err) =&gt; error!(&quot;Client {peer} error: {err}&quot;),
+</a>                 }
+             });
+         })
+     }
+<a href="#h1-2-41" id="h1-2-41" class="d">-}
+</a><a href="#h1-2-42" id="h1-2-42" class="d">-
+</a><a href="#h1-2-43" id="h1-2-43" class="d">-/// A client request.
+</a><a href="#h1-2-44" id="h1-2-44" class="d">-#[derive(Debug, Serialize, Deserialize)]
+</a><a href="#h1-2-45" id="h1-2-45" class="d">-pub enum Request {
+</a><a href="#h1-2-46" id="h1-2-46" class="d">-    Execute(String),
+</a><a href="#h1-2-47" id="h1-2-47" class="d">-    GetTable(String),
+</a><a href="#h1-2-48" id="h1-2-48" class="d">-    ListTables,
+</a><a href="#h1-2-49" id="h1-2-49" class="d">-    Status,
+</a><a href="#h1-2-50" id="h1-2-50" class="d">-}
+</a><a href="#h1-2-51" id="h1-2-51" class="d">-
+</a><a href="#h1-2-52" id="h1-2-52" class="d">-/// A server response.
+</a><a href="#h1-2-53" id="h1-2-53" class="d">-#[derive(Debug, Serialize, Deserialize)]
+</a><a href="#h1-2-54" id="h1-2-54" class="d">-pub enum Response {
+</a><a href="#h1-2-55" id="h1-2-55" class="d">-    Execute(ResultSet),
+</a><a href="#h1-2-56" id="h1-2-56" class="d">-    Row(Option&lt;Row&gt;),
+</a><a href="#h1-2-57" id="h1-2-57" class="d">-    GetTable(Table),
+</a><a href="#h1-2-58" id="h1-2-58" class="d">-    ListTables(Vec&lt;String&gt;),
+</a><a href="#h1-2-59" id="h1-2-59" class="d">-    Status(sql::engine::Status),
+</a><a href="#h1-2-60" id="h1-2-60" class="d">-}
+</a><a href="#h1-2-61" id="h1-2-61" class="d">-
+</a><a href="#h1-2-62" id="h1-2-62" class="d">-/// A client session coupled to a SQL session.
+</a><a href="#h1-2-63" id="h1-2-63" class="d">-pub struct Session {
+</a><a href="#h1-2-64" id="h1-2-64" class="d">-    engine: sql::engine::Raft,
+</a><a href="#h1-2-65" id="h1-2-65" class="d">-    sql: sql::engine::Session&lt;sql::engine::Raft&gt;,
+</a><a href="#h1-2-66" id="h1-2-66" class="d">-}
+</a><a href="#h1-2-67" id="h1-2-67" class="d">-
+</a><a href="#h1-2-68" id="h1-2-68" class="d">-impl Session {
+</a><a href="#h1-2-69" id="h1-2-69" class="d">-    /// Creates a new client session.
+</a><a href="#h1-2-70" id="h1-2-70" class="d">-    fn new(engine: sql::engine::Raft) -&gt; Self {
+</a><a href="#h1-2-71" id="h1-2-71" class="d">-        Self { sql: engine.session(), engine }
+</a><a href="#h1-2-72" id="h1-2-72" class="d">-    }
+</a> 
+<a href="#h1-2-74" id="h1-2-74" class="d">-    /// Handles a client connection.
+</a><a href="#h1-2-75" id="h1-2-75" class="d">-    fn handle(mut self, mut socket: std::net::TcpStream) -&gt; Result&lt;()&gt; {
+</a><a href="#h1-2-76" id="h1-2-76" class="i">+    /// Processes a client SQL session, by executing SQL statements against the
+</a><a href="#h1-2-77" id="h1-2-77" class="i">+    /// Raft node.
+</a><a href="#h1-2-78" id="h1-2-78" class="i">+    fn sql_session(mut socket: std::net::TcpStream, raft_tx: raft::ClientSender) -&gt; Result&lt;()&gt; {
+</a><a href="#h1-2-79" id="h1-2-79" class="i">+        let mut session = sql::engine::Raft::new(raft_tx).session();
+</a>         while let Some(request) = bincode::maybe_deserialize_from(&amp;mut socket)? {
+<a href="#h1-2-81" id="h1-2-81" class="d">-            let mut response = self.request(request);
+</a><a href="#h1-2-82" id="h1-2-82" class="i">+            // Execute request.
+</a><a href="#h1-2-83" id="h1-2-83" class="i">+            debug!(&quot;Received request {request:?}&quot;);
+</a><a href="#h1-2-84" id="h1-2-84" class="i">+            let mut response = match request {
+</a><a href="#h1-2-85" id="h1-2-85" class="i">+                Request::Execute(query) =&gt; session.execute(&amp;query).map(Response::Execute),
+</a><a href="#h1-2-86" id="h1-2-86" class="i">+                Request::Status =&gt; session.status().map(Response::Status),
+</a><a href="#h1-2-87" id="h1-2-87" class="i">+                Request::GetTable(table) =&gt; session
+</a><a href="#h1-2-88" id="h1-2-88" class="i">+                    .with_txn_read_only(|txn| txn.must_read_table(&amp;table))
+</a><a href="#h1-2-89" id="h1-2-89" class="i">+                    .map(Response::GetTable),
+</a><a href="#h1-2-90" id="h1-2-90" class="i">+                Request::ListTables =&gt; session
+</a><a href="#h1-2-91" id="h1-2-91" class="i">+                    .with_txn_read_only(|txn| Ok(txn.scan_tables()?.map(|t| t.name).collect()))
+</a><a href="#h1-2-92" id="h1-2-92" class="i">+                    .map(Response::ListTables),
+</a><a href="#h1-2-93" id="h1-2-93" class="i">+            };
+</a><a href="#h1-2-94" id="h1-2-94" class="i">+
+</a><a href="#h1-2-95" id="h1-2-95" class="i">+            // Process response.
+</a><a href="#h1-2-96" id="h1-2-96" class="i">+            debug!(&quot;Returning response {response:?}&quot;);
+</a>             let mut rows: Box&lt;dyn Iterator&lt;Item = Result&lt;Response&gt;&gt; + Send&gt; =
+                 Box::new(std::iter::empty());
+             if let Ok(Response::Execute(ResultSet::Query { rows: ref mut resultrows, .. })) =
+<a href="#h1-3" id="h1-3" class="h">@@ -129,33 +115,33 @@ impl Session {
+</a>             }
+ 
+             bincode::serialize_into(&amp;mut socket, &amp;response)?;
+<a href="#h1-3-3" id="h1-3-3" class="d">-
+</a>             for row in rows {
+                 bincode::serialize_into(&amp;mut socket, &amp;row)?;
+             }
+         }
+         Ok(())
+     }
+<a href="#h1-3-10" id="h1-3-10" class="d">-    /// Executes a request.
+</a><a href="#h1-3-11" id="h1-3-11" class="d">-    pub fn request(&amp;mut self, request: Request) -&gt; Result&lt;Response&gt; {
+</a><a href="#h1-3-12" id="h1-3-12" class="d">-        debug!(&quot;Processing request {:?}&quot;, request);
+</a><a href="#h1-3-13" id="h1-3-13" class="d">-        let response = match request {
+</a><a href="#h1-3-14" id="h1-3-14" class="d">-            Request::Execute(query) =&gt; Response::Execute(self.sql.execute(&amp;query)?),
+</a><a href="#h1-3-15" id="h1-3-15" class="d">-            Request::GetTable(table) =&gt; {
+</a><a href="#h1-3-16" id="h1-3-16" class="d">-                Response::GetTable(self.sql.read_with_txn(|txn| txn.must_read_table(&amp;table))?)
+</a><a href="#h1-3-17" id="h1-3-17" class="d">-            }
+</a><a href="#h1-3-18" id="h1-3-18" class="d">-            Request::ListTables =&gt; Response::ListTables(
+</a><a href="#h1-3-19" id="h1-3-19" class="d">-                self.sql.read_with_txn(|txn| Ok(txn.scan_tables()?.map(|t| t.name).collect()))?,
+</a><a href="#h1-3-20" id="h1-3-20" class="d">-            ),
+</a><a href="#h1-3-21" id="h1-3-21" class="d">-            Request::Status =&gt; Response::Status(self.engine.status()?),
+</a><a href="#h1-3-22" id="h1-3-22" class="d">-        };
+</a><a href="#h1-3-23" id="h1-3-23" class="d">-        debug!(&quot;Returning response {:?}&quot;, response);
+</a><a href="#h1-3-24" id="h1-3-24" class="d">-        Ok(response)
+</a><a href="#h1-3-25" id="h1-3-25" class="d">-    }
+</a> }
+ 
+<a href="#h1-3-28" id="h1-3-28" class="d">-impl Drop for Session {
+</a><a href="#h1-3-29" id="h1-3-29" class="d">-    fn drop(&amp;mut self) {
+</a><a href="#h1-3-30" id="h1-3-30" class="d">-        self.sql.execute(&quot;ROLLBACK&quot;).ok();
+</a><a href="#h1-3-31" id="h1-3-31" class="d">-    }
+</a><a href="#h1-3-32" id="h1-3-32" class="i">+/// A SQL client request.
+</a><a href="#h1-3-33" id="h1-3-33" class="i">+#[derive(Debug, Serialize, Deserialize)]
+</a><a href="#h1-3-34" id="h1-3-34" class="i">+pub enum Request {
+</a><a href="#h1-3-35" id="h1-3-35" class="i">+    /// Executes a SQL statement.
+</a><a href="#h1-3-36" id="h1-3-36" class="i">+    Execute(String),
+</a><a href="#h1-3-37" id="h1-3-37" class="i">+    /// Fetches the given table schema.
+</a><a href="#h1-3-38" id="h1-3-38" class="i">+    GetTable(String),
+</a><a href="#h1-3-39" id="h1-3-39" class="i">+    /// Lists all tables.
+</a><a href="#h1-3-40" id="h1-3-40" class="i">+    ListTables,
+</a><a href="#h1-3-41" id="h1-3-41" class="i">+    /// Returns server status.
+</a><a href="#h1-3-42" id="h1-3-42" class="i">+    Status,
+</a><a href="#h1-3-43" id="h1-3-43" class="i">+}
+</a><a href="#h1-3-44" id="h1-3-44" class="i">+
+</a><a href="#h1-3-45" id="h1-3-45" class="i">+/// A SQL server response.
+</a><a href="#h1-3-46" id="h1-3-46" class="i">+#[derive(Debug, Serialize, Deserialize)]
+</a><a href="#h1-3-47" id="h1-3-47" class="i">+pub enum Response {
+</a><a href="#h1-3-48" id="h1-3-48" class="i">+    Execute(ResultSet),
+</a><a href="#h1-3-49" id="h1-3-49" class="i">+    Row(Option&lt;Row&gt;),
+</a><a href="#h1-3-50" id="h1-3-50" class="i">+    GetTable(Table),
+</a><a href="#h1-3-51" id="h1-3-51" class="i">+    ListTables(Vec&lt;String&gt;),
+</a><a href="#h1-3-52" id="h1-3-52" class="i">+    Status(sql::engine::Status),
+</a> }
+<b>diff --git a/<a id="h2" href="../file/src/sql/engine/mod.rs.html">src/sql/engine/mod.rs</a> b/<a href="../file/src/sql/engine/mod.rs.html">src/sql/engine/mod.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -62,7 +62,7 @@ pub trait Transaction: Catalog {
+</a> }
+ 
+ /// An SQL session, which handles transaction control and simplified query execution
+<a href="#h2-0-3" id="h2-0-3" class="d">-pub struct Session&lt;E: Engine&gt; {
+</a><a href="#h2-0-4" id="h2-0-4" class="i">+pub struct Session&lt;E: Engine + &#39;static&gt; {
+</a>     /// The underlying engine
+     engine: E,
+     /// The current session transaction, if any
+<a href="#h2-1" id="h2-1" class="h">@@ -115,7 +115,7 @@ impl&lt;E: Engine + &#39;static&gt; Session&lt;E&gt; {
+</a>                 txn.rollback()?;
+                 Ok(ResultSet::Rollback { version })
+             }
+<a href="#h2-1-3" id="h2-1-3" class="d">-            ast::Statement::Explain(statement) =&gt; self.read_with_txn(|txn| {
+</a><a href="#h2-1-4" id="h2-1-4" class="i">+            ast::Statement::Explain(statement) =&gt; self.with_txn_read_only(|txn| {
+</a>                 Ok(ResultSet::Explain(Plan::build(*statement, txn)?.optimize(txn)?.0))
+             }),
+             statement if self.txn.is_some() =&gt; Plan::build(statement, self.txn.as_mut().unwrap())?
+<a href="#h2-2" id="h2-2" class="h">@@ -145,10 +145,10 @@ impl&lt;E: Engine + &#39;static&gt; Session&lt;E&gt; {
+</a>     }
+ 
+     /// Runs a read-only closure in the session&#39;s transaction, or a new
+<a href="#h2-2-3" id="h2-2-3" class="d">-    /// transaction if none is active.
+</a><a href="#h2-2-4" id="h2-2-4" class="i">+    /// read-only transaction if none is active.
+</a>     ///
+<a href="#h2-2-6" id="h2-2-6" class="d">-    /// TODO: reconsider this
+</a><a href="#h2-2-7" id="h2-2-7" class="d">-    pub fn read_with_txn&lt;R, F&gt;(&amp;mut self, f: F) -&gt; Result&lt;R&gt;
+</a><a href="#h2-2-8" id="h2-2-8" class="i">+    /// TODO: reconsider this.
+</a><a href="#h2-2-9" id="h2-2-9" class="i">+    pub fn with_txn_read_only&lt;F, R&gt;(&amp;mut self, f: F) -&gt; Result&lt;R&gt;
+</a>     where
+         F: FnOnce(&amp;mut E::Transaction) -&gt; Result&lt;R&gt;,
+     {
+<a href="#h2-3" id="h2-3" class="h">@@ -162,6 +162,18 @@ impl&lt;E: Engine + &#39;static&gt; Session&lt;E&gt; {
+</a>     }
+ }
+ 
+<a href="#h2-3-3" id="h2-3-3" class="i">+impl Session&lt;Raft&gt; {
+</a><a href="#h2-3-4" id="h2-3-4" class="i">+    pub fn status(&amp;self) -&gt; Result&lt;Status&gt; {
+</a><a href="#h2-3-5" id="h2-3-5" class="i">+        self.engine.status()
+</a><a href="#h2-3-6" id="h2-3-6" class="i">+    }
+</a><a href="#h2-3-7" id="h2-3-7" class="i">+}
+</a><a href="#h2-3-8" id="h2-3-8" class="i">+
+</a><a href="#h2-3-9" id="h2-3-9" class="i">+impl&lt;E: Engine + &#39;static&gt; Drop for Session&lt;E&gt; {
+</a><a href="#h2-3-10" id="h2-3-10" class="i">+    fn drop(&amp;mut self) {
+</a><a href="#h2-3-11" id="h2-3-11" class="i">+        self.execute(&quot;ROLLBACK&quot;).ok();
+</a><a href="#h2-3-12" id="h2-3-12" class="i">+    }
+</a><a href="#h2-3-13" id="h2-3-13" class="i">+}
+</a><a href="#h2-3-14" id="h2-3-14" class="i">+
+</a> /// A row scan iterator
+ pub type Scan = Box&lt;dyn DoubleEndedIterator&lt;Item = Result&lt;Row&gt;&gt; + Send&gt;;
+ 
+</pre>
+</div>
+</body>
+</html>

@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>sql: improve error message for unknown fields in aggregate queries - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/799a92090e8817b75ef87cf6c11a426592add775.html">799a92090e8817b75ef87cf6c11a426592add775</a>
+<b>parent</b> <a href="../commit/7ec20fb8f85147da66bf9df6776b0cc83879d9a2.html">7ec20fb8f85147da66bf9df6776b0cc83879d9a2</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Mon, 15 Jul 2024 15:56:04 +0200
+
+sql: improve error message for unknown fields in aggregate queries
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/sql/planner/planner.rs</a></td><td> | </td><td class="num">11</td><td><span class="i">+++++++++++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/sql/testscripts/queries/aggregate</a></td><td> | </td><td class="num">5</td><td><span class="i">+++++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/sql/testscripts/queries/group_by</a></td><td> | </td><td class="num">14</td><td><span class="i">++++++++++++++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">src/sql/testscripts/queries/having</a></td><td> | </td><td class="num">3</td><td><span class="i">+</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h4">src/sql/testscripts/queries/order</a></td><td> | </td><td class="num">5</td><td><span class="i">+++++</span><span class="d"></span></td></tr>
+</table></pre><pre>5 files changed, 36 insertions(+), 2 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/sql/planner/planner.rs.html">src/sql/planner/planner.rs</a> b/<a href="../file/src/sql/planner/planner.rs.html">src/sql/planner/planner.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -200,6 +200,7 @@ impl&lt;&#39;a, C: Catalog&gt; Planner&lt;&#39;a, C&gt; {
+</a>         if !select.is_empty() {
+             let labels = select.iter().map(|(_, l)| Label::maybe_name(l.clone())).collect_vec();
+             let mut expressions: Vec&lt;_&gt; = select
+<a href="#h0-0-3" id="h0-0-3" class="i">+                .clone() // TODO: avoid
+</a>                 .into_iter()
+                 .map(|(e, _)| Self::build_expression(e, &amp;scope))
+                 .collect::&lt;Result&lt;_&gt;&gt;()?;
+<a href="#h0-1" id="h0-1" class="h">@@ -214,6 +215,16 @@ impl&lt;&#39;a, C: Catalog&gt; Planner&lt;&#39;a, C&gt; {
+</a>             }
+             hidden += expressions.len() - size;
+ 
+<a href="#h0-1-3" id="h0-1-3" class="i">+            // If the parent scope is an aggregate scope, then every projected
+</a><a href="#h0-1-4" id="h0-1-4" class="i">+            // column must also be an aggregate column by definition. Record them
+</a><a href="#h0-1-5" id="h0-1-5" class="i">+            // as such. build_hidden() already does this for hidden columns.
+</a><a href="#h0-1-6" id="h0-1-6" class="i">+            // TODO: clean this up.
+</a><a href="#h0-1-7" id="h0-1-7" class="i">+            if !parent_scope.aggregates.is_empty() {
+</a><a href="#h0-1-8" id="h0-1-8" class="i">+                for (i, expr) in select.into_iter().map(|(e, _)| e).enumerate() {
+</a><a href="#h0-1-9" id="h0-1-9" class="i">+                    scope.aggregates.entry(expr).or_insert(i);
+</a><a href="#h0-1-10" id="h0-1-10" class="i">+                }
+</a><a href="#h0-1-11" id="h0-1-11" class="i">+            }
+</a><a href="#h0-1-12" id="h0-1-12" class="i">+
+</a>             node = Node::Projection { source: Box::new(node), expressions, labels };
+         };
+ 
+<b>diff --git a/<a id="h1" href="../file/src/sql/testscripts/queries/aggregate.html">src/sql/testscripts/queries/aggregate</a> b/<a href="../file/src/sql/testscripts/queries/aggregate.html">src/sql/testscripts/queries/aggregate</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -240,3 +240,8 @@ Projection: #0 / #1 + 7
+</a> !&gt; SELECT MIN(MAX(&quot;int&quot;)) FROM test
+ ---
+ Error: invalid input: aggregate functions can&#39;t be nested
+<a href="#h1-0-3" id="h1-0-3" class="i">+
+</a><a href="#h1-0-4" id="h1-0-4" class="i">+# Can&#39;t mix aggregate and non-aggregate expressions.
+</a><a href="#h1-0-5" id="h1-0-5" class="i">+!&gt; SELECT MAX(&quot;int&quot;) - &quot;int&quot; FROM test
+</a><a href="#h1-0-6" id="h1-0-6" class="i">+---
+</a><a href="#h1-0-7" id="h1-0-7" class="i">+Error: invalid input: field int must be used in an aggregate or GROUP BY expression
+</a><b>diff --git a/<a id="h2" href="../file/src/sql/testscripts/queries/group_by.html">src/sql/testscripts/queries/group_by</a> b/<a href="../file/src/sql/testscripts/queries/group_by.html">src/sql/testscripts/queries/group_by</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -161,6 +161,20 @@ Aggregate: count(TRUE) group by id % 2
+</a> 0, 4
+ 1, 3
+ 
+<a href="#h2-0-3" id="h2-0-3" class="i">+# Can mix GROUP BY and aggregate expressions in SELECT.
+</a><a href="#h2-0-4" id="h2-0-4" class="i">+[plan]&gt; SELECT MAX(&quot;int&quot;) + id % 2 FROM test GROUP BY id
+</a><a href="#h2-0-5" id="h2-0-5" class="i">+---
+</a><a href="#h2-0-6" id="h2-0-6" class="i">+Projection: #1 + test.id % 2
+</a><a href="#h2-0-7" id="h2-0-7" class="i">+└─ Aggregate: max(int) group by id
+</a><a href="#h2-0-8" id="h2-0-8" class="i">+   └─ Scan: test
+</a><a href="#h2-0-9" id="h2-0-9" class="i">+NULL
+</a><a href="#h2-0-10" id="h2-0-10" class="i">+0
+</a><a href="#h2-0-11" id="h2-0-11" class="i">+0
+</a><a href="#h2-0-12" id="h2-0-12" class="i">+4
+</a><a href="#h2-0-13" id="h2-0-13" class="i">+42
+</a><a href="#h2-0-14" id="h2-0-14" class="i">+8
+</a><a href="#h2-0-15" id="h2-0-15" class="i">+-1
+</a><a href="#h2-0-16" id="h2-0-16" class="i">+
+</a> # GROUP BY can&#39;t use an aliased expression.
+ !&gt; SELECT id % 2 AS mod, COUNT(*) FROM test GROUP BY mod
+ ---
+<b>diff --git a/<a id="h3" href="../file/src/sql/testscripts/queries/having.html">src/sql/testscripts/queries/having</a> b/<a href="../file/src/sql/testscripts/queries/having.html">src/sql/testscripts/queries/having</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -127,7 +127,6 @@ Projection: #0
+</a> Error: invalid input: aggregate functions can&#39;t be nested
+ 
+ # Having errors on fields not in the SELECT or GROUP BY clauses.
+<a href="#h3-0-3" id="h3-0-3" class="d">-# TODO: improve the error message.
+</a> !&gt; SELECT &quot;group&quot;, COUNT(*) FROM test GROUP BY &quot;group&quot; HAVING id &gt; 3
+ ---
+<a href="#h3-0-6" id="h3-0-6" class="d">-Error: invalid input: unknown field id
+</a><a href="#h3-0-7" id="h3-0-7" class="i">+Error: invalid input: field id must be used in an aggregate or GROUP BY expression
+</a><b>diff --git a/<a id="h4" href="../file/src/sql/testscripts/queries/order.html">src/sql/testscripts/queries/order</a> b/<a href="../file/src/sql/testscripts/queries/order.html">src/sql/testscripts/queries/order</a></b>
+<a href="#h4-0" id="h4-0" class="h">@@ -536,3 +536,8 @@ Projection: #0
+</a> 8
+ 1
+ 1
+<a href="#h4-0-3" id="h4-0-3" class="i">+
+</a><a href="#h4-0-4" id="h4-0-4" class="i">+# ORDER BY errors on fields not in the SELECT or GROUP BY clauses.
+</a><a href="#h4-0-5" id="h4-0-5" class="i">+!&gt; SELECT &quot;bool&quot;, COUNT(*) FROM test GROUP BY &quot;bool&quot; ORDER BY id
+</a><a href="#h4-0-6" id="h4-0-6" class="i">+---
+</a><a href="#h4-0-7" id="h4-0-7" class="i">+Error: invalid input: field id must be used in an aggregate or GROUP BY expression
+</a></pre>
+</div>
+</body>
+</html>

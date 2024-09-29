@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>sql: initial support for fields in expressions - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/acc4a9f84f0435b672e2cc2e03b047f04897c72d.html">acc4a9f84f0435b672e2cc2e03b047f04897c72d</a>
+<b>parent</b> <a href="../commit/9b0a269406c81a0d58f7292cb75d5535ee288ff0.html">9b0a269406c81a0d58f7292cb75d5535ee288ff0</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Sun,  8 Sep 2019 21:09:49 +0200
+
+sql: initial support for fields in expressions
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/sql/expression.rs</a></td><td> | </td><td class="num">62</td><td><span class="i">++++++++++++++++++++++++++++++++++++++++++</span><span class="d">--------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/sql/parser/ast.rs</a></td><td> | </td><td class="num">7</td><td><span class="i">++</span><span class="d">-----</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/sql/parser/mod.rs</a></td><td> | </td><td class="num">3</td><td><span class="i">++</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">src/sql/plan/filter.rs</a></td><td> | </td><td class="num">4</td><td><span class="i">++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h4">src/sql/plan/insert.rs</a></td><td> | </td><td class="num">4</td><td><span class="i">++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h5">src/sql/plan/mod.rs</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h6">src/sql/plan/projection.rs</a></td><td> | </td><td class="num">5</td><td><span class="i">+++</span><span class="d">--</span></td></tr>
+<tr><td class="A">A</td><td><a href="#h7">src/sql/testdata/select_fields_from_table</a></td><td> | </td><td class="num">109</td><td><span class="i">+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h8">src/sql/tests.rs</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+</table></pre><pre>9 files changed, 164 insertions(+), 32 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/sql/expression.rs.html">src/sql/expression.rs</a> b/<a href="../file/src/sql/expression.rs.html">src/sql/expression.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -1,10 +1,13 @@
+</a> use super::types::Value;
+ use crate::Error;
+<a href="#h0-0-2" id="h0-0-2" class="i">+use std::collections::HashMap;
+</a> 
+ /// An expression
+ #[derive(Debug)]
+ pub enum Expression {
+<a href="#h0-0-7" id="h0-0-7" class="i">+    // Values
+</a>     Constant(Value),
+<a href="#h0-0-9" id="h0-0-9" class="i">+    Field(String),
+</a> 
+     // Logical operations
+     And(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+<a href="#h0-1" id="h0-1" class="h">@@ -32,28 +35,49 @@ pub enum Expression {
+</a> 
+ pub type Expressions = Vec&lt;Expression&gt;;
+ 
+<a href="#h0-1-3" id="h0-1-3" class="i">+pub struct Environment {
+</a><a href="#h0-1-4" id="h0-1-4" class="i">+    fields: HashMap&lt;String, Value&gt;,
+</a><a href="#h0-1-5" id="h0-1-5" class="i">+}
+</a><a href="#h0-1-6" id="h0-1-6" class="i">+
+</a><a href="#h0-1-7" id="h0-1-7" class="i">+impl Environment {
+</a><a href="#h0-1-8" id="h0-1-8" class="i">+    pub fn new(fields: HashMap&lt;String, Value&gt;) -&gt; Self {
+</a><a href="#h0-1-9" id="h0-1-9" class="i">+        Self { fields }
+</a><a href="#h0-1-10" id="h0-1-10" class="i">+    }
+</a><a href="#h0-1-11" id="h0-1-11" class="i">+
+</a><a href="#h0-1-12" id="h0-1-12" class="i">+    pub fn empty() -&gt; Self {
+</a><a href="#h0-1-13" id="h0-1-13" class="i">+        Self::new(HashMap::new())
+</a><a href="#h0-1-14" id="h0-1-14" class="i">+    }
+</a><a href="#h0-1-15" id="h0-1-15" class="i">+}
+</a><a href="#h0-1-16" id="h0-1-16" class="i">+
+</a> impl Expression {
+     /// Evaluates an expression to a value
+<a href="#h0-1-19" id="h0-1-19" class="d">-    pub fn evaluate(&amp;self) -&gt; Result&lt;Value, Error&gt; {
+</a><a href="#h0-1-20" id="h0-1-20" class="i">+    pub fn evaluate(&amp;self, e: &amp;Environment) -&gt; Result&lt;Value, Error&gt; {
+</a>         use Value::*;
+         Ok(match self {
+<a href="#h0-1-23" id="h0-1-23" class="i">+            // Values
+</a><a href="#h0-1-24" id="h0-1-24" class="i">+            Self::Constant(c) =&gt; c.clone(),
+</a><a href="#h0-1-25" id="h0-1-25" class="i">+            Self::Field(f) =&gt; match e.fields.get(f) {
+</a><a href="#h0-1-26" id="h0-1-26" class="i">+                Some(v) =&gt; v.clone(),
+</a><a href="#h0-1-27" id="h0-1-27" class="i">+                None =&gt; return Err(Error::Value(format!(&quot;Unknown field {}&quot;, f))),
+</a><a href="#h0-1-28" id="h0-1-28" class="i">+            },
+</a><a href="#h0-1-29" id="h0-1-29" class="i">+
+</a>             // Logical operations
+<a href="#h0-1-31" id="h0-1-31" class="d">-            Expression::And(lhs, rhs) =&gt; match (lhs.evaluate()?, rhs.evaluate()?) {
+</a><a href="#h0-1-32" id="h0-1-32" class="i">+            Self::And(lhs, rhs) =&gt; match (lhs.evaluate(e)?, rhs.evaluate(e)?) {
+</a>                 (Boolean(lhs), Boolean(rhs)) =&gt; Boolean(lhs &amp;&amp; rhs),
+                 (lhs, rhs) =&gt; return Err(Error::Value(format!(&quot;Can&#39;t and {} and {}&quot;, lhs, rhs))),
+             },
+<a href="#h0-1-36" id="h0-1-36" class="d">-            Expression::Not(expr) =&gt; match expr.evaluate()? {
+</a><a href="#h0-1-37" id="h0-1-37" class="i">+            Self::Not(expr) =&gt; match expr.evaluate(e)? {
+</a>                 Boolean(b) =&gt; Boolean(!b),
+                 value =&gt; return Err(Error::Value(format!(&quot;Can&#39;t negate {}&quot;, value))),
+             },
+<a href="#h0-1-41" id="h0-1-41" class="d">-            Expression::Or(lhs, rhs) =&gt; match (lhs.evaluate()?, rhs.evaluate()?) {
+</a><a href="#h0-1-42" id="h0-1-42" class="i">+            Self::Or(lhs, rhs) =&gt; match (lhs.evaluate(e)?, rhs.evaluate(e)?) {
+</a>                 (Boolean(lhs), Boolean(rhs)) =&gt; Boolean(lhs || rhs),
+                 (lhs, rhs) =&gt; return Err(Error::Value(format!(&quot;Can&#39;t or {} and {}&quot;, lhs, rhs))),
+             },
+ 
+             // Comparison operations
+             #[allow(clippy::float_cmp)] // Up to the user if they want to compare or not
+<a href="#h0-1-49" id="h0-1-49" class="d">-            Expression::CompareEQ(lhs, rhs) =&gt; match (lhs.evaluate()?, rhs.evaluate()?) {
+</a><a href="#h0-1-50" id="h0-1-50" class="i">+            Self::CompareEQ(lhs, rhs) =&gt; match (lhs.evaluate(e)?, rhs.evaluate(e)?) {
+</a>                 (Integer(lhs), Integer(rhs)) =&gt; Boolean(lhs == rhs),
+                 (Integer(lhs), Float(rhs)) =&gt; Boolean(lhs as f64 == rhs),
+                 (Float(lhs), Integer(rhs)) =&gt; Boolean(lhs == rhs as f64),
+<a href="#h0-2" id="h0-2" class="h">@@ -62,7 +86,7 @@ impl Expression {
+</a>                     return Err(Error::Value(format!(&quot;Can&#39;t compare {} and {}&quot;, lhs, rhs)))
+                 }
+             },
+<a href="#h0-2-3" id="h0-2-3" class="d">-            Expression::CompareGT(lhs, rhs) =&gt; match (lhs.evaluate()?, rhs.evaluate()?) {
+</a><a href="#h0-2-4" id="h0-2-4" class="i">+            Self::CompareGT(lhs, rhs) =&gt; match (lhs.evaluate(e)?, rhs.evaluate(e)?) {
+</a>                 (Integer(lhs), Integer(rhs)) =&gt; Boolean(lhs &gt; rhs),
+                 (Integer(lhs), Float(rhs)) =&gt; Boolean(lhs as f64 &gt; rhs),
+                 (Float(lhs), Integer(rhs)) =&gt; Boolean(lhs &gt; rhs as f64),
+<a href="#h0-3" id="h0-3" class="h">@@ -71,7 +95,7 @@ impl Expression {
+</a>                     return Err(Error::Value(format!(&quot;Can&#39;t compare {} and {}&quot;, lhs, rhs)))
+                 }
+             },
+<a href="#h0-3-3" id="h0-3-3" class="d">-            Expression::CompareGTE(lhs, rhs) =&gt; match (lhs.evaluate()?, rhs.evaluate()?) {
+</a><a href="#h0-3-4" id="h0-3-4" class="i">+            Self::CompareGTE(lhs, rhs) =&gt; match (lhs.evaluate(e)?, rhs.evaluate(e)?) {
+</a>                 (Integer(lhs), Integer(rhs)) =&gt; Boolean(lhs &gt;= rhs),
+                 (Integer(lhs), Float(rhs)) =&gt; Boolean(lhs as f64 &gt;= rhs),
+                 (Float(lhs), Integer(rhs)) =&gt; Boolean(lhs &gt;= rhs as f64),
+<a href="#h0-4" id="h0-4" class="h">@@ -80,7 +104,7 @@ impl Expression {
+</a>                     return Err(Error::Value(format!(&quot;Can&#39;t compare {} and {}&quot;, lhs, rhs)))
+                 }
+             },
+<a href="#h0-4-3" id="h0-4-3" class="d">-            Expression::CompareLT(lhs, rhs) =&gt; match (lhs.evaluate()?, rhs.evaluate()?) {
+</a><a href="#h0-4-4" id="h0-4-4" class="i">+            Self::CompareLT(lhs, rhs) =&gt; match (lhs.evaluate(e)?, rhs.evaluate(e)?) {
+</a>                 (Integer(lhs), Integer(rhs)) =&gt; Boolean(lhs &lt; rhs),
+                 (Integer(lhs), Float(rhs)) =&gt; Boolean((lhs as f64) &lt; rhs),
+                 (Float(lhs), Integer(rhs)) =&gt; Boolean(lhs &lt; rhs as f64),
+<a href="#h0-5" id="h0-5" class="h">@@ -89,7 +113,7 @@ impl Expression {
+</a>                     return Err(Error::Value(format!(&quot;Can&#39;t compare {} and {}&quot;, lhs, rhs)))
+                 }
+             },
+<a href="#h0-5-3" id="h0-5-3" class="d">-            Expression::CompareLTE(lhs, rhs) =&gt; match (lhs.evaluate()?, rhs.evaluate()?) {
+</a><a href="#h0-5-4" id="h0-5-4" class="i">+            Self::CompareLTE(lhs, rhs) =&gt; match (lhs.evaluate(e)?, rhs.evaluate(e)?) {
+</a>                 (Integer(lhs), Integer(rhs)) =&gt; Boolean(lhs &lt;= rhs),
+                 (Integer(lhs), Float(rhs)) =&gt; Boolean((lhs as f64) &lt;= rhs),
+                 (Float(lhs), Integer(rhs)) =&gt; Boolean(lhs &lt;= rhs as f64),
+<a href="#h0-6" id="h0-6" class="h">@@ -99,7 +123,7 @@ impl Expression {
+</a>                 }
+             },
+             #[allow(clippy::float_cmp)] // Up to the user if they want to compare or not
+<a href="#h0-6-3" id="h0-6-3" class="d">-            Expression::CompareNE(lhs, rhs) =&gt; match (lhs.evaluate()?, rhs.evaluate()?) {
+</a><a href="#h0-6-4" id="h0-6-4" class="i">+            Self::CompareNE(lhs, rhs) =&gt; match (lhs.evaluate(e)?, rhs.evaluate(e)?) {
+</a>                 (Integer(lhs), Integer(rhs)) =&gt; Boolean(lhs != rhs),
+                 (Integer(lhs), Float(rhs)) =&gt; Boolean(lhs as f64 != rhs),
+                 (Float(lhs), Integer(rhs)) =&gt; Boolean(lhs != rhs as f64),
+<a href="#h0-7" id="h0-7" class="h">@@ -110,14 +134,14 @@ impl Expression {
+</a>             },
+ 
+             // Mathematical operations
+<a href="#h0-7-3" id="h0-7-3" class="d">-            Expression::Add(lhs, rhs) =&gt; match (lhs.evaluate()?, rhs.evaluate()?) {
+</a><a href="#h0-7-4" id="h0-7-4" class="i">+            Self::Add(lhs, rhs) =&gt; match (lhs.evaluate(e)?, rhs.evaluate(e)?) {
+</a>                 (Integer(lhs), Integer(rhs)) =&gt; Integer(lhs + rhs),
+                 (Integer(lhs), Float(rhs)) =&gt; Float(lhs as f64 + rhs),
+                 (Float(lhs), Integer(rhs)) =&gt; Float(lhs + rhs as f64),
+                 (Float(lhs), Float(rhs)) =&gt; Float(lhs + rhs),
+                 (lhs, rhs) =&gt; return Err(Error::Value(format!(&quot;Can&#39;t add {} and {}&quot;, lhs, rhs))),
+             },
+<a href="#h0-7-11" id="h0-7-11" class="d">-            Expression::Divide(lhs, rhs) =&gt; match (lhs.evaluate()?, rhs.evaluate()?) {
+</a><a href="#h0-7-12" id="h0-7-12" class="i">+            Self::Divide(lhs, rhs) =&gt; match (lhs.evaluate(e)?, rhs.evaluate(e)?) {
+</a>                 (Integer(lhs), Integer(rhs)) =&gt; Integer(lhs / rhs),
+                 (Integer(lhs), Float(rhs)) =&gt; Float(lhs as f64 / rhs),
+                 (Float(lhs), Integer(rhs)) =&gt; Float(lhs / rhs as f64),
+<a href="#h0-8" id="h0-8" class="h">@@ -126,7 +150,7 @@ impl Expression {
+</a>                     return Err(Error::Value(format!(&quot;Can&#39;t divide {} and {}&quot;, lhs, rhs)))
+                 }
+             },
+<a href="#h0-8-3" id="h0-8-3" class="d">-            Expression::Exponentiate(lhs, rhs) =&gt; match (lhs.evaluate()?, rhs.evaluate()?) {
+</a><a href="#h0-8-4" id="h0-8-4" class="i">+            Self::Exponentiate(lhs, rhs) =&gt; match (lhs.evaluate(e)?, rhs.evaluate(e)?) {
+</a>                 // FIXME Handle overflow
+                 (Integer(lhs), Integer(rhs)) =&gt; Integer(lhs.pow(rhs as u32)),
+                 (Integer(lhs), Float(rhs)) =&gt; Float((lhs as f64).powi(rhs as i32)),
+<a href="#h0-9" id="h0-9" class="h">@@ -136,11 +160,11 @@ impl Expression {
+</a>                     return Err(Error::Value(format!(&quot;Can&#39;t exponentiate {} and {}&quot;, lhs, rhs)))
+                 }
+             },
+<a href="#h0-9-3" id="h0-9-3" class="d">-            Expression::Factorial(expr) =&gt; match expr.evaluate()? {
+</a><a href="#h0-9-4" id="h0-9-4" class="i">+            Self::Factorial(expr) =&gt; match expr.evaluate(e)? {
+</a>                 Integer(i) =&gt; Integer((1..=i).fold(1, |a, b| a * b as i64)),
+                 value =&gt; return Err(Error::Value(format!(&quot;Can&#39;t take factorial of {}&quot;, value))),
+             },
+<a href="#h0-9-8" id="h0-9-8" class="d">-            Expression::Modulo(lhs, rhs) =&gt; match (lhs.evaluate()?, rhs.evaluate()?) {
+</a><a href="#h0-9-9" id="h0-9-9" class="i">+            Self::Modulo(lhs, rhs) =&gt; match (lhs.evaluate(e)?, rhs.evaluate(e)?) {
+</a>                 // The % operator in Rust is remainder, not modulo, so we have to do a bit of
+                 // acrobatics to make it work right
+                 (Integer(lhs), Integer(rhs)) =&gt; Integer(((lhs % rhs) + rhs) % rhs),
+<a href="#h0-10" id="h0-10" class="h">@@ -151,7 +175,7 @@ impl Expression {
+</a>                     return Err(Error::Value(format!(&quot;Can&#39;t take modulo of {} and {}&quot;, lhs, rhs)))
+                 }
+             },
+<a href="#h0-10-3" id="h0-10-3" class="d">-            Expression::Multiply(lhs, rhs) =&gt; match (lhs.evaluate()?, rhs.evaluate()?) {
+</a><a href="#h0-10-4" id="h0-10-4" class="i">+            Self::Multiply(lhs, rhs) =&gt; match (lhs.evaluate(e)?, rhs.evaluate(e)?) {
+</a>                 (Integer(lhs), Integer(rhs)) =&gt; Integer(lhs * rhs),
+                 (Integer(lhs), Float(rhs)) =&gt; Float(lhs as f64 * rhs),
+                 (Float(lhs), Integer(rhs)) =&gt; Float(lhs * rhs as f64),
+<a href="#h0-11" id="h0-11" class="h">@@ -160,12 +184,12 @@ impl Expression {
+</a>                     return Err(Error::Value(format!(&quot;Can&#39;t multiply {} and {}&quot;, lhs, rhs)))
+                 }
+             },
+<a href="#h0-11-3" id="h0-11-3" class="d">-            Expression::Negate(expr) =&gt; match expr.evaluate()? {
+</a><a href="#h0-11-4" id="h0-11-4" class="i">+            Self::Negate(expr) =&gt; match expr.evaluate(e)? {
+</a>                 Integer(i) =&gt; Integer(-i),
+                 Float(f) =&gt; Float(-f),
+                 value =&gt; return Err(Error::Value(format!(&quot;Can&#39;t negate {}&quot;, value))),
+             },
+<a href="#h0-11-9" id="h0-11-9" class="d">-            Expression::Subtract(lhs, rhs) =&gt; match (lhs.evaluate()?, rhs.evaluate()?) {
+</a><a href="#h0-11-10" id="h0-11-10" class="i">+            Self::Subtract(lhs, rhs) =&gt; match (lhs.evaluate(e)?, rhs.evaluate(e)?) {
+</a>                 (Integer(lhs), Integer(rhs)) =&gt; Integer(lhs - rhs),
+                 (Integer(lhs), Float(rhs)) =&gt; Float(lhs as f64 - rhs),
+                 (Float(lhs), Integer(rhs)) =&gt; Float(lhs - rhs as f64),
+<a href="#h0-12" id="h0-12" class="h">@@ -174,8 +198,6 @@ impl Expression {
+</a>                     return Err(Error::Value(format!(&quot;Can&#39;t subtract {} and {}&quot;, lhs, rhs)))
+                 }
+             },
+<a href="#h0-12-3" id="h0-12-3" class="d">-
+</a><a href="#h0-12-4" id="h0-12-4" class="d">-            Expression::Constant(c) =&gt; c.clone(),
+</a>         })
+     }
+ }
+<b>diff --git a/<a id="h1" href="../file/src/sql/parser/ast.rs.html">src/sql/parser/ast.rs</a> b/<a href="../file/src/sql/parser/ast.rs.html">src/sql/parser/ast.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -10,11 +10,7 @@ pub enum Statement {
+</a>     /// An INSERT statement
+     Insert { table: String, columns: Option&lt;Vec&lt;String&gt;&gt;, values: Vec&lt;Expressions&gt; },
+     /// A SELECT statement
+<a href="#h1-0-3" id="h1-0-3" class="d">-    Select {
+</a><a href="#h1-0-4" id="h1-0-4" class="d">-        select: SelectClause,
+</a><a href="#h1-0-5" id="h1-0-5" class="d">-        from: Option&lt;FromClause&gt;,
+</a><a href="#h1-0-6" id="h1-0-6" class="d">-        r#where: Option&lt;WhereClause&gt;,
+</a><a href="#h1-0-7" id="h1-0-7" class="d">-    },
+</a><a href="#h1-0-8" id="h1-0-8" class="i">+    Select { select: SelectClause, from: Option&lt;FromClause&gt;, r#where: Option&lt;WhereClause&gt; },
+</a> }
+ 
+ /// A column specification
+<a href="#h1-1" id="h1-1" class="h">@@ -48,6 +44,7 @@ pub struct WhereClause(pub Expression);
+</a> /// Expressions
+ #[derive(Clone, Debug, PartialEq)]
+ pub enum Expression {
+<a href="#h1-1-3" id="h1-1-3" class="i">+    Field(String),
+</a>     Literal(Literal),
+     Operation(Operation),
+ }
+<b>diff --git a/<a id="h2" href="../file/src/sql/parser/mod.rs.html">src/sql/parser/mod.rs</a> b/<a href="../file/src/sql/parser/mod.rs.html">src/sql/parser/mod.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -276,7 +276,7 @@ impl&lt;&#39;a&gt; Parser&lt;&#39;a&gt; {
+</a>     /// Parses a WHERE clause
+     fn parse_clause_where(&amp;mut self) -&gt; Result&lt;Option&lt;ast::WhereClause&gt;, Error&gt; {
+         if self.next_if_token(Keyword::Where.into()).is_none() {
+<a href="#h2-0-3" id="h2-0-3" class="d">-            return Ok(None)
+</a><a href="#h2-0-4" id="h2-0-4" class="i">+            return Ok(None);
+</a>         }
+         Ok(Some(ast::WhereClause(self.parse_expression(0)?)))
+     }
+<a href="#h2-1" id="h2-1" class="h">@@ -301,6 +301,7 @@ impl&lt;&#39;a&gt; Parser&lt;&#39;a&gt; {
+</a>     /// Parses an expression atom
+     fn parse_expression_atom(&amp;mut self) -&gt; Result&lt;ast::Expression, Error&gt; {
+         Ok(match self.next()? {
+<a href="#h2-1-3" id="h2-1-3" class="i">+            Token::Ident(i) =&gt; ast::Expression::Field(i),
+</a>             Token::Number(n) =&gt; {
+                 if n.chars().all(|c| c.is_digit(10)) {
+                     ast::Literal::Integer(n.parse()?).into()
+<b>diff --git a/<a id="h3" href="../file/src/sql/plan/filter.rs.html">src/sql/plan/filter.rs</a> b/<a href="../file/src/sql/plan/filter.rs.html">src/sql/plan/filter.rs</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -1,4 +1,4 @@
+</a><a href="#h3-0-0" id="h3-0-0" class="d">-use super::super::expression::Expression;
+</a><a href="#h3-0-1" id="h3-0-1" class="i">+use super::super::expression::{Environment, Expression};
+</a> use super::super::types::{Row, Value};
+ use super::{Context, Node};
+ use crate::Error;
+<a href="#h3-1" id="h3-1" class="h">@@ -31,7 +31,7 @@ impl Iterator for Filter {
+</a>                 Err(err) =&gt; return Some(Err(err)),
+                 Ok(r) =&gt; r,
+             };
+<a href="#h3-1-3" id="h3-1-3" class="d">-            match self.predicate.evaluate() {
+</a><a href="#h3-1-4" id="h3-1-4" class="i">+            match self.predicate.evaluate(&amp;Environment::empty()) {
+</a>                 Err(err) =&gt; return Some(Err(err)),
+                 Ok(Value::Boolean(true)) =&gt; return Some(Ok(row)),
+                 Ok(Value::Boolean(false)) =&gt; {}
+<b>diff --git a/<a id="h4" href="../file/src/sql/plan/insert.rs.html">src/sql/plan/insert.rs</a> b/<a href="../file/src/sql/plan/insert.rs.html">src/sql/plan/insert.rs</a></b>
+<a href="#h4-0" id="h4-0" class="h">@@ -1,4 +1,4 @@
+</a><a href="#h4-0-0" id="h4-0-0" class="d">-use super::super::expression::Expressions;
+</a><a href="#h4-0-1" id="h4-0-1" class="i">+use super::super::expression::{Environment, Expressions};
+</a> use super::super::types::Row;
+ use super::{Context, Node};
+ use crate::Error;
+<a href="#h4-1" id="h4-1" class="h">@@ -26,7 +26,7 @@ impl Node for Insert {
+</a>         for exprs in &amp;self.expressions {
+             let mut row = Row::new();
+             for expr in exprs {
+<a href="#h4-1-3" id="h4-1-3" class="d">-                row.push(expr.evaluate()?);
+</a><a href="#h4-1-4" id="h4-1-4" class="i">+                row.push(expr.evaluate(&amp;Environment::empty())?);
+</a>             }
+             row = table.normalize_row(
+                 row,
+<b>diff --git a/<a id="h5" href="../file/src/sql/plan/mod.rs.html">src/sql/plan/mod.rs</a> b/<a href="../file/src/sql/plan/mod.rs.html">src/sql/plan/mod.rs</a></b>
+<a href="#h5-0" id="h5-0" class="h">@@ -178,6 +178,7 @@ impl From&lt;ast::Expression&gt; for Expression {
+</a>     fn from(expr: ast::Expression) -&gt; Self {
+         match expr {
+             ast::Expression::Literal(l) =&gt; Expression::Constant(l.into()),
+<a href="#h5-0-3" id="h5-0-3" class="i">+            ast::Expression::Field(name) =&gt; Expression::Field(name),
+</a>             ast::Expression::Operation(op) =&gt; match op {
+                 // Logical operators
+                 ast::Operation::And(lhs, rhs) =&gt; Self::And(lhs.into(), rhs.into()),
+<b>diff --git a/<a id="h6" href="../file/src/sql/plan/projection.rs.html">src/sql/plan/projection.rs</a> b/<a href="../file/src/sql/plan/projection.rs.html">src/sql/plan/projection.rs</a></b>
+<a href="#h6-0" id="h6-0" class="h">@@ -1,4 +1,4 @@
+</a><a href="#h6-0-0" id="h6-0-0" class="d">-use super::super::expression::Expressions;
+</a><a href="#h6-0-1" id="h6-0-1" class="i">+use super::super::expression::{Environment, Expressions};
+</a> use super::super::types::Row;
+ use super::{Context, Node};
+ use crate::Error;
+<a href="#h6-1" id="h6-1" class="h">@@ -27,9 +27,10 @@ impl Iterator for Projection {
+</a>     type Item = Result&lt;Row, Error&gt;;
+ 
+     fn next(&amp;mut self) -&gt; Option&lt;Self::Item&gt; {
+<a href="#h6-1-3" id="h6-1-3" class="i">+        let ctx = Environment::empty();
+</a>         match self.source.next()? {
+             Err(err) =&gt; Some(Err(err)),
+<a href="#h6-1-6" id="h6-1-6" class="d">-            _ =&gt; Some(self.expressions.iter().map(|e| e.evaluate()).collect()),
+</a><a href="#h6-1-7" id="h6-1-7" class="i">+            _ =&gt; Some(self.expressions.iter().map(|e| e.evaluate(&amp;ctx)).collect()),
+</a>         }
+     }
+ }
+<b>diff --git a/<a id="h7" href="../file/src/sql/testdata/select_fields_from_table.html">src/sql/testdata/select_fields_from_table</a> b/<a href="../file/src/sql/testdata/select_fields_from_table.html">src/sql/testdata/select_fields_from_table</a></b>
+<a href="#h7-0" id="h7-0" class="h">@@ -0,0 +1,108 @@
+</a><a href="#h7-0-0" id="h7-0-0" class="i">+Query: SELECT title, 2019 - released AS age, rating * 10 FROM movies
+</a><a href="#h7-0-1" id="h7-0-1" class="i">+
+</a><a href="#h7-0-2" id="h7-0-2" class="i">+Tokens:
+</a><a href="#h7-0-3" id="h7-0-3" class="i">+  Keyword(Select)
+</a><a href="#h7-0-4" id="h7-0-4" class="i">+  Ident(&quot;title&quot;)
+</a><a href="#h7-0-5" id="h7-0-5" class="i">+  Comma
+</a><a href="#h7-0-6" id="h7-0-6" class="i">+  Number(&quot;2019&quot;)
+</a><a href="#h7-0-7" id="h7-0-7" class="i">+  Minus
+</a><a href="#h7-0-8" id="h7-0-8" class="i">+  Ident(&quot;released&quot;)
+</a><a href="#h7-0-9" id="h7-0-9" class="i">+  Keyword(As)
+</a><a href="#h7-0-10" id="h7-0-10" class="i">+  Ident(&quot;age&quot;)
+</a><a href="#h7-0-11" id="h7-0-11" class="i">+  Comma
+</a><a href="#h7-0-12" id="h7-0-12" class="i">+  Ident(&quot;rating&quot;)
+</a><a href="#h7-0-13" id="h7-0-13" class="i">+  Asterisk
+</a><a href="#h7-0-14" id="h7-0-14" class="i">+  Number(&quot;10&quot;)
+</a><a href="#h7-0-15" id="h7-0-15" class="i">+  Keyword(From)
+</a><a href="#h7-0-16" id="h7-0-16" class="i">+  Ident(&quot;movies&quot;)
+</a><a href="#h7-0-17" id="h7-0-17" class="i">+
+</a><a href="#h7-0-18" id="h7-0-18" class="i">+AST: Select {
+</a><a href="#h7-0-19" id="h7-0-19" class="i">+    select: SelectClause {
+</a><a href="#h7-0-20" id="h7-0-20" class="i">+        expressions: [
+</a><a href="#h7-0-21" id="h7-0-21" class="i">+            Field(
+</a><a href="#h7-0-22" id="h7-0-22" class="i">+                &quot;title&quot;,
+</a><a href="#h7-0-23" id="h7-0-23" class="i">+            ),
+</a><a href="#h7-0-24" id="h7-0-24" class="i">+            Operation(
+</a><a href="#h7-0-25" id="h7-0-25" class="i">+                Subtract(
+</a><a href="#h7-0-26" id="h7-0-26" class="i">+                    Literal(
+</a><a href="#h7-0-27" id="h7-0-27" class="i">+                        Integer(
+</a><a href="#h7-0-28" id="h7-0-28" class="i">+                            2019,
+</a><a href="#h7-0-29" id="h7-0-29" class="i">+                        ),
+</a><a href="#h7-0-30" id="h7-0-30" class="i">+                    ),
+</a><a href="#h7-0-31" id="h7-0-31" class="i">+                    Field(
+</a><a href="#h7-0-32" id="h7-0-32" class="i">+                        &quot;released&quot;,
+</a><a href="#h7-0-33" id="h7-0-33" class="i">+                    ),
+</a><a href="#h7-0-34" id="h7-0-34" class="i">+                ),
+</a><a href="#h7-0-35" id="h7-0-35" class="i">+            ),
+</a><a href="#h7-0-36" id="h7-0-36" class="i">+            Operation(
+</a><a href="#h7-0-37" id="h7-0-37" class="i">+                Multiply(
+</a><a href="#h7-0-38" id="h7-0-38" class="i">+                    Field(
+</a><a href="#h7-0-39" id="h7-0-39" class="i">+                        &quot;rating&quot;,
+</a><a href="#h7-0-40" id="h7-0-40" class="i">+                    ),
+</a><a href="#h7-0-41" id="h7-0-41" class="i">+                    Literal(
+</a><a href="#h7-0-42" id="h7-0-42" class="i">+                        Integer(
+</a><a href="#h7-0-43" id="h7-0-43" class="i">+                            10,
+</a><a href="#h7-0-44" id="h7-0-44" class="i">+                        ),
+</a><a href="#h7-0-45" id="h7-0-45" class="i">+                    ),
+</a><a href="#h7-0-46" id="h7-0-46" class="i">+                ),
+</a><a href="#h7-0-47" id="h7-0-47" class="i">+            ),
+</a><a href="#h7-0-48" id="h7-0-48" class="i">+        ],
+</a><a href="#h7-0-49" id="h7-0-49" class="i">+        labels: [
+</a><a href="#h7-0-50" id="h7-0-50" class="i">+            None,
+</a><a href="#h7-0-51" id="h7-0-51" class="i">+            Some(
+</a><a href="#h7-0-52" id="h7-0-52" class="i">+                &quot;age&quot;,
+</a><a href="#h7-0-53" id="h7-0-53" class="i">+            ),
+</a><a href="#h7-0-54" id="h7-0-54" class="i">+            None,
+</a><a href="#h7-0-55" id="h7-0-55" class="i">+        ],
+</a><a href="#h7-0-56" id="h7-0-56" class="i">+    },
+</a><a href="#h7-0-57" id="h7-0-57" class="i">+    from: Some(
+</a><a href="#h7-0-58" id="h7-0-58" class="i">+        FromClause {
+</a><a href="#h7-0-59" id="h7-0-59" class="i">+            tables: [
+</a><a href="#h7-0-60" id="h7-0-60" class="i">+                &quot;movies&quot;,
+</a><a href="#h7-0-61" id="h7-0-61" class="i">+            ],
+</a><a href="#h7-0-62" id="h7-0-62" class="i">+        },
+</a><a href="#h7-0-63" id="h7-0-63" class="i">+    ),
+</a><a href="#h7-0-64" id="h7-0-64" class="i">+    where: None,
+</a><a href="#h7-0-65" id="h7-0-65" class="i">+}
+</a><a href="#h7-0-66" id="h7-0-66" class="i">+
+</a><a href="#h7-0-67" id="h7-0-67" class="i">+Plan: Plan {
+</a><a href="#h7-0-68" id="h7-0-68" class="i">+    root: Projection {
+</a><a href="#h7-0-69" id="h7-0-69" class="i">+        source: Scan {
+</a><a href="#h7-0-70" id="h7-0-70" class="i">+            table: &quot;movies&quot;,
+</a><a href="#h7-0-71" id="h7-0-71" class="i">+        },
+</a><a href="#h7-0-72" id="h7-0-72" class="i">+        labels: [
+</a><a href="#h7-0-73" id="h7-0-73" class="i">+            &quot;?&quot;,
+</a><a href="#h7-0-74" id="h7-0-74" class="i">+            &quot;age&quot;,
+</a><a href="#h7-0-75" id="h7-0-75" class="i">+            &quot;?&quot;,
+</a><a href="#h7-0-76" id="h7-0-76" class="i">+        ],
+</a><a href="#h7-0-77" id="h7-0-77" class="i">+        expressions: [
+</a><a href="#h7-0-78" id="h7-0-78" class="i">+            Field(
+</a><a href="#h7-0-79" id="h7-0-79" class="i">+                &quot;title&quot;,
+</a><a href="#h7-0-80" id="h7-0-80" class="i">+            ),
+</a><a href="#h7-0-81" id="h7-0-81" class="i">+            Subtract(
+</a><a href="#h7-0-82" id="h7-0-82" class="i">+                Constant(
+</a><a href="#h7-0-83" id="h7-0-83" class="i">+                    Integer(
+</a><a href="#h7-0-84" id="h7-0-84" class="i">+                        2019,
+</a><a href="#h7-0-85" id="h7-0-85" class="i">+                    ),
+</a><a href="#h7-0-86" id="h7-0-86" class="i">+                ),
+</a><a href="#h7-0-87" id="h7-0-87" class="i">+                Field(
+</a><a href="#h7-0-88" id="h7-0-88" class="i">+                    &quot;released&quot;,
+</a><a href="#h7-0-89" id="h7-0-89" class="i">+                ),
+</a><a href="#h7-0-90" id="h7-0-90" class="i">+            ),
+</a><a href="#h7-0-91" id="h7-0-91" class="i">+            Multiply(
+</a><a href="#h7-0-92" id="h7-0-92" class="i">+                Field(
+</a><a href="#h7-0-93" id="h7-0-93" class="i">+                    &quot;rating&quot;,
+</a><a href="#h7-0-94" id="h7-0-94" class="i">+                ),
+</a><a href="#h7-0-95" id="h7-0-95" class="i">+                Constant(
+</a><a href="#h7-0-96" id="h7-0-96" class="i">+                    Integer(
+</a><a href="#h7-0-97" id="h7-0-97" class="i">+                        10,
+</a><a href="#h7-0-98" id="h7-0-98" class="i">+                    ),
+</a><a href="#h7-0-99" id="h7-0-99" class="i">+                ),
+</a><a href="#h7-0-100" id="h7-0-100" class="i">+            ),
+</a><a href="#h7-0-101" id="h7-0-101" class="i">+        ],
+</a><a href="#h7-0-102" id="h7-0-102" class="i">+    },
+</a><a href="#h7-0-103" id="h7-0-103" class="i">+}
+</a><a href="#h7-0-104" id="h7-0-104" class="i">+
+</a><a href="#h7-0-105" id="h7-0-105" class="i">+Query: SELECT title, 2019 - released AS age, rating * 10 FROM movies
+</a><a href="#h7-0-106" id="h7-0-106" class="i">+
+</a><a href="#h7-0-107" id="h7-0-107" class="i">+Result: Value(&quot;Unknown field title&quot;)
+</a><a href="#h7-0-108" id="h7-0-108" class="i">+\ No newline at end of file
+</a><b>diff --git a/<a id="h8" href="../file/src/sql/tests.rs.html">src/sql/tests.rs</a> b/<a href="../file/src/sql/tests.rs.html">src/sql/tests.rs</a></b>
+<a href="#h8-0" id="h8-0" class="h">@@ -210,6 +210,7 @@ test_sql! {
+</a> 
+     select_all_from_table: &quot;SELECT * FROM movies&quot;,
+     select_aliases: &quot;SELECT 1, 2 b, 3 AS c&quot;,
+<a href="#h8-0-3" id="h8-0-3" class="i">+    select_fields: &quot;SELECT title, 2019 - released AS age, rating * 10 FROM movies&quot;,
+</a>     select_error_bare: &quot;SELECT&quot;,
+     select_error_bare_as: &quot;SELECT 1 AS, 2&quot;,
+     select_error_bare_from: &quot;SELECT 1 FROM&quot;,
+</pre>
+</div>
+</body>
+</html>

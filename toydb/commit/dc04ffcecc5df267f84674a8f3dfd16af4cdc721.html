@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>raft: simplified thread-related trait bounds - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/dc04ffcecc5df267f84674a8f3dfd16af4cdc721.html">dc04ffcecc5df267f84674a8f3dfd16af4cdc721</a>
+<b>parent</b> <a href="../commit/874133bb8229636dda372d028178351e246a17c9.html">874133bb8229636dda372d028178351e246a17c9</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Sun, 15 Dec 2019 17:36:08 +0100
+
+raft: simplified thread-related trait bounds
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/kv/storage/mod.rs</a></td><td> | </td><td class="num">6</td><td><span class="i">++</span><span class="d">----</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/raft/mod.rs</a></td><td> | </td><td class="num">8</td><td><span class="i">++++</span><span class="d">----</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/raft/transport.rs</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+</table></pre><pre>3 files changed, 7 insertions(+), 9 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/kv/storage/mod.rs.html">src/kv/storage/mod.rs</a> b/<a href="../file/src/kv/storage/mod.rs.html">src/kv/storage/mod.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -14,8 +14,7 @@ use crate::Error;
+</a> use std::ops::RangeBounds;
+ 
+ /// Key/value storage backend.
+<a href="#h0-0-3" id="h0-0-3" class="d">-// FIXME Should not require &#39;static + Sync + Send, but necessary due to raft::State.
+</a><a href="#h0-0-4" id="h0-0-4" class="d">-pub trait Storage: &#39;static + Sync + Send {
+</a><a href="#h0-0-5" id="h0-0-5" class="i">+pub trait Storage {
+</a>     /// Reads a value for a key, or `None` if it does not exist.
+     fn read(&amp;self, key: &amp;[u8]) -&gt; Result&lt;Option&lt;Vec&lt;u8&gt;&gt;, Error&gt;;
+ 
+<a href="#h0-1" id="h0-1" class="h">@@ -30,8 +29,7 @@ pub trait Storage: &#39;static + Sync + Send {
+</a> }
+ 
+ /// Iterator over a key/value range.
+<a href="#h0-1-3" id="h0-1-3" class="d">-pub type Range&lt;&#39;a&gt; =
+</a><a href="#h0-1-4" id="h0-1-4" class="d">-    Box&lt;dyn DoubleEndedIterator&lt;Item = Result&lt;(Vec&lt;u8&gt;, Vec&lt;u8&gt;), Error&gt;&gt; + &#39;a + Sync + Send&gt;;
+</a><a href="#h0-1-5" id="h0-1-5" class="i">+pub type Range&lt;&#39;a&gt; = Box&lt;dyn DoubleEndedIterator&lt;Item = Result&lt;(Vec&lt;u8&gt;, Vec&lt;u8&gt;), Error&gt;&gt; + &#39;a&gt;;
+</a> 
+ #[cfg(test)]
+ trait TestSuite&lt;S: Storage&gt; {
+<b>diff --git a/<a id="h1" href="../file/src/raft/mod.rs.html">src/raft/mod.rs</a> b/<a href="../file/src/raft/mod.rs.html">src/raft/mod.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -17,7 +17,7 @@ use uuid::Uuid;
+</a> const TICK: std::time::Duration = std::time::Duration::from_millis(100);
+ 
+ /// A Raft-managed state machine.
+<a href="#h1-0-3" id="h1-0-3" class="d">-pub trait State: &#39;static + Sync + Send + std::fmt::Debug {
+</a><a href="#h1-0-4" id="h1-0-4" class="i">+pub trait State {
+</a>     /// Mutates the state machine.
+     fn mutate(&amp;mut self, command: Vec&lt;u8&gt;) -&gt; Result&lt;Vec&lt;u8&gt;, Error&gt;;
+ 
+<a href="#h1-1" id="h1-1" class="h">@@ -42,9 +42,9 @@ impl Raft {
+</a>         transport: T,
+     ) -&gt; Result&lt;Raft, Error&gt;
+     where
+<a href="#h1-1-3" id="h1-1-3" class="d">-        S: State,
+</a><a href="#h1-1-4" id="h1-1-4" class="d">-        L: kv::storage::Storage,
+</a><a href="#h1-1-5" id="h1-1-5" class="d">-        T: Transport,
+</a><a href="#h1-1-6" id="h1-1-6" class="i">+        S: State + &#39;static + Send,
+</a><a href="#h1-1-7" id="h1-1-7" class="i">+        L: kv::storage::Storage + &#39;static + Send,
+</a><a href="#h1-1-8" id="h1-1-8" class="i">+        T: Transport + &#39;static + Send,
+</a>     {
+         let ticker = crossbeam_channel::tick(TICK);
+         let inbound_rx = transport.receiver();
+<b>diff --git a/<a id="h2" href="../file/src/raft/transport.rs.html">src/raft/transport.rs</a> b/<a href="../file/src/raft/transport.rs.html">src/raft/transport.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -3,7 +3,7 @@ use crate::Error;
+</a> use crossbeam_channel::Receiver;
+ 
+ /// A transport for communication between a Raft node and its peers.
+<a href="#h2-0-3" id="h2-0-3" class="d">-pub trait Transport: &#39;static + Sync + Send {
+</a><a href="#h2-0-4" id="h2-0-4" class="i">+pub trait Transport {
+</a>     /// Returns a channel for receiving inbound messages.
+     fn receiver(&amp;self) -&gt; Receiver&lt;Message&gt;;
+ 
+</pre>
+</div>
+</body>
+</html>

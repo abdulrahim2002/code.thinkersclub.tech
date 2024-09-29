@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>sql: split out short_circuit optimizer - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/29675287dd909922d38b31fae6436127a1ae35a2.html">29675287dd909922d38b31fae6436127a1ae35a2</a>
+<b>parent</b> <a href="../commit/19de23a583eed8b13d301613e54d648978d412ac.html">19de23a583eed8b13d301613e54d648978d412ac</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Wed, 26 Jun 2024 15:19:25 +0200
+
+sql: split out short_circuit optimizer
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/sql/execution/source.rs</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/sql/planner/optimizer.rs</a></td><td> | </td><td class="num">36</td><td><span class="i">++++++++++++++++++++++++++++</span><span class="d">--------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/sql/planner/plan.rs</a></td><td> | </td><td class="num">4</td><td><span class="i">+++</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">tests/sql/query/join_inner_on_true</a></td><td> | </td><td class="num">10</td><td><span class="i">++</span><span class="d">--------</span></td></tr>
+</table></pre><pre>4 files changed, 34 insertions(+), 17 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/sql/execution/source.rs.html">src/sql/execution/source.rs</a> b/<a href="../file/src/sql/execution/source.rs.html">src/sql/execution/source.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -29,6 +29,7 @@ pub(super) fn lookup_index(
+</a> 
+ /// Produces a single empty row. Used for queries without a FROM clause, e.g.
+ /// SELECT 1+1, in order to have something to project against.
+<a href="#h0-0-3" id="h0-0-3" class="i">+/// TODO: should actually return nothing.
+</a> pub(super) fn nothing() -&gt; Rows {
+     Box::new(std::iter::once(Ok(Row::new())))
+ }
+<b>diff --git a/<a id="h1" href="../file/src/sql/planner/optimizer.rs.html">src/sql/planner/optimizer.rs</a> b/<a href="../file/src/sql/planner/optimizer.rs.html">src/sql/planner/optimizer.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -41,17 +41,10 @@ pub(super) fn fold_constants(node: Node) -&gt; Result&lt;Node&gt; {
+</a>         })
+     };
+ 
+<a href="#h1-0-3" id="h1-0-3" class="d">-    // Removes noop nodes.
+</a><a href="#h1-0-4" id="h1-0-4" class="d">-    // TODO: this can replace false predicates with nothing nodes.
+</a><a href="#h1-0-5" id="h1-0-5" class="d">-    let remove_noops = |node| match node {
+</a><a href="#h1-0-6" id="h1-0-6" class="d">-        Node::Filter { source, predicate: Constant(Boolean(true)) } =&gt; *source,
+</a><a href="#h1-0-7" id="h1-0-7" class="d">-        node =&gt; node,
+</a><a href="#h1-0-8" id="h1-0-8" class="d">-    };
+</a><a href="#h1-0-9" id="h1-0-9" class="d">-
+</a>     // Transform expressions after descending, both to perform the logical
+     // short-circuiting on child expressions that have already been folded, and
+     // to reduce the quadratic cost when an expression contains a field.
+<a href="#h1-0-13" id="h1-0-13" class="d">-    node.transform(&amp;|n| n.transform_expressions(&amp;Ok, &amp;transform), &amp;|n| Ok(remove_noops(n)))
+</a><a href="#h1-0-14" id="h1-0-14" class="i">+    node.transform(&amp;|n| n.transform_expressions(&amp;Ok, &amp;transform), &amp;Ok)
+</a> }
+ 
+ /// Pushes filter predicates down into child nodes where possible. In
+<a href="#h1-1" id="h1-1" class="h">@@ -287,3 +280,30 @@ pub(super) fn join_type(node: Node) -&gt; Result&lt;Node&gt; {
+</a>     };
+     node.transform(&amp;|n| Ok(transform(n)), &amp;Ok)
+ }
+<a href="#h1-1-3" id="h1-1-3" class="i">+
+</a><a href="#h1-1-4" id="h1-1-4" class="i">+/// Short-circuits useless nodes and expressions.
+</a><a href="#h1-1-5" id="h1-1-5" class="i">+///
+</a><a href="#h1-1-6" id="h1-1-6" class="i">+/// TODO: this should replace e.g. Filter(false) nodes with Nothing nodes, but
+</a><a href="#h1-1-7" id="h1-1-7" class="i">+/// Nothing nodes currently emit a single row (for non-table queries). Once
+</a><a href="#h1-1-8" id="h1-1-8" class="i">+/// Nothing doesn&#39;t emit anything, extend this to transform false filters with
+</a><a href="#h1-1-9" id="h1-1-9" class="i">+/// Nothing, and then pull this upwards in the tree (e.g. a join or projection
+</a><a href="#h1-1-10" id="h1-1-10" class="i">+/// with Nothing is useless).
+</a><a href="#h1-1-11" id="h1-1-11" class="i">+pub(super) fn short_circuit(node: Node) -&gt; Result&lt;Node&gt; {
+</a><a href="#h1-1-12" id="h1-1-12" class="i">+    const TRUE: Expression = Expression::Constant(Value::Boolean(true));
+</a><a href="#h1-1-13" id="h1-1-13" class="i">+    const TRUEOPT: Option&lt;Expression&gt; = Some(TRUE);
+</a><a href="#h1-1-14" id="h1-1-14" class="i">+
+</a><a href="#h1-1-15" id="h1-1-15" class="i">+    let transform = |node| match node {
+</a><a href="#h1-1-16" id="h1-1-16" class="i">+        // Filter nodes that always yield true are unnecessary.
+</a><a href="#h1-1-17" id="h1-1-17" class="i">+        Node::Filter { source, predicate: TRUE } =&gt; *source,
+</a><a href="#h1-1-18" id="h1-1-18" class="i">+
+</a><a href="#h1-1-19" id="h1-1-19" class="i">+        // Predicates that always yield true are unnecessary.
+</a><a href="#h1-1-20" id="h1-1-20" class="i">+        Node::Scan { table, filter: TRUEOPT, alias } =&gt; Node::Scan { table, filter: None, alias },
+</a><a href="#h1-1-21" id="h1-1-21" class="i">+        Node::NestedLoopJoin { left, left_size, right, right_size, predicate: TRUEOPT, outer } =&gt; {
+</a><a href="#h1-1-22" id="h1-1-22" class="i">+            Node::NestedLoopJoin { left, left_size, right, right_size, predicate: None, outer }
+</a><a href="#h1-1-23" id="h1-1-23" class="i">+        }
+</a><a href="#h1-1-24" id="h1-1-24" class="i">+        node =&gt; node,
+</a><a href="#h1-1-25" id="h1-1-25" class="i">+    };
+</a><a href="#h1-1-26" id="h1-1-26" class="i">+
+</a><a href="#h1-1-27" id="h1-1-27" class="i">+    // Transform after descending, to (eventually) pull Nothing nodes upwards.
+</a><a href="#h1-1-28" id="h1-1-28" class="i">+    node.transform(&amp;Ok, &amp;|n| Ok(transform(n)))
+</a><a href="#h1-1-29" id="h1-1-29" class="i">+}
+</a><b>diff --git a/<a id="h2" href="../file/src/sql/planner/plan.rs.html">src/sql/planner/plan.rs</a> b/<a href="../file/src/sql/planner/plan.rs.html">src/sql/planner/plan.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -67,6 +67,7 @@ impl Plan {
+</a>             node = optimizer::push_filters(node)?;
+             node = optimizer::index_lookup(node)?;
+             node = optimizer::join_type(node)?;
+<a href="#h2-0-3" id="h2-0-3" class="i">+            node = optimizer::short_circuit(node)?;
+</a>             Ok(node)
+         };
+         Ok(match self {
+<a href="#h2-1" id="h2-1" class="h">@@ -129,7 +130,8 @@ pub enum Node {
+</a>         outer: bool,
+     },
+     /// Emits a single empty row. Used for SELECT queries with no FROM clause.
+<a href="#h2-1-3" id="h2-1-3" class="d">-    /// TODO: replace with Values, but requires changes to aggregate planning.
+</a><a href="#h2-1-4" id="h2-1-4" class="i">+    /// TODO: this shouldn&#39;t emit anything, and be used with the short circuit
+</a><a href="#h2-1-5" id="h2-1-5" class="i">+    /// optimizer instead.
+</a>     Nothing,
+     /// Discards the first offset rows from source, emits the rest.
+     Offset { source: Box&lt;Node&gt;, offset: usize },
+<b>diff --git a/<a id="h3" href="../file/tests/sql/query/join_inner_on_true.html">tests/sql/query/join_inner_on_true</a> b/<a href="../file/tests/sql/query/join_inner_on_true.html">tests/sql/query/join_inner_on_true</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -2,7 +2,7 @@ Query: SELECT * FROM movies INNER JOIN genres ON TRUE
+</a> 
+ Explain:
+ NestedLoopJoin: inner
+<a href="#h3-0-3" id="h3-0-3" class="d">-├─ Scan: movies (TRUE)
+</a><a href="#h3-0-4" id="h3-0-4" class="i">+├─ Scan: movies
+</a> └─ Scan: genres
+ 
+ Result: [&quot;id&quot;, &quot;title&quot;, &quot;studio_id&quot;, &quot;genre_id&quot;, &quot;released&quot;, &quot;rating&quot;, &quot;ultrahd&quot;, &quot;id&quot;, &quot;name&quot;]
+<a href="#h3-1" id="h3-1" class="h">@@ -309,13 +309,7 @@ Optimized plan: Select {
+</a>                     },
+                 ],
+             },
+<a href="#h3-1-3" id="h3-1-3" class="d">-            filter: Some(
+</a><a href="#h3-1-4" id="h3-1-4" class="d">-                Constant(
+</a><a href="#h3-1-5" id="h3-1-5" class="d">-                    Boolean(
+</a><a href="#h3-1-6" id="h3-1-6" class="d">-                        true,
+</a><a href="#h3-1-7" id="h3-1-7" class="d">-                    ),
+</a><a href="#h3-1-8" id="h3-1-8" class="d">-                ),
+</a><a href="#h3-1-9" id="h3-1-9" class="d">-            ),
+</a><a href="#h3-1-10" id="h3-1-10" class="i">+            filter: None,
+</a>             alias: None,
+         },
+         left_size: 7,
+</pre>
+</div>
+</body>
+</html>

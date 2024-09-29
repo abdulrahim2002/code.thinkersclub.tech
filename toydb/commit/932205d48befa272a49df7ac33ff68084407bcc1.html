@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>import tweaks - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/932205d48befa272a49df7ac33ff68084407bcc1.html">932205d48befa272a49df7ac33ff68084407bcc1</a>
+<b>parent</b> <a href="../commit/fe42d6425e05af3bc99014d61e1065df0e73fb26.html">fe42d6425e05af3bc99014d61e1065df0e73fb26</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Thu, 14 May 2020 23:11:11 +0200
+
+import tweaks
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/storage/log/hybrid.rs</a></td><td> | </td><td class="num">27</td><td><span class="i">++++++++++++</span><span class="d">---------------</span></td></tr>
+</table></pre><pre>1 file changed, 12 insertions(+), 15 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/storage/log/hybrid.rs.html">src/storage/log/hybrid.rs</a> b/<a href="../file/src/storage/log/hybrid.rs.html">src/storage/log/hybrid.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -3,11 +3,11 @@ use crate::Error;
+</a> 
+ use std::cmp::{max, min};
+ use std::collections::{BTreeMap, HashMap, VecDeque};
+<a href="#h0-0-3" id="h0-0-3" class="d">-use std::fs;
+</a><a href="#h0-0-4" id="h0-0-4" class="d">-use std::io::{BufReader, BufWriter, Read as _, Seek as _, SeekFrom, Write};
+</a><a href="#h0-0-5" id="h0-0-5" class="i">+use std::fs::{File, OpenOptions};
+</a><a href="#h0-0-6" id="h0-0-6" class="i">+use std::io::{BufReader, BufWriter, Read, Seek as _, SeekFrom, Write};
+</a> use std::ops::{Bound, RangeBounds};
+ use std::path::Path;
+<a href="#h0-0-9" id="h0-0-9" class="d">-use std::sync::Mutex;
+</a><a href="#h0-0-10" id="h0-0-10" class="i">+use std::sync::{Mutex, MutexGuard};
+</a> 
+ /// A hybrid log store, storing committed entries in an append-only file, uncommitted entries
+ /// in memory, and metadata in a separate file (should be an on-disk key-value store).
+<a href="#h0-1" id="h0-1" class="h">@@ -22,7 +22,7 @@ use std::sync::Mutex;
+</a> /// reasonably cheap.
+ pub struct Hybrid {
+     /// The append-only log file. Protected by a mutex for interior mutability (i.e. read seeks).
+<a href="#h0-1-3" id="h0-1-3" class="d">-    file: Mutex&lt;fs::File&gt;,
+</a><a href="#h0-1-4" id="h0-1-4" class="i">+    file: Mutex&lt;File&gt;,
+</a>     /// Index of entry locations and sizes in the log file.
+     index: BTreeMap&lt;u64, (u64, u64)&gt;,
+     /// Uncommitted log entries.
+<a href="#h0-2" id="h0-2" class="h">@@ -31,7 +31,7 @@ pub struct Hybrid {
+</a>     metadata: HashMap&lt;Vec&lt;u8&gt;, Vec&lt;u8&gt;&gt;,
+     /// The file used to store metadata.
+     /// FIXME Should be an on-disk B-tree key-value store.
+<a href="#h0-2-3" id="h0-2-3" class="d">-    metadata_file: fs::File,
+</a><a href="#h0-2-4" id="h0-2-4" class="i">+    metadata_file: File,
+</a>     /// If true, fsync writes.
+     sync: bool,
+ }
+<a href="#h0-3" id="h0-3" class="h">@@ -39,13 +39,10 @@ pub struct Hybrid {
+</a> impl Hybrid {
+     /// Creates or opens a new hybrid log, with files in the given directory.
+     pub fn new(dir: &amp;Path, sync: bool) -&gt; Result&lt;Self, Error&gt; {
+<a href="#h0-3-3" id="h0-3-3" class="d">-        let file = fs::OpenOptions::new()
+</a><a href="#h0-3-4" id="h0-3-4" class="d">-            .read(true)
+</a><a href="#h0-3-5" id="h0-3-5" class="d">-            .write(true)
+</a><a href="#h0-3-6" id="h0-3-6" class="d">-            .create(true)
+</a><a href="#h0-3-7" id="h0-3-7" class="d">-            .open(dir.join(&quot;raft-log&quot;))?;
+</a><a href="#h0-3-8" id="h0-3-8" class="i">+        let file =
+</a><a href="#h0-3-9" id="h0-3-9" class="i">+            OpenOptions::new().read(true).write(true).create(true).open(dir.join(&quot;raft-log&quot;))?;
+</a> 
+<a href="#h0-3-11" id="h0-3-11" class="d">-        let metadata_file = fs::OpenOptions::new()
+</a><a href="#h0-3-12" id="h0-3-12" class="i">+        let metadata_file = OpenOptions::new()
+</a>             .read(true)
+             .write(true)
+             .create(true)
+<a href="#h0-4" id="h0-4" class="h">@@ -62,7 +59,7 @@ impl Hybrid {
+</a>     }
+ 
+     /// Builds the index by scanning the log file.
+<a href="#h0-4-3" id="h0-4-3" class="d">-    fn build_index(file: &amp;fs::File) -&gt; Result&lt;BTreeMap&lt;u64, (u64, u64)&gt;, Error&gt; {
+</a><a href="#h0-4-4" id="h0-4-4" class="i">+    fn build_index(file: &amp;File) -&gt; Result&lt;BTreeMap&lt;u64, (u64, u64)&gt;, Error&gt; {
+</a>         let filesize = file.metadata()?.len();
+         let mut bufreader = BufReader::new(file);
+         let mut index = BTreeMap::new();
+<a href="#h0-5" id="h0-5" class="h">@@ -83,7 +80,7 @@ impl Hybrid {
+</a>     }
+ 
+     /// Loads metadata from a file.
+<a href="#h0-5-3" id="h0-5-3" class="d">-    fn load_metadata(file: &amp;fs::File) -&gt; Result&lt;HashMap&lt;Vec&lt;u8&gt;, Vec&lt;u8&gt;&gt;, Error&gt; {
+</a><a href="#h0-5-4" id="h0-5-4" class="i">+    fn load_metadata(file: &amp;File) -&gt; Result&lt;HashMap&lt;Vec&lt;u8&gt;, Vec&lt;u8&gt;&gt;, Error&gt; {
+</a>         match serde_cbor::from_reader(file) {
+             Ok(metadata) =&gt; Ok(metadata),
+             Err(err) if err.is_eof() =&gt; Ok(HashMap::new()),
+<a href="#h0-6" id="h0-6" class="h">@@ -245,9 +242,9 @@ impl Drop for Hybrid {
+</a>     }
+ }
+ 
+<a href="#h0-6-3" id="h0-6-3" class="d">-struct MutexReader&lt;&#39;a&gt;(std::sync::MutexGuard&lt;&#39;a, fs::File&gt;);
+</a><a href="#h0-6-4" id="h0-6-4" class="i">+struct MutexReader&lt;&#39;a&gt;(MutexGuard&lt;&#39;a, File&gt;);
+</a> 
+<a href="#h0-6-6" id="h0-6-6" class="d">-impl&lt;&#39;a&gt; std::io::Read for MutexReader&lt;&#39;a&gt; {
+</a><a href="#h0-6-7" id="h0-6-7" class="i">+impl&lt;&#39;a&gt; Read for MutexReader&lt;&#39;a&gt; {
+</a>     fn read(&amp;mut self, buf: &amp;mut [u8]) -&gt; std::io::Result&lt;usize&gt; {
+         self.0.read(buf)
+     }
+</pre>
+</div>
+</body>
+</html>

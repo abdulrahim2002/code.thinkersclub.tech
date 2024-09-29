@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>storage: add mvcc::Transaction.scan_prefix() - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/9d777ff712e2299283e8bc9472563586686f17ad.html">9d777ff712e2299283e8bc9472563586686f17ad</a>
+<b>parent</b> <a href="../commit/671a225c725cc94b17ec39ee73756b57adf4e961.html">671a225c725cc94b17ec39ee73756b57adf4e961</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Fri, 15 May 2020 20:40:45 +0200
+
+storage: add mvcc::Transaction.scan_prefix()
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/sql/engine/kv.rs</a></td><td> | </td><td class="num">84</td><td><span class="i">+++++++++++++++++++++++++++++++++</span><span class="d">----------------------------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/storage/kv/mvcc.rs</a></td><td> | </td><td class="num">74</td><td><span class="i">++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d"></span></td></tr>
+</table></pre><pre>2 files changed, 109 insertions(+), 49 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/sql/engine/kv.rs.html">src/sql/engine/kv.rs</a> b/<a href="../file/src/sql/engine/kv.rs.html">src/sql/engine/kv.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -180,7 +180,7 @@ impl&lt;S: kv::Store&gt; super::Transaction for Transaction&lt;S&gt; {
+</a>         let table = self.must_read_table(&amp;table)?;
+         let scan = self
+             .txn
+<a href="#h0-0-3" id="h0-0-3" class="d">-            .scan(&amp;Key::RowStart(&amp;table.name).encode()..&amp;Key::RowEnd(&amp;table.name).encode())?
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+            .scan_prefix(&amp;KeyPrefix::Row(&amp;table.name).encode())?
+</a>             .map(|r| r.and_then(|(_, v)| deserialize(&amp;v)))
+             .filter_map(|r| match r {
+                 Ok(row) =&gt; match &amp;filter {
+<a href="#h0-1" id="h0-1" class="h">@@ -211,10 +211,7 @@ impl&lt;S: kv::Store&gt; super::Transaction for Transaction&lt;S&gt; {
+</a> 
+         let scan = self
+             .txn
+<a href="#h0-1-3" id="h0-1-3" class="d">-            .scan(
+</a><a href="#h0-1-4" id="h0-1-4" class="d">-                &amp;Key::IndexStart(&amp;table.name, &amp;column.name).encode()
+</a><a href="#h0-1-5" id="h0-1-5" class="d">-                    ..&amp;Key::IndexEnd(&amp;table.name, &amp;column.name).encode(),
+</a><a href="#h0-1-6" id="h0-1-6" class="d">-            )?
+</a><a href="#h0-1-7" id="h0-1-7" class="i">+            .scan_prefix(&amp;KeyPrefix::Index(&amp;table.name, &amp;column.name).encode())?
+</a>             .map(|r| r.and_then(|(_, v)| deserialize(&amp;v)));
+ 
+         // FIXME We buffer results here, to avoid dealing with trait lifetimes right now
+<a href="#h0-2" id="h0-2" class="h">@@ -279,7 +276,7 @@ impl&lt;S: kv::Store&gt; Catalog for Transaction&lt;S&gt; {
+</a>     fn scan_tables(&amp;self) -&gt; Result&lt;Tables, Error&gt; {
+         Ok(Box::new(
+             self.txn
+<a href="#h0-2-3" id="h0-2-3" class="d">-                .scan(&amp;Key::TableStart.encode()..&amp;Key::TableEnd.encode())?
+</a><a href="#h0-2-4" id="h0-2-4" class="i">+                .scan_prefix(&amp;KeyPrefix::Table.encode())?
+</a>                 .map(|r| r.and_then(|(_, v)| deserialize(&amp;v)))
+                 .collect::&lt;Result&lt;Vec&lt;_&gt;, Error&gt;&gt;()?
+                 .into_iter(),
+<a href="#h0-3" id="h0-3" class="h">@@ -287,65 +284,54 @@ impl&lt;S: kv::Store&gt; Catalog for Transaction&lt;S&gt; {
+</a>     }
+ }
+ 
+<a href="#h0-3-3" id="h0-3-3" class="i">+/// Encodes MVCC keyspace prefixes
+</a><a href="#h0-3-4" id="h0-3-4" class="i">+enum KeyPrefix&lt;&#39;a&gt; {
+</a><a href="#h0-3-5" id="h0-3-5" class="i">+    /// Tables
+</a><a href="#h0-3-6" id="h0-3-6" class="i">+    Table,
+</a><a href="#h0-3-7" id="h0-3-7" class="i">+    /// Index entries for a table and column
+</a><a href="#h0-3-8" id="h0-3-8" class="i">+    Index(&amp;&#39;a str, &amp;&#39;a str),
+</a><a href="#h0-3-9" id="h0-3-9" class="i">+    /// Rows for a table
+</a><a href="#h0-3-10" id="h0-3-10" class="i">+    Row(&amp;&#39;a str),
+</a><a href="#h0-3-11" id="h0-3-11" class="i">+}
+</a><a href="#h0-3-12" id="h0-3-12" class="i">+
+</a><a href="#h0-3-13" id="h0-3-13" class="i">+impl&lt;&#39;a&gt; KeyPrefix&lt;&#39;a&gt; {
+</a><a href="#h0-3-14" id="h0-3-14" class="i">+    fn encode(&amp;self) -&gt; Vec&lt;u8&gt; {
+</a><a href="#h0-3-15" id="h0-3-15" class="i">+        match self {
+</a><a href="#h0-3-16" id="h0-3-16" class="i">+            KeyPrefix::Table =&gt; vec![0x01],
+</a><a href="#h0-3-17" id="h0-3-17" class="i">+            KeyPrefix::Index(table, column) =&gt; [
+</a><a href="#h0-3-18" id="h0-3-18" class="i">+                vec![0x03],
+</a><a href="#h0-3-19" id="h0-3-19" class="i">+                table.as_bytes().to_vec(),
+</a><a href="#h0-3-20" id="h0-3-20" class="i">+                vec![0x00],
+</a><a href="#h0-3-21" id="h0-3-21" class="i">+                column.as_bytes().to_vec(),
+</a><a href="#h0-3-22" id="h0-3-22" class="i">+                vec![0x00],
+</a><a href="#h0-3-23" id="h0-3-23" class="i">+            ]
+</a><a href="#h0-3-24" id="h0-3-24" class="i">+            .concat(),
+</a><a href="#h0-3-25" id="h0-3-25" class="i">+            KeyPrefix::Row(table) =&gt; [vec![0x05], table.as_bytes().to_vec(), vec![0x00]].concat(),
+</a><a href="#h0-3-26" id="h0-3-26" class="i">+        }
+</a><a href="#h0-3-27" id="h0-3-27" class="i">+    }
+</a><a href="#h0-3-28" id="h0-3-28" class="i">+}
+</a><a href="#h0-3-29" id="h0-3-29" class="i">+
+</a> /// Encodes tables and rows as MVCC key/value keys
+ enum Key&lt;&#39;a&gt; {
+<a href="#h0-3-32" id="h0-3-32" class="d">-    /// The start of the table schema keyspace
+</a><a href="#h0-3-33" id="h0-3-33" class="d">-    TableStart,
+</a>     /// A table schema key for the given table name
+     Table(&amp;&#39;a str),
+<a href="#h0-3-36" id="h0-3-36" class="d">-    /// The end of the table schema keyspace
+</a><a href="#h0-3-37" id="h0-3-37" class="d">-    TableEnd,
+</a><a href="#h0-3-38" id="h0-3-38" class="d">-    /// The start of the index keyspace for a table and column
+</a><a href="#h0-3-39" id="h0-3-39" class="d">-    IndexStart(&amp;&#39;a str, &amp;&#39;a str),
+</a>     /// A key for an index entry
+     Index(&amp;&#39;a str, &amp;&#39;a str, &amp;&#39;a Value),
+<a href="#h0-3-42" id="h0-3-42" class="d">-    /// The end of the index keyspace for a table and column
+</a><a href="#h0-3-43" id="h0-3-43" class="d">-    IndexEnd(&amp;&#39;a str, &amp;&#39;a str),
+</a><a href="#h0-3-44" id="h0-3-44" class="d">-    /// The start of the row keyspace of the given table name
+</a><a href="#h0-3-45" id="h0-3-45" class="d">-    RowStart(&amp;&#39;a str),
+</a>     /// A key for a row identified by table name and row primary key
+     Row(&amp;&#39;a str, &amp;&#39;a Value),
+<a href="#h0-3-48" id="h0-3-48" class="d">-    /// The end of the row keyspace of the given table name
+</a><a href="#h0-3-49" id="h0-3-49" class="d">-    RowEnd(&amp;&#39;a str),
+</a> }
+ 
+ impl&lt;&#39;a&gt; Key&lt;&#39;a&gt; {
+     /// Encodes the key as a byte vector
+     fn encode(self) -&gt; Vec&lt;u8&gt; {
+         match self {
+<a href="#h0-3-56" id="h0-3-56" class="d">-            Self::TableStart =&gt; vec![0x01],
+</a><a href="#h0-3-57" id="h0-3-57" class="d">-            Self::Table(name) =&gt; [vec![0x01], name.as_bytes().to_vec()].concat(),
+</a><a href="#h0-3-58" id="h0-3-58" class="d">-            Self::TableEnd =&gt; vec![0x02],
+</a><a href="#h0-3-59" id="h0-3-59" class="d">-            Self::IndexStart(table, column) =&gt; [
+</a><a href="#h0-3-60" id="h0-3-60" class="d">-                vec![0x03],
+</a><a href="#h0-3-61" id="h0-3-61" class="d">-                table.as_bytes().to_vec(),
+</a><a href="#h0-3-62" id="h0-3-62" class="d">-                vec![0x00],
+</a><a href="#h0-3-63" id="h0-3-63" class="d">-                column.as_bytes().to_vec(),
+</a><a href="#h0-3-64" id="h0-3-64" class="d">-                vec![0x00],
+</a><a href="#h0-3-65" id="h0-3-65" class="d">-            ]
+</a><a href="#h0-3-66" id="h0-3-66" class="d">-            .concat(),
+</a><a href="#h0-3-67" id="h0-3-67" class="d">-            Self::Index(table, column, value) =&gt; [
+</a><a href="#h0-3-68" id="h0-3-68" class="d">-                vec![0x03],
+</a><a href="#h0-3-69" id="h0-3-69" class="d">-                table.as_bytes().to_vec(),
+</a><a href="#h0-3-70" id="h0-3-70" class="d">-                vec![0x00],
+</a><a href="#h0-3-71" id="h0-3-71" class="d">-                column.as_bytes().to_vec(),
+</a><a href="#h0-3-72" id="h0-3-72" class="d">-                vec![0x00],
+</a><a href="#h0-3-73" id="h0-3-73" class="d">-                Self::encode_value(value),
+</a><a href="#h0-3-74" id="h0-3-74" class="d">-            ]
+</a><a href="#h0-3-75" id="h0-3-75" class="d">-            .concat(),
+</a><a href="#h0-3-76" id="h0-3-76" class="d">-            Self::IndexEnd(table, column) =&gt; [
+</a><a href="#h0-3-77" id="h0-3-77" class="d">-                vec![0x03],
+</a><a href="#h0-3-78" id="h0-3-78" class="d">-                table.as_bytes().to_vec(),
+</a><a href="#h0-3-79" id="h0-3-79" class="d">-                vec![0x00],
+</a><a href="#h0-3-80" id="h0-3-80" class="d">-                column.as_bytes().to_vec(),
+</a><a href="#h0-3-81" id="h0-3-81" class="d">-                vec![0xff],
+</a><a href="#h0-3-82" id="h0-3-82" class="d">-            ]
+</a><a href="#h0-3-83" id="h0-3-83" class="d">-            .concat(),
+</a><a href="#h0-3-84" id="h0-3-84" class="d">-            Self::RowStart(table) =&gt; [vec![0x05], table.as_bytes().to_vec(), vec![0x00]].concat(),
+</a><a href="#h0-3-85" id="h0-3-85" class="i">+            Self::Table(name) =&gt; [KeyPrefix::Table.encode(), name.as_bytes().to_vec()].concat(),
+</a><a href="#h0-3-86" id="h0-3-86" class="i">+            Self::Index(table, column, value) =&gt; {
+</a><a href="#h0-3-87" id="h0-3-87" class="i">+                [KeyPrefix::Index(table, column).encode(), Self::encode_value(value)].concat()
+</a><a href="#h0-3-88" id="h0-3-88" class="i">+            }
+</a>             Self::Row(table, pk) =&gt; {
+<a href="#h0-3-90" id="h0-3-90" class="d">-                [vec![0x05], table.as_bytes().to_vec(), vec![0x00], Self::encode_value(pk)].concat()
+</a><a href="#h0-3-91" id="h0-3-91" class="i">+                [KeyPrefix::Row(table).encode(), Self::encode_value(pk)].concat()
+</a>             }
+<a href="#h0-3-93" id="h0-3-93" class="d">-            Self::RowEnd(table) =&gt; [vec![0x05], table.as_bytes().to_vec(), vec![0xff]].concat(),
+</a>         }
+     }
+ 
+<b>diff --git a/<a id="h1" href="../file/src/storage/kv/mvcc.rs.html">src/storage/kv/mvcc.rs</a> b/<a href="../file/src/storage/kv/mvcc.rs.html">src/storage/kv/mvcc.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -214,6 +214,30 @@ impl&lt;S: Store&gt; Transaction&lt;S&gt; {
+</a>         Ok(Box::new(Scan::new(self.store.clone(), self.snapshot.clone(), range)?))
+     }
+ 
+<a href="#h1-0-3" id="h1-0-3" class="i">+    /// Scans keys under a given prefix.
+</a><a href="#h1-0-4" id="h1-0-4" class="i">+    pub fn scan_prefix(&amp;self, prefix: &amp;[u8]) -&gt; Result&lt;super::Scan, Error&gt; {
+</a><a href="#h1-0-5" id="h1-0-5" class="i">+        if prefix.is_empty() {
+</a><a href="#h1-0-6" id="h1-0-6" class="i">+            return Err(Error::Internal(&quot;Scan prefix cannot be empty&quot;.into()));
+</a><a href="#h1-0-7" id="h1-0-7" class="i">+        }
+</a><a href="#h1-0-8" id="h1-0-8" class="i">+        let start = prefix.to_vec();
+</a><a href="#h1-0-9" id="h1-0-9" class="i">+        let mut end = start.clone();
+</a><a href="#h1-0-10" id="h1-0-10" class="i">+        for i in (0..end.len()).rev() {
+</a><a href="#h1-0-11" id="h1-0-11" class="i">+            match end[i] {
+</a><a href="#h1-0-12" id="h1-0-12" class="i">+                // If all 0xff we could in principle use Range::Unbounded, but it&#39;s won&#39;t happen
+</a><a href="#h1-0-13" id="h1-0-13" class="i">+                0xff if i == 0 =&gt; return Err(Error::Internal(&quot;Invalid prefix scan range&quot;.into())),
+</a><a href="#h1-0-14" id="h1-0-14" class="i">+                0xff =&gt; {
+</a><a href="#h1-0-15" id="h1-0-15" class="i">+                    end[i] = 0x00;
+</a><a href="#h1-0-16" id="h1-0-16" class="i">+                    continue;
+</a><a href="#h1-0-17" id="h1-0-17" class="i">+                }
+</a><a href="#h1-0-18" id="h1-0-18" class="i">+                v =&gt; {
+</a><a href="#h1-0-19" id="h1-0-19" class="i">+                    end[i] = v + 1;
+</a><a href="#h1-0-20" id="h1-0-20" class="i">+                    break;
+</a><a href="#h1-0-21" id="h1-0-21" class="i">+                }
+</a><a href="#h1-0-22" id="h1-0-22" class="i">+            }
+</a><a href="#h1-0-23" id="h1-0-23" class="i">+        }
+</a><a href="#h1-0-24" id="h1-0-24" class="i">+        Ok(Box::new(Scan::new(self.store.clone(), self.snapshot.clone(), start..end)?))
+</a><a href="#h1-0-25" id="h1-0-25" class="i">+    }
+</a><a href="#h1-0-26" id="h1-0-26" class="i">+
+</a>     /// Sets a key.
+     pub fn set(&amp;mut self, key: &amp;[u8], value: Vec&lt;u8&gt;) -&gt; Result&lt;(), Error&gt; {
+         self.write(key, Some(value))
+<a href="#h1-1" id="h1-1" class="h">@@ -964,6 +988,56 @@ pub mod tests {
+</a>     }
+ 
+     #[test]
+<a href="#h1-1-3" id="h1-1-3" class="i">+    fn test_txn_scan_prefix() -&gt; Result&lt;(), Error&gt; {
+</a><a href="#h1-1-4" id="h1-1-4" class="i">+        let mvcc = setup();
+</a><a href="#h1-1-5" id="h1-1-5" class="i">+        let mut txn = mvcc.begin()?;
+</a><a href="#h1-1-6" id="h1-1-6" class="i">+
+</a><a href="#h1-1-7" id="h1-1-7" class="i">+        txn.set(b&quot;a&quot;, vec![0x01])?;
+</a><a href="#h1-1-8" id="h1-1-8" class="i">+        txn.set(b&quot;az&quot;, vec![0x01, 0x1a])?;
+</a><a href="#h1-1-9" id="h1-1-9" class="i">+        txn.set(b&quot;b&quot;, vec![0x02])?;
+</a><a href="#h1-1-10" id="h1-1-10" class="i">+        txn.set(b&quot;ba&quot;, vec![0x02, 0x01])?;
+</a><a href="#h1-1-11" id="h1-1-11" class="i">+        txn.set(b&quot;bb&quot;, vec![0x02, 0x02])?;
+</a><a href="#h1-1-12" id="h1-1-12" class="i">+        txn.set(b&quot;bc&quot;, vec![0x02, 0x03])?;
+</a><a href="#h1-1-13" id="h1-1-13" class="i">+        txn.set(b&quot;c&quot;, vec![0x03])?;
+</a><a href="#h1-1-14" id="h1-1-14" class="i">+        txn.commit()?;
+</a><a href="#h1-1-15" id="h1-1-15" class="i">+
+</a><a href="#h1-1-16" id="h1-1-16" class="i">+        // Forward scan
+</a><a href="#h1-1-17" id="h1-1-17" class="i">+        let txn = mvcc.begin()?;
+</a><a href="#h1-1-18" id="h1-1-18" class="i">+        assert_eq!(
+</a><a href="#h1-1-19" id="h1-1-19" class="i">+            vec![
+</a><a href="#h1-1-20" id="h1-1-20" class="i">+                (b&quot;b&quot;.to_vec(), vec![0x02]),
+</a><a href="#h1-1-21" id="h1-1-21" class="i">+                (b&quot;ba&quot;.to_vec(), vec![0x02, 0x01]),
+</a><a href="#h1-1-22" id="h1-1-22" class="i">+                (b&quot;bb&quot;.to_vec(), vec![0x02, 0x02]),
+</a><a href="#h1-1-23" id="h1-1-23" class="i">+                (b&quot;bc&quot;.to_vec(), vec![0x02, 0x03]),
+</a><a href="#h1-1-24" id="h1-1-24" class="i">+            ],
+</a><a href="#h1-1-25" id="h1-1-25" class="i">+            txn.scan_prefix(b&quot;b&quot;)?.collect::&lt;Result&lt;Vec&lt;_&gt;, _&gt;&gt;()?
+</a><a href="#h1-1-26" id="h1-1-26" class="i">+        );
+</a><a href="#h1-1-27" id="h1-1-27" class="i">+
+</a><a href="#h1-1-28" id="h1-1-28" class="i">+        // Reverse scan
+</a><a href="#h1-1-29" id="h1-1-29" class="i">+        assert_eq!(
+</a><a href="#h1-1-30" id="h1-1-30" class="i">+            vec![
+</a><a href="#h1-1-31" id="h1-1-31" class="i">+                (b&quot;bc&quot;.to_vec(), vec![0x02, 0x03]),
+</a><a href="#h1-1-32" id="h1-1-32" class="i">+                (b&quot;bb&quot;.to_vec(), vec![0x02, 0x02]),
+</a><a href="#h1-1-33" id="h1-1-33" class="i">+                (b&quot;ba&quot;.to_vec(), vec![0x02, 0x01]),
+</a><a href="#h1-1-34" id="h1-1-34" class="i">+                (b&quot;b&quot;.to_vec(), vec![0x02]),
+</a><a href="#h1-1-35" id="h1-1-35" class="i">+            ],
+</a><a href="#h1-1-36" id="h1-1-36" class="i">+            txn.scan_prefix(b&quot;b&quot;)?.rev().collect::&lt;Result&lt;Vec&lt;_&gt;, _&gt;&gt;()?
+</a><a href="#h1-1-37" id="h1-1-37" class="i">+        );
+</a><a href="#h1-1-38" id="h1-1-38" class="i">+
+</a><a href="#h1-1-39" id="h1-1-39" class="i">+        // Alternate forward/backward scan
+</a><a href="#h1-1-40" id="h1-1-40" class="i">+        let mut scan = txn.scan_prefix(b&quot;b&quot;)?;
+</a><a href="#h1-1-41" id="h1-1-41" class="i">+        assert_eq!(Some((b&quot;b&quot;.to_vec(), vec![0x02])), scan.next().transpose()?);
+</a><a href="#h1-1-42" id="h1-1-42" class="i">+        assert_eq!(Some((b&quot;bc&quot;.to_vec(), vec![0x02, 0x03])), scan.next_back().transpose()?);
+</a><a href="#h1-1-43" id="h1-1-43" class="i">+        assert_eq!(Some((b&quot;bb&quot;.to_vec(), vec![0x02, 0x02])), scan.next_back().transpose()?);
+</a><a href="#h1-1-44" id="h1-1-44" class="i">+        assert_eq!(Some((b&quot;ba&quot;.to_vec(), vec![0x02, 0x01])), scan.next().transpose()?);
+</a><a href="#h1-1-45" id="h1-1-45" class="i">+        assert_eq!(None, scan.next_back().transpose()?);
+</a><a href="#h1-1-46" id="h1-1-46" class="i">+        std::mem::drop(scan);
+</a><a href="#h1-1-47" id="h1-1-47" class="i">+
+</a><a href="#h1-1-48" id="h1-1-48" class="i">+        txn.commit()?;
+</a><a href="#h1-1-49" id="h1-1-49" class="i">+        Ok(())
+</a><a href="#h1-1-50" id="h1-1-50" class="i">+    }
+</a><a href="#h1-1-51" id="h1-1-51" class="i">+
+</a><a href="#h1-1-52" id="h1-1-52" class="i">+    #[test]
+</a>     fn test_txn_set_conflict() -&gt; Result&lt;(), Error&gt; {
+         let mvcc = setup();
+ 
+</pre>
+</div>
+</body>
+</html>

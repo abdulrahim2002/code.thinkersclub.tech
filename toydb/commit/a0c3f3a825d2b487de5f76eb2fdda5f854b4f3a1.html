@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>raft: improve `Log.splice()` - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/a0c3f3a825d2b487de5f76eb2fdda5f854b4f3a1.html">a0c3f3a825d2b487de5f76eb2fdda5f854b4f3a1</a>
+<b>parent</b> <a href="../commit/813a75da224a26f34e1528ec2900bc23a037fb4c.html">813a75da224a26f34e1528ec2900bc23a037fb4c</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Thu, 30 May 2024 18:01:59 +0200
+
+raft: improve `Log.splice()`
+
+In particular, don&#39;t truncate the log when splicing entries that fully overlap
+an infix of the log, since this can lose entries with reordered messages.
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/raft/log.rs</a></td><td> | </td><td class="num">87</td><td><span class="i">++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d">-----------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/raft/testscripts/log/splice</a></td><td> | </td><td class="num">62</td><td><span class="i">+++++++++++++++++++++++++++++++++++++++</span><span class="d">-----------------------</span></td></tr>
+</table></pre><pre>2 files changed, 94 insertions(+), 55 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/raft/log.rs.html">src/raft/log.rs</a> b/<a href="../file/src/raft/log.rs.html">src/raft/log.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -1,8 +1,8 @@
+</a> use super::{NodeID, Term};
+ use crate::encoding::{bincode, keycode};
+<a href="#h0-0-2" id="h0-0-2" class="d">-use crate::errassert;
+</a> use crate::error::{Error, Result};
+ use crate::storage;
+<a href="#h0-0-5" id="h0-0-5" class="i">+use crate::{asserterr, errassert};
+</a> 
+ use serde::{Deserialize, Serialize};
+ 
+<a href="#h0-1" id="h0-1" class="h">@@ -222,54 +222,77 @@ impl Log {
+</a>             .map(|r| r.and_then(|(k, v)| Self::decode_entry(&amp;k, &amp;v))))
+     }
+ 
+<a href="#h0-1-3" id="h0-1-3" class="d">-    /// Splices a set of entries into the log. The entries must be contiguous,
+</a><a href="#h0-1-4" id="h0-1-4" class="d">-    /// and the first entry must be at most last_index+1. If an entry does not
+</a><a href="#h0-1-5" id="h0-1-5" class="d">-    /// exist, append it. If an existing entry has a term mismatch, replace it
+</a><a href="#h0-1-6" id="h0-1-6" class="d">-    /// and all following entries.
+</a><a href="#h0-1-7" id="h0-1-7" class="d">-    ///
+</a><a href="#h0-1-8" id="h0-1-8" class="d">-    /// TODO: this shouldn&#39;t truncate the log if it overlaps with an infix,
+</a><a href="#h0-1-9" id="h0-1-9" class="d">-    /// since message reordering can lead to data loss of committed entries.
+</a><a href="#h0-1-10" id="h0-1-10" class="i">+    /// Splices a set of entries into the log. The entries must have contiguous
+</a><a href="#h0-1-11" id="h0-1-11" class="i">+    /// indexes and equal/increasing terms, and the first entry must be in the
+</a><a href="#h0-1-12" id="h0-1-12" class="i">+    /// range [1,last_index+1] with a term at or equal to the previous (base)
+</a><a href="#h0-1-13" id="h0-1-13" class="i">+    /// entry&#39;s term. New indexes will be appended. Overlapping indexes with the
+</a><a href="#h0-1-14" id="h0-1-14" class="i">+    /// same term must be equal and will be ignored. Overlapping indexes with
+</a><a href="#h0-1-15" id="h0-1-15" class="i">+    /// different terms will truncate the existing log at the first conflict and
+</a><a href="#h0-1-16" id="h0-1-16" class="i">+    /// then splice the new entries.
+</a>     pub fn splice(&amp;mut self, entries: Vec&lt;Entry&gt;) -&gt; Result&lt;Index&gt; {
+<a href="#h0-1-18" id="h0-1-18" class="d">-        // TODO: don&#39;t allow empty entries.
+</a><a href="#h0-1-19" id="h0-1-19" class="d">-        if entries.is_empty() {
+</a><a href="#h0-1-20" id="h0-1-20" class="d">-            return Ok(self.last_index);
+</a><a href="#h0-1-21" id="h0-1-21" class="d">-        }
+</a><a href="#h0-1-22" id="h0-1-22" class="d">-        if entries[0].index == 0 || entries[0].index &gt; self.last_index + 1 {
+</a><a href="#h0-1-23" id="h0-1-23" class="d">-            return errassert!(&quot;spliced entries must begin before last index&quot;);
+</a><a href="#h0-1-24" id="h0-1-24" class="i">+        let (Some(first), Some(last)) = (entries.first(), entries.last()) else {
+</a><a href="#h0-1-25" id="h0-1-25" class="i">+            return Ok(self.last_index); // empty input is noop
+</a><a href="#h0-1-26" id="h0-1-26" class="i">+        };
+</a><a href="#h0-1-27" id="h0-1-27" class="i">+
+</a><a href="#h0-1-28" id="h0-1-28" class="i">+        // Check that the entries are well-formed.
+</a><a href="#h0-1-29" id="h0-1-29" class="i">+        if first.index == 0 || first.term == 0 {
+</a><a href="#h0-1-30" id="h0-1-30" class="i">+            return errassert!(&quot;spliced entry has index or term 0&quot;);
+</a>         }
+         if !entries.windows(2).all(|w| w[0].index + 1 == w[1].index) {
+<a href="#h0-1-33" id="h0-1-33" class="d">-            return errassert!(&quot;spliced entries must be contiguous&quot;);
+</a><a href="#h0-1-34" id="h0-1-34" class="i">+            return errassert!(&quot;spliced entries are not contiguous&quot;);
+</a><a href="#h0-1-35" id="h0-1-35" class="i">+        }
+</a><a href="#h0-1-36" id="h0-1-36" class="i">+        if !entries.windows(2).all(|w| w[0].term &lt;= w[1].term) {
+</a><a href="#h0-1-37" id="h0-1-37" class="i">+            return errassert!(&quot;spliced entries have term regression&quot;);
+</a>         }
+<a href="#h0-1-39" id="h0-1-39" class="d">-        let (last_index, last_term) = entries.last().map(|e| (e.index, e.term)).unwrap();
+</a> 
+<a href="#h0-1-41" id="h0-1-41" class="d">-        // Skip entries that are already in the log (identified by index and term).
+</a><a href="#h0-1-42" id="h0-1-42" class="i">+        // Check that the entries connect to the existing log (if any), and that the
+</a><a href="#h0-1-43" id="h0-1-43" class="i">+        // term doesn&#39;t regress.
+</a><a href="#h0-1-44" id="h0-1-44" class="i">+        match self.get(first.index - 1)? {
+</a><a href="#h0-1-45" id="h0-1-45" class="i">+            Some(base) if first.term &lt; base.term =&gt; {
+</a><a href="#h0-1-46" id="h0-1-46" class="i">+                return errassert!(&quot;splice term regression {} → {}&quot;, base.term, first.term)
+</a><a href="#h0-1-47" id="h0-1-47" class="i">+            }
+</a><a href="#h0-1-48" id="h0-1-48" class="i">+            Some(_) =&gt; {}
+</a><a href="#h0-1-49" id="h0-1-49" class="i">+            None if first.index == 1 =&gt; {}
+</a><a href="#h0-1-50" id="h0-1-50" class="i">+            None =&gt; return errassert!(&quot;first index {} must touch existing log&quot;, first.index),
+</a><a href="#h0-1-51" id="h0-1-51" class="i">+        }
+</a><a href="#h0-1-52" id="h0-1-52" class="i">+
+</a><a href="#h0-1-53" id="h0-1-53" class="i">+        // Skip entries that are already in the log.
+</a>         let mut entries = entries.as_slice();
+<a href="#h0-1-55" id="h0-1-55" class="d">-        let mut scan = self.scan(entries[0].index..=entries.last().unwrap().index)?;
+</a><a href="#h0-1-56" id="h0-1-56" class="d">-        while let Some(e) = scan.next().transpose()? {
+</a><a href="#h0-1-57" id="h0-1-57" class="d">-            if e.term != entries[0].term {
+</a><a href="#h0-1-58" id="h0-1-58" class="i">+        let mut scan = self.scan(first.index..=last.index)?;
+</a><a href="#h0-1-59" id="h0-1-59" class="i">+        while let Some(entry) = scan.next().transpose()? {
+</a><a href="#h0-1-60" id="h0-1-60" class="i">+            // [0] is ok, because the scan has the same size as entries.
+</a><a href="#h0-1-61" id="h0-1-61" class="i">+            asserterr!(entry.index == entries[0].index, &quot;index mismatch at {entry:?}&quot;);
+</a><a href="#h0-1-62" id="h0-1-62" class="i">+            if entry.term != entries[0].term {
+</a>                 break;
+             }
+<a href="#h0-1-65" id="h0-1-65" class="i">+            asserterr!(entry.command == entries[0].command, &quot;command mismatch at {entry:?}&quot;);
+</a>             entries = &amp;entries[1..];
+         }
+         drop(scan);
+ 
+<a href="#h0-1-70" id="h0-1-70" class="d">-        if !entries.is_empty() &amp;&amp; entries[0].index &lt;= self.commit_index {
+</a><a href="#h0-1-71" id="h0-1-71" class="d">-            return errassert!(&quot;spliced entries must begin after commit index&quot;);
+</a><a href="#h0-1-72" id="h0-1-72" class="d">-        }
+</a><a href="#h0-1-73" id="h0-1-73" class="i">+        // If all entries already exist then we&#39;re done.
+</a><a href="#h0-1-74" id="h0-1-74" class="i">+        let Some(first) = entries.first() else {
+</a><a href="#h0-1-75" id="h0-1-75" class="i">+            return Ok(self.last_index);
+</a><a href="#h0-1-76" id="h0-1-76" class="i">+        };
+</a> 
+<a href="#h0-1-78" id="h0-1-78" class="d">-        // Write any entries not already in the log.
+</a><a href="#h0-1-79" id="h0-1-79" class="d">-        for e in entries {
+</a><a href="#h0-1-80" id="h0-1-80" class="d">-            self.engine
+</a><a href="#h0-1-81" id="h0-1-81" class="d">-                .set(&amp;Key::Entry(e.index).encode()?, bincode::serialize(&amp;(&amp;e.term, &amp;e.command))?)?;
+</a><a href="#h0-1-82" id="h0-1-82" class="d">-        }
+</a><a href="#h0-1-83" id="h0-1-83" class="i">+        // Write the entries that weren&#39;t already in the log, and remove the
+</a><a href="#h0-1-84" id="h0-1-84" class="i">+        // tail of the old log if any. We can&#39;t write below the commit index,
+</a><a href="#h0-1-85" id="h0-1-85" class="i">+        // since these entries must be immutable.
+</a><a href="#h0-1-86" id="h0-1-86" class="i">+        asserterr!(first.index &gt; self.commit_index, &quot;spliced entries below commit index&quot;);
+</a> 
+<a href="#h0-1-88" id="h0-1-88" class="d">-        // Remove the remaining tail of the old log, if any, and update the index.
+</a><a href="#h0-1-89" id="h0-1-89" class="d">-        for index in (last_index + 1)..=self.last_index {
+</a><a href="#h0-1-90" id="h0-1-90" class="i">+        for entry in entries {
+</a><a href="#h0-1-91" id="h0-1-91" class="i">+            self.engine.set(
+</a><a href="#h0-1-92" id="h0-1-92" class="i">+                &amp;Key::Entry(entry.index).encode()?,
+</a><a href="#h0-1-93" id="h0-1-93" class="i">+                bincode::serialize(&amp;(&amp;entry.term, &amp;entry.command))?,
+</a><a href="#h0-1-94" id="h0-1-94" class="i">+            )?;
+</a><a href="#h0-1-95" id="h0-1-95" class="i">+        }
+</a><a href="#h0-1-96" id="h0-1-96" class="i">+        for index in last.index + 1..=self.last_index {
+</a>             self.engine.delete(&amp;Key::Entry(index).encode()?)?;
+         }
+         self.engine.flush()?;
+<a href="#h0-1-100" id="h0-1-100" class="d">-        self.last_index = last_index;
+</a><a href="#h0-1-101" id="h0-1-101" class="d">-        self.last_term = last_term;
+</a><a href="#h0-1-102" id="h0-1-102" class="i">+
+</a><a href="#h0-1-103" id="h0-1-103" class="i">+        self.last_index = last.index;
+</a><a href="#h0-1-104" id="h0-1-104" class="i">+        self.last_term = last.term;
+</a>         Ok(self.last_index)
+     }
+ }
+<b>diff --git a/<a id="h1" href="../file/src/raft/testscripts/log/splice.html">src/raft/testscripts/log/splice</a> b/<a href="../file/src/raft/testscripts/log/splice.html">src/raft/testscripts/log/splice</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -1,12 +1,12 @@
+</a> # Splicing at index 0 should fail.
+ !splice 0@1=foo
+ ---
+<a href="#h1-0-3" id="h1-0-3" class="d">-Error: assertion failed: spliced entries must begin before last index
+</a><a href="#h1-0-4" id="h1-0-4" class="i">+Error: assertion failed: spliced entry has index or term 0
+</a> 
+<a href="#h1-0-6" id="h1-0-6" class="d">-# Splicing at index 2 should fail (not contiguous).
+</a><a href="#h1-0-7" id="h1-0-7" class="i">+# Splicing at index 2 should fail (creates gap).
+</a> !splice 2@1=foo
+ ---
+<a href="#h1-0-10" id="h1-0-10" class="d">-Error: assertion failed: spliced entries must begin before last index
+</a><a href="#h1-0-11" id="h1-0-11" class="i">+Error: assertion failed: first index 2 must touch existing log
+</a> 
+ # Splicing entries at start should work, both with and without
+ # commands, and starting at a term after 1. It should also update
+<a href="#h1-1" id="h1-1" class="h">@@ -21,27 +21,42 @@ last=2@2 commit=0@0
+</a> 1@2 None
+ 2@2 command
+ 
+<a href="#h1-1-3" id="h1-1-3" class="i">+# Splicing an empty list should work and be a noop.
+</a><a href="#h1-1-4" id="h1-1-4" class="i">+splice
+</a><a href="#h1-1-5" id="h1-1-5" class="i">+status
+</a><a href="#h1-1-6" id="h1-1-6" class="i">+scan
+</a><a href="#h1-1-7" id="h1-1-7" class="i">+---
+</a><a href="#h1-1-8" id="h1-1-8" class="i">+splice → 2@2 command
+</a><a href="#h1-1-9" id="h1-1-9" class="i">+last=2@2 commit=0@0
+</a><a href="#h1-1-10" id="h1-1-10" class="i">+1@2 None
+</a><a href="#h1-1-11" id="h1-1-11" class="i">+2@2 command
+</a><a href="#h1-1-12" id="h1-1-12" class="i">+
+</a> # Splicing multiple duplicate entries should fail.
+ !splice 3@2= 3@2=
+ ---
+<a href="#h1-1-16" id="h1-1-16" class="d">-Error: assertion failed: spliced entries must be contiguous
+</a><a href="#h1-1-17" id="h1-1-17" class="i">+Error: assertion failed: spliced entries are not contiguous
+</a> 
+ # Splicing entries with a gap should fail.
+ !splice 3@2= 5@2=
+ ---
+<a href="#h1-1-22" id="h1-1-22" class="d">-Error: assertion failed: spliced entries must be contiguous
+</a><a href="#h1-1-23" id="h1-1-23" class="i">+Error: assertion failed: spliced entries are not contiguous
+</a><a href="#h1-1-24" id="h1-1-24" class="i">+
+</a><a href="#h1-1-25" id="h1-1-25" class="i">+# Splicing entries with a term regression should fail.
+</a><a href="#h1-1-26" id="h1-1-26" class="i">+!splice 3@2= 4@1=
+</a><a href="#h1-1-27" id="h1-1-27" class="i">+---
+</a><a href="#h1-1-28" id="h1-1-28" class="i">+Error: assertion failed: spliced entries have term regression
+</a> 
+<a href="#h1-1-30" id="h1-1-30" class="d">-# Splicing with a term regression should fail.
+</a><a href="#h1-1-31" id="h1-1-31" class="d">-# TODO: fix this.
+</a><a href="#h1-1-32" id="h1-1-32" class="d">-#!splice 3@1=
+</a><a href="#h1-1-33" id="h1-1-33" class="d">-#---
+</a><a href="#h1-1-34" id="h1-1-34" class="i">+# Splicing entries with a gap from the base should fail.
+</a><a href="#h1-1-35" id="h1-1-35" class="i">+!splice 4@2=
+</a><a href="#h1-1-36" id="h1-1-36" class="i">+---
+</a><a href="#h1-1-37" id="h1-1-37" class="i">+Error: assertion failed: first index 4 must touch existing log
+</a> 
+<a href="#h1-1-39" id="h1-1-39" class="d">-# Splicing with a term regression in the given entries should fail.
+</a><a href="#h1-1-40" id="h1-1-40" class="d">-# TODO: fix this.
+</a><a href="#h1-1-41" id="h1-1-41" class="d">-#splice 3@2= 4@1=
+</a><a href="#h1-1-42" id="h1-1-42" class="d">-#---
+</a><a href="#h1-1-43" id="h1-1-43" class="i">+# Splicing with a term regression from the base should fail.
+</a><a href="#h1-1-44" id="h1-1-44" class="i">+!splice 3@1=
+</a><a href="#h1-1-45" id="h1-1-45" class="i">+---
+</a><a href="#h1-1-46" id="h1-1-46" class="i">+Error: assertion failed: splice term regression 2 → 1
+</a> 
+<a href="#h1-1-48" id="h1-1-48" class="d">-# Overlapping entries is a noop.
+</a><a href="#h1-1-49" id="h1-1-49" class="i">+# Fully overlapping entries is a noop.
+</a> splice 1@2= 2@2=command
+ scan
+ ---
+<a href="#h1-2" id="h1-2" class="h">@@ -50,10 +65,12 @@ splice → 2@2 command
+</a> 2@2 command
+ 
+ # An overlapping prefix is a noop.
+<a href="#h1-2-3" id="h1-2-3" class="d">-# TODO: fix this.
+</a><a href="#h1-2-4" id="h1-2-4" class="d">-#splice 1@2=
+</a><a href="#h1-2-5" id="h1-2-5" class="d">-#scan
+</a><a href="#h1-2-6" id="h1-2-6" class="d">-#---
+</a><a href="#h1-2-7" id="h1-2-7" class="i">+splice 1@2=
+</a><a href="#h1-2-8" id="h1-2-8" class="i">+scan
+</a><a href="#h1-2-9" id="h1-2-9" class="i">+---
+</a><a href="#h1-2-10" id="h1-2-10" class="i">+splice → 2@2 command
+</a><a href="#h1-2-11" id="h1-2-11" class="i">+1@2 None
+</a><a href="#h1-2-12" id="h1-2-12" class="i">+2@2 command
+</a> 
+ # An overlapping suffix is a noop.
+ splice 2@2=command
+<a href="#h1-3" id="h1-3" class="h">@@ -64,11 +81,10 @@ splice → 2@2 command
+</a> 2@2 command
+ 
+ # Changing a command with the same term/index should fail.
+<a href="#h1-3-3" id="h1-3-3" class="d">-# TODO: instead of a noop, this should error.
+</a><a href="#h1-3-4" id="h1-3-4" class="d">-splice 2@2=foo
+</a><a href="#h1-3-5" id="h1-3-5" class="i">+!splice 2@2=foo
+</a> scan
+ ---
+<a href="#h1-3-8" id="h1-3-8" class="d">-splice → 2@2 command
+</a><a href="#h1-3-9" id="h1-3-9" class="i">+Error: assertion failed: command mismatch at Entry { index: 2, term: 2, command: Some([99, 111, 109, 109, 97, 110, 100]) }
+</a> 1@2 None
+ 2@2 command
+ 
+<a href="#h1-4" id="h1-4" class="h">@@ -148,8 +164,8 @@ last=4@6 commit=2@5
+</a> !splice 2@7=
+ !splice 1@7=
+ ---
+<a href="#h1-4-3" id="h1-4-3" class="d">-Error: assertion failed: spliced entries must begin after commit index
+</a><a href="#h1-4-4" id="h1-4-4" class="d">-Error: assertion failed: spliced entries must begin after commit index
+</a><a href="#h1-4-5" id="h1-4-5" class="i">+Error: assertion failed: spliced entries below commit index
+</a><a href="#h1-4-6" id="h1-4-6" class="i">+Error: assertion failed: spliced entries below commit index
+</a> 
+ # Dump the raw data.
+ raw
+</pre>
+</div>
+</body>
+</html>

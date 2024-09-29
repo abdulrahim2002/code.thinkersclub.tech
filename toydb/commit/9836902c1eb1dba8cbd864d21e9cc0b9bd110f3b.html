@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>kv: cleaned up storage module - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/9836902c1eb1dba8cbd864d21e9cc0b9bd110f3b.html">9836902c1eb1dba8cbd864d21e9cc0b9bd110f3b</a>
+<b>parent</b> <a href="../commit/4e54faeb00c6aab86fbaf540a504077a8ad66eb0.html">4e54faeb00c6aab86fbaf540a504077a8ad66eb0</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Sun, 15 Dec 2019 14:31:59 +0100
+
+kv: cleaned up storage module
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/kv/mvcc.rs</a></td><td> | </td><td class="num">82</td><td><span class="i">++++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d">---------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/kv/simple.rs</a></td><td> | </td><td class="num">6</td><td><span class="i">+++++</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/kv/storage/file.rs</a></td><td> | </td><td class="num">20</td><td><span class="i">+++++++</span><span class="d">-------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">src/kv/storage/memory.rs</a></td><td> | </td><td class="num">16</td><td><span class="i">+++++</span><span class="d">-----------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h4">src/kv/storage/mod.rs</a></td><td> | </td><td class="num">109</td><td><span class="i">++++++++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d">-----------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h5">src/sql/engine/kv.rs</a></td><td> | </td><td class="num">16</td><td><span class="i">++++++++++++</span><span class="d">----</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h6">src/sql/engine/mod.rs</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+</table></pre><pre>7 files changed, 162 insertions(+), 89 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/kv/mvcc.rs.html">src/kv/mvcc.rs</a> b/<a href="../file/src/kv/mvcc.rs.html">src/kv/mvcc.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -68,7 +68,7 @@ pub struct Transaction&lt;S: Storage&gt; {
+</a>     snapshot: Snapshot,
+ }
+ 
+<a href="#h0-0-3" id="h0-0-3" class="d">-impl&lt;S: Storage&gt; Transaction&lt;S&gt; {
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+impl&lt;&#39;a, S: Storage&gt; Transaction&lt;S&gt; {
+</a>     /// Begins a new transaction
+     fn begin(storage: Arc&lt;RwLock&lt;S&gt;&gt;, mode: Mode) -&gt; Result&lt;Self, Error&gt; {
+         let id = {
+<a href="#h0-1" id="h0-1" class="h">@@ -127,15 +127,19 @@ impl&lt;S: Storage&gt; Transaction&lt;S&gt; {
+</a>             let mut storage = self.storage.write()?;
+             let start = Key::TxnUpdatedStart(self.id).encode();
+             let end = Key::TxnUpdatedEnd(self.id).encode();
+<a href="#h0-1-3" id="h0-1-3" class="i">+            let mut keys: Vec&lt;Vec&lt;u8&gt;&gt; = vec![];
+</a>             for r in storage.scan(start..end).rev() {
+                 let (k, _) = r?;
+                 if let Key::TxnUpdated(_, key) = Key::decode(k.clone())? {
+<a href="#h0-1-7" id="h0-1-7" class="d">-                    storage.remove(&amp;key)?;
+</a><a href="#h0-1-8" id="h0-1-8" class="d">-                    storage.remove(&amp;k)?;
+</a><a href="#h0-1-9" id="h0-1-9" class="i">+                    keys.push(key.clone());
+</a><a href="#h0-1-10" id="h0-1-10" class="i">+                    keys.push(k.clone());
+</a>                 } else {
+                     return Err(Error::Internal(&quot;Unexpected key&quot;.into()));
+                 }
+             }
+<a href="#h0-1-15" id="h0-1-15" class="i">+            for key in keys.into_iter() {
+</a><a href="#h0-1-16" id="h0-1-16" class="i">+                storage.remove(&amp;key)?;
+</a><a href="#h0-1-17" id="h0-1-17" class="i">+            }
+</a>             storage.remove(&amp;Key::TxnActive(self.id).encode())?;
+         }
+         Ok(())
+<a href="#h0-2" id="h0-2" class="h">@@ -160,7 +164,8 @@ impl&lt;S: Storage&gt; Transaction&lt;S&gt; {
+</a>     pub fn get(&amp;self, key: &amp;[u8]) -&gt; Result&lt;Option&lt;Vec&lt;u8&gt;&gt;, Error&gt; {
+         let from = Key::Record(key.to_vec(), 0).encode();
+         let to = Key::Record(key.to_vec(), self.id).encode();
+<a href="#h0-2-3" id="h0-2-3" class="d">-        let mut range = self.storage.read()?.scan(from..=to).rev();
+</a><a href="#h0-2-4" id="h0-2-4" class="i">+        let storage = self.storage.read()?;
+</a><a href="#h0-2-5" id="h0-2-5" class="i">+        let mut range = storage.scan(from..=to).rev();
+</a>         while let Some((k, v)) = range.next().transpose()? {
+             if !self.snapshot.is_visible(Key::decode(k)?.version()?) {
+                 continue;
+<a href="#h0-3" id="h0-3" class="h">@@ -175,24 +180,7 @@ impl&lt;S: Storage&gt; Transaction&lt;S&gt; {
+</a> 
+     /// Scans a key range
+     pub fn scan(&amp;self, range: impl RangeBounds&lt;Vec&lt;u8&gt;&gt;) -&gt; Result&lt;Range, Error&gt; {
+<a href="#h0-3-3" id="h0-3-3" class="d">-        let from = match range.start_bound() {
+</a><a href="#h0-3-4" id="h0-3-4" class="d">-            Bound::Excluded(key) =&gt; Bound::Included(Key::Record(key.clone(), 0).encode()),
+</a><a href="#h0-3-5" id="h0-3-5" class="d">-            Bound::Included(key) =&gt; Bound::Included(Key::Record(key.clone(), 0).encode()),
+</a><a href="#h0-3-6" id="h0-3-6" class="d">-            Bound::Unbounded =&gt; Bound::Included(Key::RecordStart.encode()),
+</a><a href="#h0-3-7" id="h0-3-7" class="d">-        };
+</a><a href="#h0-3-8" id="h0-3-8" class="d">-        let to = match range.end_bound() {
+</a><a href="#h0-3-9" id="h0-3-9" class="d">-            Bound::Excluded(key) =&gt; Bound::Excluded(Key::Record(key.clone(), 0).encode()),
+</a><a href="#h0-3-10" id="h0-3-10" class="d">-            Bound::Included(key) =&gt; {
+</a><a href="#h0-3-11" id="h0-3-11" class="d">-                Bound::Included(Key::Record(key.clone(), std::u64::MAX).encode())
+</a><a href="#h0-3-12" id="h0-3-12" class="d">-            }
+</a><a href="#h0-3-13" id="h0-3-13" class="d">-            Bound::Unbounded =&gt; Bound::Included(Key::RecordEnd.encode()),
+</a><a href="#h0-3-14" id="h0-3-14" class="d">-        };
+</a><a href="#h0-3-15" id="h0-3-15" class="d">-        Ok(Box::new(Scan {
+</a><a href="#h0-3-16" id="h0-3-16" class="d">-            range: self.storage.read()?.scan((from, to)),
+</a><a href="#h0-3-17" id="h0-3-17" class="d">-            snapshot: self.snapshot.clone(),
+</a><a href="#h0-3-18" id="h0-3-18" class="d">-            seen: None,
+</a><a href="#h0-3-19" id="h0-3-19" class="d">-            rev_ignore: None,
+</a><a href="#h0-3-20" id="h0-3-20" class="d">-        }))
+</a><a href="#h0-3-21" id="h0-3-21" class="i">+        Ok(Box::new(Scan::new(self.storage.clone(), self.snapshot.clone(), range)?))
+</a>     }
+ 
+     /// Sets a key
+<a href="#h0-4" id="h0-4" class="h">@@ -267,20 +255,55 @@ impl Snapshot {
+</a> }
+ 
+ /// A key range scan
+<a href="#h0-4-3" id="h0-4-3" class="d">-pub struct Scan {
+</a><a href="#h0-4-4" id="h0-4-4" class="d">-    range: Range,
+</a><a href="#h0-4-5" id="h0-4-5" class="i">+pub struct Scan&lt;S: Storage&gt; {
+</a><a href="#h0-4-6" id="h0-4-6" class="i">+    storage: Arc&lt;RwLock&lt;S&gt;&gt;,
+</a>     snapshot: Snapshot,
+<a href="#h0-4-8" id="h0-4-8" class="i">+    mark_front: Bound&lt;Vec&lt;u8&gt;&gt;,
+</a><a href="#h0-4-9" id="h0-4-9" class="i">+    mark_back: Bound&lt;Vec&lt;u8&gt;&gt;,
+</a>     seen: Option&lt;(Vec&lt;u8&gt;, Vec&lt;u8&gt;)&gt;,
+     rev_ignore: Option&lt;(Vec&lt;u8&gt;)&gt;,
+ }
+ 
+<a href="#h0-4-14" id="h0-4-14" class="d">-impl Iterator for Scan {
+</a><a href="#h0-4-15" id="h0-4-15" class="i">+impl&lt;S: Storage&gt; Scan&lt;S&gt; {
+</a><a href="#h0-4-16" id="h0-4-16" class="i">+    fn new(
+</a><a href="#h0-4-17" id="h0-4-17" class="i">+        storage: Arc&lt;RwLock&lt;S&gt;&gt;,
+</a><a href="#h0-4-18" id="h0-4-18" class="i">+        snapshot: Snapshot,
+</a><a href="#h0-4-19" id="h0-4-19" class="i">+        range: impl RangeBounds&lt;Vec&lt;u8&gt;&gt;,
+</a><a href="#h0-4-20" id="h0-4-20" class="i">+    ) -&gt; Result&lt;Self, Error&gt; {
+</a><a href="#h0-4-21" id="h0-4-21" class="i">+        let from = match range.start_bound() {
+</a><a href="#h0-4-22" id="h0-4-22" class="i">+            Bound::Excluded(key) =&gt; Bound::Included(Key::Record(key.clone(), 0).encode()),
+</a><a href="#h0-4-23" id="h0-4-23" class="i">+            Bound::Included(key) =&gt; Bound::Included(Key::Record(key.clone(), 0).encode()),
+</a><a href="#h0-4-24" id="h0-4-24" class="i">+            Bound::Unbounded =&gt; Bound::Included(Key::RecordStart.encode()),
+</a><a href="#h0-4-25" id="h0-4-25" class="i">+        };
+</a><a href="#h0-4-26" id="h0-4-26" class="i">+        let to = match range.end_bound() {
+</a><a href="#h0-4-27" id="h0-4-27" class="i">+            Bound::Excluded(key) =&gt; Bound::Excluded(Key::Record(key.clone(), 0).encode()),
+</a><a href="#h0-4-28" id="h0-4-28" class="i">+            Bound::Included(key) =&gt; {
+</a><a href="#h0-4-29" id="h0-4-29" class="i">+                Bound::Included(Key::Record(key.clone(), std::u64::MAX).encode())
+</a><a href="#h0-4-30" id="h0-4-30" class="i">+            }
+</a><a href="#h0-4-31" id="h0-4-31" class="i">+            Bound::Unbounded =&gt; Bound::Included(Key::RecordEnd.encode()),
+</a><a href="#h0-4-32" id="h0-4-32" class="i">+        };
+</a><a href="#h0-4-33" id="h0-4-33" class="i">+
+</a><a href="#h0-4-34" id="h0-4-34" class="i">+        Ok(Self {
+</a><a href="#h0-4-35" id="h0-4-35" class="i">+            storage,
+</a><a href="#h0-4-36" id="h0-4-36" class="i">+            snapshot,
+</a><a href="#h0-4-37" id="h0-4-37" class="i">+            mark_front: from,
+</a><a href="#h0-4-38" id="h0-4-38" class="i">+            mark_back: to,
+</a><a href="#h0-4-39" id="h0-4-39" class="i">+            seen: None,
+</a><a href="#h0-4-40" id="h0-4-40" class="i">+            rev_ignore: None,
+</a><a href="#h0-4-41" id="h0-4-41" class="i">+        })
+</a><a href="#h0-4-42" id="h0-4-42" class="i">+    }
+</a><a href="#h0-4-43" id="h0-4-43" class="i">+}
+</a><a href="#h0-4-44" id="h0-4-44" class="i">+
+</a><a href="#h0-4-45" id="h0-4-45" class="i">+impl&lt;S: Storage&gt; Iterator for Scan&lt;S&gt; {
+</a>     type Item = Result&lt;(Vec&lt;u8&gt;, Vec&lt;u8&gt;), Error&gt;;
+ 
+     fn next(&amp;mut self) -&gt; Option&lt;Self::Item&gt; {
+<a href="#h0-4-49" id="h0-4-49" class="d">-        while let Some(r) = self.range.next() {
+</a><a href="#h0-4-50" id="h0-4-50" class="i">+        let storage = self.storage.read().unwrap();
+</a><a href="#h0-4-51" id="h0-4-51" class="i">+        let mut range = storage.scan((self.mark_front.clone(), self.mark_back.clone()));
+</a><a href="#h0-4-52" id="h0-4-52" class="i">+        while let Some(r) = range.next() {
+</a>             match r {
+                 Ok((k, v)) =&gt; {
+<a href="#h0-4-55" id="h0-4-55" class="i">+                    self.mark_front = Bound::Excluded(k.clone());
+</a>                     let (key, version) = match Key::decode(k).unwrap() {
+                         Key::Record(key, version) =&gt; (key, version),
+                         _ =&gt; panic!(&quot;Not implemented&quot;),
+<a href="#h0-5" id="h0-5" class="h">@@ -327,11 +350,14 @@ impl Iterator for Scan {
+</a>     }
+ }
+ 
+<a href="#h0-5-3" id="h0-5-3" class="d">-impl DoubleEndedIterator for Scan {
+</a><a href="#h0-5-4" id="h0-5-4" class="i">+impl&lt;S: Storage&gt; DoubleEndedIterator for Scan&lt;S&gt; {
+</a>     fn next_back(&amp;mut self) -&gt; Option&lt;Self::Item&gt; {
+<a href="#h0-5-6" id="h0-5-6" class="d">-        while let Some(r) = self.range.next_back() {
+</a><a href="#h0-5-7" id="h0-5-7" class="i">+        let storage = self.storage.read().unwrap();
+</a><a href="#h0-5-8" id="h0-5-8" class="i">+        let mut range = storage.scan((self.mark_front.clone(), self.mark_back.clone()));
+</a><a href="#h0-5-9" id="h0-5-9" class="i">+        while let Some(r) = range.next_back() {
+</a>             match r {
+                 Ok((k, v)) =&gt; {
+<a href="#h0-5-12" id="h0-5-12" class="i">+                    self.mark_back = Bound::Excluded(k.clone());
+</a>                     let (key, version) = match Key::decode(k).unwrap() {
+                         Key::Record(key, version) =&gt; (key, version),
+                         _ =&gt; panic!(&quot;Not implemented&quot;),
+<b>diff --git a/<a id="h1" href="../file/src/kv/simple.rs.html">src/kv/simple.rs</a> b/<a href="../file/src/kv/simple.rs.html">src/kv/simple.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -29,7 +29,11 @@ impl&lt;S: Storage&gt; Simple&lt;S&gt; {
+</a>     /// Scans a key range
+     #[allow(dead_code)]
+     pub fn scan(&amp;self, range: impl RangeBounds&lt;Vec&lt;u8&gt;&gt;) -&gt; Result&lt;Range, Error&gt; {
+<a href="#h1-0-3" id="h1-0-3" class="d">-        Ok(self.storage.read()?.scan(range))
+</a><a href="#h1-0-4" id="h1-0-4" class="i">+        // FIXME We temporarily buffer the iterator here, to avoid dealing with
+</a><a href="#h1-0-5" id="h1-0-5" class="i">+        // borrow issues.
+</a><a href="#h1-0-6" id="h1-0-6" class="i">+        Ok(Box::new(
+</a><a href="#h1-0-7" id="h1-0-7" class="i">+            self.storage.read()?.scan(range).collect::&lt;Vec&lt;Result&lt;_, Error&gt;&gt;&gt;().into_iter(),
+</a><a href="#h1-0-8" id="h1-0-8" class="i">+        ))
+</a>     }
+ 
+     /// Sets a key
+<b>diff --git a/<a id="h2" href="../file/src/kv/storage/file.rs.html">src/kv/storage/file.rs</a> b/<a href="../file/src/kv/storage/file.rs.html">src/kv/storage/file.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -10,12 +10,15 @@ use std::ops::RangeBounds;
+</a> /// until a proper store is written.
+ #[derive(Debug)]
+ pub struct File {
+<a href="#h2-0-3" id="h2-0-3" class="i">+    /// The file handle of the backing file.
+</a>     file: std::fs::File,
+<a href="#h2-0-5" id="h2-0-5" class="i">+
+</a><a href="#h2-0-6" id="h2-0-6" class="i">+    /// The in-memory key-value store that is flushed to disk.
+</a>     data: BTreeMap&lt;Vec&lt;u8&gt;, Vec&lt;u8&gt;&gt;,
+ }
+ 
+ impl File {
+<a href="#h2-0-11" id="h2-0-11" class="d">-    /// Creates a new file-based key-value storage backend
+</a><a href="#h2-0-12" id="h2-0-12" class="i">+    /// Creates a new file-based key-value storage backend.
+</a>     pub fn new(file: std::fs::File) -&gt; Result&lt;Self, Error&gt; {
+         let data = if file.metadata()?.len() &gt; 0 {
+             rmp_serde::decode::from_read(file.try_clone()?)?
+<a href="#h2-1" id="h2-1" class="h">@@ -25,7 +28,7 @@ impl File {
+</a>         Ok(Self { file, data })
+     }
+ 
+<a href="#h2-1-3" id="h2-1-3" class="d">-    /// Writes out the entire dataset to the file
+</a><a href="#h2-1-4" id="h2-1-4" class="i">+    /// Writes out the entire dataset to the file.
+</a>     fn flush(&amp;mut self) -&gt; Result&lt;(), Error&gt; {
+         self.file.seek(std::io::SeekFrom::Start(0))?;
+         rmp_serde::encode::write(&amp;mut self.file, &amp;self.data)?;
+<a href="#h2-2" id="h2-2" class="h">@@ -45,15 +48,7 @@ impl Storage for File {
+</a>     }
+ 
+     fn scan(&amp;self, range: impl RangeBounds&lt;Vec&lt;u8&gt;&gt;) -&gt; Range {
+<a href="#h2-2-3" id="h2-2-3" class="d">-        // FIXME This copies everything into a separate vec to not have to deal with
+</a><a href="#h2-2-4" id="h2-2-4" class="d">-        // lifetimes, which is pretty terrible.
+</a><a href="#h2-2-5" id="h2-2-5" class="d">-        Box::new(
+</a><a href="#h2-2-6" id="h2-2-6" class="d">-            self.data
+</a><a href="#h2-2-7" id="h2-2-7" class="d">-                .range(range)
+</a><a href="#h2-2-8" id="h2-2-8" class="d">-                .map(|(k, v)| Ok((k.clone(), v.clone())))
+</a><a href="#h2-2-9" id="h2-2-9" class="d">-                .collect::&lt;Vec&lt;Result&lt;_, Error&gt;&gt;&gt;()
+</a><a href="#h2-2-10" id="h2-2-10" class="d">-                .into_iter(),
+</a><a href="#h2-2-11" id="h2-2-11" class="d">-        )
+</a><a href="#h2-2-12" id="h2-2-12" class="i">+        Box::new(self.data.range(range).map(|(k, v)| Ok((k.clone(), v.clone()))))
+</a>     }
+ 
+     fn write(&amp;mut self, key: &amp;[u8], value: Vec&lt;u8&gt;) -&gt; Result&lt;(), Error&gt; {
+<a href="#h2-3" id="h2-3" class="h">@@ -67,8 +62,7 @@ impl Storage for File {
+</a> impl super::TestSuite&lt;File&gt; for File {
+     fn setup() -&gt; Result&lt;Self, Error&gt; {
+         extern crate tempfile;
+<a href="#h2-3-3" id="h2-3-3" class="d">-        use tempfile::tempfile;
+</a><a href="#h2-3-4" id="h2-3-4" class="d">-        File::new(tempfile()?)
+</a><a href="#h2-3-5" id="h2-3-5" class="i">+        File::new(tempfile::tempfile()?)
+</a>     }
+ }
+ 
+<b>diff --git a/<a id="h3" href="../file/src/kv/storage/memory.rs.html">src/kv/storage/memory.rs</a> b/<a href="../file/src/kv/storage/memory.rs.html">src/kv/storage/memory.rs</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -1,16 +1,18 @@
+</a> use super::{Range, Storage};
+ use crate::Error;
+<a href="#h3-0-2" id="h3-0-2" class="i">+
+</a> use std::collections::BTreeMap;
+ use std::ops::RangeBounds;
+ 
+<a href="#h3-0-6" id="h3-0-6" class="d">-/// In-memory key-value storage. Primarily used for prototyping and testing.
+</a><a href="#h3-0-7" id="h3-0-7" class="i">+/// In-memory key-value storage backend. Primarily used for prototyping and testing.
+</a> #[derive(Clone, Debug)]
+ pub struct Memory {
+<a href="#h3-0-10" id="h3-0-10" class="i">+    /// The underlying key-value storage.
+</a>     data: BTreeMap&lt;Vec&lt;u8&gt;, Vec&lt;u8&gt;&gt;,
+ }
+ 
+ impl Memory {
+<a href="#h3-0-15" id="h3-0-15" class="d">-    /// Creates a new Memory key-value storage engine
+</a><a href="#h3-0-16" id="h3-0-16" class="i">+    /// Creates a new Memory key-value storage engine.
+</a>     pub fn new() -&gt; Self {
+         Self { data: BTreeMap::new() }
+     }
+<a href="#h3-1" id="h3-1" class="h">@@ -27,15 +29,7 @@ impl Storage for Memory {
+</a>     }
+ 
+     fn scan(&amp;self, range: impl RangeBounds&lt;Vec&lt;u8&gt;&gt;) -&gt; Range {
+<a href="#h3-1-3" id="h3-1-3" class="d">-        // FIXME This copies everything into a separate vec to not have to deal with
+</a><a href="#h3-1-4" id="h3-1-4" class="d">-        // lifetimes, which is pretty terrible.
+</a><a href="#h3-1-5" id="h3-1-5" class="d">-        Box::new(
+</a><a href="#h3-1-6" id="h3-1-6" class="d">-            self.data
+</a><a href="#h3-1-7" id="h3-1-7" class="d">-                .range(range)
+</a><a href="#h3-1-8" id="h3-1-8" class="d">-                .map(|(k, v)| Ok((k.clone(), v.clone())))
+</a><a href="#h3-1-9" id="h3-1-9" class="d">-                .collect::&lt;Vec&lt;Result&lt;_, Error&gt;&gt;&gt;()
+</a><a href="#h3-1-10" id="h3-1-10" class="d">-                .into_iter(),
+</a><a href="#h3-1-11" id="h3-1-11" class="d">-        )
+</a><a href="#h3-1-12" id="h3-1-12" class="i">+        Box::new(self.data.range(range).map(|(k, v)| Ok((k.clone(), v.clone()))))
+</a>     }
+ 
+     fn write(&amp;mut self, key: &amp;[u8], value: Vec&lt;u8&gt;) -&gt; Result&lt;(), Error&gt; {
+<b>diff --git a/<a id="h4" href="../file/src/kv/storage/mod.rs.html">src/kv/storage/mod.rs</a> b/<a href="../file/src/kv/storage/mod.rs.html">src/kv/storage/mod.rs</a></b>
+<a href="#h4-0" id="h4-0" class="h">@@ -1,3 +1,5 @@
+</a><a href="#h4-0-0" id="h4-0-0" class="i">+//! Key-value storage backends, with primitive IO operations.
+</a><a href="#h4-0-1" id="h4-0-1" class="i">+
+</a> mod file;
+ #[cfg(test)]
+ mod memory;
+<a href="#h4-1" id="h4-1" class="h">@@ -9,38 +11,56 @@ pub use memory::Memory;
+</a> use crate::Error;
+ use std::ops::RangeBounds;
+ 
+<a href="#h4-1-3" id="h4-1-3" class="d">-/// KV storage backend
+</a><a href="#h4-1-4" id="h4-1-4" class="i">+/// Key/value storage backend.
+</a> pub trait Storage: &#39;static + Sync + Send {
+<a href="#h4-1-6" id="h4-1-6" class="d">-    /// Reads a value
+</a><a href="#h4-1-7" id="h4-1-7" class="i">+    /// Reads a value for a key, or `None` if it does not exist.
+</a>     fn read(&amp;self, key: &amp;[u8]) -&gt; Result&lt;Option&lt;Vec&lt;u8&gt;&gt;, Error&gt;;
+ 
+<a href="#h4-1-10" id="h4-1-10" class="d">-    /// Removes a value
+</a><a href="#h4-1-11" id="h4-1-11" class="i">+    /// Removes a key, if it exists.
+</a>     fn remove(&amp;mut self, key: &amp;[u8]) -&gt; Result&lt;(), Error&gt;;
+ 
+<a href="#h4-1-14" id="h4-1-14" class="d">-    /// Returns an iterator over a range of pairs (inclusive)
+</a><a href="#h4-1-15" id="h4-1-15" class="i">+    /// Returns an iterator over a range of key/value pairs.
+</a>     fn scan(&amp;self, range: impl RangeBounds&lt;Vec&lt;u8&gt;&gt;) -&gt; Range;
+ 
+<a href="#h4-1-18" id="h4-1-18" class="d">-    /// Writes a value
+</a><a href="#h4-1-19" id="h4-1-19" class="i">+    /// Writes a value for a key, replacing the existing value if any.
+</a>     fn write(&amp;mut self, key: &amp;[u8], value: Vec&lt;u8&gt;) -&gt; Result&lt;(), Error&gt;;
+ }
+ 
+<a href="#h4-1-23" id="h4-1-23" class="d">-/// Iterator over a key range
+</a><a href="#h4-1-24" id="h4-1-24" class="d">-pub type Range =
+</a><a href="#h4-1-25" id="h4-1-25" class="d">-    Box&lt;dyn DoubleEndedIterator&lt;Item = Result&lt;(Vec&lt;u8&gt;, Vec&lt;u8&gt;), Error&gt;&gt; + &#39;static + Sync + Send&gt;;
+</a><a href="#h4-1-26" id="h4-1-26" class="i">+/// Iterator over a key/value range.
+</a><a href="#h4-1-27" id="h4-1-27" class="i">+pub type Range&lt;&#39;a&gt; =
+</a><a href="#h4-1-28" id="h4-1-28" class="i">+    Box&lt;dyn DoubleEndedIterator&lt;Item = Result&lt;(Vec&lt;u8&gt;, Vec&lt;u8&gt;), Error&gt;&gt; + &#39;a + Sync + Send&gt;;
+</a> 
+ #[cfg(test)]
+ trait TestSuite&lt;S: Storage&gt; {
+     fn setup() -&gt; Result&lt;S, Error&gt;;
+ 
+     fn test() -&gt; Result&lt;(), Error&gt; {
+<a href="#h4-1-35" id="h4-1-35" class="d">-        Self::test_range()?;
+</a>         Self::test_read()?;
+         Self::test_remove()?;
+<a href="#h4-1-38" id="h4-1-38" class="i">+        Self::test_scan()?;
+</a>         Self::test_write()?;
+         Ok(())
+     }
+ 
+<a href="#h4-1-43" id="h4-1-43" class="d">-    fn test_range() -&gt; Result&lt;(), Error&gt; {
+</a><a href="#h4-1-44" id="h4-1-44" class="i">+    fn test_read() -&gt; Result&lt;(), Error&gt; {
+</a><a href="#h4-1-45" id="h4-1-45" class="i">+        let mut s = Self::setup()?;
+</a><a href="#h4-1-46" id="h4-1-46" class="i">+        assert_eq!((), s.write(b&quot;a&quot;, vec![0x01])?);
+</a><a href="#h4-1-47" id="h4-1-47" class="i">+        assert_eq!(Some(vec![0x01]), s.read(b&quot;a&quot;)?);
+</a><a href="#h4-1-48" id="h4-1-48" class="i">+        assert_eq!(None, s.read(b&quot;b&quot;)?);
+</a><a href="#h4-1-49" id="h4-1-49" class="i">+        Ok(())
+</a><a href="#h4-1-50" id="h4-1-50" class="i">+    }
+</a><a href="#h4-1-51" id="h4-1-51" class="i">+
+</a><a href="#h4-1-52" id="h4-1-52" class="i">+    fn test_remove() -&gt; Result&lt;(), Error&gt; {
+</a><a href="#h4-1-53" id="h4-1-53" class="i">+        let mut s = Self::setup()?;
+</a><a href="#h4-1-54" id="h4-1-54" class="i">+        s.write(b&quot;a&quot;, vec![0x01])?;
+</a><a href="#h4-1-55" id="h4-1-55" class="i">+        assert_eq!(Some(vec![0x01]), s.read(b&quot;a&quot;)?);
+</a><a href="#h4-1-56" id="h4-1-56" class="i">+        assert_eq!((), s.remove(b&quot;a&quot;)?);
+</a><a href="#h4-1-57" id="h4-1-57" class="i">+        assert_eq!(None, s.read(b&quot;a&quot;)?);
+</a><a href="#h4-1-58" id="h4-1-58" class="i">+        assert_eq!((), s.remove(b&quot;b&quot;)?);
+</a><a href="#h4-1-59" id="h4-1-59" class="i">+        Ok(())
+</a><a href="#h4-1-60" id="h4-1-60" class="i">+    }
+</a><a href="#h4-1-61" id="h4-1-61" class="i">+
+</a><a href="#h4-1-62" id="h4-1-62" class="i">+    fn test_scan() -&gt; Result&lt;(), Error&gt; {
+</a>         let mut s = Self::setup()?;
+         s.write(b&quot;a&quot;, vec![0x01])?;
+         s.write(b&quot;b&quot;, vec![0x02])?;
+<a href="#h4-2" id="h4-2" class="h">@@ -48,6 +68,7 @@ trait TestSuite&lt;S: Storage&gt; {
+</a>         s.write(b&quot;bb&quot;, vec![0x02, 0x02])?;
+         s.write(b&quot;c&quot;, vec![0x03])?;
+ 
+<a href="#h4-2-3" id="h4-2-3" class="i">+        // Forward/backward ranges
+</a>         assert_eq!(
+             vec![
+                 (b&quot;b&quot;.to_vec(), vec![0x02]),
+<a href="#h4-3" id="h4-3" class="h">@@ -56,33 +77,59 @@ trait TestSuite&lt;S: Storage&gt; {
+</a>             ],
+             s.scan(b&quot;b&quot;.to_vec()..b&quot;bz&quot;.to_vec()).collect::&lt;Result&lt;Vec&lt;_&gt;, _&gt;&gt;()?
+         );
+<a href="#h4-3-3" id="h4-3-3" class="d">-        Ok(())
+</a><a href="#h4-3-4" id="h4-3-4" class="d">-    }
+</a><a href="#h4-3-5" id="h4-3-5" class="i">+        assert_eq!(
+</a><a href="#h4-3-6" id="h4-3-6" class="i">+            vec![
+</a><a href="#h4-3-7" id="h4-3-7" class="i">+                (b&quot;bb&quot;.to_vec(), vec![0x02, 0x02]),
+</a><a href="#h4-3-8" id="h4-3-8" class="i">+                (b&quot;ba&quot;.to_vec(), vec![0x02, 0x01]),
+</a><a href="#h4-3-9" id="h4-3-9" class="i">+                (b&quot;b&quot;.to_vec(), vec![0x02]),
+</a><a href="#h4-3-10" id="h4-3-10" class="i">+            ],
+</a><a href="#h4-3-11" id="h4-3-11" class="i">+            s.scan(b&quot;b&quot;.to_vec()..b&quot;bz&quot;.to_vec()).rev().collect::&lt;Result&lt;Vec&lt;_&gt;, _&gt;&gt;()?
+</a><a href="#h4-3-12" id="h4-3-12" class="i">+        );
+</a> 
+<a href="#h4-3-14" id="h4-3-14" class="d">-    fn test_read() -&gt; Result&lt;(), Error&gt; {
+</a><a href="#h4-3-15" id="h4-3-15" class="d">-        let mut b = Self::setup()?;
+</a><a href="#h4-3-16" id="h4-3-16" class="d">-        b.write(b&quot;a&quot;, vec![0x01])?;
+</a><a href="#h4-3-17" id="h4-3-17" class="d">-        assert_eq!(Some(vec![0x01]), b.read(b&quot;a&quot;)?);
+</a><a href="#h4-3-18" id="h4-3-18" class="d">-        assert_eq!(None, b.read(b&quot;b&quot;)?);
+</a><a href="#h4-3-19" id="h4-3-19" class="d">-        Ok(())
+</a><a href="#h4-3-20" id="h4-3-20" class="d">-    }
+</a><a href="#h4-3-21" id="h4-3-21" class="i">+        // Inclusive/exclusive ranges
+</a><a href="#h4-3-22" id="h4-3-22" class="i">+        assert_eq!(
+</a><a href="#h4-3-23" id="h4-3-23" class="i">+            vec![(b&quot;b&quot;.to_vec(), vec![0x02]), (b&quot;ba&quot;.to_vec(), vec![0x02, 0x01]),],
+</a><a href="#h4-3-24" id="h4-3-24" class="i">+            s.scan(b&quot;b&quot;.to_vec()..b&quot;bb&quot;.to_vec()).collect::&lt;Result&lt;Vec&lt;_&gt;, _&gt;&gt;()?
+</a><a href="#h4-3-25" id="h4-3-25" class="i">+        );
+</a><a href="#h4-3-26" id="h4-3-26" class="i">+        assert_eq!(
+</a><a href="#h4-3-27" id="h4-3-27" class="i">+            vec![
+</a><a href="#h4-3-28" id="h4-3-28" class="i">+                (b&quot;b&quot;.to_vec(), vec![0x02]),
+</a><a href="#h4-3-29" id="h4-3-29" class="i">+                (b&quot;ba&quot;.to_vec(), vec![0x02, 0x01]),
+</a><a href="#h4-3-30" id="h4-3-30" class="i">+                (b&quot;bb&quot;.to_vec(), vec![0x02, 0x02]),
+</a><a href="#h4-3-31" id="h4-3-31" class="i">+            ],
+</a><a href="#h4-3-32" id="h4-3-32" class="i">+            s.scan(b&quot;b&quot;.to_vec()..=b&quot;bb&quot;.to_vec()).collect::&lt;Result&lt;Vec&lt;_&gt;, _&gt;&gt;()?
+</a><a href="#h4-3-33" id="h4-3-33" class="i">+        );
+</a> 
+<a href="#h4-3-35" id="h4-3-35" class="d">-    fn test_remove() -&gt; Result&lt;(), Error&gt; {
+</a><a href="#h4-3-36" id="h4-3-36" class="d">-        let mut b = Self::setup()?;
+</a><a href="#h4-3-37" id="h4-3-37" class="d">-        b.write(b&quot;a&quot;, vec![0x01])?;
+</a><a href="#h4-3-38" id="h4-3-38" class="d">-        assert_eq!(Some(vec![0x01]), b.read(b&quot;a&quot;)?);
+</a><a href="#h4-3-39" id="h4-3-39" class="d">-        b.remove(b&quot;a&quot;)?;
+</a><a href="#h4-3-40" id="h4-3-40" class="d">-        assert_eq!(None, b.read(b&quot;a&quot;)?);
+</a><a href="#h4-3-41" id="h4-3-41" class="d">-        b.remove(b&quot;b&quot;)?;
+</a><a href="#h4-3-42" id="h4-3-42" class="i">+        // Open ranges
+</a><a href="#h4-3-43" id="h4-3-43" class="i">+        assert_eq!(
+</a><a href="#h4-3-44" id="h4-3-44" class="i">+            vec![(b&quot;bb&quot;.to_vec(), vec![0x02, 0x02]), (b&quot;c&quot;.to_vec(), vec![0x03]),],
+</a><a href="#h4-3-45" id="h4-3-45" class="i">+            s.scan(b&quot;bb&quot;.to_vec()..).collect::&lt;Result&lt;Vec&lt;_&gt;, _&gt;&gt;()?
+</a><a href="#h4-3-46" id="h4-3-46" class="i">+        );
+</a><a href="#h4-3-47" id="h4-3-47" class="i">+        assert_eq!(
+</a><a href="#h4-3-48" id="h4-3-48" class="i">+            vec![(b&quot;a&quot;.to_vec(), vec![0x01]), (b&quot;b&quot;.to_vec(), vec![0x02]),],
+</a><a href="#h4-3-49" id="h4-3-49" class="i">+            s.scan(..=b&quot;b&quot;.to_vec()).collect::&lt;Result&lt;Vec&lt;_&gt;, _&gt;&gt;()?
+</a><a href="#h4-3-50" id="h4-3-50" class="i">+        );
+</a><a href="#h4-3-51" id="h4-3-51" class="i">+
+</a><a href="#h4-3-52" id="h4-3-52" class="i">+        // Full range
+</a><a href="#h4-3-53" id="h4-3-53" class="i">+        assert_eq!(
+</a><a href="#h4-3-54" id="h4-3-54" class="i">+            vec![
+</a><a href="#h4-3-55" id="h4-3-55" class="i">+                (b&quot;a&quot;.to_vec(), vec![0x01]),
+</a><a href="#h4-3-56" id="h4-3-56" class="i">+                (b&quot;b&quot;.to_vec(), vec![0x02]),
+</a><a href="#h4-3-57" id="h4-3-57" class="i">+                (b&quot;ba&quot;.to_vec(), vec![0x02, 0x01]),
+</a><a href="#h4-3-58" id="h4-3-58" class="i">+                (b&quot;bb&quot;.to_vec(), vec![0x02, 0x02]),
+</a><a href="#h4-3-59" id="h4-3-59" class="i">+                (b&quot;c&quot;.to_vec(), vec![0x03]),
+</a><a href="#h4-3-60" id="h4-3-60" class="i">+            ],
+</a><a href="#h4-3-61" id="h4-3-61" class="i">+            s.scan(..).collect::&lt;Result&lt;Vec&lt;_&gt;, _&gt;&gt;()?
+</a><a href="#h4-3-62" id="h4-3-62" class="i">+        );
+</a>         Ok(())
+     }
+ 
+     fn test_write() -&gt; Result&lt;(), Error&gt; {
+<a href="#h4-3-67" id="h4-3-67" class="d">-        let mut b = Self::setup()?;
+</a><a href="#h4-3-68" id="h4-3-68" class="d">-        b.write(b&quot;a&quot;, vec![0x01])?;
+</a><a href="#h4-3-69" id="h4-3-69" class="d">-        assert_eq!(Some(vec![0x01]), b.read(b&quot;a&quot;)?);
+</a><a href="#h4-3-70" id="h4-3-70" class="d">-        b.write(b&quot;a&quot;, vec![0x02])?;
+</a><a href="#h4-3-71" id="h4-3-71" class="d">-        assert_eq!(Some(vec![0x02]), b.read(b&quot;a&quot;)?);
+</a><a href="#h4-3-72" id="h4-3-72" class="i">+        let mut s = Self::setup()?;
+</a><a href="#h4-3-73" id="h4-3-73" class="i">+        assert_eq!((), s.write(b&quot;a&quot;, vec![0x01])?);
+</a><a href="#h4-3-74" id="h4-3-74" class="i">+        assert_eq!(Some(vec![0x01]), s.read(b&quot;a&quot;)?);
+</a><a href="#h4-3-75" id="h4-3-75" class="i">+        assert_eq!((), s.write(b&quot;a&quot;, vec![0x02])?);
+</a><a href="#h4-3-76" id="h4-3-76" class="i">+        assert_eq!(Some(vec![0x02]), s.read(b&quot;a&quot;)?);
+</a>         Ok(())
+     }
+ }
+<b>diff --git a/<a id="h5" href="../file/src/sql/engine/kv.rs.html">src/sql/engine/kv.rs</a> b/<a href="../file/src/sql/engine/kv.rs.html">src/sql/engine/kv.rs</a></b>
+<a href="#h5-0" id="h5-0" class="h">@@ -81,10 +81,18 @@ impl&lt;S: kv::storage::Storage&gt; super::Transaction for Transaction&lt;S&gt; {
+</a>     fn scan(&amp;self, table: &amp;str) -&gt; Result&lt;super::Scan, Error&gt; {
+         let from = Key::RowStart(table).encode();
+         let to = Key::RowEnd(table).encode();
+<a href="#h5-0-3" id="h5-0-3" class="d">-        Ok(Box::new(self.txn.scan(&amp;from..&amp;to)?.map(|res| match res {
+</a><a href="#h5-0-4" id="h5-0-4" class="d">-            Ok((_, v)) =&gt; deserialize(&amp;v),
+</a><a href="#h5-0-5" id="h5-0-5" class="d">-            Err(err) =&gt; Err(err),
+</a><a href="#h5-0-6" id="h5-0-6" class="d">-        })))
+</a><a href="#h5-0-7" id="h5-0-7" class="i">+        // FIXME We buffer results here, to avoid dealing with trait lifetimes
+</a><a href="#h5-0-8" id="h5-0-8" class="i">+        // right now
+</a><a href="#h5-0-9" id="h5-0-9" class="i">+        let iter = self
+</a><a href="#h5-0-10" id="h5-0-10" class="i">+            .txn
+</a><a href="#h5-0-11" id="h5-0-11" class="i">+            .scan(&amp;from..&amp;to)?
+</a><a href="#h5-0-12" id="h5-0-12" class="i">+            .map(|res| match res {
+</a><a href="#h5-0-13" id="h5-0-13" class="i">+                Ok((_, v)) =&gt; deserialize(&amp;v),
+</a><a href="#h5-0-14" id="h5-0-14" class="i">+                Err(err) =&gt; Err(err),
+</a><a href="#h5-0-15" id="h5-0-15" class="i">+            })
+</a><a href="#h5-0-16" id="h5-0-16" class="i">+            .collect::&lt;Vec&lt;Result&lt;_, Error&gt;&gt;&gt;()
+</a><a href="#h5-0-17" id="h5-0-17" class="i">+            .into_iter();
+</a><a href="#h5-0-18" id="h5-0-18" class="i">+        Ok(Box::new(iter))
+</a>     }
+ 
+     fn update(&amp;mut self, table: &amp;str, id: &amp;types::Value, row: types::Row) -&gt; Result&lt;(), Error&gt; {
+<b>diff --git a/<a id="h6" href="../file/src/sql/engine/mod.rs.html">src/sql/engine/mod.rs</a> b/<a href="../file/src/sql/engine/mod.rs.html">src/sql/engine/mod.rs</a></b>
+<a href="#h6-0" id="h6-0" class="h">@@ -39,4 +39,4 @@ pub trait Transaction {
+</a> }
+ 
+ pub type Scan =
+<a href="#h6-0-3" id="h6-0-3" class="d">-    Box&lt;dyn DoubleEndedIterator&lt;Item = Result&lt;types::Row, Error&gt;&gt; + Sync + Send + &#39;static&gt;;
+</a><a href="#h6-0-4" id="h6-0-4" class="i">+    Box&lt;dyn DoubleEndedIterator&lt;Item = Result&lt;types::Row, Error&gt;&gt; + &#39;static + Sync + Send&gt;;
+</a></pre>
+</div>
+</body>
+</html>

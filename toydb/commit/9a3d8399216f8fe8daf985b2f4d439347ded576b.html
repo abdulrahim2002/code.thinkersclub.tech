@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>sql: split out separate execution::execute module - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/9a3d8399216f8fe8daf985b2f4d439347ded576b.html">9a3d8399216f8fe8daf985b2f4d439347ded576b</a>
+<b>parent</b> <a href="../commit/3457a9fbe66a224ecc87997604761b7a52e2fa6f.html">3457a9fbe66a224ecc87997604761b7a52e2fa6f</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Mon, 17 Jun 2024 11:00:27 +0200
+
+sql: split out separate execution::execute module
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/sql/execution/aggregation.rs</a></td><td> | </td><td class="num">4</td><td><span class="i">++</span><span class="d">--</span></td></tr>
+<tr><td class="A">A</td><td><a href="#h1">src/sql/execution/execute.rs</a></td><td> | </td><td class="num">136</td><td><span class="i">+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/sql/execution/join.rs</a></td><td> | </td><td class="num">4</td><td><span class="i">++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">src/sql/execution/mod.rs</a></td><td> | </td><td class="num">139</td><td><span class="i">++</span><span class="d">-----------------------------------------------------------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h4">src/sql/execution/mutation.rs</a></td><td> | </td><td class="num">6</td><td><span class="i">+++</span><span class="d">---</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h5">src/sql/execution/query.rs</a></td><td> | </td><td class="num">4</td><td><span class="i">++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h6">src/sql/execution/schema.rs</a></td><td> | </td><td class="num">4</td><td><span class="i">++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h7">src/sql/execution/source.rs</a></td><td> | </td><td class="num">4</td><td><span class="i">++</span><span class="d">--</span></td></tr>
+</table></pre><pre>8 files changed, 151 insertions(+), 150 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/sql/execution/aggregation.rs.html">src/sql/execution/aggregation.rs</a> b/<a href="../file/src/sql/execution/aggregation.rs.html">src/sql/execution/aggregation.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -1,7 +1,7 @@
+</a><a href="#h0-0-0" id="h0-0-0" class="d">-use super::super::plan::Aggregate;
+</a><a href="#h0-0-1" id="h0-0-1" class="d">-use super::super::types::{Column, Value};
+</a> use super::QueryIterator;
+ use crate::error::Result;
+<a href="#h0-0-4" id="h0-0-4" class="i">+use crate::sql::plan::Aggregate;
+</a><a href="#h0-0-5" id="h0-0-5" class="i">+use crate::sql::types::{Column, Value};
+</a> 
+ use std::cmp::Ordering;
+ use std::collections::HashMap;
+<b>diff --git a/<a id="h1" href="../file/src/sql/execution/execute.rs.html">src/sql/execution/execute.rs</a> b/<a href="../file/src/sql/execution/execute.rs.html">src/sql/execution/execute.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -0,0 +1,136 @@
+</a><a href="#h1-0-0" id="h1-0-0" class="i">+use super::aggregation::Aggregation;
+</a><a href="#h1-0-1" id="h1-0-1" class="i">+use super::join::{HashJoin, NestedLoopJoin};
+</a><a href="#h1-0-2" id="h1-0-2" class="i">+use super::mutation::{Delete, Insert, Update};
+</a><a href="#h1-0-3" id="h1-0-3" class="i">+use super::query::{Filter, Limit, Offset, Order, Projection};
+</a><a href="#h1-0-4" id="h1-0-4" class="i">+use super::schema::{CreateTable, DropTable};
+</a><a href="#h1-0-5" id="h1-0-5" class="i">+use super::source::{IndexLookup, KeyLookup, Nothing, Scan};
+</a><a href="#h1-0-6" id="h1-0-6" class="i">+use crate::error::Result;
+</a><a href="#h1-0-7" id="h1-0-7" class="i">+use crate::sql::engine::Transaction;
+</a><a href="#h1-0-8" id="h1-0-8" class="i">+use crate::sql::plan::{Node, Plan};
+</a><a href="#h1-0-9" id="h1-0-9" class="i">+use crate::sql::types::{Columns, Row};
+</a><a href="#h1-0-10" id="h1-0-10" class="i">+
+</a><a href="#h1-0-11" id="h1-0-11" class="i">+/// A plan execution result.
+</a><a href="#h1-0-12" id="h1-0-12" class="i">+pub enum ExecutionResult {
+</a><a href="#h1-0-13" id="h1-0-13" class="i">+    CreateTable { name: String },
+</a><a href="#h1-0-14" id="h1-0-14" class="i">+    DropTable { name: String, existed: bool },
+</a><a href="#h1-0-15" id="h1-0-15" class="i">+    Delete { count: u64 },
+</a><a href="#h1-0-16" id="h1-0-16" class="i">+    Insert { count: u64 },
+</a><a href="#h1-0-17" id="h1-0-17" class="i">+    Update { count: u64 },
+</a><a href="#h1-0-18" id="h1-0-18" class="i">+    Select { iter: QueryIterator },
+</a><a href="#h1-0-19" id="h1-0-19" class="i">+}
+</a><a href="#h1-0-20" id="h1-0-20" class="i">+
+</a><a href="#h1-0-21" id="h1-0-21" class="i">+/// A query result iterator, containins the columns and row iterator.
+</a><a href="#h1-0-22" id="h1-0-22" class="i">+pub struct QueryIterator {
+</a><a href="#h1-0-23" id="h1-0-23" class="i">+    // TODO: use a different type here.
+</a><a href="#h1-0-24" id="h1-0-24" class="i">+    pub columns: Columns,
+</a><a href="#h1-0-25" id="h1-0-25" class="i">+    // TODO: remove Send, it&#39;s only needed for the ResultSet conversion.
+</a><a href="#h1-0-26" id="h1-0-26" class="i">+    pub rows: Box&lt;dyn Iterator&lt;Item = Result&lt;Row&gt;&gt; + Send&gt;,
+</a><a href="#h1-0-27" id="h1-0-27" class="i">+}
+</a><a href="#h1-0-28" id="h1-0-28" class="i">+
+</a><a href="#h1-0-29" id="h1-0-29" class="i">+impl Iterator for QueryIterator {
+</a><a href="#h1-0-30" id="h1-0-30" class="i">+    type Item = Result&lt;Row&gt;;
+</a><a href="#h1-0-31" id="h1-0-31" class="i">+
+</a><a href="#h1-0-32" id="h1-0-32" class="i">+    fn next(&amp;mut self) -&gt; Option&lt;Self::Item&gt; {
+</a><a href="#h1-0-33" id="h1-0-33" class="i">+        self.rows.next()
+</a><a href="#h1-0-34" id="h1-0-34" class="i">+    }
+</a><a href="#h1-0-35" id="h1-0-35" class="i">+}
+</a><a href="#h1-0-36" id="h1-0-36" class="i">+
+</a><a href="#h1-0-37" id="h1-0-37" class="i">+/// Executes a plan, returning an execution result.
+</a><a href="#h1-0-38" id="h1-0-38" class="i">+pub fn execute_plan(plan: Plan, txn: &amp;mut impl Transaction) -&gt; Result&lt;ExecutionResult&gt; {
+</a><a href="#h1-0-39" id="h1-0-39" class="i">+    Ok(match plan {
+</a><a href="#h1-0-40" id="h1-0-40" class="i">+        Plan::Select(node) =&gt; ExecutionResult::Select { iter: execute(node, txn)? },
+</a><a href="#h1-0-41" id="h1-0-41" class="i">+
+</a><a href="#h1-0-42" id="h1-0-42" class="i">+        Plan::CreateTable { schema } =&gt; {
+</a><a href="#h1-0-43" id="h1-0-43" class="i">+            let name = schema.name.clone();
+</a><a href="#h1-0-44" id="h1-0-44" class="i">+            CreateTable::new(schema).execute(txn)?;
+</a><a href="#h1-0-45" id="h1-0-45" class="i">+            ExecutionResult::CreateTable { name }
+</a><a href="#h1-0-46" id="h1-0-46" class="i">+        }
+</a><a href="#h1-0-47" id="h1-0-47" class="i">+
+</a><a href="#h1-0-48" id="h1-0-48" class="i">+        Plan::DropTable { table, if_exists } =&gt; {
+</a><a href="#h1-0-49" id="h1-0-49" class="i">+            let name = table.clone();
+</a><a href="#h1-0-50" id="h1-0-50" class="i">+            let existed = DropTable::new(table, if_exists).execute(txn)?;
+</a><a href="#h1-0-51" id="h1-0-51" class="i">+            ExecutionResult::DropTable { name, existed }
+</a><a href="#h1-0-52" id="h1-0-52" class="i">+        }
+</a><a href="#h1-0-53" id="h1-0-53" class="i">+
+</a><a href="#h1-0-54" id="h1-0-54" class="i">+        Plan::Delete { table, source } =&gt; {
+</a><a href="#h1-0-55" id="h1-0-55" class="i">+            let source = execute(source, txn)?;
+</a><a href="#h1-0-56" id="h1-0-56" class="i">+            let count = Delete::new(table, source).execute(txn)?;
+</a><a href="#h1-0-57" id="h1-0-57" class="i">+            ExecutionResult::Delete { count }
+</a><a href="#h1-0-58" id="h1-0-58" class="i">+        }
+</a><a href="#h1-0-59" id="h1-0-59" class="i">+
+</a><a href="#h1-0-60" id="h1-0-60" class="i">+        Plan::Insert { table, columns, expressions } =&gt; {
+</a><a href="#h1-0-61" id="h1-0-61" class="i">+            let count = Insert::new(table, columns, expressions).execute(txn)?;
+</a><a href="#h1-0-62" id="h1-0-62" class="i">+            ExecutionResult::Insert { count }
+</a><a href="#h1-0-63" id="h1-0-63" class="i">+        }
+</a><a href="#h1-0-64" id="h1-0-64" class="i">+
+</a><a href="#h1-0-65" id="h1-0-65" class="i">+        Plan::Update { table, source, expressions } =&gt; {
+</a><a href="#h1-0-66" id="h1-0-66" class="i">+            let source = execute(source, txn)?;
+</a><a href="#h1-0-67" id="h1-0-67" class="i">+            let expressions = expressions.into_iter().map(|(i, _, expr)| (i, expr)).collect();
+</a><a href="#h1-0-68" id="h1-0-68" class="i">+            let count = Update::new(table, source, expressions).execute(txn)?;
+</a><a href="#h1-0-69" id="h1-0-69" class="i">+            ExecutionResult::Update { count }
+</a><a href="#h1-0-70" id="h1-0-70" class="i">+        }
+</a><a href="#h1-0-71" id="h1-0-71" class="i">+    })
+</a><a href="#h1-0-72" id="h1-0-72" class="i">+}
+</a><a href="#h1-0-73" id="h1-0-73" class="i">+
+</a><a href="#h1-0-74" id="h1-0-74" class="i">+/// Recursively executes a query plan node, returning a row iterator.
+</a><a href="#h1-0-75" id="h1-0-75" class="i">+///
+</a><a href="#h1-0-76" id="h1-0-76" class="i">+/// TODO: flatten the executor structs into functions where appropriate. Same
+</a><a href="#h1-0-77" id="h1-0-77" class="i">+/// goes for all other execute functions.
+</a><a href="#h1-0-78" id="h1-0-78" class="i">+///
+</a><a href="#h1-0-79" id="h1-0-79" class="i">+/// TODO: since iterators are lazy, make this infallible and move all catalog
+</a><a href="#h1-0-80" id="h1-0-80" class="i">+/// lookups to planning.
+</a><a href="#h1-0-81" id="h1-0-81" class="i">+pub fn execute(node: Node, txn: &amp;mut impl Transaction) -&gt; Result&lt;QueryIterator&gt; {
+</a><a href="#h1-0-82" id="h1-0-82" class="i">+    match node {
+</a><a href="#h1-0-83" id="h1-0-83" class="i">+        Node::Aggregation { source, aggregates } =&gt; {
+</a><a href="#h1-0-84" id="h1-0-84" class="i">+            let source = execute(*source, txn)?;
+</a><a href="#h1-0-85" id="h1-0-85" class="i">+            Aggregation::new(source, aggregates).execute()
+</a><a href="#h1-0-86" id="h1-0-86" class="i">+        }
+</a><a href="#h1-0-87" id="h1-0-87" class="i">+
+</a><a href="#h1-0-88" id="h1-0-88" class="i">+        Node::Filter { source, predicate } =&gt; {
+</a><a href="#h1-0-89" id="h1-0-89" class="i">+            let source = execute(*source, txn)?;
+</a><a href="#h1-0-90" id="h1-0-90" class="i">+            Ok(Filter::new(source, predicate).execute())
+</a><a href="#h1-0-91" id="h1-0-91" class="i">+        }
+</a><a href="#h1-0-92" id="h1-0-92" class="i">+
+</a><a href="#h1-0-93" id="h1-0-93" class="i">+        Node::HashJoin { left, left_field, right, right_field, outer } =&gt; {
+</a><a href="#h1-0-94" id="h1-0-94" class="i">+            let left = execute(*left, txn)?;
+</a><a href="#h1-0-95" id="h1-0-95" class="i">+            let right = execute(*right, txn)?;
+</a><a href="#h1-0-96" id="h1-0-96" class="i">+            HashJoin::new(left, left_field.0, right, right_field.0, outer).execute()
+</a><a href="#h1-0-97" id="h1-0-97" class="i">+        }
+</a><a href="#h1-0-98" id="h1-0-98" class="i">+
+</a><a href="#h1-0-99" id="h1-0-99" class="i">+        Node::IndexLookup { table, alias: _, column, values } =&gt; {
+</a><a href="#h1-0-100" id="h1-0-100" class="i">+            IndexLookup::new(table, column, values).execute(txn)
+</a><a href="#h1-0-101" id="h1-0-101" class="i">+        }
+</a><a href="#h1-0-102" id="h1-0-102" class="i">+
+</a><a href="#h1-0-103" id="h1-0-103" class="i">+        Node::KeyLookup { table, alias: _, keys } =&gt; KeyLookup::new(table, keys).execute(txn),
+</a><a href="#h1-0-104" id="h1-0-104" class="i">+
+</a><a href="#h1-0-105" id="h1-0-105" class="i">+        Node::Limit { source, limit } =&gt; {
+</a><a href="#h1-0-106" id="h1-0-106" class="i">+            let source = execute(*source, txn)?;
+</a><a href="#h1-0-107" id="h1-0-107" class="i">+            Ok(Limit::new(source, limit).execute())
+</a><a href="#h1-0-108" id="h1-0-108" class="i">+        }
+</a><a href="#h1-0-109" id="h1-0-109" class="i">+
+</a><a href="#h1-0-110" id="h1-0-110" class="i">+        Node::NestedLoopJoin { left, left_size: _, right, predicate, outer } =&gt; {
+</a><a href="#h1-0-111" id="h1-0-111" class="i">+            let left = execute(*left, txn)?;
+</a><a href="#h1-0-112" id="h1-0-112" class="i">+            let right = execute(*right, txn)?;
+</a><a href="#h1-0-113" id="h1-0-113" class="i">+            NestedLoopJoin::new(left, right, predicate, outer).execute()
+</a><a href="#h1-0-114" id="h1-0-114" class="i">+        }
+</a><a href="#h1-0-115" id="h1-0-115" class="i">+
+</a><a href="#h1-0-116" id="h1-0-116" class="i">+        Node::Nothing =&gt; Ok(Nothing.execute()),
+</a><a href="#h1-0-117" id="h1-0-117" class="i">+
+</a><a href="#h1-0-118" id="h1-0-118" class="i">+        Node::Offset { source, offset } =&gt; {
+</a><a href="#h1-0-119" id="h1-0-119" class="i">+            let source = execute(*source, txn)?;
+</a><a href="#h1-0-120" id="h1-0-120" class="i">+            Ok(Offset::new(source, offset).execute())
+</a><a href="#h1-0-121" id="h1-0-121" class="i">+        }
+</a><a href="#h1-0-122" id="h1-0-122" class="i">+
+</a><a href="#h1-0-123" id="h1-0-123" class="i">+        Node::Order { source, orders } =&gt; {
+</a><a href="#h1-0-124" id="h1-0-124" class="i">+            let source = execute(*source, txn)?;
+</a><a href="#h1-0-125" id="h1-0-125" class="i">+            Order::new(source, orders).execute()
+</a><a href="#h1-0-126" id="h1-0-126" class="i">+        }
+</a><a href="#h1-0-127" id="h1-0-127" class="i">+
+</a><a href="#h1-0-128" id="h1-0-128" class="i">+        Node::Projection { source, expressions } =&gt; {
+</a><a href="#h1-0-129" id="h1-0-129" class="i">+            let source = execute(*source, txn)?;
+</a><a href="#h1-0-130" id="h1-0-130" class="i">+            Ok(Projection::new(source, expressions).execute())
+</a><a href="#h1-0-131" id="h1-0-131" class="i">+        }
+</a><a href="#h1-0-132" id="h1-0-132" class="i">+
+</a><a href="#h1-0-133" id="h1-0-133" class="i">+        Node::Scan { table, alias: _, filter } =&gt; Scan::new(table, filter).execute(txn),
+</a><a href="#h1-0-134" id="h1-0-134" class="i">+    }
+</a><a href="#h1-0-135" id="h1-0-135" class="i">+}
+</a><b>diff --git a/<a id="h2" href="../file/src/sql/execution/join.rs.html">src/sql/execution/join.rs</a> b/<a href="../file/src/sql/execution/join.rs.html">src/sql/execution/join.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -1,7 +1,7 @@
+</a><a href="#h2-0-0" id="h2-0-0" class="d">-use super::super::types::{Expression, Rows};
+</a><a href="#h2-0-1" id="h2-0-1" class="d">-use super::{QueryIterator, Row, Value};
+</a><a href="#h2-0-2" id="h2-0-2" class="i">+use super::QueryIterator;
+</a> use crate::errdata;
+ use crate::error::Result;
+<a href="#h2-0-5" id="h2-0-5" class="i">+use crate::sql::types::{Expression, Row, Rows, Value};
+</a> 
+ use std::collections::HashMap;
+ 
+<b>diff --git a/<a id="h3" href="../file/src/sql/execution/mod.rs.html">src/sql/execution/mod.rs</a> b/<a href="../file/src/sql/execution/mod.rs.html">src/sql/execution/mod.rs</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -1,144 +1,9 @@
+</a> mod aggregation;
+<a href="#h3-0-1" id="h3-0-1" class="i">+mod execute;
+</a> mod join;
+ mod mutation;
+ mod query;
+ mod schema;
+ mod source;
+ 
+<a href="#h3-0-8" id="h3-0-8" class="d">-use aggregation::Aggregation;
+</a><a href="#h3-0-9" id="h3-0-9" class="d">-use join::{HashJoin, NestedLoopJoin};
+</a><a href="#h3-0-10" id="h3-0-10" class="d">-use mutation::{Delete, Insert, Update};
+</a><a href="#h3-0-11" id="h3-0-11" class="d">-use query::{Filter, Limit, Offset, Order, Projection};
+</a><a href="#h3-0-12" id="h3-0-12" class="d">-use schema::{CreateTable, DropTable};
+</a><a href="#h3-0-13" id="h3-0-13" class="d">-use source::{IndexLookup, KeyLookup, Nothing, Scan};
+</a><a href="#h3-0-14" id="h3-0-14" class="d">-
+</a><a href="#h3-0-15" id="h3-0-15" class="d">-use super::engine::Transaction;
+</a><a href="#h3-0-16" id="h3-0-16" class="d">-use super::plan::{Node, Plan};
+</a><a href="#h3-0-17" id="h3-0-17" class="d">-use super::types::{Columns, Row, Value};
+</a><a href="#h3-0-18" id="h3-0-18" class="d">-use crate::error::Result;
+</a><a href="#h3-0-19" id="h3-0-19" class="d">-
+</a><a href="#h3-0-20" id="h3-0-20" class="d">-/// A plan execution result.
+</a><a href="#h3-0-21" id="h3-0-21" class="d">-pub enum ExecutionResult {
+</a><a href="#h3-0-22" id="h3-0-22" class="d">-    CreateTable { name: String },
+</a><a href="#h3-0-23" id="h3-0-23" class="d">-    DropTable { name: String, existed: bool },
+</a><a href="#h3-0-24" id="h3-0-24" class="d">-    Delete { count: u64 },
+</a><a href="#h3-0-25" id="h3-0-25" class="d">-    Insert { count: u64 },
+</a><a href="#h3-0-26" id="h3-0-26" class="d">-    Update { count: u64 },
+</a><a href="#h3-0-27" id="h3-0-27" class="d">-    Select { iter: QueryIterator },
+</a><a href="#h3-0-28" id="h3-0-28" class="d">-}
+</a><a href="#h3-0-29" id="h3-0-29" class="d">-
+</a><a href="#h3-0-30" id="h3-0-30" class="d">-/// A query result iterator, containins the columns and row iterator.
+</a><a href="#h3-0-31" id="h3-0-31" class="d">-pub struct QueryIterator {
+</a><a href="#h3-0-32" id="h3-0-32" class="d">-    // TODO: use a different type here.
+</a><a href="#h3-0-33" id="h3-0-33" class="d">-    pub columns: Columns,
+</a><a href="#h3-0-34" id="h3-0-34" class="d">-    // TODO: remove Send, it&#39;s only needed for the ResultSet conversion.
+</a><a href="#h3-0-35" id="h3-0-35" class="d">-    pub rows: Box&lt;dyn Iterator&lt;Item = Result&lt;Row&gt;&gt; + Send&gt;,
+</a><a href="#h3-0-36" id="h3-0-36" class="d">-}
+</a><a href="#h3-0-37" id="h3-0-37" class="d">-
+</a><a href="#h3-0-38" id="h3-0-38" class="d">-impl Iterator for QueryIterator {
+</a><a href="#h3-0-39" id="h3-0-39" class="d">-    type Item = Result&lt;Row&gt;;
+</a><a href="#h3-0-40" id="h3-0-40" class="d">-
+</a><a href="#h3-0-41" id="h3-0-41" class="d">-    fn next(&amp;mut self) -&gt; Option&lt;Self::Item&gt; {
+</a><a href="#h3-0-42" id="h3-0-42" class="d">-        self.rows.next()
+</a><a href="#h3-0-43" id="h3-0-43" class="d">-    }
+</a><a href="#h3-0-44" id="h3-0-44" class="d">-}
+</a><a href="#h3-0-45" id="h3-0-45" class="d">-
+</a><a href="#h3-0-46" id="h3-0-46" class="d">-/// Executes a plan, returning an execution result.
+</a><a href="#h3-0-47" id="h3-0-47" class="d">-pub fn execute_plan(plan: Plan, txn: &amp;mut impl Transaction) -&gt; Result&lt;ExecutionResult&gt; {
+</a><a href="#h3-0-48" id="h3-0-48" class="d">-    Ok(match plan {
+</a><a href="#h3-0-49" id="h3-0-49" class="d">-        Plan::Select(node) =&gt; ExecutionResult::Select { iter: execute(node, txn)? },
+</a><a href="#h3-0-50" id="h3-0-50" class="d">-
+</a><a href="#h3-0-51" id="h3-0-51" class="d">-        Plan::CreateTable { schema } =&gt; {
+</a><a href="#h3-0-52" id="h3-0-52" class="d">-            let name = schema.name.clone();
+</a><a href="#h3-0-53" id="h3-0-53" class="d">-            CreateTable::new(schema).execute(txn)?;
+</a><a href="#h3-0-54" id="h3-0-54" class="d">-            ExecutionResult::CreateTable { name }
+</a><a href="#h3-0-55" id="h3-0-55" class="d">-        }
+</a><a href="#h3-0-56" id="h3-0-56" class="d">-
+</a><a href="#h3-0-57" id="h3-0-57" class="d">-        Plan::DropTable { table, if_exists } =&gt; {
+</a><a href="#h3-0-58" id="h3-0-58" class="d">-            let name = table.clone();
+</a><a href="#h3-0-59" id="h3-0-59" class="d">-            let existed = DropTable::new(table, if_exists).execute(txn)?;
+</a><a href="#h3-0-60" id="h3-0-60" class="d">-            ExecutionResult::DropTable { name, existed }
+</a><a href="#h3-0-61" id="h3-0-61" class="d">-        }
+</a><a href="#h3-0-62" id="h3-0-62" class="d">-
+</a><a href="#h3-0-63" id="h3-0-63" class="d">-        Plan::Delete { table, source } =&gt; {
+</a><a href="#h3-0-64" id="h3-0-64" class="d">-            let source = execute(source, txn)?;
+</a><a href="#h3-0-65" id="h3-0-65" class="d">-            let count = Delete::new(table, source).execute(txn)?;
+</a><a href="#h3-0-66" id="h3-0-66" class="d">-            ExecutionResult::Delete { count }
+</a><a href="#h3-0-67" id="h3-0-67" class="d">-        }
+</a><a href="#h3-0-68" id="h3-0-68" class="d">-
+</a><a href="#h3-0-69" id="h3-0-69" class="d">-        Plan::Insert { table, columns, expressions } =&gt; {
+</a><a href="#h3-0-70" id="h3-0-70" class="d">-            let count = Insert::new(table, columns, expressions).execute(txn)?;
+</a><a href="#h3-0-71" id="h3-0-71" class="d">-            ExecutionResult::Insert { count }
+</a><a href="#h3-0-72" id="h3-0-72" class="d">-        }
+</a><a href="#h3-0-73" id="h3-0-73" class="d">-
+</a><a href="#h3-0-74" id="h3-0-74" class="d">-        Plan::Update { table, source, expressions } =&gt; {
+</a><a href="#h3-0-75" id="h3-0-75" class="d">-            let source = execute(source, txn)?;
+</a><a href="#h3-0-76" id="h3-0-76" class="d">-            let expressions = expressions.into_iter().map(|(i, _, expr)| (i, expr)).collect();
+</a><a href="#h3-0-77" id="h3-0-77" class="d">-            let count = Update::new(table, source, expressions).execute(txn)?;
+</a><a href="#h3-0-78" id="h3-0-78" class="d">-            ExecutionResult::Update { count }
+</a><a href="#h3-0-79" id="h3-0-79" class="d">-        }
+</a><a href="#h3-0-80" id="h3-0-80" class="d">-    })
+</a><a href="#h3-0-81" id="h3-0-81" class="d">-}
+</a><a href="#h3-0-82" id="h3-0-82" class="d">-
+</a><a href="#h3-0-83" id="h3-0-83" class="d">-/// Recursively executes a query plan node, returning a row iterator.
+</a><a href="#h3-0-84" id="h3-0-84" class="d">-///
+</a><a href="#h3-0-85" id="h3-0-85" class="d">-/// TODO: flatten the executor structs into functions where appropriate. Same
+</a><a href="#h3-0-86" id="h3-0-86" class="d">-/// goes for all other execute functions.
+</a><a href="#h3-0-87" id="h3-0-87" class="d">-///
+</a><a href="#h3-0-88" id="h3-0-88" class="d">-/// TODO: since iterators are lazy, make this infallible and move all catalog
+</a><a href="#h3-0-89" id="h3-0-89" class="d">-/// lookups to planning.
+</a><a href="#h3-0-90" id="h3-0-90" class="d">-pub fn execute(node: Node, txn: &amp;mut impl Transaction) -&gt; Result&lt;QueryIterator&gt; {
+</a><a href="#h3-0-91" id="h3-0-91" class="d">-    match node {
+</a><a href="#h3-0-92" id="h3-0-92" class="d">-        Node::Aggregation { source, aggregates } =&gt; {
+</a><a href="#h3-0-93" id="h3-0-93" class="d">-            let source = execute(*source, txn)?;
+</a><a href="#h3-0-94" id="h3-0-94" class="d">-            Aggregation::new(source, aggregates).execute()
+</a><a href="#h3-0-95" id="h3-0-95" class="d">-        }
+</a><a href="#h3-0-96" id="h3-0-96" class="d">-
+</a><a href="#h3-0-97" id="h3-0-97" class="d">-        Node::Filter { source, predicate } =&gt; {
+</a><a href="#h3-0-98" id="h3-0-98" class="d">-            let source = execute(*source, txn)?;
+</a><a href="#h3-0-99" id="h3-0-99" class="d">-            Ok(Filter::new(source, predicate).execute())
+</a><a href="#h3-0-100" id="h3-0-100" class="d">-        }
+</a><a href="#h3-0-101" id="h3-0-101" class="d">-
+</a><a href="#h3-0-102" id="h3-0-102" class="d">-        Node::HashJoin { left, left_field, right, right_field, outer } =&gt; {
+</a><a href="#h3-0-103" id="h3-0-103" class="d">-            let left = execute(*left, txn)?;
+</a><a href="#h3-0-104" id="h3-0-104" class="d">-            let right = execute(*right, txn)?;
+</a><a href="#h3-0-105" id="h3-0-105" class="d">-            HashJoin::new(left, left_field.0, right, right_field.0, outer).execute()
+</a><a href="#h3-0-106" id="h3-0-106" class="d">-        }
+</a><a href="#h3-0-107" id="h3-0-107" class="d">-
+</a><a href="#h3-0-108" id="h3-0-108" class="d">-        Node::IndexLookup { table, alias: _, column, values } =&gt; {
+</a><a href="#h3-0-109" id="h3-0-109" class="d">-            IndexLookup::new(table, column, values).execute(txn)
+</a><a href="#h3-0-110" id="h3-0-110" class="d">-        }
+</a><a href="#h3-0-111" id="h3-0-111" class="d">-
+</a><a href="#h3-0-112" id="h3-0-112" class="d">-        Node::KeyLookup { table, alias: _, keys } =&gt; KeyLookup::new(table, keys).execute(txn),
+</a><a href="#h3-0-113" id="h3-0-113" class="d">-
+</a><a href="#h3-0-114" id="h3-0-114" class="d">-        Node::Limit { source, limit } =&gt; {
+</a><a href="#h3-0-115" id="h3-0-115" class="d">-            let source = execute(*source, txn)?;
+</a><a href="#h3-0-116" id="h3-0-116" class="d">-            Ok(Limit::new(source, limit).execute())
+</a><a href="#h3-0-117" id="h3-0-117" class="d">-        }
+</a><a href="#h3-0-118" id="h3-0-118" class="d">-
+</a><a href="#h3-0-119" id="h3-0-119" class="d">-        Node::NestedLoopJoin { left, left_size: _, right, predicate, outer } =&gt; {
+</a><a href="#h3-0-120" id="h3-0-120" class="d">-            let left = execute(*left, txn)?;
+</a><a href="#h3-0-121" id="h3-0-121" class="d">-            let right = execute(*right, txn)?;
+</a><a href="#h3-0-122" id="h3-0-122" class="d">-            NestedLoopJoin::new(left, right, predicate, outer).execute()
+</a><a href="#h3-0-123" id="h3-0-123" class="d">-        }
+</a><a href="#h3-0-124" id="h3-0-124" class="d">-
+</a><a href="#h3-0-125" id="h3-0-125" class="d">-        Node::Nothing =&gt; Ok(Nothing.execute()),
+</a><a href="#h3-0-126" id="h3-0-126" class="d">-
+</a><a href="#h3-0-127" id="h3-0-127" class="d">-        Node::Offset { source, offset } =&gt; {
+</a><a href="#h3-0-128" id="h3-0-128" class="d">-            let source = execute(*source, txn)?;
+</a><a href="#h3-0-129" id="h3-0-129" class="d">-            Ok(Offset::new(source, offset).execute())
+</a><a href="#h3-0-130" id="h3-0-130" class="d">-        }
+</a><a href="#h3-0-131" id="h3-0-131" class="d">-
+</a><a href="#h3-0-132" id="h3-0-132" class="d">-        Node::Order { source, orders } =&gt; {
+</a><a href="#h3-0-133" id="h3-0-133" class="d">-            let source = execute(*source, txn)?;
+</a><a href="#h3-0-134" id="h3-0-134" class="d">-            Order::new(source, orders).execute()
+</a><a href="#h3-0-135" id="h3-0-135" class="d">-        }
+</a><a href="#h3-0-136" id="h3-0-136" class="d">-
+</a><a href="#h3-0-137" id="h3-0-137" class="d">-        Node::Projection { source, expressions } =&gt; {
+</a><a href="#h3-0-138" id="h3-0-138" class="d">-            let source = execute(*source, txn)?;
+</a><a href="#h3-0-139" id="h3-0-139" class="d">-            Ok(Projection::new(source, expressions).execute())
+</a><a href="#h3-0-140" id="h3-0-140" class="d">-        }
+</a><a href="#h3-0-141" id="h3-0-141" class="d">-
+</a><a href="#h3-0-142" id="h3-0-142" class="d">-        Node::Scan { table, alias: _, filter } =&gt; Scan::new(table, filter).execute(txn),
+</a><a href="#h3-0-143" id="h3-0-143" class="d">-    }
+</a><a href="#h3-0-144" id="h3-0-144" class="d">-}
+</a><a href="#h3-0-145" id="h3-0-145" class="i">+pub use execute::{execute_plan, ExecutionResult, QueryIterator};
+</a><b>diff --git a/<a id="h4" href="../file/src/sql/execution/mutation.rs.html">src/sql/execution/mutation.rs</a> b/<a href="../file/src/sql/execution/mutation.rs.html">src/sql/execution/mutation.rs</a></b>
+<a href="#h4-0" id="h4-0" class="h">@@ -1,9 +1,9 @@
+</a><a href="#h4-0-0" id="h4-0-0" class="d">-use super::super::engine::Transaction;
+</a><a href="#h4-0-1" id="h4-0-1" class="d">-use super::super::types::schema::Table;
+</a><a href="#h4-0-2" id="h4-0-2" class="d">-use super::super::types::{Expression, Row, Value};
+</a> use super::QueryIterator;
+ use crate::errinput;
+ use crate::error::Result;
+<a href="#h4-0-6" id="h4-0-6" class="i">+use crate::sql::engine::Transaction;
+</a><a href="#h4-0-7" id="h4-0-7" class="i">+use crate::sql::types::schema::Table;
+</a><a href="#h4-0-8" id="h4-0-8" class="i">+use crate::sql::types::{Expression, Row, Value};
+</a> 
+ use std::collections::{HashMap, HashSet};
+ 
+<b>diff --git a/<a id="h5" href="../file/src/sql/execution/query.rs.html">src/sql/execution/query.rs</a> b/<a href="../file/src/sql/execution/query.rs.html">src/sql/execution/query.rs</a></b>
+<a href="#h5-0" id="h5-0" class="h">@@ -1,8 +1,8 @@
+</a><a href="#h5-0-0" id="h5-0-0" class="d">-use super::super::plan::Direction;
+</a><a href="#h5-0-1" id="h5-0-1" class="d">-use super::super::types::{Column, Expression, Row, Value};
+</a> use super::QueryIterator;
+ use crate::errinput;
+ use crate::error::Result;
+<a href="#h5-0-5" id="h5-0-5" class="i">+use crate::sql::plan::Direction;
+</a><a href="#h5-0-6" id="h5-0-6" class="i">+use crate::sql::types::{Column, Expression, Row, Value};
+</a> 
+ /// A filter executor
+ pub struct Filter {
+<b>diff --git a/<a id="h6" href="../file/src/sql/execution/schema.rs.html">src/sql/execution/schema.rs</a> b/<a href="../file/src/sql/execution/schema.rs.html">src/sql/execution/schema.rs</a></b>
+<a href="#h6-0" id="h6-0" class="h">@@ -1,6 +1,6 @@
+</a><a href="#h6-0-0" id="h6-0-0" class="d">-use super::super::engine::Transaction;
+</a><a href="#h6-0-1" id="h6-0-1" class="d">-use super::super::types::schema::Table;
+</a> use crate::error::Result;
+<a href="#h6-0-3" id="h6-0-3" class="i">+use crate::sql::engine::Transaction;
+</a><a href="#h6-0-4" id="h6-0-4" class="i">+use crate::sql::types::schema::Table;
+</a> 
+ /// A CREATE TABLE executor
+ pub struct CreateTable {
+<b>diff --git a/<a id="h7" href="../file/src/sql/execution/source.rs.html">src/sql/execution/source.rs</a> b/<a href="../file/src/sql/execution/source.rs.html">src/sql/execution/source.rs</a></b>
+<a href="#h7-0" id="h7-0" class="h">@@ -1,7 +1,7 @@
+</a><a href="#h7-0-0" id="h7-0-0" class="d">-use super::super::engine::Transaction;
+</a><a href="#h7-0-1" id="h7-0-1" class="d">-use super::super::types::{Column, Expression, Row, Value};
+</a> use super::QueryIterator;
+ use crate::error::Result;
+<a href="#h7-0-4" id="h7-0-4" class="i">+use crate::sql::engine::Transaction;
+</a><a href="#h7-0-5" id="h7-0-5" class="i">+use crate::sql::types::{Column, Expression, Row, Value};
+</a> 
+ use std::collections::HashSet;
+ 
+</pre>
+</div>
+</body>
+</html>

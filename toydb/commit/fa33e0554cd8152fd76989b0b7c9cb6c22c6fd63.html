@@ -1,0 +1,1019 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>sql: fix scope handling when building multiple join items - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/fa33e0554cd8152fd76989b0b7c9cb6c22c6fd63.html">fa33e0554cd8152fd76989b0b7c9cb6c22c6fd63</a>
+<b>parent</b> <a href="../commit/7b38683e91d2f1c9f0fc70e26d59b49e033025b7.html">7b38683e91d2f1c9f0fc70e26d59b49e033025b7</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Sat, 13 Jun 2020 12:30:26 +0200
+
+sql: fix scope handling when building multiple join items
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/sql/execution/join.rs</a></td><td> | </td><td class="num">14</td><td><span class="i">++++++++++++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/sql/plan/planner.rs</a></td><td> | </td><td class="num">27</td><td><span class="i">++++++++++++++++++++++++</span><span class="d">---</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">tests/sql/query.rs</a></td><td> | </td><td class="num">7</td><td><span class="i">+++++++</span><span class="d"></span></td></tr>
+<tr><td class="A">A</td><td><a href="#h3">tests/sql/query/join_inner_multi_same</a></td><td> | </td><td class="num">882</td><td><span class="i">+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d"></span></td></tr>
+</table></pre><pre>4 files changed, 925 insertions(+), 5 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/sql/execution/join.rs.html">src/sql/execution/join.rs</a> b/<a href="../file/src/sql/execution/join.rs.html">src/sql/execution/join.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -166,11 +166,21 @@ impl&lt;T: Transaction&gt; Executor&lt;T&gt; for HashJoin&lt;T&gt; {
+</a>         if let ResultSet::Query { mut columns, rows } = self.left.execute(txn)? {
+             if let ResultSet::Query { columns: rcolumns, rows: rrows } = self.right.execute(txn)? {
+                 let (l, r, outer) = (self.left_field, self.right_field, self.outer);
+<a href="#h0-0-3" id="h0-0-3" class="d">-                let right: HashMap&lt;Value, Row&gt; =
+</a><a href="#h0-0-4" id="h0-0-4" class="d">-                    rrows.map(|res| res.map(|row| (row[r].clone(), row))).collect::&lt;Result&lt;_&gt;&gt;()?;
+</a><a href="#h0-0-5" id="h0-0-5" class="i">+                let right: HashMap&lt;Value, Row&gt; = rrows
+</a><a href="#h0-0-6" id="h0-0-6" class="i">+                    .map(|res| match res {
+</a><a href="#h0-0-7" id="h0-0-7" class="i">+                        Ok(row) if row.len() &lt;= r =&gt; {
+</a><a href="#h0-0-8" id="h0-0-8" class="i">+                            Err(Error::Internal(format!(&quot;Right index {} out of bounds&quot;, r)))
+</a><a href="#h0-0-9" id="h0-0-9" class="i">+                        }
+</a><a href="#h0-0-10" id="h0-0-10" class="i">+                        Ok(row) =&gt; Ok((row[r].clone(), row)),
+</a><a href="#h0-0-11" id="h0-0-11" class="i">+                        Err(err) =&gt; Err(err),
+</a><a href="#h0-0-12" id="h0-0-12" class="i">+                    })
+</a><a href="#h0-0-13" id="h0-0-13" class="i">+                    .collect::&lt;Result&lt;_&gt;&gt;()?;
+</a>                 let empty = std::iter::repeat(Value::Null).take(rcolumns.len());
+                 columns.extend(rcolumns);
+                 let rows = Box::new(rows.filter_map(move |res| match res {
+<a href="#h0-0-17" id="h0-0-17" class="i">+                    Ok(row) if row.len() &lt;= l =&gt; {
+</a><a href="#h0-0-18" id="h0-0-18" class="i">+                        Some(Err(Error::Value(format!(&quot;Left index {} out of bounds&quot;, l))))
+</a><a href="#h0-0-19" id="h0-0-19" class="i">+                    }
+</a>                     Ok(mut row) =&gt; match right.get(&amp;row[l]) {
+                         Some(hit) =&gt; {
+                             row.extend(hit.clone());
+<b>diff --git a/<a id="h1" href="../file/src/sql/plan/planner.rs.html">src/sql/plan/planner.rs</a> b/<a href="../file/src/sql/plan/planner.rs.html">src/sql/plan/planner.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -258,19 +258,23 @@ impl&lt;&#39;a, C: Catalog&gt; Planner&lt;&#39;a, C&gt; {
+</a>     /// join of an arbitrary number of tables. All of the items are joined, since e.g. &#39;SELECT * FROM
+     /// a, b&#39; is an implicit join of a and b.
+     fn build_from_clause(&amp;self, scope: &amp;mut Scope, from: Vec&lt;ast::FromItem&gt;) -&gt; Result&lt;Node&gt; {
+<a href="#h1-0-3" id="h1-0-3" class="i">+        let base_scope = scope.clone();
+</a>         let mut items = from.into_iter();
+         let mut node = match items.next() {
+             Some(item) =&gt; self.build_from_item(scope, item)?,
+             None =&gt; return Err(Error::Value(&quot;No from items given&quot;.into())),
+         };
+         for item in items {
+<a href="#h1-0-10" id="h1-0-10" class="i">+            let mut right_scope = base_scope.clone();
+</a><a href="#h1-0-11" id="h1-0-11" class="i">+            let right = self.build_from_item(&amp;mut right_scope, item)?;
+</a>             node = Node::NestedLoopJoin {
+                 left: Box::new(node),
+                 left_size: scope.len(),
+<a href="#h1-0-15" id="h1-0-15" class="d">-                right: Box::new(self.build_from_item(scope, item)?),
+</a><a href="#h1-0-16" id="h1-0-16" class="i">+                right: Box::new(right),
+</a>                 predicate: None,
+                 outer: false,
+<a href="#h1-0-19" id="h1-0-19" class="d">-            }
+</a><a href="#h1-0-20" id="h1-0-20" class="i">+            };
+</a><a href="#h1-0-21" id="h1-0-21" class="i">+            scope.merge(right_scope)?;
+</a>         }
+         Ok(node)
+     }
+<a href="#h1-1" id="h1-1" class="h">@@ -634,7 +638,7 @@ impl&lt;&#39;a, C: Catalog&gt; Planner&lt;&#39;a, C&gt; {
+</a> }
+ 
+ /// Manages names available to expressions and executors, and maps them onto columns/fields.
+<a href="#h1-1-3" id="h1-1-3" class="d">-#[derive(Debug)]
+</a><a href="#h1-1-4" id="h1-1-4" class="i">+#[derive(Clone, Debug)]
+</a> pub struct Scope {
+     // If true, the scope is constant and cannot contain any variables.
+     constant: bool,
+<a href="#h1-2" id="h1-2" class="h">@@ -733,6 +737,23 @@ impl Scope {
+</a>         })
+     }
+ 
+<a href="#h1-2-3" id="h1-2-3" class="i">+    /// Merges two scopes, by appending the given scope to self.
+</a><a href="#h1-2-4" id="h1-2-4" class="i">+    fn merge(&amp;mut self, scope: Scope) -&gt; Result&lt;()&gt; {
+</a><a href="#h1-2-5" id="h1-2-5" class="i">+        if self.constant {
+</a><a href="#h1-2-6" id="h1-2-6" class="i">+            return Err(Error::Internal(&quot;Can&#39;t modify constant scope&quot;.into()));
+</a><a href="#h1-2-7" id="h1-2-7" class="i">+        }
+</a><a href="#h1-2-8" id="h1-2-8" class="i">+        for (label, table) in scope.tables {
+</a><a href="#h1-2-9" id="h1-2-9" class="i">+            if self.tables.contains_key(&amp;label) {
+</a><a href="#h1-2-10" id="h1-2-10" class="i">+                return Err(Error::Value(format!(&quot;Duplicate table name {}&quot;, label)));
+</a><a href="#h1-2-11" id="h1-2-11" class="i">+            }
+</a><a href="#h1-2-12" id="h1-2-12" class="i">+            self.tables.insert(label, table);
+</a><a href="#h1-2-13" id="h1-2-13" class="i">+        }
+</a><a href="#h1-2-14" id="h1-2-14" class="i">+        for (table, label) in scope.columns {
+</a><a href="#h1-2-15" id="h1-2-15" class="i">+            self.add_column(table, label);
+</a><a href="#h1-2-16" id="h1-2-16" class="i">+        }
+</a><a href="#h1-2-17" id="h1-2-17" class="i">+        Ok(())
+</a><a href="#h1-2-18" id="h1-2-18" class="i">+    }
+</a><a href="#h1-2-19" id="h1-2-19" class="i">+
+</a>     /// Resolves a name, optionally qualified by a table name.
+     fn resolve(&amp;self, table: Option&lt;&amp;str&gt;, name: &amp;str) -&gt; Result&lt;usize&gt; {
+         if self.constant {
+<b>diff --git a/<a id="h2" href="../file/tests/sql/query.rs.html">tests/sql/query.rs</a> b/<a href="../file/tests/sql/query.rs.html">tests/sql/query.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -322,6 +322,13 @@ test_query! {
+</a>             INNER JOIN genres g ON m.genre_id = g.id AND g.id = 1
+             INNER JOIN studios s ON m.studio_id = s.id AND s.id = 4
+         ORDER BY m.title&quot;#,
+<a href="#h2-0-3" id="h2-0-3" class="i">+    join_inner_multi_same: r#&quot;
+</a><a href="#h2-0-4" id="h2-0-4" class="i">+        SELECT m.id, m.title, g.name AS genre, s.name AS studio, m.rating
+</a><a href="#h2-0-5" id="h2-0-5" class="i">+        FROM movies m JOIN genres g ON m.genre_id = g.id,
+</a><a href="#h2-0-6" id="h2-0-6" class="i">+            studios s JOIN movies good ON good.studio_id = s.id AND good.rating &gt;= 8
+</a><a href="#h2-0-7" id="h2-0-7" class="i">+        WHERE m.studio_id = s.id
+</a><a href="#h2-0-8" id="h2-0-8" class="i">+        ORDER BY m.rating DESC, m.released ASC, m.id ASC
+</a><a href="#h2-0-9" id="h2-0-9" class="i">+    &quot;#,
+</a> 
+     join_left: &quot;SELECT m.id AS movie_id, g.id AS genre_id FROM movies m LEFT JOIN genres g ON m.id = g.id&quot;,
+     join_left_all: &quot;SELECT * FROM movies m LEFT JOIN genres g ON m.id = g.id&quot;,
+<b>diff --git a/<a id="h3" href="../file/tests/sql/query/join_inner_multi_same.html">tests/sql/query/join_inner_multi_same</a> b/<a href="../file/tests/sql/query/join_inner_multi_same.html">tests/sql/query/join_inner_multi_same</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -0,0 +1,882 @@
+</a><a href="#h3-0-0" id="h3-0-0" class="i">+Query: 
+</a><a href="#h3-0-1" id="h3-0-1" class="i">+        SELECT m.id, m.title, g.name AS genre, s.name AS studio, m.rating
+</a><a href="#h3-0-2" id="h3-0-2" class="i">+        FROM movies m JOIN genres g ON m.genre_id = g.id,
+</a><a href="#h3-0-3" id="h3-0-3" class="i">+            studios s JOIN movies good ON good.studio_id = s.id AND good.rating &gt;= 8
+</a><a href="#h3-0-4" id="h3-0-4" class="i">+        WHERE m.studio_id = s.id
+</a><a href="#h3-0-5" id="h3-0-5" class="i">+        ORDER BY m.rating DESC, m.released ASC, m.id ASC
+</a><a href="#h3-0-6" id="h3-0-6" class="i">+    
+</a><a href="#h3-0-7" id="h3-0-7" class="i">+
+</a><a href="#h3-0-8" id="h3-0-8" class="i">+Explain:
+</a><a href="#h3-0-9" id="h3-0-9" class="i">+Projection: #0, #1, #2, #3, #4
+</a><a href="#h3-0-10" id="h3-0-10" class="i">+└─ Order: m.rating desc, m.released asc, m.id asc
+</a><a href="#h3-0-11" id="h3-0-11" class="i">+   └─ Projection: m.id, m.title, g.name, s.name, m.rating, m.released
+</a><a href="#h3-0-12" id="h3-0-12" class="i">+      └─ HashJoin: inner on m.studio_id = s.id
+</a><a href="#h3-0-13" id="h3-0-13" class="i">+         ├─ HashJoin: inner on m.genre_id = g.id
+</a><a href="#h3-0-14" id="h3-0-14" class="i">+         │  ├─ Scan: movies as m
+</a><a href="#h3-0-15" id="h3-0-15" class="i">+         │  └─ Scan: genres as g
+</a><a href="#h3-0-16" id="h3-0-16" class="i">+         └─ HashJoin: inner on s.id = good.studio_id
+</a><a href="#h3-0-17" id="h3-0-17" class="i">+            ├─ Scan: studios as s
+</a><a href="#h3-0-18" id="h3-0-18" class="i">+            └─ Scan: movies as good (good.rating &gt; 8 OR good.rating = 8)
+</a><a href="#h3-0-19" id="h3-0-19" class="i">+
+</a><a href="#h3-0-20" id="h3-0-20" class="i">+Result: [&quot;id&quot;, &quot;title&quot;, &quot;genre&quot;, &quot;studio&quot;, &quot;rating&quot;]
+</a><a href="#h3-0-21" id="h3-0-21" class="i">+[Integer(10), String(&quot;Inception&quot;), String(&quot;Science Fiction&quot;), String(&quot;Warner Bros&quot;), Float(8.8)]
+</a><a href="#h3-0-22" id="h3-0-22" class="i">+[Integer(1), String(&quot;Stalker&quot;), String(&quot;Science Fiction&quot;), String(&quot;Mosfilm&quot;), Float(8.2)]
+</a><a href="#h3-0-23" id="h3-0-23" class="i">+[Integer(4), String(&quot;Heat&quot;), String(&quot;Action&quot;), String(&quot;Warner Bros&quot;), Float(8.2)]
+</a><a href="#h3-0-24" id="h3-0-24" class="i">+[Integer(6), String(&quot;Solaris&quot;), String(&quot;Science Fiction&quot;), String(&quot;Mosfilm&quot;), Float(8.1)]
+</a><a href="#h3-0-25" id="h3-0-25" class="i">+[Integer(7), String(&quot;Gravity&quot;), String(&quot;Science Fiction&quot;), String(&quot;Warner Bros&quot;), Float(7.7)]
+</a><a href="#h3-0-26" id="h3-0-26" class="i">+[Integer(9), String(&quot;Birdman&quot;), String(&quot;Comedy&quot;), String(&quot;Warner Bros&quot;), Float(7.7)]
+</a><a href="#h3-0-27" id="h3-0-27" class="i">+[Integer(5), String(&quot;The Fountain&quot;), String(&quot;Science Fiction&quot;), String(&quot;Warner Bros&quot;), Float(7.2)]
+</a><a href="#h3-0-28" id="h3-0-28" class="i">+
+</a><a href="#h3-0-29" id="h3-0-29" class="i">+AST: Select {
+</a><a href="#h3-0-30" id="h3-0-30" class="i">+    select: [
+</a><a href="#h3-0-31" id="h3-0-31" class="i">+        (
+</a><a href="#h3-0-32" id="h3-0-32" class="i">+            Field(
+</a><a href="#h3-0-33" id="h3-0-33" class="i">+                Some(
+</a><a href="#h3-0-34" id="h3-0-34" class="i">+                    &quot;m&quot;,
+</a><a href="#h3-0-35" id="h3-0-35" class="i">+                ),
+</a><a href="#h3-0-36" id="h3-0-36" class="i">+                &quot;id&quot;,
+</a><a href="#h3-0-37" id="h3-0-37" class="i">+            ),
+</a><a href="#h3-0-38" id="h3-0-38" class="i">+            None,
+</a><a href="#h3-0-39" id="h3-0-39" class="i">+        ),
+</a><a href="#h3-0-40" id="h3-0-40" class="i">+        (
+</a><a href="#h3-0-41" id="h3-0-41" class="i">+            Field(
+</a><a href="#h3-0-42" id="h3-0-42" class="i">+                Some(
+</a><a href="#h3-0-43" id="h3-0-43" class="i">+                    &quot;m&quot;,
+</a><a href="#h3-0-44" id="h3-0-44" class="i">+                ),
+</a><a href="#h3-0-45" id="h3-0-45" class="i">+                &quot;title&quot;,
+</a><a href="#h3-0-46" id="h3-0-46" class="i">+            ),
+</a><a href="#h3-0-47" id="h3-0-47" class="i">+            None,
+</a><a href="#h3-0-48" id="h3-0-48" class="i">+        ),
+</a><a href="#h3-0-49" id="h3-0-49" class="i">+        (
+</a><a href="#h3-0-50" id="h3-0-50" class="i">+            Field(
+</a><a href="#h3-0-51" id="h3-0-51" class="i">+                Some(
+</a><a href="#h3-0-52" id="h3-0-52" class="i">+                    &quot;g&quot;,
+</a><a href="#h3-0-53" id="h3-0-53" class="i">+                ),
+</a><a href="#h3-0-54" id="h3-0-54" class="i">+                &quot;name&quot;,
+</a><a href="#h3-0-55" id="h3-0-55" class="i">+            ),
+</a><a href="#h3-0-56" id="h3-0-56" class="i">+            Some(
+</a><a href="#h3-0-57" id="h3-0-57" class="i">+                &quot;genre&quot;,
+</a><a href="#h3-0-58" id="h3-0-58" class="i">+            ),
+</a><a href="#h3-0-59" id="h3-0-59" class="i">+        ),
+</a><a href="#h3-0-60" id="h3-0-60" class="i">+        (
+</a><a href="#h3-0-61" id="h3-0-61" class="i">+            Field(
+</a><a href="#h3-0-62" id="h3-0-62" class="i">+                Some(
+</a><a href="#h3-0-63" id="h3-0-63" class="i">+                    &quot;s&quot;,
+</a><a href="#h3-0-64" id="h3-0-64" class="i">+                ),
+</a><a href="#h3-0-65" id="h3-0-65" class="i">+                &quot;name&quot;,
+</a><a href="#h3-0-66" id="h3-0-66" class="i">+            ),
+</a><a href="#h3-0-67" id="h3-0-67" class="i">+            Some(
+</a><a href="#h3-0-68" id="h3-0-68" class="i">+                &quot;studio&quot;,
+</a><a href="#h3-0-69" id="h3-0-69" class="i">+            ),
+</a><a href="#h3-0-70" id="h3-0-70" class="i">+        ),
+</a><a href="#h3-0-71" id="h3-0-71" class="i">+        (
+</a><a href="#h3-0-72" id="h3-0-72" class="i">+            Field(
+</a><a href="#h3-0-73" id="h3-0-73" class="i">+                Some(
+</a><a href="#h3-0-74" id="h3-0-74" class="i">+                    &quot;m&quot;,
+</a><a href="#h3-0-75" id="h3-0-75" class="i">+                ),
+</a><a href="#h3-0-76" id="h3-0-76" class="i">+                &quot;rating&quot;,
+</a><a href="#h3-0-77" id="h3-0-77" class="i">+            ),
+</a><a href="#h3-0-78" id="h3-0-78" class="i">+            None,
+</a><a href="#h3-0-79" id="h3-0-79" class="i">+        ),
+</a><a href="#h3-0-80" id="h3-0-80" class="i">+    ],
+</a><a href="#h3-0-81" id="h3-0-81" class="i">+    from: [
+</a><a href="#h3-0-82" id="h3-0-82" class="i">+        Join {
+</a><a href="#h3-0-83" id="h3-0-83" class="i">+            left: Table {
+</a><a href="#h3-0-84" id="h3-0-84" class="i">+                name: &quot;movies&quot;,
+</a><a href="#h3-0-85" id="h3-0-85" class="i">+                alias: Some(
+</a><a href="#h3-0-86" id="h3-0-86" class="i">+                    &quot;m&quot;,
+</a><a href="#h3-0-87" id="h3-0-87" class="i">+                ),
+</a><a href="#h3-0-88" id="h3-0-88" class="i">+            },
+</a><a href="#h3-0-89" id="h3-0-89" class="i">+            right: Table {
+</a><a href="#h3-0-90" id="h3-0-90" class="i">+                name: &quot;genres&quot;,
+</a><a href="#h3-0-91" id="h3-0-91" class="i">+                alias: Some(
+</a><a href="#h3-0-92" id="h3-0-92" class="i">+                    &quot;g&quot;,
+</a><a href="#h3-0-93" id="h3-0-93" class="i">+                ),
+</a><a href="#h3-0-94" id="h3-0-94" class="i">+            },
+</a><a href="#h3-0-95" id="h3-0-95" class="i">+            type: Inner,
+</a><a href="#h3-0-96" id="h3-0-96" class="i">+            predicate: Some(
+</a><a href="#h3-0-97" id="h3-0-97" class="i">+                Operation(
+</a><a href="#h3-0-98" id="h3-0-98" class="i">+                    Equal(
+</a><a href="#h3-0-99" id="h3-0-99" class="i">+                        Field(
+</a><a href="#h3-0-100" id="h3-0-100" class="i">+                            Some(
+</a><a href="#h3-0-101" id="h3-0-101" class="i">+                                &quot;m&quot;,
+</a><a href="#h3-0-102" id="h3-0-102" class="i">+                            ),
+</a><a href="#h3-0-103" id="h3-0-103" class="i">+                            &quot;genre_id&quot;,
+</a><a href="#h3-0-104" id="h3-0-104" class="i">+                        ),
+</a><a href="#h3-0-105" id="h3-0-105" class="i">+                        Field(
+</a><a href="#h3-0-106" id="h3-0-106" class="i">+                            Some(
+</a><a href="#h3-0-107" id="h3-0-107" class="i">+                                &quot;g&quot;,
+</a><a href="#h3-0-108" id="h3-0-108" class="i">+                            ),
+</a><a href="#h3-0-109" id="h3-0-109" class="i">+                            &quot;id&quot;,
+</a><a href="#h3-0-110" id="h3-0-110" class="i">+                        ),
+</a><a href="#h3-0-111" id="h3-0-111" class="i">+                    ),
+</a><a href="#h3-0-112" id="h3-0-112" class="i">+                ),
+</a><a href="#h3-0-113" id="h3-0-113" class="i">+            ),
+</a><a href="#h3-0-114" id="h3-0-114" class="i">+        },
+</a><a href="#h3-0-115" id="h3-0-115" class="i">+        Join {
+</a><a href="#h3-0-116" id="h3-0-116" class="i">+            left: Table {
+</a><a href="#h3-0-117" id="h3-0-117" class="i">+                name: &quot;studios&quot;,
+</a><a href="#h3-0-118" id="h3-0-118" class="i">+                alias: Some(
+</a><a href="#h3-0-119" id="h3-0-119" class="i">+                    &quot;s&quot;,
+</a><a href="#h3-0-120" id="h3-0-120" class="i">+                ),
+</a><a href="#h3-0-121" id="h3-0-121" class="i">+            },
+</a><a href="#h3-0-122" id="h3-0-122" class="i">+            right: Table {
+</a><a href="#h3-0-123" id="h3-0-123" class="i">+                name: &quot;movies&quot;,
+</a><a href="#h3-0-124" id="h3-0-124" class="i">+                alias: Some(
+</a><a href="#h3-0-125" id="h3-0-125" class="i">+                    &quot;good&quot;,
+</a><a href="#h3-0-126" id="h3-0-126" class="i">+                ),
+</a><a href="#h3-0-127" id="h3-0-127" class="i">+            },
+</a><a href="#h3-0-128" id="h3-0-128" class="i">+            type: Inner,
+</a><a href="#h3-0-129" id="h3-0-129" class="i">+            predicate: Some(
+</a><a href="#h3-0-130" id="h3-0-130" class="i">+                Operation(
+</a><a href="#h3-0-131" id="h3-0-131" class="i">+                    And(
+</a><a href="#h3-0-132" id="h3-0-132" class="i">+                        Operation(
+</a><a href="#h3-0-133" id="h3-0-133" class="i">+                            Equal(
+</a><a href="#h3-0-134" id="h3-0-134" class="i">+                                Field(
+</a><a href="#h3-0-135" id="h3-0-135" class="i">+                                    Some(
+</a><a href="#h3-0-136" id="h3-0-136" class="i">+                                        &quot;good&quot;,
+</a><a href="#h3-0-137" id="h3-0-137" class="i">+                                    ),
+</a><a href="#h3-0-138" id="h3-0-138" class="i">+                                    &quot;studio_id&quot;,
+</a><a href="#h3-0-139" id="h3-0-139" class="i">+                                ),
+</a><a href="#h3-0-140" id="h3-0-140" class="i">+                                Field(
+</a><a href="#h3-0-141" id="h3-0-141" class="i">+                                    Some(
+</a><a href="#h3-0-142" id="h3-0-142" class="i">+                                        &quot;s&quot;,
+</a><a href="#h3-0-143" id="h3-0-143" class="i">+                                    ),
+</a><a href="#h3-0-144" id="h3-0-144" class="i">+                                    &quot;id&quot;,
+</a><a href="#h3-0-145" id="h3-0-145" class="i">+                                ),
+</a><a href="#h3-0-146" id="h3-0-146" class="i">+                            ),
+</a><a href="#h3-0-147" id="h3-0-147" class="i">+                        ),
+</a><a href="#h3-0-148" id="h3-0-148" class="i">+                        Operation(
+</a><a href="#h3-0-149" id="h3-0-149" class="i">+                            GreaterThanOrEqual(
+</a><a href="#h3-0-150" id="h3-0-150" class="i">+                                Field(
+</a><a href="#h3-0-151" id="h3-0-151" class="i">+                                    Some(
+</a><a href="#h3-0-152" id="h3-0-152" class="i">+                                        &quot;good&quot;,
+</a><a href="#h3-0-153" id="h3-0-153" class="i">+                                    ),
+</a><a href="#h3-0-154" id="h3-0-154" class="i">+                                    &quot;rating&quot;,
+</a><a href="#h3-0-155" id="h3-0-155" class="i">+                                ),
+</a><a href="#h3-0-156" id="h3-0-156" class="i">+                                Literal(
+</a><a href="#h3-0-157" id="h3-0-157" class="i">+                                    Integer(
+</a><a href="#h3-0-158" id="h3-0-158" class="i">+                                        8,
+</a><a href="#h3-0-159" id="h3-0-159" class="i">+                                    ),
+</a><a href="#h3-0-160" id="h3-0-160" class="i">+                                ),
+</a><a href="#h3-0-161" id="h3-0-161" class="i">+                            ),
+</a><a href="#h3-0-162" id="h3-0-162" class="i">+                        ),
+</a><a href="#h3-0-163" id="h3-0-163" class="i">+                    ),
+</a><a href="#h3-0-164" id="h3-0-164" class="i">+                ),
+</a><a href="#h3-0-165" id="h3-0-165" class="i">+            ),
+</a><a href="#h3-0-166" id="h3-0-166" class="i">+        },
+</a><a href="#h3-0-167" id="h3-0-167" class="i">+    ],
+</a><a href="#h3-0-168" id="h3-0-168" class="i">+    where: Some(
+</a><a href="#h3-0-169" id="h3-0-169" class="i">+        Operation(
+</a><a href="#h3-0-170" id="h3-0-170" class="i">+            Equal(
+</a><a href="#h3-0-171" id="h3-0-171" class="i">+                Field(
+</a><a href="#h3-0-172" id="h3-0-172" class="i">+                    Some(
+</a><a href="#h3-0-173" id="h3-0-173" class="i">+                        &quot;m&quot;,
+</a><a href="#h3-0-174" id="h3-0-174" class="i">+                    ),
+</a><a href="#h3-0-175" id="h3-0-175" class="i">+                    &quot;studio_id&quot;,
+</a><a href="#h3-0-176" id="h3-0-176" class="i">+                ),
+</a><a href="#h3-0-177" id="h3-0-177" class="i">+                Field(
+</a><a href="#h3-0-178" id="h3-0-178" class="i">+                    Some(
+</a><a href="#h3-0-179" id="h3-0-179" class="i">+                        &quot;s&quot;,
+</a><a href="#h3-0-180" id="h3-0-180" class="i">+                    ),
+</a><a href="#h3-0-181" id="h3-0-181" class="i">+                    &quot;id&quot;,
+</a><a href="#h3-0-182" id="h3-0-182" class="i">+                ),
+</a><a href="#h3-0-183" id="h3-0-183" class="i">+            ),
+</a><a href="#h3-0-184" id="h3-0-184" class="i">+        ),
+</a><a href="#h3-0-185" id="h3-0-185" class="i">+    ),
+</a><a href="#h3-0-186" id="h3-0-186" class="i">+    group_by: [],
+</a><a href="#h3-0-187" id="h3-0-187" class="i">+    having: None,
+</a><a href="#h3-0-188" id="h3-0-188" class="i">+    order: [
+</a><a href="#h3-0-189" id="h3-0-189" class="i">+        (
+</a><a href="#h3-0-190" id="h3-0-190" class="i">+            Field(
+</a><a href="#h3-0-191" id="h3-0-191" class="i">+                Some(
+</a><a href="#h3-0-192" id="h3-0-192" class="i">+                    &quot;m&quot;,
+</a><a href="#h3-0-193" id="h3-0-193" class="i">+                ),
+</a><a href="#h3-0-194" id="h3-0-194" class="i">+                &quot;rating&quot;,
+</a><a href="#h3-0-195" id="h3-0-195" class="i">+            ),
+</a><a href="#h3-0-196" id="h3-0-196" class="i">+            Descending,
+</a><a href="#h3-0-197" id="h3-0-197" class="i">+        ),
+</a><a href="#h3-0-198" id="h3-0-198" class="i">+        (
+</a><a href="#h3-0-199" id="h3-0-199" class="i">+            Field(
+</a><a href="#h3-0-200" id="h3-0-200" class="i">+                Some(
+</a><a href="#h3-0-201" id="h3-0-201" class="i">+                    &quot;m&quot;,
+</a><a href="#h3-0-202" id="h3-0-202" class="i">+                ),
+</a><a href="#h3-0-203" id="h3-0-203" class="i">+                &quot;released&quot;,
+</a><a href="#h3-0-204" id="h3-0-204" class="i">+            ),
+</a><a href="#h3-0-205" id="h3-0-205" class="i">+            Ascending,
+</a><a href="#h3-0-206" id="h3-0-206" class="i">+        ),
+</a><a href="#h3-0-207" id="h3-0-207" class="i">+        (
+</a><a href="#h3-0-208" id="h3-0-208" class="i">+            Field(
+</a><a href="#h3-0-209" id="h3-0-209" class="i">+                Some(
+</a><a href="#h3-0-210" id="h3-0-210" class="i">+                    &quot;m&quot;,
+</a><a href="#h3-0-211" id="h3-0-211" class="i">+                ),
+</a><a href="#h3-0-212" id="h3-0-212" class="i">+                &quot;id&quot;,
+</a><a href="#h3-0-213" id="h3-0-213" class="i">+            ),
+</a><a href="#h3-0-214" id="h3-0-214" class="i">+            Ascending,
+</a><a href="#h3-0-215" id="h3-0-215" class="i">+        ),
+</a><a href="#h3-0-216" id="h3-0-216" class="i">+    ],
+</a><a href="#h3-0-217" id="h3-0-217" class="i">+    offset: None,
+</a><a href="#h3-0-218" id="h3-0-218" class="i">+    limit: None,
+</a><a href="#h3-0-219" id="h3-0-219" class="i">+}
+</a><a href="#h3-0-220" id="h3-0-220" class="i">+
+</a><a href="#h3-0-221" id="h3-0-221" class="i">+Plan: Plan(
+</a><a href="#h3-0-222" id="h3-0-222" class="i">+    Projection {
+</a><a href="#h3-0-223" id="h3-0-223" class="i">+        source: Order {
+</a><a href="#h3-0-224" id="h3-0-224" class="i">+            source: Projection {
+</a><a href="#h3-0-225" id="h3-0-225" class="i">+                source: Filter {
+</a><a href="#h3-0-226" id="h3-0-226" class="i">+                    source: NestedLoopJoin {
+</a><a href="#h3-0-227" id="h3-0-227" class="i">+                        left: NestedLoopJoin {
+</a><a href="#h3-0-228" id="h3-0-228" class="i">+                            left: Scan {
+</a><a href="#h3-0-229" id="h3-0-229" class="i">+                                table: &quot;movies&quot;,
+</a><a href="#h3-0-230" id="h3-0-230" class="i">+                                alias: Some(
+</a><a href="#h3-0-231" id="h3-0-231" class="i">+                                    &quot;m&quot;,
+</a><a href="#h3-0-232" id="h3-0-232" class="i">+                                ),
+</a><a href="#h3-0-233" id="h3-0-233" class="i">+                                filter: None,
+</a><a href="#h3-0-234" id="h3-0-234" class="i">+                            },
+</a><a href="#h3-0-235" id="h3-0-235" class="i">+                            left_size: 7,
+</a><a href="#h3-0-236" id="h3-0-236" class="i">+                            right: Scan {
+</a><a href="#h3-0-237" id="h3-0-237" class="i">+                                table: &quot;genres&quot;,
+</a><a href="#h3-0-238" id="h3-0-238" class="i">+                                alias: Some(
+</a><a href="#h3-0-239" id="h3-0-239" class="i">+                                    &quot;g&quot;,
+</a><a href="#h3-0-240" id="h3-0-240" class="i">+                                ),
+</a><a href="#h3-0-241" id="h3-0-241" class="i">+                                filter: None,
+</a><a href="#h3-0-242" id="h3-0-242" class="i">+                            },
+</a><a href="#h3-0-243" id="h3-0-243" class="i">+                            predicate: Some(
+</a><a href="#h3-0-244" id="h3-0-244" class="i">+                                Equal(
+</a><a href="#h3-0-245" id="h3-0-245" class="i">+                                    Field(
+</a><a href="#h3-0-246" id="h3-0-246" class="i">+                                        3,
+</a><a href="#h3-0-247" id="h3-0-247" class="i">+                                        Some(
+</a><a href="#h3-0-248" id="h3-0-248" class="i">+                                            (
+</a><a href="#h3-0-249" id="h3-0-249" class="i">+                                                Some(
+</a><a href="#h3-0-250" id="h3-0-250" class="i">+                                                    &quot;m&quot;,
+</a><a href="#h3-0-251" id="h3-0-251" class="i">+                                                ),
+</a><a href="#h3-0-252" id="h3-0-252" class="i">+                                                &quot;genre_id&quot;,
+</a><a href="#h3-0-253" id="h3-0-253" class="i">+                                            ),
+</a><a href="#h3-0-254" id="h3-0-254" class="i">+                                        ),
+</a><a href="#h3-0-255" id="h3-0-255" class="i">+                                    ),
+</a><a href="#h3-0-256" id="h3-0-256" class="i">+                                    Field(
+</a><a href="#h3-0-257" id="h3-0-257" class="i">+                                        7,
+</a><a href="#h3-0-258" id="h3-0-258" class="i">+                                        Some(
+</a><a href="#h3-0-259" id="h3-0-259" class="i">+                                            (
+</a><a href="#h3-0-260" id="h3-0-260" class="i">+                                                Some(
+</a><a href="#h3-0-261" id="h3-0-261" class="i">+                                                    &quot;g&quot;,
+</a><a href="#h3-0-262" id="h3-0-262" class="i">+                                                ),
+</a><a href="#h3-0-263" id="h3-0-263" class="i">+                                                &quot;id&quot;,
+</a><a href="#h3-0-264" id="h3-0-264" class="i">+                                            ),
+</a><a href="#h3-0-265" id="h3-0-265" class="i">+                                        ),
+</a><a href="#h3-0-266" id="h3-0-266" class="i">+                                    ),
+</a><a href="#h3-0-267" id="h3-0-267" class="i">+                                ),
+</a><a href="#h3-0-268" id="h3-0-268" class="i">+                            ),
+</a><a href="#h3-0-269" id="h3-0-269" class="i">+                            outer: false,
+</a><a href="#h3-0-270" id="h3-0-270" class="i">+                        },
+</a><a href="#h3-0-271" id="h3-0-271" class="i">+                        left_size: 9,
+</a><a href="#h3-0-272" id="h3-0-272" class="i">+                        right: NestedLoopJoin {
+</a><a href="#h3-0-273" id="h3-0-273" class="i">+                            left: Scan {
+</a><a href="#h3-0-274" id="h3-0-274" class="i">+                                table: &quot;studios&quot;,
+</a><a href="#h3-0-275" id="h3-0-275" class="i">+                                alias: Some(
+</a><a href="#h3-0-276" id="h3-0-276" class="i">+                                    &quot;s&quot;,
+</a><a href="#h3-0-277" id="h3-0-277" class="i">+                                ),
+</a><a href="#h3-0-278" id="h3-0-278" class="i">+                                filter: None,
+</a><a href="#h3-0-279" id="h3-0-279" class="i">+                            },
+</a><a href="#h3-0-280" id="h3-0-280" class="i">+                            left_size: 3,
+</a><a href="#h3-0-281" id="h3-0-281" class="i">+                            right: Scan {
+</a><a href="#h3-0-282" id="h3-0-282" class="i">+                                table: &quot;movies&quot;,
+</a><a href="#h3-0-283" id="h3-0-283" class="i">+                                alias: Some(
+</a><a href="#h3-0-284" id="h3-0-284" class="i">+                                    &quot;good&quot;,
+</a><a href="#h3-0-285" id="h3-0-285" class="i">+                                ),
+</a><a href="#h3-0-286" id="h3-0-286" class="i">+                                filter: None,
+</a><a href="#h3-0-287" id="h3-0-287" class="i">+                            },
+</a><a href="#h3-0-288" id="h3-0-288" class="i">+                            predicate: Some(
+</a><a href="#h3-0-289" id="h3-0-289" class="i">+                                And(
+</a><a href="#h3-0-290" id="h3-0-290" class="i">+                                    Equal(
+</a><a href="#h3-0-291" id="h3-0-291" class="i">+                                        Field(
+</a><a href="#h3-0-292" id="h3-0-292" class="i">+                                            5,
+</a><a href="#h3-0-293" id="h3-0-293" class="i">+                                            Some(
+</a><a href="#h3-0-294" id="h3-0-294" class="i">+                                                (
+</a><a href="#h3-0-295" id="h3-0-295" class="i">+                                                    Some(
+</a><a href="#h3-0-296" id="h3-0-296" class="i">+                                                        &quot;good&quot;,
+</a><a href="#h3-0-297" id="h3-0-297" class="i">+                                                    ),
+</a><a href="#h3-0-298" id="h3-0-298" class="i">+                                                    &quot;studio_id&quot;,
+</a><a href="#h3-0-299" id="h3-0-299" class="i">+                                                ),
+</a><a href="#h3-0-300" id="h3-0-300" class="i">+                                            ),
+</a><a href="#h3-0-301" id="h3-0-301" class="i">+                                        ),
+</a><a href="#h3-0-302" id="h3-0-302" class="i">+                                        Field(
+</a><a href="#h3-0-303" id="h3-0-303" class="i">+                                            0,
+</a><a href="#h3-0-304" id="h3-0-304" class="i">+                                            Some(
+</a><a href="#h3-0-305" id="h3-0-305" class="i">+                                                (
+</a><a href="#h3-0-306" id="h3-0-306" class="i">+                                                    Some(
+</a><a href="#h3-0-307" id="h3-0-307" class="i">+                                                        &quot;s&quot;,
+</a><a href="#h3-0-308" id="h3-0-308" class="i">+                                                    ),
+</a><a href="#h3-0-309" id="h3-0-309" class="i">+                                                    &quot;id&quot;,
+</a><a href="#h3-0-310" id="h3-0-310" class="i">+                                                ),
+</a><a href="#h3-0-311" id="h3-0-311" class="i">+                                            ),
+</a><a href="#h3-0-312" id="h3-0-312" class="i">+                                        ),
+</a><a href="#h3-0-313" id="h3-0-313" class="i">+                                    ),
+</a><a href="#h3-0-314" id="h3-0-314" class="i">+                                    Or(
+</a><a href="#h3-0-315" id="h3-0-315" class="i">+                                        GreaterThan(
+</a><a href="#h3-0-316" id="h3-0-316" class="i">+                                            Field(
+</a><a href="#h3-0-317" id="h3-0-317" class="i">+                                                8,
+</a><a href="#h3-0-318" id="h3-0-318" class="i">+                                                Some(
+</a><a href="#h3-0-319" id="h3-0-319" class="i">+                                                    (
+</a><a href="#h3-0-320" id="h3-0-320" class="i">+                                                        Some(
+</a><a href="#h3-0-321" id="h3-0-321" class="i">+                                                            &quot;good&quot;,
+</a><a href="#h3-0-322" id="h3-0-322" class="i">+                                                        ),
+</a><a href="#h3-0-323" id="h3-0-323" class="i">+                                                        &quot;rating&quot;,
+</a><a href="#h3-0-324" id="h3-0-324" class="i">+                                                    ),
+</a><a href="#h3-0-325" id="h3-0-325" class="i">+                                                ),
+</a><a href="#h3-0-326" id="h3-0-326" class="i">+                                            ),
+</a><a href="#h3-0-327" id="h3-0-327" class="i">+                                            Constant(
+</a><a href="#h3-0-328" id="h3-0-328" class="i">+                                                Integer(
+</a><a href="#h3-0-329" id="h3-0-329" class="i">+                                                    8,
+</a><a href="#h3-0-330" id="h3-0-330" class="i">+                                                ),
+</a><a href="#h3-0-331" id="h3-0-331" class="i">+                                            ),
+</a><a href="#h3-0-332" id="h3-0-332" class="i">+                                        ),
+</a><a href="#h3-0-333" id="h3-0-333" class="i">+                                        Equal(
+</a><a href="#h3-0-334" id="h3-0-334" class="i">+                                            Field(
+</a><a href="#h3-0-335" id="h3-0-335" class="i">+                                                8,
+</a><a href="#h3-0-336" id="h3-0-336" class="i">+                                                Some(
+</a><a href="#h3-0-337" id="h3-0-337" class="i">+                                                    (
+</a><a href="#h3-0-338" id="h3-0-338" class="i">+                                                        Some(
+</a><a href="#h3-0-339" id="h3-0-339" class="i">+                                                            &quot;good&quot;,
+</a><a href="#h3-0-340" id="h3-0-340" class="i">+                                                        ),
+</a><a href="#h3-0-341" id="h3-0-341" class="i">+                                                        &quot;rating&quot;,
+</a><a href="#h3-0-342" id="h3-0-342" class="i">+                                                    ),
+</a><a href="#h3-0-343" id="h3-0-343" class="i">+                                                ),
+</a><a href="#h3-0-344" id="h3-0-344" class="i">+                                            ),
+</a><a href="#h3-0-345" id="h3-0-345" class="i">+                                            Constant(
+</a><a href="#h3-0-346" id="h3-0-346" class="i">+                                                Integer(
+</a><a href="#h3-0-347" id="h3-0-347" class="i">+                                                    8,
+</a><a href="#h3-0-348" id="h3-0-348" class="i">+                                                ),
+</a><a href="#h3-0-349" id="h3-0-349" class="i">+                                            ),
+</a><a href="#h3-0-350" id="h3-0-350" class="i">+                                        ),
+</a><a href="#h3-0-351" id="h3-0-351" class="i">+                                    ),
+</a><a href="#h3-0-352" id="h3-0-352" class="i">+                                ),
+</a><a href="#h3-0-353" id="h3-0-353" class="i">+                            ),
+</a><a href="#h3-0-354" id="h3-0-354" class="i">+                            outer: false,
+</a><a href="#h3-0-355" id="h3-0-355" class="i">+                        },
+</a><a href="#h3-0-356" id="h3-0-356" class="i">+                        predicate: None,
+</a><a href="#h3-0-357" id="h3-0-357" class="i">+                        outer: false,
+</a><a href="#h3-0-358" id="h3-0-358" class="i">+                    },
+</a><a href="#h3-0-359" id="h3-0-359" class="i">+                    predicate: Equal(
+</a><a href="#h3-0-360" id="h3-0-360" class="i">+                        Field(
+</a><a href="#h3-0-361" id="h3-0-361" class="i">+                            2,
+</a><a href="#h3-0-362" id="h3-0-362" class="i">+                            Some(
+</a><a href="#h3-0-363" id="h3-0-363" class="i">+                                (
+</a><a href="#h3-0-364" id="h3-0-364" class="i">+                                    Some(
+</a><a href="#h3-0-365" id="h3-0-365" class="i">+                                        &quot;m&quot;,
+</a><a href="#h3-0-366" id="h3-0-366" class="i">+                                    ),
+</a><a href="#h3-0-367" id="h3-0-367" class="i">+                                    &quot;studio_id&quot;,
+</a><a href="#h3-0-368" id="h3-0-368" class="i">+                                ),
+</a><a href="#h3-0-369" id="h3-0-369" class="i">+                            ),
+</a><a href="#h3-0-370" id="h3-0-370" class="i">+                        ),
+</a><a href="#h3-0-371" id="h3-0-371" class="i">+                        Field(
+</a><a href="#h3-0-372" id="h3-0-372" class="i">+                            9,
+</a><a href="#h3-0-373" id="h3-0-373" class="i">+                            Some(
+</a><a href="#h3-0-374" id="h3-0-374" class="i">+                                (
+</a><a href="#h3-0-375" id="h3-0-375" class="i">+                                    Some(
+</a><a href="#h3-0-376" id="h3-0-376" class="i">+                                        &quot;s&quot;,
+</a><a href="#h3-0-377" id="h3-0-377" class="i">+                                    ),
+</a><a href="#h3-0-378" id="h3-0-378" class="i">+                                    &quot;id&quot;,
+</a><a href="#h3-0-379" id="h3-0-379" class="i">+                                ),
+</a><a href="#h3-0-380" id="h3-0-380" class="i">+                            ),
+</a><a href="#h3-0-381" id="h3-0-381" class="i">+                        ),
+</a><a href="#h3-0-382" id="h3-0-382" class="i">+                    ),
+</a><a href="#h3-0-383" id="h3-0-383" class="i">+                },
+</a><a href="#h3-0-384" id="h3-0-384" class="i">+                expressions: [
+</a><a href="#h3-0-385" id="h3-0-385" class="i">+                    (
+</a><a href="#h3-0-386" id="h3-0-386" class="i">+                        Field(
+</a><a href="#h3-0-387" id="h3-0-387" class="i">+                            0,
+</a><a href="#h3-0-388" id="h3-0-388" class="i">+                            Some(
+</a><a href="#h3-0-389" id="h3-0-389" class="i">+                                (
+</a><a href="#h3-0-390" id="h3-0-390" class="i">+                                    Some(
+</a><a href="#h3-0-391" id="h3-0-391" class="i">+                                        &quot;m&quot;,
+</a><a href="#h3-0-392" id="h3-0-392" class="i">+                                    ),
+</a><a href="#h3-0-393" id="h3-0-393" class="i">+                                    &quot;id&quot;,
+</a><a href="#h3-0-394" id="h3-0-394" class="i">+                                ),
+</a><a href="#h3-0-395" id="h3-0-395" class="i">+                            ),
+</a><a href="#h3-0-396" id="h3-0-396" class="i">+                        ),
+</a><a href="#h3-0-397" id="h3-0-397" class="i">+                        None,
+</a><a href="#h3-0-398" id="h3-0-398" class="i">+                    ),
+</a><a href="#h3-0-399" id="h3-0-399" class="i">+                    (
+</a><a href="#h3-0-400" id="h3-0-400" class="i">+                        Field(
+</a><a href="#h3-0-401" id="h3-0-401" class="i">+                            1,
+</a><a href="#h3-0-402" id="h3-0-402" class="i">+                            Some(
+</a><a href="#h3-0-403" id="h3-0-403" class="i">+                                (
+</a><a href="#h3-0-404" id="h3-0-404" class="i">+                                    Some(
+</a><a href="#h3-0-405" id="h3-0-405" class="i">+                                        &quot;m&quot;,
+</a><a href="#h3-0-406" id="h3-0-406" class="i">+                                    ),
+</a><a href="#h3-0-407" id="h3-0-407" class="i">+                                    &quot;title&quot;,
+</a><a href="#h3-0-408" id="h3-0-408" class="i">+                                ),
+</a><a href="#h3-0-409" id="h3-0-409" class="i">+                            ),
+</a><a href="#h3-0-410" id="h3-0-410" class="i">+                        ),
+</a><a href="#h3-0-411" id="h3-0-411" class="i">+                        None,
+</a><a href="#h3-0-412" id="h3-0-412" class="i">+                    ),
+</a><a href="#h3-0-413" id="h3-0-413" class="i">+                    (
+</a><a href="#h3-0-414" id="h3-0-414" class="i">+                        Field(
+</a><a href="#h3-0-415" id="h3-0-415" class="i">+                            8,
+</a><a href="#h3-0-416" id="h3-0-416" class="i">+                            Some(
+</a><a href="#h3-0-417" id="h3-0-417" class="i">+                                (
+</a><a href="#h3-0-418" id="h3-0-418" class="i">+                                    Some(
+</a><a href="#h3-0-419" id="h3-0-419" class="i">+                                        &quot;g&quot;,
+</a><a href="#h3-0-420" id="h3-0-420" class="i">+                                    ),
+</a><a href="#h3-0-421" id="h3-0-421" class="i">+                                    &quot;name&quot;,
+</a><a href="#h3-0-422" id="h3-0-422" class="i">+                                ),
+</a><a href="#h3-0-423" id="h3-0-423" class="i">+                            ),
+</a><a href="#h3-0-424" id="h3-0-424" class="i">+                        ),
+</a><a href="#h3-0-425" id="h3-0-425" class="i">+                        Some(
+</a><a href="#h3-0-426" id="h3-0-426" class="i">+                            &quot;genre&quot;,
+</a><a href="#h3-0-427" id="h3-0-427" class="i">+                        ),
+</a><a href="#h3-0-428" id="h3-0-428" class="i">+                    ),
+</a><a href="#h3-0-429" id="h3-0-429" class="i">+                    (
+</a><a href="#h3-0-430" id="h3-0-430" class="i">+                        Field(
+</a><a href="#h3-0-431" id="h3-0-431" class="i">+                            10,
+</a><a href="#h3-0-432" id="h3-0-432" class="i">+                            Some(
+</a><a href="#h3-0-433" id="h3-0-433" class="i">+                                (
+</a><a href="#h3-0-434" id="h3-0-434" class="i">+                                    Some(
+</a><a href="#h3-0-435" id="h3-0-435" class="i">+                                        &quot;s&quot;,
+</a><a href="#h3-0-436" id="h3-0-436" class="i">+                                    ),
+</a><a href="#h3-0-437" id="h3-0-437" class="i">+                                    &quot;name&quot;,
+</a><a href="#h3-0-438" id="h3-0-438" class="i">+                                ),
+</a><a href="#h3-0-439" id="h3-0-439" class="i">+                            ),
+</a><a href="#h3-0-440" id="h3-0-440" class="i">+                        ),
+</a><a href="#h3-0-441" id="h3-0-441" class="i">+                        Some(
+</a><a href="#h3-0-442" id="h3-0-442" class="i">+                            &quot;studio&quot;,
+</a><a href="#h3-0-443" id="h3-0-443" class="i">+                        ),
+</a><a href="#h3-0-444" id="h3-0-444" class="i">+                    ),
+</a><a href="#h3-0-445" id="h3-0-445" class="i">+                    (
+</a><a href="#h3-0-446" id="h3-0-446" class="i">+                        Field(
+</a><a href="#h3-0-447" id="h3-0-447" class="i">+                            5,
+</a><a href="#h3-0-448" id="h3-0-448" class="i">+                            Some(
+</a><a href="#h3-0-449" id="h3-0-449" class="i">+                                (
+</a><a href="#h3-0-450" id="h3-0-450" class="i">+                                    Some(
+</a><a href="#h3-0-451" id="h3-0-451" class="i">+                                        &quot;m&quot;,
+</a><a href="#h3-0-452" id="h3-0-452" class="i">+                                    ),
+</a><a href="#h3-0-453" id="h3-0-453" class="i">+                                    &quot;rating&quot;,
+</a><a href="#h3-0-454" id="h3-0-454" class="i">+                                ),
+</a><a href="#h3-0-455" id="h3-0-455" class="i">+                            ),
+</a><a href="#h3-0-456" id="h3-0-456" class="i">+                        ),
+</a><a href="#h3-0-457" id="h3-0-457" class="i">+                        None,
+</a><a href="#h3-0-458" id="h3-0-458" class="i">+                    ),
+</a><a href="#h3-0-459" id="h3-0-459" class="i">+                    (
+</a><a href="#h3-0-460" id="h3-0-460" class="i">+                        Field(
+</a><a href="#h3-0-461" id="h3-0-461" class="i">+                            4,
+</a><a href="#h3-0-462" id="h3-0-462" class="i">+                            Some(
+</a><a href="#h3-0-463" id="h3-0-463" class="i">+                                (
+</a><a href="#h3-0-464" id="h3-0-464" class="i">+                                    Some(
+</a><a href="#h3-0-465" id="h3-0-465" class="i">+                                        &quot;m&quot;,
+</a><a href="#h3-0-466" id="h3-0-466" class="i">+                                    ),
+</a><a href="#h3-0-467" id="h3-0-467" class="i">+                                    &quot;released&quot;,
+</a><a href="#h3-0-468" id="h3-0-468" class="i">+                                ),
+</a><a href="#h3-0-469" id="h3-0-469" class="i">+                            ),
+</a><a href="#h3-0-470" id="h3-0-470" class="i">+                        ),
+</a><a href="#h3-0-471" id="h3-0-471" class="i">+                        None,
+</a><a href="#h3-0-472" id="h3-0-472" class="i">+                    ),
+</a><a href="#h3-0-473" id="h3-0-473" class="i">+                ],
+</a><a href="#h3-0-474" id="h3-0-474" class="i">+            },
+</a><a href="#h3-0-475" id="h3-0-475" class="i">+            orders: [
+</a><a href="#h3-0-476" id="h3-0-476" class="i">+                (
+</a><a href="#h3-0-477" id="h3-0-477" class="i">+                    Field(
+</a><a href="#h3-0-478" id="h3-0-478" class="i">+                        4,
+</a><a href="#h3-0-479" id="h3-0-479" class="i">+                        Some(
+</a><a href="#h3-0-480" id="h3-0-480" class="i">+                            (
+</a><a href="#h3-0-481" id="h3-0-481" class="i">+                                Some(
+</a><a href="#h3-0-482" id="h3-0-482" class="i">+                                    &quot;m&quot;,
+</a><a href="#h3-0-483" id="h3-0-483" class="i">+                                ),
+</a><a href="#h3-0-484" id="h3-0-484" class="i">+                                &quot;rating&quot;,
+</a><a href="#h3-0-485" id="h3-0-485" class="i">+                            ),
+</a><a href="#h3-0-486" id="h3-0-486" class="i">+                        ),
+</a><a href="#h3-0-487" id="h3-0-487" class="i">+                    ),
+</a><a href="#h3-0-488" id="h3-0-488" class="i">+                    Descending,
+</a><a href="#h3-0-489" id="h3-0-489" class="i">+                ),
+</a><a href="#h3-0-490" id="h3-0-490" class="i">+                (
+</a><a href="#h3-0-491" id="h3-0-491" class="i">+                    Field(
+</a><a href="#h3-0-492" id="h3-0-492" class="i">+                        5,
+</a><a href="#h3-0-493" id="h3-0-493" class="i">+                        Some(
+</a><a href="#h3-0-494" id="h3-0-494" class="i">+                            (
+</a><a href="#h3-0-495" id="h3-0-495" class="i">+                                Some(
+</a><a href="#h3-0-496" id="h3-0-496" class="i">+                                    &quot;m&quot;,
+</a><a href="#h3-0-497" id="h3-0-497" class="i">+                                ),
+</a><a href="#h3-0-498" id="h3-0-498" class="i">+                                &quot;released&quot;,
+</a><a href="#h3-0-499" id="h3-0-499" class="i">+                            ),
+</a><a href="#h3-0-500" id="h3-0-500" class="i">+                        ),
+</a><a href="#h3-0-501" id="h3-0-501" class="i">+                    ),
+</a><a href="#h3-0-502" id="h3-0-502" class="i">+                    Ascending,
+</a><a href="#h3-0-503" id="h3-0-503" class="i">+                ),
+</a><a href="#h3-0-504" id="h3-0-504" class="i">+                (
+</a><a href="#h3-0-505" id="h3-0-505" class="i">+                    Field(
+</a><a href="#h3-0-506" id="h3-0-506" class="i">+                        0,
+</a><a href="#h3-0-507" id="h3-0-507" class="i">+                        Some(
+</a><a href="#h3-0-508" id="h3-0-508" class="i">+                            (
+</a><a href="#h3-0-509" id="h3-0-509" class="i">+                                Some(
+</a><a href="#h3-0-510" id="h3-0-510" class="i">+                                    &quot;m&quot;,
+</a><a href="#h3-0-511" id="h3-0-511" class="i">+                                ),
+</a><a href="#h3-0-512" id="h3-0-512" class="i">+                                &quot;id&quot;,
+</a><a href="#h3-0-513" id="h3-0-513" class="i">+                            ),
+</a><a href="#h3-0-514" id="h3-0-514" class="i">+                        ),
+</a><a href="#h3-0-515" id="h3-0-515" class="i">+                    ),
+</a><a href="#h3-0-516" id="h3-0-516" class="i">+                    Ascending,
+</a><a href="#h3-0-517" id="h3-0-517" class="i">+                ),
+</a><a href="#h3-0-518" id="h3-0-518" class="i">+            ],
+</a><a href="#h3-0-519" id="h3-0-519" class="i">+        },
+</a><a href="#h3-0-520" id="h3-0-520" class="i">+        expressions: [
+</a><a href="#h3-0-521" id="h3-0-521" class="i">+            (
+</a><a href="#h3-0-522" id="h3-0-522" class="i">+                Field(
+</a><a href="#h3-0-523" id="h3-0-523" class="i">+                    0,
+</a><a href="#h3-0-524" id="h3-0-524" class="i">+                    None,
+</a><a href="#h3-0-525" id="h3-0-525" class="i">+                ),
+</a><a href="#h3-0-526" id="h3-0-526" class="i">+                None,
+</a><a href="#h3-0-527" id="h3-0-527" class="i">+            ),
+</a><a href="#h3-0-528" id="h3-0-528" class="i">+            (
+</a><a href="#h3-0-529" id="h3-0-529" class="i">+                Field(
+</a><a href="#h3-0-530" id="h3-0-530" class="i">+                    1,
+</a><a href="#h3-0-531" id="h3-0-531" class="i">+                    None,
+</a><a href="#h3-0-532" id="h3-0-532" class="i">+                ),
+</a><a href="#h3-0-533" id="h3-0-533" class="i">+                None,
+</a><a href="#h3-0-534" id="h3-0-534" class="i">+            ),
+</a><a href="#h3-0-535" id="h3-0-535" class="i">+            (
+</a><a href="#h3-0-536" id="h3-0-536" class="i">+                Field(
+</a><a href="#h3-0-537" id="h3-0-537" class="i">+                    2,
+</a><a href="#h3-0-538" id="h3-0-538" class="i">+                    None,
+</a><a href="#h3-0-539" id="h3-0-539" class="i">+                ),
+</a><a href="#h3-0-540" id="h3-0-540" class="i">+                None,
+</a><a href="#h3-0-541" id="h3-0-541" class="i">+            ),
+</a><a href="#h3-0-542" id="h3-0-542" class="i">+            (
+</a><a href="#h3-0-543" id="h3-0-543" class="i">+                Field(
+</a><a href="#h3-0-544" id="h3-0-544" class="i">+                    3,
+</a><a href="#h3-0-545" id="h3-0-545" class="i">+                    None,
+</a><a href="#h3-0-546" id="h3-0-546" class="i">+                ),
+</a><a href="#h3-0-547" id="h3-0-547" class="i">+                None,
+</a><a href="#h3-0-548" id="h3-0-548" class="i">+            ),
+</a><a href="#h3-0-549" id="h3-0-549" class="i">+            (
+</a><a href="#h3-0-550" id="h3-0-550" class="i">+                Field(
+</a><a href="#h3-0-551" id="h3-0-551" class="i">+                    4,
+</a><a href="#h3-0-552" id="h3-0-552" class="i">+                    None,
+</a><a href="#h3-0-553" id="h3-0-553" class="i">+                ),
+</a><a href="#h3-0-554" id="h3-0-554" class="i">+                None,
+</a><a href="#h3-0-555" id="h3-0-555" class="i">+            ),
+</a><a href="#h3-0-556" id="h3-0-556" class="i">+        ],
+</a><a href="#h3-0-557" id="h3-0-557" class="i">+    },
+</a><a href="#h3-0-558" id="h3-0-558" class="i">+)
+</a><a href="#h3-0-559" id="h3-0-559" class="i">+
+</a><a href="#h3-0-560" id="h3-0-560" class="i">+Optimized plan: Plan(
+</a><a href="#h3-0-561" id="h3-0-561" class="i">+    Projection {
+</a><a href="#h3-0-562" id="h3-0-562" class="i">+        source: Order {
+</a><a href="#h3-0-563" id="h3-0-563" class="i">+            source: Projection {
+</a><a href="#h3-0-564" id="h3-0-564" class="i">+                source: HashJoin {
+</a><a href="#h3-0-565" id="h3-0-565" class="i">+                    left: HashJoin {
+</a><a href="#h3-0-566" id="h3-0-566" class="i">+                        left: Scan {
+</a><a href="#h3-0-567" id="h3-0-567" class="i">+                            table: &quot;movies&quot;,
+</a><a href="#h3-0-568" id="h3-0-568" class="i">+                            alias: Some(
+</a><a href="#h3-0-569" id="h3-0-569" class="i">+                                &quot;m&quot;,
+</a><a href="#h3-0-570" id="h3-0-570" class="i">+                            ),
+</a><a href="#h3-0-571" id="h3-0-571" class="i">+                            filter: None,
+</a><a href="#h3-0-572" id="h3-0-572" class="i">+                        },
+</a><a href="#h3-0-573" id="h3-0-573" class="i">+                        left_field: (
+</a><a href="#h3-0-574" id="h3-0-574" class="i">+                            3,
+</a><a href="#h3-0-575" id="h3-0-575" class="i">+                            Some(
+</a><a href="#h3-0-576" id="h3-0-576" class="i">+                                (
+</a><a href="#h3-0-577" id="h3-0-577" class="i">+                                    Some(
+</a><a href="#h3-0-578" id="h3-0-578" class="i">+                                        &quot;m&quot;,
+</a><a href="#h3-0-579" id="h3-0-579" class="i">+                                    ),
+</a><a href="#h3-0-580" id="h3-0-580" class="i">+                                    &quot;genre_id&quot;,
+</a><a href="#h3-0-581" id="h3-0-581" class="i">+                                ),
+</a><a href="#h3-0-582" id="h3-0-582" class="i">+                            ),
+</a><a href="#h3-0-583" id="h3-0-583" class="i">+                        ),
+</a><a href="#h3-0-584" id="h3-0-584" class="i">+                        right: Scan {
+</a><a href="#h3-0-585" id="h3-0-585" class="i">+                            table: &quot;genres&quot;,
+</a><a href="#h3-0-586" id="h3-0-586" class="i">+                            alias: Some(
+</a><a href="#h3-0-587" id="h3-0-587" class="i">+                                &quot;g&quot;,
+</a><a href="#h3-0-588" id="h3-0-588" class="i">+                            ),
+</a><a href="#h3-0-589" id="h3-0-589" class="i">+                            filter: None,
+</a><a href="#h3-0-590" id="h3-0-590" class="i">+                        },
+</a><a href="#h3-0-591" id="h3-0-591" class="i">+                        right_field: (
+</a><a href="#h3-0-592" id="h3-0-592" class="i">+                            0,
+</a><a href="#h3-0-593" id="h3-0-593" class="i">+                            Some(
+</a><a href="#h3-0-594" id="h3-0-594" class="i">+                                (
+</a><a href="#h3-0-595" id="h3-0-595" class="i">+                                    Some(
+</a><a href="#h3-0-596" id="h3-0-596" class="i">+                                        &quot;g&quot;,
+</a><a href="#h3-0-597" id="h3-0-597" class="i">+                                    ),
+</a><a href="#h3-0-598" id="h3-0-598" class="i">+                                    &quot;id&quot;,
+</a><a href="#h3-0-599" id="h3-0-599" class="i">+                                ),
+</a><a href="#h3-0-600" id="h3-0-600" class="i">+                            ),
+</a><a href="#h3-0-601" id="h3-0-601" class="i">+                        ),
+</a><a href="#h3-0-602" id="h3-0-602" class="i">+                        outer: false,
+</a><a href="#h3-0-603" id="h3-0-603" class="i">+                    },
+</a><a href="#h3-0-604" id="h3-0-604" class="i">+                    left_field: (
+</a><a href="#h3-0-605" id="h3-0-605" class="i">+                        2,
+</a><a href="#h3-0-606" id="h3-0-606" class="i">+                        Some(
+</a><a href="#h3-0-607" id="h3-0-607" class="i">+                            (
+</a><a href="#h3-0-608" id="h3-0-608" class="i">+                                Some(
+</a><a href="#h3-0-609" id="h3-0-609" class="i">+                                    &quot;m&quot;,
+</a><a href="#h3-0-610" id="h3-0-610" class="i">+                                ),
+</a><a href="#h3-0-611" id="h3-0-611" class="i">+                                &quot;studio_id&quot;,
+</a><a href="#h3-0-612" id="h3-0-612" class="i">+                            ),
+</a><a href="#h3-0-613" id="h3-0-613" class="i">+                        ),
+</a><a href="#h3-0-614" id="h3-0-614" class="i">+                    ),
+</a><a href="#h3-0-615" id="h3-0-615" class="i">+                    right: HashJoin {
+</a><a href="#h3-0-616" id="h3-0-616" class="i">+                        left: Scan {
+</a><a href="#h3-0-617" id="h3-0-617" class="i">+                            table: &quot;studios&quot;,
+</a><a href="#h3-0-618" id="h3-0-618" class="i">+                            alias: Some(
+</a><a href="#h3-0-619" id="h3-0-619" class="i">+                                &quot;s&quot;,
+</a><a href="#h3-0-620" id="h3-0-620" class="i">+                            ),
+</a><a href="#h3-0-621" id="h3-0-621" class="i">+                            filter: None,
+</a><a href="#h3-0-622" id="h3-0-622" class="i">+                        },
+</a><a href="#h3-0-623" id="h3-0-623" class="i">+                        left_field: (
+</a><a href="#h3-0-624" id="h3-0-624" class="i">+                            0,
+</a><a href="#h3-0-625" id="h3-0-625" class="i">+                            Some(
+</a><a href="#h3-0-626" id="h3-0-626" class="i">+                                (
+</a><a href="#h3-0-627" id="h3-0-627" class="i">+                                    Some(
+</a><a href="#h3-0-628" id="h3-0-628" class="i">+                                        &quot;s&quot;,
+</a><a href="#h3-0-629" id="h3-0-629" class="i">+                                    ),
+</a><a href="#h3-0-630" id="h3-0-630" class="i">+                                    &quot;id&quot;,
+</a><a href="#h3-0-631" id="h3-0-631" class="i">+                                ),
+</a><a href="#h3-0-632" id="h3-0-632" class="i">+                            ),
+</a><a href="#h3-0-633" id="h3-0-633" class="i">+                        ),
+</a><a href="#h3-0-634" id="h3-0-634" class="i">+                        right: Scan {
+</a><a href="#h3-0-635" id="h3-0-635" class="i">+                            table: &quot;movies&quot;,
+</a><a href="#h3-0-636" id="h3-0-636" class="i">+                            alias: Some(
+</a><a href="#h3-0-637" id="h3-0-637" class="i">+                                &quot;good&quot;,
+</a><a href="#h3-0-638" id="h3-0-638" class="i">+                            ),
+</a><a href="#h3-0-639" id="h3-0-639" class="i">+                            filter: Some(
+</a><a href="#h3-0-640" id="h3-0-640" class="i">+                                Or(
+</a><a href="#h3-0-641" id="h3-0-641" class="i">+                                    GreaterThan(
+</a><a href="#h3-0-642" id="h3-0-642" class="i">+                                        Field(
+</a><a href="#h3-0-643" id="h3-0-643" class="i">+                                            5,
+</a><a href="#h3-0-644" id="h3-0-644" class="i">+                                            Some(
+</a><a href="#h3-0-645" id="h3-0-645" class="i">+                                                (
+</a><a href="#h3-0-646" id="h3-0-646" class="i">+                                                    Some(
+</a><a href="#h3-0-647" id="h3-0-647" class="i">+                                                        &quot;good&quot;,
+</a><a href="#h3-0-648" id="h3-0-648" class="i">+                                                    ),
+</a><a href="#h3-0-649" id="h3-0-649" class="i">+                                                    &quot;rating&quot;,
+</a><a href="#h3-0-650" id="h3-0-650" class="i">+                                                ),
+</a><a href="#h3-0-651" id="h3-0-651" class="i">+                                            ),
+</a><a href="#h3-0-652" id="h3-0-652" class="i">+                                        ),
+</a><a href="#h3-0-653" id="h3-0-653" class="i">+                                        Constant(
+</a><a href="#h3-0-654" id="h3-0-654" class="i">+                                            Integer(
+</a><a href="#h3-0-655" id="h3-0-655" class="i">+                                                8,
+</a><a href="#h3-0-656" id="h3-0-656" class="i">+                                            ),
+</a><a href="#h3-0-657" id="h3-0-657" class="i">+                                        ),
+</a><a href="#h3-0-658" id="h3-0-658" class="i">+                                    ),
+</a><a href="#h3-0-659" id="h3-0-659" class="i">+                                    Equal(
+</a><a href="#h3-0-660" id="h3-0-660" class="i">+                                        Field(
+</a><a href="#h3-0-661" id="h3-0-661" class="i">+                                            5,
+</a><a href="#h3-0-662" id="h3-0-662" class="i">+                                            Some(
+</a><a href="#h3-0-663" id="h3-0-663" class="i">+                                                (
+</a><a href="#h3-0-664" id="h3-0-664" class="i">+                                                    Some(
+</a><a href="#h3-0-665" id="h3-0-665" class="i">+                                                        &quot;good&quot;,
+</a><a href="#h3-0-666" id="h3-0-666" class="i">+                                                    ),
+</a><a href="#h3-0-667" id="h3-0-667" class="i">+                                                    &quot;rating&quot;,
+</a><a href="#h3-0-668" id="h3-0-668" class="i">+                                                ),
+</a><a href="#h3-0-669" id="h3-0-669" class="i">+                                            ),
+</a><a href="#h3-0-670" id="h3-0-670" class="i">+                                        ),
+</a><a href="#h3-0-671" id="h3-0-671" class="i">+                                        Constant(
+</a><a href="#h3-0-672" id="h3-0-672" class="i">+                                            Integer(
+</a><a href="#h3-0-673" id="h3-0-673" class="i">+                                                8,
+</a><a href="#h3-0-674" id="h3-0-674" class="i">+                                            ),
+</a><a href="#h3-0-675" id="h3-0-675" class="i">+                                        ),
+</a><a href="#h3-0-676" id="h3-0-676" class="i">+                                    ),
+</a><a href="#h3-0-677" id="h3-0-677" class="i">+                                ),
+</a><a href="#h3-0-678" id="h3-0-678" class="i">+                            ),
+</a><a href="#h3-0-679" id="h3-0-679" class="i">+                        },
+</a><a href="#h3-0-680" id="h3-0-680" class="i">+                        right_field: (
+</a><a href="#h3-0-681" id="h3-0-681" class="i">+                            2,
+</a><a href="#h3-0-682" id="h3-0-682" class="i">+                            Some(
+</a><a href="#h3-0-683" id="h3-0-683" class="i">+                                (
+</a><a href="#h3-0-684" id="h3-0-684" class="i">+                                    Some(
+</a><a href="#h3-0-685" id="h3-0-685" class="i">+                                        &quot;good&quot;,
+</a><a href="#h3-0-686" id="h3-0-686" class="i">+                                    ),
+</a><a href="#h3-0-687" id="h3-0-687" class="i">+                                    &quot;studio_id&quot;,
+</a><a href="#h3-0-688" id="h3-0-688" class="i">+                                ),
+</a><a href="#h3-0-689" id="h3-0-689" class="i">+                            ),
+</a><a href="#h3-0-690" id="h3-0-690" class="i">+                        ),
+</a><a href="#h3-0-691" id="h3-0-691" class="i">+                        outer: false,
+</a><a href="#h3-0-692" id="h3-0-692" class="i">+                    },
+</a><a href="#h3-0-693" id="h3-0-693" class="i">+                    right_field: (
+</a><a href="#h3-0-694" id="h3-0-694" class="i">+                        0,
+</a><a href="#h3-0-695" id="h3-0-695" class="i">+                        Some(
+</a><a href="#h3-0-696" id="h3-0-696" class="i">+                            (
+</a><a href="#h3-0-697" id="h3-0-697" class="i">+                                Some(
+</a><a href="#h3-0-698" id="h3-0-698" class="i">+                                    &quot;s&quot;,
+</a><a href="#h3-0-699" id="h3-0-699" class="i">+                                ),
+</a><a href="#h3-0-700" id="h3-0-700" class="i">+                                &quot;id&quot;,
+</a><a href="#h3-0-701" id="h3-0-701" class="i">+                            ),
+</a><a href="#h3-0-702" id="h3-0-702" class="i">+                        ),
+</a><a href="#h3-0-703" id="h3-0-703" class="i">+                    ),
+</a><a href="#h3-0-704" id="h3-0-704" class="i">+                    outer: false,
+</a><a href="#h3-0-705" id="h3-0-705" class="i">+                },
+</a><a href="#h3-0-706" id="h3-0-706" class="i">+                expressions: [
+</a><a href="#h3-0-707" id="h3-0-707" class="i">+                    (
+</a><a href="#h3-0-708" id="h3-0-708" class="i">+                        Field(
+</a><a href="#h3-0-709" id="h3-0-709" class="i">+                            0,
+</a><a href="#h3-0-710" id="h3-0-710" class="i">+                            Some(
+</a><a href="#h3-0-711" id="h3-0-711" class="i">+                                (
+</a><a href="#h3-0-712" id="h3-0-712" class="i">+                                    Some(
+</a><a href="#h3-0-713" id="h3-0-713" class="i">+                                        &quot;m&quot;,
+</a><a href="#h3-0-714" id="h3-0-714" class="i">+                                    ),
+</a><a href="#h3-0-715" id="h3-0-715" class="i">+                                    &quot;id&quot;,
+</a><a href="#h3-0-716" id="h3-0-716" class="i">+                                ),
+</a><a href="#h3-0-717" id="h3-0-717" class="i">+                            ),
+</a><a href="#h3-0-718" id="h3-0-718" class="i">+                        ),
+</a><a href="#h3-0-719" id="h3-0-719" class="i">+                        None,
+</a><a href="#h3-0-720" id="h3-0-720" class="i">+                    ),
+</a><a href="#h3-0-721" id="h3-0-721" class="i">+                    (
+</a><a href="#h3-0-722" id="h3-0-722" class="i">+                        Field(
+</a><a href="#h3-0-723" id="h3-0-723" class="i">+                            1,
+</a><a href="#h3-0-724" id="h3-0-724" class="i">+                            Some(
+</a><a href="#h3-0-725" id="h3-0-725" class="i">+                                (
+</a><a href="#h3-0-726" id="h3-0-726" class="i">+                                    Some(
+</a><a href="#h3-0-727" id="h3-0-727" class="i">+                                        &quot;m&quot;,
+</a><a href="#h3-0-728" id="h3-0-728" class="i">+                                    ),
+</a><a href="#h3-0-729" id="h3-0-729" class="i">+                                    &quot;title&quot;,
+</a><a href="#h3-0-730" id="h3-0-730" class="i">+                                ),
+</a><a href="#h3-0-731" id="h3-0-731" class="i">+                            ),
+</a><a href="#h3-0-732" id="h3-0-732" class="i">+                        ),
+</a><a href="#h3-0-733" id="h3-0-733" class="i">+                        None,
+</a><a href="#h3-0-734" id="h3-0-734" class="i">+                    ),
+</a><a href="#h3-0-735" id="h3-0-735" class="i">+                    (
+</a><a href="#h3-0-736" id="h3-0-736" class="i">+                        Field(
+</a><a href="#h3-0-737" id="h3-0-737" class="i">+                            8,
+</a><a href="#h3-0-738" id="h3-0-738" class="i">+                            Some(
+</a><a href="#h3-0-739" id="h3-0-739" class="i">+                                (
+</a><a href="#h3-0-740" id="h3-0-740" class="i">+                                    Some(
+</a><a href="#h3-0-741" id="h3-0-741" class="i">+                                        &quot;g&quot;,
+</a><a href="#h3-0-742" id="h3-0-742" class="i">+                                    ),
+</a><a href="#h3-0-743" id="h3-0-743" class="i">+                                    &quot;name&quot;,
+</a><a href="#h3-0-744" id="h3-0-744" class="i">+                                ),
+</a><a href="#h3-0-745" id="h3-0-745" class="i">+                            ),
+</a><a href="#h3-0-746" id="h3-0-746" class="i">+                        ),
+</a><a href="#h3-0-747" id="h3-0-747" class="i">+                        Some(
+</a><a href="#h3-0-748" id="h3-0-748" class="i">+                            &quot;genre&quot;,
+</a><a href="#h3-0-749" id="h3-0-749" class="i">+                        ),
+</a><a href="#h3-0-750" id="h3-0-750" class="i">+                    ),
+</a><a href="#h3-0-751" id="h3-0-751" class="i">+                    (
+</a><a href="#h3-0-752" id="h3-0-752" class="i">+                        Field(
+</a><a href="#h3-0-753" id="h3-0-753" class="i">+                            10,
+</a><a href="#h3-0-754" id="h3-0-754" class="i">+                            Some(
+</a><a href="#h3-0-755" id="h3-0-755" class="i">+                                (
+</a><a href="#h3-0-756" id="h3-0-756" class="i">+                                    Some(
+</a><a href="#h3-0-757" id="h3-0-757" class="i">+                                        &quot;s&quot;,
+</a><a href="#h3-0-758" id="h3-0-758" class="i">+                                    ),
+</a><a href="#h3-0-759" id="h3-0-759" class="i">+                                    &quot;name&quot;,
+</a><a href="#h3-0-760" id="h3-0-760" class="i">+                                ),
+</a><a href="#h3-0-761" id="h3-0-761" class="i">+                            ),
+</a><a href="#h3-0-762" id="h3-0-762" class="i">+                        ),
+</a><a href="#h3-0-763" id="h3-0-763" class="i">+                        Some(
+</a><a href="#h3-0-764" id="h3-0-764" class="i">+                            &quot;studio&quot;,
+</a><a href="#h3-0-765" id="h3-0-765" class="i">+                        ),
+</a><a href="#h3-0-766" id="h3-0-766" class="i">+                    ),
+</a><a href="#h3-0-767" id="h3-0-767" class="i">+                    (
+</a><a href="#h3-0-768" id="h3-0-768" class="i">+                        Field(
+</a><a href="#h3-0-769" id="h3-0-769" class="i">+                            5,
+</a><a href="#h3-0-770" id="h3-0-770" class="i">+                            Some(
+</a><a href="#h3-0-771" id="h3-0-771" class="i">+                                (
+</a><a href="#h3-0-772" id="h3-0-772" class="i">+                                    Some(
+</a><a href="#h3-0-773" id="h3-0-773" class="i">+                                        &quot;m&quot;,
+</a><a href="#h3-0-774" id="h3-0-774" class="i">+                                    ),
+</a><a href="#h3-0-775" id="h3-0-775" class="i">+                                    &quot;rating&quot;,
+</a><a href="#h3-0-776" id="h3-0-776" class="i">+                                ),
+</a><a href="#h3-0-777" id="h3-0-777" class="i">+                            ),
+</a><a href="#h3-0-778" id="h3-0-778" class="i">+                        ),
+</a><a href="#h3-0-779" id="h3-0-779" class="i">+                        None,
+</a><a href="#h3-0-780" id="h3-0-780" class="i">+                    ),
+</a><a href="#h3-0-781" id="h3-0-781" class="i">+                    (
+</a><a href="#h3-0-782" id="h3-0-782" class="i">+                        Field(
+</a><a href="#h3-0-783" id="h3-0-783" class="i">+                            4,
+</a><a href="#h3-0-784" id="h3-0-784" class="i">+                            Some(
+</a><a href="#h3-0-785" id="h3-0-785" class="i">+                                (
+</a><a href="#h3-0-786" id="h3-0-786" class="i">+                                    Some(
+</a><a href="#h3-0-787" id="h3-0-787" class="i">+                                        &quot;m&quot;,
+</a><a href="#h3-0-788" id="h3-0-788" class="i">+                                    ),
+</a><a href="#h3-0-789" id="h3-0-789" class="i">+                                    &quot;released&quot;,
+</a><a href="#h3-0-790" id="h3-0-790" class="i">+                                ),
+</a><a href="#h3-0-791" id="h3-0-791" class="i">+                            ),
+</a><a href="#h3-0-792" id="h3-0-792" class="i">+                        ),
+</a><a href="#h3-0-793" id="h3-0-793" class="i">+                        None,
+</a><a href="#h3-0-794" id="h3-0-794" class="i">+                    ),
+</a><a href="#h3-0-795" id="h3-0-795" class="i">+                ],
+</a><a href="#h3-0-796" id="h3-0-796" class="i">+            },
+</a><a href="#h3-0-797" id="h3-0-797" class="i">+            orders: [
+</a><a href="#h3-0-798" id="h3-0-798" class="i">+                (
+</a><a href="#h3-0-799" id="h3-0-799" class="i">+                    Field(
+</a><a href="#h3-0-800" id="h3-0-800" class="i">+                        4,
+</a><a href="#h3-0-801" id="h3-0-801" class="i">+                        Some(
+</a><a href="#h3-0-802" id="h3-0-802" class="i">+                            (
+</a><a href="#h3-0-803" id="h3-0-803" class="i">+                                Some(
+</a><a href="#h3-0-804" id="h3-0-804" class="i">+                                    &quot;m&quot;,
+</a><a href="#h3-0-805" id="h3-0-805" class="i">+                                ),
+</a><a href="#h3-0-806" id="h3-0-806" class="i">+                                &quot;rating&quot;,
+</a><a href="#h3-0-807" id="h3-0-807" class="i">+                            ),
+</a><a href="#h3-0-808" id="h3-0-808" class="i">+                        ),
+</a><a href="#h3-0-809" id="h3-0-809" class="i">+                    ),
+</a><a href="#h3-0-810" id="h3-0-810" class="i">+                    Descending,
+</a><a href="#h3-0-811" id="h3-0-811" class="i">+                ),
+</a><a href="#h3-0-812" id="h3-0-812" class="i">+                (
+</a><a href="#h3-0-813" id="h3-0-813" class="i">+                    Field(
+</a><a href="#h3-0-814" id="h3-0-814" class="i">+                        5,
+</a><a href="#h3-0-815" id="h3-0-815" class="i">+                        Some(
+</a><a href="#h3-0-816" id="h3-0-816" class="i">+                            (
+</a><a href="#h3-0-817" id="h3-0-817" class="i">+                                Some(
+</a><a href="#h3-0-818" id="h3-0-818" class="i">+                                    &quot;m&quot;,
+</a><a href="#h3-0-819" id="h3-0-819" class="i">+                                ),
+</a><a href="#h3-0-820" id="h3-0-820" class="i">+                                &quot;released&quot;,
+</a><a href="#h3-0-821" id="h3-0-821" class="i">+                            ),
+</a><a href="#h3-0-822" id="h3-0-822" class="i">+                        ),
+</a><a href="#h3-0-823" id="h3-0-823" class="i">+                    ),
+</a><a href="#h3-0-824" id="h3-0-824" class="i">+                    Ascending,
+</a><a href="#h3-0-825" id="h3-0-825" class="i">+                ),
+</a><a href="#h3-0-826" id="h3-0-826" class="i">+                (
+</a><a href="#h3-0-827" id="h3-0-827" class="i">+                    Field(
+</a><a href="#h3-0-828" id="h3-0-828" class="i">+                        0,
+</a><a href="#h3-0-829" id="h3-0-829" class="i">+                        Some(
+</a><a href="#h3-0-830" id="h3-0-830" class="i">+                            (
+</a><a href="#h3-0-831" id="h3-0-831" class="i">+                                Some(
+</a><a href="#h3-0-832" id="h3-0-832" class="i">+                                    &quot;m&quot;,
+</a><a href="#h3-0-833" id="h3-0-833" class="i">+                                ),
+</a><a href="#h3-0-834" id="h3-0-834" class="i">+                                &quot;id&quot;,
+</a><a href="#h3-0-835" id="h3-0-835" class="i">+                            ),
+</a><a href="#h3-0-836" id="h3-0-836" class="i">+                        ),
+</a><a href="#h3-0-837" id="h3-0-837" class="i">+                    ),
+</a><a href="#h3-0-838" id="h3-0-838" class="i">+                    Ascending,
+</a><a href="#h3-0-839" id="h3-0-839" class="i">+                ),
+</a><a href="#h3-0-840" id="h3-0-840" class="i">+            ],
+</a><a href="#h3-0-841" id="h3-0-841" class="i">+        },
+</a><a href="#h3-0-842" id="h3-0-842" class="i">+        expressions: [
+</a><a href="#h3-0-843" id="h3-0-843" class="i">+            (
+</a><a href="#h3-0-844" id="h3-0-844" class="i">+                Field(
+</a><a href="#h3-0-845" id="h3-0-845" class="i">+                    0,
+</a><a href="#h3-0-846" id="h3-0-846" class="i">+                    None,
+</a><a href="#h3-0-847" id="h3-0-847" class="i">+                ),
+</a><a href="#h3-0-848" id="h3-0-848" class="i">+                None,
+</a><a href="#h3-0-849" id="h3-0-849" class="i">+            ),
+</a><a href="#h3-0-850" id="h3-0-850" class="i">+            (
+</a><a href="#h3-0-851" id="h3-0-851" class="i">+                Field(
+</a><a href="#h3-0-852" id="h3-0-852" class="i">+                    1,
+</a><a href="#h3-0-853" id="h3-0-853" class="i">+                    None,
+</a><a href="#h3-0-854" id="h3-0-854" class="i">+                ),
+</a><a href="#h3-0-855" id="h3-0-855" class="i">+                None,
+</a><a href="#h3-0-856" id="h3-0-856" class="i">+            ),
+</a><a href="#h3-0-857" id="h3-0-857" class="i">+            (
+</a><a href="#h3-0-858" id="h3-0-858" class="i">+                Field(
+</a><a href="#h3-0-859" id="h3-0-859" class="i">+                    2,
+</a><a href="#h3-0-860" id="h3-0-860" class="i">+                    None,
+</a><a href="#h3-0-861" id="h3-0-861" class="i">+                ),
+</a><a href="#h3-0-862" id="h3-0-862" class="i">+                None,
+</a><a href="#h3-0-863" id="h3-0-863" class="i">+            ),
+</a><a href="#h3-0-864" id="h3-0-864" class="i">+            (
+</a><a href="#h3-0-865" id="h3-0-865" class="i">+                Field(
+</a><a href="#h3-0-866" id="h3-0-866" class="i">+                    3,
+</a><a href="#h3-0-867" id="h3-0-867" class="i">+                    None,
+</a><a href="#h3-0-868" id="h3-0-868" class="i">+                ),
+</a><a href="#h3-0-869" id="h3-0-869" class="i">+                None,
+</a><a href="#h3-0-870" id="h3-0-870" class="i">+            ),
+</a><a href="#h3-0-871" id="h3-0-871" class="i">+            (
+</a><a href="#h3-0-872" id="h3-0-872" class="i">+                Field(
+</a><a href="#h3-0-873" id="h3-0-873" class="i">+                    4,
+</a><a href="#h3-0-874" id="h3-0-874" class="i">+                    None,
+</a><a href="#h3-0-875" id="h3-0-875" class="i">+                ),
+</a><a href="#h3-0-876" id="h3-0-876" class="i">+                None,
+</a><a href="#h3-0-877" id="h3-0-877" class="i">+            ),
+</a><a href="#h3-0-878" id="h3-0-878" class="i">+        ],
+</a><a href="#h3-0-879" id="h3-0-879" class="i">+    },
+</a><a href="#h3-0-880" id="h3-0-880" class="i">+)
+</a><a href="#h3-0-881" id="h3-0-881" class="i">+
+</a></pre>
+</div>
+</body>
+</html>

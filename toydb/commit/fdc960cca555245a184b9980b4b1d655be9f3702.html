@@ -1,0 +1,519 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>bin: clean up `toysql` binary - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/fdc960cca555245a184b9980b4b1d655be9f3702.html">fdc960cca555245a184b9980b4b1d655be9f3702</a>
+<b>parent</b> <a href="../commit/b184c35e2eb6ef951f78fd61f3e35e15c6e549ae.html">b184c35e2eb6ef951f78fd61f3e35e15c6e549ae</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Mon, 22 Jul 2024 00:10:27 +0200
+
+bin: clean up `toysql` binary
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/bin/toysql.rs</a></td><td> | </td><td class="num">342</td><td><span class="i">++++++++++++++++++++++++++++++++++++++</span><span class="d">-----------------------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/storage/bitcask.rs</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/storage/engine.rs</a></td><td> | </td><td class="num">9</td><td><span class="i">+++++++++</span><span class="d"></span></td></tr>
+</table></pre><pre>3 files changed, 173 insertions(+), 180 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/bin/toysql.rs.html">src/bin/toysql.rs</a> b/<a href="../file/src/bin/toysql.rs.html">src/bin/toysql.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -1,138 +1,138 @@
+</a><a href="#h0-0-0" id="h0-0-0" class="d">-/*
+</a><a href="#h0-0-1" id="h0-0-1" class="d">- * toysql is a command-line client for toyDB. It connects to a toyDB cluster node and executes SQL
+</a><a href="#h0-0-2" id="h0-0-2" class="d">- * queries against it via a REPL interface.
+</a><a href="#h0-0-3" id="h0-0-3" class="d">- */
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+//! toySQL is a command-line client for toyDB. It connects to a toyDB node
+</a><a href="#h0-0-5" id="h0-0-5" class="i">+//! (default localhost:9605) and executes SQL statements against it via an
+</a><a href="#h0-0-6" id="h0-0-6" class="i">+//! interactive shell interface. Command history is stored in .toysql.history.
+</a> 
+ #![warn(clippy::all)]
+ 
+<a href="#h0-0-10" id="h0-0-10" class="d">-use itertools::Itertools as _;
+</a><a href="#h0-0-11" id="h0-0-11" class="d">-use rustyline::history::DefaultHistory;
+</a><a href="#h0-0-12" id="h0-0-12" class="d">-use rustyline::validate::{ValidationContext, ValidationResult, Validator};
+</a><a href="#h0-0-13" id="h0-0-13" class="d">-use rustyline::{error::ReadlineError, Editor, Modifiers};
+</a><a href="#h0-0-14" id="h0-0-14" class="d">-use rustyline_derive::{Completer, Helper, Highlighter, Hinter};
+</a> use toydb::errinput;
+ use toydb::error::Result;
+ use toydb::sql::engine::StatementResult;
+ use toydb::sql::parser::{Lexer, Token};
+ use toydb::Client;
+ 
+<a href="#h0-0-21" id="h0-0-21" class="d">-fn main() -&gt; Result&lt;()&gt; {
+</a><a href="#h0-0-22" id="h0-0-22" class="d">-    let opts = clap::command!()
+</a><a href="#h0-0-23" id="h0-0-23" class="d">-        .name(&quot;toysql&quot;)
+</a><a href="#h0-0-24" id="h0-0-24" class="d">-        .about(&quot;A ToyDB client.&quot;)
+</a><a href="#h0-0-25" id="h0-0-25" class="d">-        .args([
+</a><a href="#h0-0-26" id="h0-0-26" class="d">-            clap::Arg::new(&quot;command&quot;),
+</a><a href="#h0-0-27" id="h0-0-27" class="d">-            clap::Arg::new(&quot;host&quot;)
+</a><a href="#h0-0-28" id="h0-0-28" class="d">-                .short(&#39;H&#39;)
+</a><a href="#h0-0-29" id="h0-0-29" class="d">-                .long(&quot;host&quot;)
+</a><a href="#h0-0-30" id="h0-0-30" class="d">-                .help(&quot;Host to connect to&quot;)
+</a><a href="#h0-0-31" id="h0-0-31" class="d">-                .default_value(&quot;localhost&quot;),
+</a><a href="#h0-0-32" id="h0-0-32" class="d">-            clap::Arg::new(&quot;port&quot;)
+</a><a href="#h0-0-33" id="h0-0-33" class="d">-                .short(&#39;p&#39;)
+</a><a href="#h0-0-34" id="h0-0-34" class="d">-                .long(&quot;port&quot;)
+</a><a href="#h0-0-35" id="h0-0-35" class="d">-                .help(&quot;Port number to connect to&quot;)
+</a><a href="#h0-0-36" id="h0-0-36" class="d">-                .value_parser(clap::value_parser!(u16))
+</a><a href="#h0-0-37" id="h0-0-37" class="d">-                .default_value(&quot;9605&quot;),
+</a><a href="#h0-0-38" id="h0-0-38" class="d">-        ])
+</a><a href="#h0-0-39" id="h0-0-39" class="d">-        .get_matches();
+</a><a href="#h0-0-40" id="h0-0-40" class="i">+use clap::Parser as _;
+</a><a href="#h0-0-41" id="h0-0-41" class="i">+use itertools::Itertools as _;
+</a><a href="#h0-0-42" id="h0-0-42" class="i">+use rustyline::error::ReadlineError;
+</a><a href="#h0-0-43" id="h0-0-43" class="i">+use rustyline::history::DefaultHistory;
+</a><a href="#h0-0-44" id="h0-0-44" class="i">+use rustyline::validate::{ValidationContext, ValidationResult, Validator};
+</a><a href="#h0-0-45" id="h0-0-45" class="i">+use rustyline::{Editor, Modifiers};
+</a><a href="#h0-0-46" id="h0-0-46" class="i">+use rustyline_derive::{Completer, Helper, Highlighter, Hinter};
+</a><a href="#h0-0-47" id="h0-0-47" class="i">+
+</a><a href="#h0-0-48" id="h0-0-48" class="i">+fn main() {
+</a><a href="#h0-0-49" id="h0-0-49" class="i">+    if let Err(error) = Command::parse().run() {
+</a><a href="#h0-0-50" id="h0-0-50" class="i">+        eprintln!(&quot;Error: {error}&quot;);
+</a><a href="#h0-0-51" id="h0-0-51" class="i">+    }
+</a><a href="#h0-0-52" id="h0-0-52" class="i">+}
+</a> 
+<a href="#h0-0-54" id="h0-0-54" class="d">-    let mut toysql =
+</a><a href="#h0-0-55" id="h0-0-55" class="d">-        ToySQL::new(opts.get_one::&lt;String&gt;(&quot;host&quot;).unwrap(), *opts.get_one(&quot;port&quot;).unwrap())?;
+</a><a href="#h0-0-56" id="h0-0-56" class="i">+/// The toySQL command.
+</a><a href="#h0-0-57" id="h0-0-57" class="i">+#[derive(clap::Parser)]
+</a><a href="#h0-0-58" id="h0-0-58" class="i">+#[command(about = &quot;A toyDB client.&quot;, version, propagate_version = true)]
+</a><a href="#h0-0-59" id="h0-0-59" class="i">+struct Command {
+</a><a href="#h0-0-60" id="h0-0-60" class="i">+    /// A SQL statement to execute, then exit.
+</a><a href="#h0-0-61" id="h0-0-61" class="i">+    #[arg()]
+</a><a href="#h0-0-62" id="h0-0-62" class="i">+    statement: Option&lt;String&gt;,
+</a><a href="#h0-0-63" id="h0-0-63" class="i">+    /// Host to connect to.
+</a><a href="#h0-0-64" id="h0-0-64" class="i">+    #[arg(short = &#39;H&#39;, long, default_value = &quot;localhost&quot;)]
+</a><a href="#h0-0-65" id="h0-0-65" class="i">+    host: String,
+</a><a href="#h0-0-66" id="h0-0-66" class="i">+    /// Port number to connect to.
+</a><a href="#h0-0-67" id="h0-0-67" class="i">+    #[arg(short = &#39;p&#39;, long, default_value = &quot;9605&quot;)]
+</a><a href="#h0-0-68" id="h0-0-68" class="i">+    port: u16,
+</a><a href="#h0-0-69" id="h0-0-69" class="i">+}
+</a> 
+<a href="#h0-0-71" id="h0-0-71" class="d">-    if let Some(command) = opts.get_one::&lt;&amp;str&gt;(&quot;command&quot;) {
+</a><a href="#h0-0-72" id="h0-0-72" class="d">-        toysql.execute(command)
+</a><a href="#h0-0-73" id="h0-0-73" class="d">-    } else {
+</a><a href="#h0-0-74" id="h0-0-74" class="d">-        toysql.run()
+</a><a href="#h0-0-75" id="h0-0-75" class="i">+impl Command {
+</a><a href="#h0-0-76" id="h0-0-76" class="i">+    /// Runs the command.
+</a><a href="#h0-0-77" id="h0-0-77" class="i">+    fn run(self) -&gt; Result&lt;()&gt; {
+</a><a href="#h0-0-78" id="h0-0-78" class="i">+        let mut shell = Shell::new(&amp;self.host, self.port)?;
+</a><a href="#h0-0-79" id="h0-0-79" class="i">+        match self.statement {
+</a><a href="#h0-0-80" id="h0-0-80" class="i">+            Some(statement) =&gt; shell.execute(&amp;statement),
+</a><a href="#h0-0-81" id="h0-0-81" class="i">+            None =&gt; shell.run(),
+</a><a href="#h0-0-82" id="h0-0-82" class="i">+        }
+</a>     }
+ }
+ 
+<a href="#h0-0-86" id="h0-0-86" class="d">-/// The ToySQL REPL
+</a><a href="#h0-0-87" id="h0-0-87" class="d">-struct ToySQL {
+</a><a href="#h0-0-88" id="h0-0-88" class="i">+/// An interactive toySQL shell.
+</a><a href="#h0-0-89" id="h0-0-89" class="i">+struct Shell {
+</a><a href="#h0-0-90" id="h0-0-90" class="i">+    /// The toyDB client.
+</a>     client: Client,
+<a href="#h0-0-92" id="h0-0-92" class="i">+    /// The Rustyline command editor.
+</a>     editor: Editor&lt;InputValidator, DefaultHistory&gt;,
+<a href="#h0-0-94" id="h0-0-94" class="i">+    /// The path to the history file, if any.
+</a>     history_path: Option&lt;std::path::PathBuf&gt;,
+<a href="#h0-0-96" id="h0-0-96" class="i">+    /// If true, SELECT column headers will be displayed.
+</a>     show_headers: bool,
+ }
+ 
+<a href="#h0-0-100" id="h0-0-100" class="d">-impl ToySQL {
+</a><a href="#h0-0-101" id="h0-0-101" class="d">-    /// Creates a new ToySQL REPL for the given server host and port
+</a><a href="#h0-0-102" id="h0-0-102" class="i">+impl Shell {
+</a><a href="#h0-0-103" id="h0-0-103" class="i">+    /// Creates a new shell connected to the given server.
+</a>     fn new(host: &amp;str, port: u16) -&gt; Result&lt;Self&gt; {
+<a href="#h0-0-105" id="h0-0-105" class="d">-        Ok(Self {
+</a><a href="#h0-0-106" id="h0-0-106" class="d">-            client: Client::connect((host, port))?,
+</a><a href="#h0-0-107" id="h0-0-107" class="d">-            editor: Editor::new()?,
+</a><a href="#h0-0-108" id="h0-0-108" class="d">-            history_path: std::env::var_os(&quot;HOME&quot;)
+</a><a href="#h0-0-109" id="h0-0-109" class="d">-                .map(|home| std::path::Path::new(&amp;home).join(&quot;.toysql.history&quot;)),
+</a><a href="#h0-0-110" id="h0-0-110" class="d">-            show_headers: false,
+</a><a href="#h0-0-111" id="h0-0-111" class="d">-        })
+</a><a href="#h0-0-112" id="h0-0-112" class="i">+        let client = Client::connect((host, port))?;
+</a><a href="#h0-0-113" id="h0-0-113" class="i">+        // Set up Rustyline. Make sure multiline pastes are handled normally.
+</a><a href="#h0-0-114" id="h0-0-114" class="i">+        let mut editor = Editor::new()?;
+</a><a href="#h0-0-115" id="h0-0-115" class="i">+        editor.set_helper(Some(InputValidator));
+</a><a href="#h0-0-116" id="h0-0-116" class="i">+        editor.bind_sequence(
+</a><a href="#h0-0-117" id="h0-0-117" class="i">+            rustyline::KeyEvent(rustyline::KeyCode::BracketedPasteStart, Modifiers::NONE),
+</a><a href="#h0-0-118" id="h0-0-118" class="i">+            rustyline::Cmd::Noop,
+</a><a href="#h0-0-119" id="h0-0-119" class="i">+        );
+</a><a href="#h0-0-120" id="h0-0-120" class="i">+        let history_path = std::env::var_os(&quot;HOME&quot;)
+</a><a href="#h0-0-121" id="h0-0-121" class="i">+            .map(|home| std::path::PathBuf::from(home).join(&quot;.toysql.history&quot;));
+</a><a href="#h0-0-122" id="h0-0-122" class="i">+        Ok(Self { client, editor, history_path, show_headers: false })
+</a>     }
+ 
+<a href="#h0-0-125" id="h0-0-125" class="d">-    /// Executes a line of input
+</a><a href="#h0-0-126" id="h0-0-126" class="i">+    /// Executes a SQL statement or ! command.
+</a>     fn execute(&amp;mut self, input: &amp;str) -&gt; Result&lt;()&gt; {
+         if input.starts_with(&#39;!&#39;) {
+             self.execute_command(input)
+         } else if !input.is_empty() {
+<a href="#h0-0-131" id="h0-0-131" class="d">-            self.execute_query(input)
+</a><a href="#h0-0-132" id="h0-0-132" class="i">+            self.execute_sql(input)
+</a>         } else {
+             Ok(())
+         }
+     }
+ 
+<a href="#h0-0-138" id="h0-0-138" class="d">-    /// Handles a REPL command (prefixed by !, e.g. !help)
+</a><a href="#h0-0-139" id="h0-0-139" class="i">+    /// Executes a toySQL ! command (e.g. !help)
+</a>     fn execute_command(&amp;mut self, input: &amp;str) -&gt; Result&lt;()&gt; {
+         let mut input = input.split_ascii_whitespace();
+         let Some(command) = input.next() else {
+             return errinput!(&quot;expected command&quot;);
+         };
+<a href="#h0-0-145" id="h0-0-145" class="i">+        let args = input.collect_vec();
+</a> 
+<a href="#h0-0-147" id="h0-0-147" class="d">-        let getargs = |n| {
+</a><a href="#h0-0-148" id="h0-0-148" class="d">-            let args: Vec&lt;&amp;str&gt; = input.collect();
+</a><a href="#h0-0-149" id="h0-0-149" class="d">-            if args.len() != n {
+</a><a href="#h0-0-150" id="h0-0-150" class="d">-                errinput!(&quot;{command}: expected {n} args, got {}&quot;, args.len())
+</a><a href="#h0-0-151" id="h0-0-151" class="d">-            } else {
+</a><a href="#h0-0-152" id="h0-0-152" class="d">-                Ok(args)
+</a><a href="#h0-0-153" id="h0-0-153" class="i">+        match (command, args.as_slice()) {
+</a><a href="#h0-0-154" id="h0-0-154" class="i">+            // Toggles column headers.
+</a><a href="#h0-0-155" id="h0-0-155" class="i">+            (&quot;!headers&quot;, []) =&gt; {
+</a><a href="#h0-0-156" id="h0-0-156" class="i">+                self.show_headers = !self.show_headers;
+</a><a href="#h0-0-157" id="h0-0-157" class="i">+                match self.show_headers {
+</a><a href="#h0-0-158" id="h0-0-158" class="i">+                    true =&gt; println!(&quot;Headers enabled&quot;),
+</a><a href="#h0-0-159" id="h0-0-159" class="i">+                    false =&gt; println!(&quot;Headers disabled&quot;),
+</a><a href="#h0-0-160" id="h0-0-160" class="i">+                }
+</a>             }
+<a href="#h0-0-162" id="h0-0-162" class="d">-        };
+</a><a href="#h0-0-163" id="h0-0-163" class="i">+            (&quot;!headers&quot;, _) =&gt; return errinput!(&quot;!headers takes no arguments&quot;),
+</a> 
+<a href="#h0-0-165" id="h0-0-165" class="d">-        match command {
+</a><a href="#h0-0-166" id="h0-0-166" class="d">-            &quot;!headers&quot; =&gt; match getargs(1)?[0] {
+</a><a href="#h0-0-167" id="h0-0-167" class="d">-                &quot;on&quot; =&gt; {
+</a><a href="#h0-0-168" id="h0-0-168" class="d">-                    self.show_headers = true;
+</a><a href="#h0-0-169" id="h0-0-169" class="d">-                    println!(&quot;Headers enabled&quot;);
+</a><a href="#h0-0-170" id="h0-0-170" class="d">-                }
+</a><a href="#h0-0-171" id="h0-0-171" class="d">-                &quot;off&quot; =&gt; {
+</a><a href="#h0-0-172" id="h0-0-172" class="d">-                    self.show_headers = false;
+</a><a href="#h0-0-173" id="h0-0-173" class="d">-                    println!(&quot;Headers disabled&quot;);
+</a><a href="#h0-0-174" id="h0-0-174" class="d">-                }
+</a><a href="#h0-0-175" id="h0-0-175" class="d">-                v =&gt; return errinput!(&quot;invalid value {v}, expected on or off&quot;),
+</a><a href="#h0-0-176" id="h0-0-176" class="d">-            },
+</a><a href="#h0-0-177" id="h0-0-177" class="d">-            &quot;!help&quot; =&gt; println!(
+</a><a href="#h0-0-178" id="h0-0-178" class="i">+            // Displays help.
+</a><a href="#h0-0-179" id="h0-0-179" class="i">+            (&quot;!help&quot;, []) =&gt; println!(
+</a>                 r#&quot;
+<a href="#h0-0-181" id="h0-0-181" class="d">-Enter a SQL statement terminated by a semicolon (;) to execute it and display the result.
+</a><a href="#h0-0-182" id="h0-0-182" class="d">-The following commands are also available:
+</a><a href="#h0-0-183" id="h0-0-183" class="i">+Enter a SQL statement terminated by a semicolon (;) to execute it, or Ctrl-D to
+</a><a href="#h0-0-184" id="h0-0-184" class="i">+exit. The following commands are also available:
+</a> 
+<a href="#h0-0-186" id="h0-0-186" class="d">-    !headers &lt;on|off&gt;  Enable or disable column headers
+</a><a href="#h0-0-187" id="h0-0-187" class="i">+    !headers           Toggles column headers
+</a>     !help              This help message
+     !status            Display server status
+<a href="#h0-0-190" id="h0-0-190" class="d">-    !table [table]     Display table schema, if it exists
+</a><a href="#h0-0-191" id="h0-0-191" class="i">+    !table NAME        Display a table schema
+</a>     !tables            List tables
+ &quot;#
+             ),
+<a href="#h0-0-195" id="h0-0-195" class="d">-            &quot;!status&quot; =&gt; {
+</a><a href="#h0-0-196" id="h0-0-196" class="i">+            (&quot;!help&quot;, _) =&gt; return errinput!(&quot;!help takes no arguments&quot;),
+</a><a href="#h0-0-197" id="h0-0-197" class="i">+
+</a><a href="#h0-0-198" id="h0-0-198" class="i">+            // Displays server status.
+</a><a href="#h0-0-199" id="h0-0-199" class="i">+            (&quot;!status&quot;, []) =&gt; {
+</a>                 let status = self.client.status()?;
+<a href="#h0-0-201" id="h0-0-201" class="d">-                let mut node_logs = status
+</a><a href="#h0-0-202" id="h0-0-202" class="d">-                    .raft
+</a><a href="#h0-0-203" id="h0-0-203" class="d">-                    .match_index
+</a><a href="#h0-0-204" id="h0-0-204" class="d">-                    .iter()
+</a><a href="#h0-0-205" id="h0-0-205" class="d">-                    .map(|(id, index)| format!(&quot;{}:{}&quot;, id, index))
+</a><a href="#h0-0-206" id="h0-0-206" class="d">-                    .collect::&lt;Vec&lt;_&gt;&gt;();
+</a><a href="#h0-0-207" id="h0-0-207" class="d">-                node_logs.sort();
+</a>                 println!(
+                     r#&quot;
+<a href="#h0-0-210" id="h0-0-210" class="d">-Server:    {server} (leader {leader} in term {term} with {nodes} nodes)
+</a><a href="#h0-0-211" id="h0-0-211" class="d">-Raft log:  {committed} committed, {applied} applied, {raft_size} MB ({raft_storage} storage)
+</a><a href="#h0-0-212" id="h0-0-212" class="d">-Node logs: {logs}
+</a><a href="#h0-0-213" id="h0-0-213" class="d">-MVCC:      {active_txns} active txns, {versions} versions
+</a><a href="#h0-0-214" id="h0-0-214" class="d">-Storage:   {keys} keys, {logical_size} MB logical, {nodes}x {disk_size} MB disk, {garbage_percent}% garbage ({sql_storage} engine)
+</a><a href="#h0-0-215" id="h0-0-215" class="i">+Server:       n{server} with Raft leader n{leader} in term {term} for {nodes} nodes
+</a><a href="#h0-0-216" id="h0-0-216" class="i">+Raft log:     {committed} committed, {applied} applied, {raft_size} MB, {raft_garbage}% garbage ({raft_storage} engine)
+</a><a href="#h0-0-217" id="h0-0-217" class="i">+Replication:  {raft_match}
+</a><a href="#h0-0-218" id="h0-0-218" class="i">+SQL storage:  {sql_keys} keys, {sql_size} MB logical, {nodes}x {sql_disk_size} MB disk, {sql_garbage}% garbage ({sql_storage} engine)
+</a><a href="#h0-0-219" id="h0-0-219" class="i">+Transactions: {active_txns} active, {versions} total
+</a> &quot;#,
+                     server = status.server,
+                     leader = status.raft.leader,
+<a href="#h0-1" id="h0-1" class="h">@@ -140,154 +140,138 @@ Storage:   {keys} keys, {logical_size} MB logical, {nodes}x {disk_size} MB disk,
+</a>                     nodes = status.raft.match_index.len(),
+                     committed = status.raft.commit_index,
+                     applied = status.raft.applied_index,
+<a href="#h0-1-3" id="h0-1-3" class="i">+                    raft_size = format_args!(&quot;{:.3}&quot;, status.raft.storage.size as f64 / 1000000.0),
+</a><a href="#h0-1-4" id="h0-1-4" class="i">+                    raft_garbage = format_args!(&quot;{:.0}&quot;, status.raft.storage.garbage_percent()),
+</a>                     raft_storage = status.raft.storage.name,
+<a href="#h0-1-6" id="h0-1-6" class="d">-                    raft_size =
+</a><a href="#h0-1-7" id="h0-1-7" class="d">-                        format_args!(&quot;{:.3}&quot;, status.raft.storage.size as f64 / 1000.0 / 1000.0),
+</a><a href="#h0-1-8" id="h0-1-8" class="d">-                    logs = node_logs.join(&quot; &quot;),
+</a><a href="#h0-1-9" id="h0-1-9" class="d">-                    versions = status.mvcc.versions,
+</a><a href="#h0-1-10" id="h0-1-10" class="d">-                    active_txns = status.mvcc.active_txns,
+</a><a href="#h0-1-11" id="h0-1-11" class="d">-                    keys = status.mvcc.storage.keys,
+</a><a href="#h0-1-12" id="h0-1-12" class="d">-                    logical_size =
+</a><a href="#h0-1-13" id="h0-1-13" class="d">-                        format_args!(&quot;{:.3}&quot;, status.mvcc.storage.size as f64 / 1000.0 / 1000.0),
+</a><a href="#h0-1-14" id="h0-1-14" class="d">-                    garbage_percent = format_args!(
+</a><a href="#h0-1-15" id="h0-1-15" class="d">-                        &quot;{:.0}&quot;,
+</a><a href="#h0-1-16" id="h0-1-16" class="d">-                        if status.mvcc.storage.total_disk_size &gt; 0 {
+</a><a href="#h0-1-17" id="h0-1-17" class="d">-                            status.mvcc.storage.garbage_disk_size as f64
+</a><a href="#h0-1-18" id="h0-1-18" class="d">-                                / status.mvcc.storage.total_disk_size as f64
+</a><a href="#h0-1-19" id="h0-1-19" class="d">-                                * 100.0
+</a><a href="#h0-1-20" id="h0-1-20" class="d">-                        } else {
+</a><a href="#h0-1-21" id="h0-1-21" class="d">-                            0.0
+</a><a href="#h0-1-22" id="h0-1-22" class="d">-                        }
+</a><a href="#h0-1-23" id="h0-1-23" class="d">-                    ),
+</a><a href="#h0-1-24" id="h0-1-24" class="d">-                    disk_size = format_args!(
+</a><a href="#h0-1-25" id="h0-1-25" class="i">+                    raft_match =
+</a><a href="#h0-1-26" id="h0-1-26" class="i">+                        status.raft.match_index.iter().map(|(n, m)| format!(&quot;n{n}:{m}&quot;)).join(&quot; &quot;),
+</a><a href="#h0-1-27" id="h0-1-27" class="i">+                    sql_keys = status.mvcc.storage.keys,
+</a><a href="#h0-1-28" id="h0-1-28" class="i">+                    sql_size = format_args!(&quot;{:.3}&quot;, status.mvcc.storage.size as f64 / 1000000.0),
+</a><a href="#h0-1-29" id="h0-1-29" class="i">+                    sql_disk_size = format_args!(
+</a>                         &quot;{:.3}&quot;,
+<a href="#h0-1-31" id="h0-1-31" class="d">-                        status.mvcc.storage.total_disk_size as f64 / 1000.0 / 1000.0
+</a><a href="#h0-1-32" id="h0-1-32" class="i">+                        status.mvcc.storage.total_disk_size as f64 / 1000000.0
+</a>                     ),
+<a href="#h0-1-34" id="h0-1-34" class="i">+                    sql_garbage = format_args!(&quot;{:.0}&quot;, status.mvcc.storage.garbage_percent()),
+</a>                     sql_storage = status.mvcc.storage.name,
+<a href="#h0-1-36" id="h0-1-36" class="i">+                    active_txns = status.mvcc.active_txns,
+</a><a href="#h0-1-37" id="h0-1-37" class="i">+                    versions = status.mvcc.versions,
+</a>                 )
+             }
+<a href="#h0-1-40" id="h0-1-40" class="d">-            &quot;!table&quot; =&gt; {
+</a><a href="#h0-1-41" id="h0-1-41" class="d">-                let args = getargs(1)?;
+</a><a href="#h0-1-42" id="h0-1-42" class="d">-                println!(&quot;{}&quot;, self.client.get_table(args[0])?);
+</a><a href="#h0-1-43" id="h0-1-43" class="d">-            }
+</a><a href="#h0-1-44" id="h0-1-44" class="d">-            &quot;!tables&quot; =&gt; {
+</a><a href="#h0-1-45" id="h0-1-45" class="d">-                getargs(0)?;
+</a><a href="#h0-1-46" id="h0-1-46" class="d">-                for table in self.client.list_tables()? {
+</a><a href="#h0-1-47" id="h0-1-47" class="d">-                    println!(&quot;{}&quot;, table)
+</a><a href="#h0-1-48" id="h0-1-48" class="d">-                }
+</a><a href="#h0-1-49" id="h0-1-49" class="d">-            }
+</a><a href="#h0-1-50" id="h0-1-50" class="d">-            c =&gt; return errinput!(&quot;unknown command {c}&quot;),
+</a><a href="#h0-1-51" id="h0-1-51" class="i">+            (&quot;!status&quot;, _) =&gt; return errinput!(&quot;!status takes no arguments&quot;),
+</a><a href="#h0-1-52" id="h0-1-52" class="i">+
+</a><a href="#h0-1-53" id="h0-1-53" class="i">+            (&quot;!table&quot;, [name]) =&gt; println!(&quot;{}&quot;, self.client.get_table(name)?),
+</a><a href="#h0-1-54" id="h0-1-54" class="i">+            (&quot;!table&quot;, _) =&gt; return errinput!(&quot;!table takes 1 argument&quot;),
+</a><a href="#h0-1-55" id="h0-1-55" class="i">+
+</a><a href="#h0-1-56" id="h0-1-56" class="i">+            (&quot;!tables&quot;, []) =&gt; self.client.list_tables()?.iter().for_each(|t| println!(&quot;{t}&quot;)),
+</a><a href="#h0-1-57" id="h0-1-57" class="i">+            (&quot;!tables&quot;, _) =&gt; return errinput!(&quot;!tables takes no arguments&quot;),
+</a><a href="#h0-1-58" id="h0-1-58" class="i">+
+</a><a href="#h0-1-59" id="h0-1-59" class="i">+            (command, _) =&gt; return errinput!(&quot;unknown command {command}&quot;),
+</a>         }
+         Ok(())
+     }
+ 
+<a href="#h0-1-64" id="h0-1-64" class="d">-    /// Runs a query and displays the results
+</a><a href="#h0-1-65" id="h0-1-65" class="d">-    fn execute_query(&amp;mut self, query: &amp;str) -&gt; Result&lt;()&gt; {
+</a><a href="#h0-1-66" id="h0-1-66" class="d">-        match self.client.execute(query)? {
+</a><a href="#h0-1-67" id="h0-1-67" class="d">-            StatementResult::Begin { state } =&gt; match state.read_only {
+</a><a href="#h0-1-68" id="h0-1-68" class="d">-                false =&gt; println!(&quot;Began transaction at new version {}&quot;, state.version),
+</a><a href="#h0-1-69" id="h0-1-69" class="i">+    /// Executes a SQL statement and displays the results.
+</a><a href="#h0-1-70" id="h0-1-70" class="i">+    fn execute_sql(&amp;mut self, statement: &amp;str) -&gt; Result&lt;()&gt; {
+</a><a href="#h0-1-71" id="h0-1-71" class="i">+        use StatementResult::*;
+</a><a href="#h0-1-72" id="h0-1-72" class="i">+        match self.client.execute(statement)? {
+</a><a href="#h0-1-73" id="h0-1-73" class="i">+            Begin { state } =&gt; match state.read_only {
+</a>                 true =&gt; println!(&quot;Began read-only transaction at version {}&quot;, state.version),
+<a href="#h0-1-75" id="h0-1-75" class="i">+                false =&gt; println!(&quot;Began transaction {}&quot;, state.version),
+</a>             },
+<a href="#h0-1-77" id="h0-1-77" class="d">-            StatementResult::Commit { version: id } =&gt; println!(&quot;Committed transaction {}&quot;, id),
+</a><a href="#h0-1-78" id="h0-1-78" class="d">-            StatementResult::Rollback { version: id } =&gt; println!(&quot;Rolled back transaction {}&quot;, id),
+</a><a href="#h0-1-79" id="h0-1-79" class="d">-            StatementResult::Insert { count } =&gt; println!(&quot;Created {} rows&quot;, count),
+</a><a href="#h0-1-80" id="h0-1-80" class="d">-            StatementResult::Delete { count } =&gt; println!(&quot;Deleted {} rows&quot;, count),
+</a><a href="#h0-1-81" id="h0-1-81" class="d">-            StatementResult::Update { count } =&gt; println!(&quot;Updated {} rows&quot;, count),
+</a><a href="#h0-1-82" id="h0-1-82" class="d">-            StatementResult::CreateTable { name } =&gt; println!(&quot;Created table {}&quot;, name),
+</a><a href="#h0-1-83" id="h0-1-83" class="d">-            StatementResult::DropTable { name, existed } =&gt; match existed {
+</a><a href="#h0-1-84" id="h0-1-84" class="d">-                true =&gt; println!(&quot;Dropped table {}&quot;, name),
+</a><a href="#h0-1-85" id="h0-1-85" class="d">-                false =&gt; println!(&quot;Table {} did not exit&quot;, name),
+</a><a href="#h0-1-86" id="h0-1-86" class="i">+            Commit { version } =&gt; println!(&quot;Committed transaction {version}&quot;),
+</a><a href="#h0-1-87" id="h0-1-87" class="i">+            Rollback { version } =&gt; println!(&quot;Rolled back transaction {version}&quot;),
+</a><a href="#h0-1-88" id="h0-1-88" class="i">+            Insert { count } =&gt; println!(&quot;Inserted {count} rows&quot;),
+</a><a href="#h0-1-89" id="h0-1-89" class="i">+            Delete { count } =&gt; println!(&quot;Deleted {count} rows&quot;),
+</a><a href="#h0-1-90" id="h0-1-90" class="i">+            Update { count } =&gt; println!(&quot;Updated {count} rows&quot;),
+</a><a href="#h0-1-91" id="h0-1-91" class="i">+            CreateTable { name } =&gt; println!(&quot;Created table {name}&quot;),
+</a><a href="#h0-1-92" id="h0-1-92" class="i">+            DropTable { name, existed } =&gt; match existed {
+</a><a href="#h0-1-93" id="h0-1-93" class="i">+                true =&gt; println!(&quot;Dropped table {name}&quot;),
+</a><a href="#h0-1-94" id="h0-1-94" class="i">+                false =&gt; println!(&quot;Table {name} does not exist&quot;),
+</a>             },
+<a href="#h0-1-96" id="h0-1-96" class="d">-            StatementResult::Explain(plan) =&gt; println!(&quot;{}&quot;, plan),
+</a><a href="#h0-1-97" id="h0-1-97" class="d">-            StatementResult::Select { columns, rows } =&gt; {
+</a><a href="#h0-1-98" id="h0-1-98" class="i">+            Explain(plan) =&gt; println!(&quot;{plan}&quot;),
+</a><a href="#h0-1-99" id="h0-1-99" class="i">+            Select { columns, rows } =&gt; {
+</a>                 if self.show_headers {
+<a href="#h0-1-101" id="h0-1-101" class="d">-                    println!(&quot;{}&quot;, columns.iter().map(|c| c.as_header()).join(&quot;|&quot;));
+</a><a href="#h0-1-102" id="h0-1-102" class="i">+                    println!(&quot;{}&quot;, columns.iter().map(|c| c.as_header()).join(&quot;, &quot;));
+</a>                 }
+                 for row in rows {
+<a href="#h0-1-105" id="h0-1-105" class="d">-                    println!(&quot;{}&quot;, row.iter().join(&quot;|&quot;));
+</a><a href="#h0-1-106" id="h0-1-106" class="i">+                    println!(&quot;{}&quot;, row.iter().join(&quot;, &quot;));
+</a>                 }
+             }
+         }
+         Ok(())
+     }
+ 
+<a href="#h0-1-113" id="h0-1-113" class="d">-    /// Prompts the user for input
+</a><a href="#h0-1-114" id="h0-1-114" class="d">-    fn prompt(&amp;mut self) -&gt; Result&lt;Option&lt;String&gt;&gt; {
+</a><a href="#h0-1-115" id="h0-1-115" class="i">+    /// Prompts the user for input. Returns None if the shell should close.
+</a><a href="#h0-1-116" id="h0-1-116" class="i">+    fn prompt(&amp;mut self) -&gt; rustyline::Result&lt;String&gt; {
+</a>         let prompt = match self.client.txn() {
+             Some(txn) if txn.read_only =&gt; format!(&quot;toydb@{}&gt; &quot;, txn.version),
+             Some(txn) =&gt; format!(&quot;toydb:{}&gt; &quot;, txn.version),
+<a href="#h0-1-120" id="h0-1-120" class="d">-            None =&gt; &quot;toydb&gt; &quot;.into(),
+</a><a href="#h0-1-121" id="h0-1-121" class="i">+            None =&gt; &quot;toydb&gt; &quot;.to_string(),
+</a>         };
+<a href="#h0-1-123" id="h0-1-123" class="d">-        match self.editor.readline(&amp;prompt) {
+</a><a href="#h0-1-124" id="h0-1-124" class="d">-            Ok(input) =&gt; {
+</a><a href="#h0-1-125" id="h0-1-125" class="d">-                self.editor.add_history_entry(&amp;input)?;
+</a><a href="#h0-1-126" id="h0-1-126" class="d">-                Ok(Some(input.trim().to_string()))
+</a><a href="#h0-1-127" id="h0-1-127" class="d">-            }
+</a><a href="#h0-1-128" id="h0-1-128" class="d">-            Err(ReadlineError::Eof) | Err(ReadlineError::Interrupted) =&gt; Ok(None),
+</a><a href="#h0-1-129" id="h0-1-129" class="d">-            Err(err) =&gt; Err(err.into()),
+</a><a href="#h0-1-130" id="h0-1-130" class="d">-        }
+</a><a href="#h0-1-131" id="h0-1-131" class="i">+        self.editor.readline(&amp;prompt)
+</a>     }
+ 
+<a href="#h0-1-134" id="h0-1-134" class="d">-    /// Runs the ToySQL REPL
+</a><a href="#h0-1-135" id="h0-1-135" class="i">+    /// Runs the interactive shell.
+</a>     fn run(&amp;mut self) -&gt; Result&lt;()&gt; {
+<a href="#h0-1-137" id="h0-1-137" class="d">-        if let Some(path) = &amp;self.history_path {
+</a><a href="#h0-1-138" id="h0-1-138" class="d">-            match self.editor.load_history(path) {
+</a><a href="#h0-1-139" id="h0-1-139" class="d">-                Ok(_) =&gt; {}
+</a><a href="#h0-1-140" id="h0-1-140" class="d">-                Err(ReadlineError::Io(ref err)) if err.kind() == std::io::ErrorKind::NotFound =&gt; {}
+</a><a href="#h0-1-141" id="h0-1-141" class="d">-                Err(err) =&gt; return Err(err.into()),
+</a><a href="#h0-1-142" id="h0-1-142" class="d">-            };
+</a><a href="#h0-1-143" id="h0-1-143" class="i">+        // Load the history file, if any.
+</a><a href="#h0-1-144" id="h0-1-144" class="i">+        if let Some(history_path) = &amp;self.history_path {
+</a><a href="#h0-1-145" id="h0-1-145" class="i">+            match self.editor.load_history(history_path) {
+</a><a href="#h0-1-146" id="h0-1-146" class="i">+                Ok(()) =&gt; {}
+</a><a href="#h0-1-147" id="h0-1-147" class="i">+                Err(ReadlineError::Io(error)) if error.kind() == std::io::ErrorKind::NotFound =&gt; {}
+</a><a href="#h0-1-148" id="h0-1-148" class="i">+                Err(error) =&gt; return Err(error.into()),
+</a><a href="#h0-1-149" id="h0-1-149" class="i">+            }
+</a>         }
+<a href="#h0-1-151" id="h0-1-151" class="d">-        self.editor.set_helper(Some(InputValidator));
+</a><a href="#h0-1-152" id="h0-1-152" class="d">-        // Make sure multiline pastes are interpreted as normal inputs.
+</a><a href="#h0-1-153" id="h0-1-153" class="d">-        self.editor.bind_sequence(
+</a><a href="#h0-1-154" id="h0-1-154" class="d">-            rustyline::KeyEvent(rustyline::KeyCode::BracketedPasteStart, Modifiers::NONE),
+</a><a href="#h0-1-155" id="h0-1-155" class="d">-            rustyline::Cmd::Noop,
+</a><a href="#h0-1-156" id="h0-1-156" class="d">-        );
+</a> 
+<a href="#h0-1-158" id="h0-1-158" class="d">-        let status = self.client.status()?;
+</a><a href="#h0-1-159" id="h0-1-159" class="d">-        println!(&quot;Connected to toyDB node \&quot;{}\&quot;. Enter !help for instructions.&quot;, status.server);
+</a><a href="#h0-1-160" id="h0-1-160" class="i">+        // Print welcome message.
+</a><a href="#h0-1-161" id="h0-1-161" class="i">+        let server = self.client.status()?.server;
+</a><a href="#h0-1-162" id="h0-1-162" class="i">+        println!(&quot;Connected to toyDB node n{server}. Enter !help for instructions.&quot;);
+</a> 
+<a href="#h0-1-164" id="h0-1-164" class="d">-        while let Some(input) = self.prompt()? {
+</a><a href="#h0-1-165" id="h0-1-165" class="i">+        // Prompt for commands and execute them.
+</a><a href="#h0-1-166" id="h0-1-166" class="i">+        loop {
+</a><a href="#h0-1-167" id="h0-1-167" class="i">+            let input = match self.prompt() {
+</a><a href="#h0-1-168" id="h0-1-168" class="i">+                Ok(input) =&gt; input.trim().to_string(),
+</a><a href="#h0-1-169" id="h0-1-169" class="i">+                Err(ReadlineError::Interrupted) =&gt; continue,
+</a><a href="#h0-1-170" id="h0-1-170" class="i">+                Err(ReadlineError::Eof) =&gt; break,
+</a><a href="#h0-1-171" id="h0-1-171" class="i">+                Err(error) =&gt; return Err(error.into()),
+</a><a href="#h0-1-172" id="h0-1-172" class="i">+            };
+</a><a href="#h0-1-173" id="h0-1-173" class="i">+            self.editor.add_history_entry(&amp;input)?;
+</a>             if let Err(error) = self.execute(&amp;input) {
+<a href="#h0-1-175" id="h0-1-175" class="d">-                println!(&quot;Error: {error}&quot;);
+</a><a href="#h0-1-176" id="h0-1-176" class="i">+                eprintln!(&quot;Error: {error}&quot;);
+</a>             };
+         }
+ 
+<a href="#h0-1-180" id="h0-1-180" class="d">-        if let Some(path) = &amp;self.history_path {
+</a><a href="#h0-1-181" id="h0-1-181" class="d">-            self.editor.save_history(path)?;
+</a><a href="#h0-1-182" id="h0-1-182" class="i">+        // Save the history file.
+</a><a href="#h0-1-183" id="h0-1-183" class="i">+        if let Some(history_path) = &amp;self.history_path {
+</a><a href="#h0-1-184" id="h0-1-184" class="i">+            self.editor.save_history(history_path)?;
+</a>         }
+         Ok(())
+     }
+ }
+ 
+<a href="#h0-1-190" id="h0-1-190" class="d">-/// A Rustyline helper for multiline editing. It parses input lines and determines if they make up a
+</a><a href="#h0-1-191" id="h0-1-191" class="d">-/// complete command or not.
+</a><a href="#h0-1-192" id="h0-1-192" class="i">+/// A Rustyline helper for multiline editing. After a new line is entered, it
+</a><a href="#h0-1-193" id="h0-1-193" class="i">+/// determines whether the input makes up a complete SQL statement that should
+</a><a href="#h0-1-194" id="h0-1-194" class="i">+/// be submitted to the server (i.e. it&#39;s terminated by ;), or wait for further
+</a><a href="#h0-1-195" id="h0-1-195" class="i">+/// input.
+</a> #[derive(Completer, Helper, Highlighter, Hinter)]
+ struct InputValidator;
+ 
+ impl Validator for InputValidator {
+     fn validate(&amp;self, ctx: &amp;mut ValidationContext) -&gt; rustyline::Result&lt;ValidationResult&gt; {
+         let input = ctx.input();
+<a href="#h0-1-202" id="h0-1-202" class="d">-
+</a><a href="#h0-1-203" id="h0-1-203" class="d">-        // Empty lines and ! commands are fine.
+</a><a href="#h0-1-204" id="h0-1-204" class="i">+        // Empty lines and ! commands are ready.
+</a>         if input.is_empty() || input.starts_with(&#39;!&#39;) || input == &quot;;&quot; {
+             return Ok(ValidationResult::Valid(None));
+         }
+<a href="#h0-1-208" id="h0-1-208" class="d">-
+</a><a href="#h0-1-209" id="h0-1-209" class="d">-        // For SQL statements, just look for any semicolon or lexer error and if found accept the
+</a><a href="#h0-1-210" id="h0-1-210" class="d">-        // input and rely on the server to do further validation and error handling. Otherwise,
+</a><a href="#h0-1-211" id="h0-1-211" class="d">-        // wait for more input.
+</a><a href="#h0-1-212" id="h0-1-212" class="d">-        for result in Lexer::new(ctx.input()) {
+</a><a href="#h0-1-213" id="h0-1-213" class="d">-            match result {
+</a><a href="#h0-1-214" id="h0-1-214" class="d">-                Ok(Token::Semicolon) =&gt; return Ok(ValidationResult::Valid(None)),
+</a><a href="#h0-1-215" id="h0-1-215" class="d">-                Err(_) =&gt; return Ok(ValidationResult::Valid(None)),
+</a><a href="#h0-1-216" id="h0-1-216" class="d">-                _ =&gt; {}
+</a><a href="#h0-1-217" id="h0-1-217" class="d">-            }
+</a><a href="#h0-1-218" id="h0-1-218" class="i">+        // For SQL statements, just look for any semicolon or lexer error, and
+</a><a href="#h0-1-219" id="h0-1-219" class="i">+        // rely on the server for further validation and error handling.
+</a><a href="#h0-1-220" id="h0-1-220" class="i">+        if Lexer::new(input).any(|r| matches!(r, Ok(Token::Semicolon) | Err(_))) {
+</a><a href="#h0-1-221" id="h0-1-221" class="i">+            return Ok(ValidationResult::Valid(None));
+</a>         }
+<a href="#h0-1-223" id="h0-1-223" class="i">+        // Otherwise, wait for more input.
+</a>         Ok(ValidationResult::Incomplete)
+     }
+ 
+     fn validate_while_typing(&amp;self) -&gt; bool {
+<a href="#h0-1-228" id="h0-1-228" class="d">-        false
+</a><a href="#h0-1-229" id="h0-1-229" class="i">+        false // only check after completed lines
+</a>     }
+ }
+<b>diff --git a/<a id="h1" href="../file/src/storage/bitcask.rs.html">src/storage/bitcask.rs</a> b/<a href="../file/src/storage/bitcask.rs.html">src/storage/bitcask.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -80,7 +80,7 @@ impl BitCask {
+</a>             log::info!(
+                 &quot;Compacting {} to remove {:.0}% garbage ({} MB out of {} MB)&quot;,
+                 s.log.path.display(),
+<a href="#h1-0-3" id="h1-0-3" class="d">-                status.garbage_disk_size as f64 / status.total_disk_size as f64 * 100.0,
+</a><a href="#h1-0-4" id="h1-0-4" class="i">+                status.garbage_percent(),
+</a>                 status.garbage_disk_size / 1024 / 1024,
+                 status.total_disk_size / 1024 / 1024
+             );
+<b>diff --git a/<a id="h2" href="../file/src/storage/engine.rs.html">src/storage/engine.rs</a> b/<a href="../file/src/storage/engine.rs.html">src/storage/engine.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -74,6 +74,15 @@ pub struct Status {
+</a>     pub garbage_disk_size: u64,
+ }
+ 
+<a href="#h2-0-3" id="h2-0-3" class="i">+impl Status {
+</a><a href="#h2-0-4" id="h2-0-4" class="i">+    pub fn garbage_percent(&amp;self) -&gt; f64 {
+</a><a href="#h2-0-5" id="h2-0-5" class="i">+        if self.total_disk_size == 0 {
+</a><a href="#h2-0-6" id="h2-0-6" class="i">+            return 0.0;
+</a><a href="#h2-0-7" id="h2-0-7" class="i">+        }
+</a><a href="#h2-0-8" id="h2-0-8" class="i">+        self.garbage_disk_size as f64 / self.total_disk_size as f64 * 100.0
+</a><a href="#h2-0-9" id="h2-0-9" class="i">+    }
+</a><a href="#h2-0-10" id="h2-0-10" class="i">+}
+</a><a href="#h2-0-11" id="h2-0-11" class="i">+
+</a> /// Test helpers for engines.
+ #[cfg(test)]
+ pub mod test {
+</pre>
+</div>
+</body>
+</html>

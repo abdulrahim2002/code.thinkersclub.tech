@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Rename `raft::Event::ReplicateEntries` to `AppendEntries`. - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/491ff9e26787c7c784e325e605d7ffea1241fd4f.html">491ff9e26787c7c784e325e605d7ffea1241fd4f</a>
+<b>parent</b> <a href="../commit/30986a599bb92c0b1b822cf5ff79dfe6252ed99a.html">30986a599bb92c0b1b822cf5ff79dfe6252ed99a</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Sun, 19 Nov 2023 12:48:01 +0100
+
+Rename `raft::Event::ReplicateEntries` to `AppendEntries`.
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/raft/message.rs</a></td><td> | </td><td class="num">4</td><td><span class="i">++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/raft/node/candidate.rs</a></td><td> | </td><td class="num">6</td><td><span class="i">+++</span><span class="d">---</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/raft/node/follower.rs</a></td><td> | </td><td class="num">46</td><td><span class="i">+++++++++++++++++++++++</span><span class="d">-----------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">src/raft/node/leader.rs</a></td><td> | </td><td class="num">12</td><td><span class="i">++++++</span><span class="d">------</span></td></tr>
+</table></pre><pre>4 files changed, 34 insertions(+), 34 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/raft/message.rs.html">src/raft/message.rs</a> b/<a href="../file/src/raft/message.rs.html">src/raft/message.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -67,8 +67,8 @@ pub enum Event {
+</a>     },
+     /// Followers may grant votes to candidates.
+     GrantVote,
+<a href="#h0-0-3" id="h0-0-3" class="d">-    /// Leaders replicate a set of log entries to followers.
+</a><a href="#h0-0-4" id="h0-0-4" class="d">-    ReplicateEntries {
+</a><a href="#h0-0-5" id="h0-0-5" class="i">+    /// Leaders replicate log entries to followers by appending it to their log.
+</a><a href="#h0-0-6" id="h0-0-6" class="i">+    AppendEntries {
+</a>         /// The index of the log entry immediately preceding the submitted commands.
+         base_index: Index,
+         /// The term of the log entry immediately preceding the submitted commands.
+<b>diff --git a/<a id="h1" href="../file/src/raft/node/candidate.rs.html">src/raft/node/candidate.rs</a> b/<a href="../file/src/raft/node/candidate.rs.html">src/raft/node/candidate.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -86,7 +86,7 @@ impl RoleNode&lt;Candidate&gt; {
+</a> 
+         // If we receive a message for a future term, become a leaderless
+         // follower in it and step the message. If the message is a Heartbeat or
+<a href="#h1-0-3" id="h1-0-3" class="d">-        // ReplicateEntries from the leader, stepping it will follow the leader.
+</a><a href="#h1-0-4" id="h1-0-4" class="i">+        // AppendEntries from the leader, stepping it will follow the leader.
+</a>         if msg.term &gt; self.term {
+             return self.become_follower(msg.term, None)?.step(msg);
+         }
+<a href="#h1-1" id="h1-1" class="h">@@ -95,7 +95,7 @@ impl RoleNode&lt;Candidate&gt; {
+</a>             // If we receive a heartbeat or replicated entries in this term, we
+             // lost the election and have a new leader. Follow it and process
+             // the message.
+<a href="#h1-1-3" id="h1-1-3" class="d">-            Event::Heartbeat { .. } | Event::ReplicateEntries { .. } =&gt; {
+</a><a href="#h1-1-4" id="h1-1-4" class="i">+            Event::Heartbeat { .. } | Event::AppendEntries { .. } =&gt; {
+</a>                 return self.become_follower(msg.term, Some(msg.from.unwrap()))?.step(msg);
+             }
+ 
+<a href="#h1-2" id="h1-2" class="h">@@ -292,7 +292,7 @@ mod tests {
+</a>                     from: Address::Node(1),
+                     to: Address::Node(to),
+                     term: 3,
+<a href="#h1-2-3" id="h1-2-3" class="d">-                    event: Event::ReplicateEntries {
+</a><a href="#h1-2-4" id="h1-2-4" class="i">+                    event: Event::AppendEntries {
+</a>                         base_index: 3,
+                         base_term: 2,
+                         entries: vec![Entry { index: 4, term: 3, command: None }],
+<b>diff --git a/<a id="h2" href="../file/src/raft/node/follower.rs.html">src/raft/node/follower.rs</a> b/<a href="../file/src/raft/node/follower.rs.html">src/raft/node/follower.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -95,7 +95,7 @@ impl RoleNode&lt;Follower&gt; {
+</a> 
+         // If we receive a message for a future term, become a leaderless
+         // follower in it and step the message. If the message is a Heartbeat or
+<a href="#h2-0-3" id="h2-0-3" class="d">-        // ReplicateEntries from the leader, stepping it will follow the leader.
+</a><a href="#h2-0-4" id="h2-0-4" class="i">+        // AppendEntries from the leader, stepping it will follow the leader.
+</a>         if msg.term &gt; self.term {
+             return self.become_follower(None, msg.term)?.step(msg);
+         }
+<a href="#h2-1" id="h2-1" class="h">@@ -132,7 +132,7 @@ impl RoleNode&lt;Follower&gt; {
+</a> 
+             // Replicate entries from the leader. If we don&#39;t have a leader in
+             // this term yet, follow it.
+<a href="#h2-1-3" id="h2-1-3" class="d">-            Event::ReplicateEntries { base_index, base_term, entries } =&gt; {
+</a><a href="#h2-1-4" id="h2-1-4" class="i">+            Event::AppendEntries { base_index, base_term, entries } =&gt; {
+</a>                 // Check that the entries are from our leader.
+                 let from = msg.from.unwrap();
+                 match self.role.leader {
+<a href="#h2-2" id="h2-2" class="h">@@ -554,8 +554,8 @@ pub mod tests {
+</a>     }
+ 
+     #[test]
+<a href="#h2-2-3" id="h2-2-3" class="d">-    // ReplicateEntries accepts some entries at base 0 without changes
+</a><a href="#h2-2-4" id="h2-2-4" class="d">-    fn step_replicateentries_base0() -&gt; Result&lt;()&gt; {
+</a><a href="#h2-2-5" id="h2-2-5" class="i">+    // AppendEntries accepts some entries at base 0 without changes
+</a><a href="#h2-2-6" id="h2-2-6" class="i">+    fn step_appendentries_base0() -&gt; Result&lt;()&gt; {
+</a>         // TODO: Move this into a setup function.
+         let (node_tx, mut node_rx) = mpsc::unbounded_channel();
+         let (state_tx, mut state_rx) = mpsc::unbounded_channel();
+<a href="#h2-3" id="h2-3" class="h">@@ -579,7 +579,7 @@ pub mod tests {
+</a>             from: Address::Node(2),
+             to: Address::Node(1),
+             term: 3,
+<a href="#h2-3-3" id="h2-3-3" class="d">-            event: Event::ReplicateEntries {
+</a><a href="#h2-3-4" id="h2-3-4" class="i">+            event: Event::AppendEntries {
+</a>                 base_index: 0,
+                 base_term: 0,
+                 entries: vec![
+<a href="#h2-4" id="h2-4" class="h">@@ -606,14 +606,14 @@ pub mod tests {
+</a>     }
+ 
+     #[test]
+<a href="#h2-4-3" id="h2-4-3" class="d">-    // ReplicateEntries appends entries but does not commit them
+</a><a href="#h2-4-4" id="h2-4-4" class="d">-    fn step_replicateentries_append() -&gt; Result&lt;()&gt; {
+</a><a href="#h2-4-5" id="h2-4-5" class="i">+    // AppendEntries appends entries but does not commit them
+</a><a href="#h2-4-6" id="h2-4-6" class="i">+    fn step_appendentries_append() -&gt; Result&lt;()&gt; {
+</a>         let (follower, mut node_rx, mut state_rx) = setup()?;
+         let mut node = follower.step(Message {
+             from: Address::Node(2),
+             to: Address::Node(1),
+             term: 3,
+<a href="#h2-4-12" id="h2-4-12" class="d">-            event: Event::ReplicateEntries {
+</a><a href="#h2-4-13" id="h2-4-13" class="i">+            event: Event::AppendEntries {
+</a>                 base_index: 3,
+                 base_term: 2,
+                 entries: vec![
+<a href="#h2-5" id="h2-5" class="h">@@ -643,14 +643,14 @@ pub mod tests {
+</a>     }
+ 
+     #[test]
+<a href="#h2-5-3" id="h2-5-3" class="d">-    // ReplicateEntries accepts partially overlapping entries
+</a><a href="#h2-5-4" id="h2-5-4" class="d">-    fn step_replicateentries_partial_overlap() -&gt; Result&lt;()&gt; {
+</a><a href="#h2-5-5" id="h2-5-5" class="i">+    // AppendEntries accepts partially overlapping entries
+</a><a href="#h2-5-6" id="h2-5-6" class="i">+    fn step_appendentries_partial_overlap() -&gt; Result&lt;()&gt; {
+</a>         let (follower, mut node_rx, mut state_rx) = setup()?;
+         let mut node = follower.step(Message {
+             from: Address::Node(2),
+             to: Address::Node(1),
+             term: 3,
+<a href="#h2-5-12" id="h2-5-12" class="d">-            event: Event::ReplicateEntries {
+</a><a href="#h2-5-13" id="h2-5-13" class="i">+            event: Event::AppendEntries {
+</a>                 base_index: 1,
+                 base_term: 1,
+                 entries: vec![
+<a href="#h2-6" id="h2-6" class="h">@@ -679,14 +679,14 @@ pub mod tests {
+</a>     }
+ 
+     #[test]
+<a href="#h2-6-3" id="h2-6-3" class="d">-    // ReplicateEntries replaces conflicting entries
+</a><a href="#h2-6-4" id="h2-6-4" class="d">-    fn step_replicateentries_replace() -&gt; Result&lt;()&gt; {
+</a><a href="#h2-6-5" id="h2-6-5" class="i">+    // AppendEntries replaces conflicting entries
+</a><a href="#h2-6-6" id="h2-6-6" class="i">+    fn step_appendentries_replace() -&gt; Result&lt;()&gt; {
+</a>         let (follower, mut node_rx, mut state_rx) = setup()?;
+         let mut node = follower.step(Message {
+             from: Address::Node(2),
+             to: Address::Node(1),
+             term: 3,
+<a href="#h2-6-12" id="h2-6-12" class="d">-            event: Event::ReplicateEntries {
+</a><a href="#h2-6-13" id="h2-6-13" class="i">+            event: Event::AppendEntries {
+</a>                 base_index: 2,
+                 base_term: 1,
+                 entries: vec![
+<a href="#h2-7" id="h2-7" class="h">@@ -715,14 +715,14 @@ pub mod tests {
+</a>     }
+ 
+     #[test]
+<a href="#h2-7-3" id="h2-7-3" class="d">-    // ReplicateEntries replaces partially conflicting entries
+</a><a href="#h2-7-4" id="h2-7-4" class="d">-    fn step_replicateentries_replace_partial() -&gt; Result&lt;()&gt; {
+</a><a href="#h2-7-5" id="h2-7-5" class="i">+    // AppendEntries replaces partially conflicting entries
+</a><a href="#h2-7-6" id="h2-7-6" class="i">+    fn step_appendentries_replace_partial() -&gt; Result&lt;()&gt; {
+</a>         let (follower, mut node_rx, mut state_rx) = setup()?;
+         let mut node = follower.step(Message {
+             from: Address::Node(2),
+             to: Address::Node(1),
+             term: 3,
+<a href="#h2-7-12" id="h2-7-12" class="d">-            event: Event::ReplicateEntries {
+</a><a href="#h2-7-13" id="h2-7-13" class="i">+            event: Event::AppendEntries {
+</a>                 base_index: 2,
+                 base_term: 1,
+                 entries: vec![
+<a href="#h2-8" id="h2-8" class="h">@@ -751,14 +751,14 @@ pub mod tests {
+</a>     }
+ 
+     #[test]
+<a href="#h2-8-3" id="h2-8-3" class="d">-    // ReplicateEntries rejects missing base index
+</a><a href="#h2-8-4" id="h2-8-4" class="d">-    fn step_replicateentries_reject_missing_base_index() -&gt; Result&lt;()&gt; {
+</a><a href="#h2-8-5" id="h2-8-5" class="i">+    // AppendEntries rejects missing base index
+</a><a href="#h2-8-6" id="h2-8-6" class="i">+    fn step_appendentries_reject_missing_base_index() -&gt; Result&lt;()&gt; {
+</a>         let (follower, mut node_rx, mut state_rx) = setup()?;
+         let mut node = follower.step(Message {
+             from: Address::Node(2),
+             to: Address::Node(1),
+             term: 3,
+<a href="#h2-8-12" id="h2-8-12" class="d">-            event: Event::ReplicateEntries {
+</a><a href="#h2-8-13" id="h2-8-13" class="i">+            event: Event::AppendEntries {
+</a>                 base_index: 5,
+                 base_term: 2,
+                 entries: vec![Entry { index: 6, term: 3, command: Some(vec![0x04]) }],
+<a href="#h2-9" id="h2-9" class="h">@@ -783,14 +783,14 @@ pub mod tests {
+</a>     }
+ 
+     #[test]
+<a href="#h2-9-3" id="h2-9-3" class="d">-    // ReplicateEntries rejects conflicting base term
+</a><a href="#h2-9-4" id="h2-9-4" class="d">-    fn step_replicateentries_reject_missing_base_term() -&gt; Result&lt;()&gt; {
+</a><a href="#h2-9-5" id="h2-9-5" class="i">+    // AppendEntries rejects conflicting base term
+</a><a href="#h2-9-6" id="h2-9-6" class="i">+    fn step_appendentries_reject_missing_base_term() -&gt; Result&lt;()&gt; {
+</a>         let (follower, mut node_rx, mut state_rx) = setup()?;
+         let mut node = follower.step(Message {
+             from: Address::Node(2),
+             to: Address::Node(1),
+             term: 3,
+<a href="#h2-9-12" id="h2-9-12" class="d">-            event: Event::ReplicateEntries {
+</a><a href="#h2-9-13" id="h2-9-13" class="i">+            event: Event::AppendEntries {
+</a>                 base_index: 1,
+                 base_term: 2,
+                 entries: vec![Entry { index: 2, term: 3, command: Some(vec![0x04]) }],
+<b>diff --git a/<a id="h3" href="../file/src/raft/node/leader.rs.html">src/raft/node/leader.rs</a> b/<a href="../file/src/raft/node/leader.rs.html">src/raft/node/leader.rs</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -95,7 +95,7 @@ impl RoleNode&lt;Leader&gt; {
+</a>         };
+         let entries = self.log.scan(peer_next..)?.collect::&lt;Result&lt;Vec&lt;_&gt;&gt;&gt;()?;
+         debug!(&quot;Replicating {} entries at base {} to {}&quot;, entries.len(), base_index, peer);
+<a href="#h3-0-3" id="h3-0-3" class="d">-        self.send(Address::Node(peer), Event::ReplicateEntries { base_index, base_term, entries })?;
+</a><a href="#h3-0-4" id="h3-0-4" class="i">+        self.send(Address::Node(peer), Event::AppendEntries { base_index, base_term, entries })?;
+</a>         Ok(())
+     }
+ 
+<a href="#h3-1" id="h3-1" class="h">@@ -113,14 +113,14 @@ impl RoleNode&lt;Leader&gt; {
+</a> 
+         // If we receive a message for a future term, become a leaderless
+         // follower in it and step the message. If the message is a Heartbeat or
+<a href="#h3-1-3" id="h3-1-3" class="d">-        // ReplicateEntries from the leader, stepping it will follow the leader.
+</a><a href="#h3-1-4" id="h3-1-4" class="i">+        // AppendEntries from the leader, stepping it will follow the leader.
+</a>         if msg.term &gt; self.term {
+             return self.become_follower(msg.term)?.step(msg);
+         }
+ 
+         match msg.event {
+             // There can&#39;t be two leaders in the same term.
+<a href="#h3-1-11" id="h3-1-11" class="d">-            Event::Heartbeat { .. } | Event::ReplicateEntries { .. } =&gt; {
+</a><a href="#h3-1-12" id="h3-1-12" class="i">+            Event::Heartbeat { .. } | Event::AppendEntries { .. } =&gt; {
+</a>                 panic!(&quot;Saw other leader {} in term {}&quot;, msg.from.unwrap(), msg.term);
+             }
+ 
+<a href="#h3-2" id="h3-2" class="h">@@ -308,7 +308,7 @@ mod tests {
+</a>                 from: Address::Node(1),
+                 to: Address::Node(2),
+                 term: 3,
+<a href="#h3-2-3" id="h3-2-3" class="d">-                event: Event::ReplicateEntries { base_index: 5, base_term: 3, entries: vec![] },
+</a><a href="#h3-2-4" id="h3-2-4" class="i">+                event: Event::AppendEntries { base_index: 5, base_term: 3, entries: vec![] },
+</a>             }],
+         );
+         assert_messages(
+<a href="#h3-3" id="h3-3" class="h">@@ -535,7 +535,7 @@ mod tests {
+</a>                     from: Address::Node(1),
+                     to: Address::Node(2),
+                     term: 3,
+<a href="#h3-3-3" id="h3-3-3" class="d">-                    event: Event::ReplicateEntries {
+</a><a href="#h3-3-4" id="h3-3-4" class="i">+                    event: Event::AppendEntries {
+</a>                         base_index: index as Index,
+                         base_term: if index &gt; 0 {
+                             entries.get(index - 1).map(|e| e.term).unwrap()
+<a href="#h3-4" id="h3-4" class="h">@@ -616,7 +616,7 @@ mod tests {
+</a>                     from: Address::Node(1),
+                     to: Address::Node(peer),
+                     term: 3,
+<a href="#h3-4-3" id="h3-4-3" class="d">-                    event: Event::ReplicateEntries {
+</a><a href="#h3-4-4" id="h3-4-4" class="i">+                    event: Event::AppendEntries {
+</a>                         base_index: 5,
+                         base_term: 3,
+                         entries: vec![Entry { index: 6, term: 3, command: Some(vec![0xaf]) },]
+</pre>
+</div>
+</body>
+</html>

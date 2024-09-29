@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Rename Raft log `save/load_term()` to `set/get_term()` - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/c102d8648f2dcc821b99ddca914238042796c8fd.html">c102d8648f2dcc821b99ddca914238042796c8fd</a>
+<b>parent</b> <a href="../commit/c8de9e78b1ec854ec43a77a62bfb015507d9c9c0.html">c8de9e78b1ec854ec43a77a62bfb015507d9c9c0</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Tue, 14 Nov 2023 20:01:38 +0100
+
+Rename Raft log `save/load_term()` to `set/get_term()`
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/raft/log.rs</a></td><td> | </td><td class="num">49</td><td><span class="i">++++++++++++++++++++++++</span><span class="d">-------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/raft/node/candidate.rs</a></td><td> | </td><td class="num">6</td><td><span class="i">+++</span><span class="d">---</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/raft/node/follower.rs</a></td><td> | </td><td class="num">8</td><td><span class="i">++++</span><span class="d">----</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">src/raft/node/leader.rs</a></td><td> | </td><td class="num">4</td><td><span class="i">++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h4">src/raft/node/mod.rs</a></td><td> | </td><td class="num">8</td><td><span class="i">++++</span><span class="d">----</span></td></tr>
+</table></pre><pre>5 files changed, 37 insertions(+), 38 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/raft/log.rs.html">src/raft/log.rs</a> b/<a href="../file/src/raft/log.rs.html">src/raft/log.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -89,6 +89,23 @@ impl Log {
+</a>         (self.last_index, self.last_term)
+     }
+ 
+<a href="#h0-0-3" id="h0-0-3" class="i">+    /// Returns the last known term (0 if none), and cast vote (if any).
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+    pub fn get_term(&amp;self) -&gt; Result&lt;(Term, Option&lt;String&gt;)&gt; {
+</a><a href="#h0-0-5" id="h0-0-5" class="i">+        let (term, voted_for) = self
+</a><a href="#h0-0-6" id="h0-0-6" class="i">+            .store
+</a><a href="#h0-0-7" id="h0-0-7" class="i">+            .get_metadata(&amp;Key::TermVote.encode())?
+</a><a href="#h0-0-8" id="h0-0-8" class="i">+            .map(|v| bincode::deserialize(&amp;v))
+</a><a href="#h0-0-9" id="h0-0-9" class="i">+            .transpose()?
+</a><a href="#h0-0-10" id="h0-0-10" class="i">+            .unwrap_or((0, None));
+</a><a href="#h0-0-11" id="h0-0-11" class="i">+        debug!(&quot;Loaded term {} and voted_for {:?} from log&quot;, term, voted_for);
+</a><a href="#h0-0-12" id="h0-0-12" class="i">+        Ok((term, voted_for))
+</a><a href="#h0-0-13" id="h0-0-13" class="i">+    }
+</a><a href="#h0-0-14" id="h0-0-14" class="i">+
+</a><a href="#h0-0-15" id="h0-0-15" class="i">+    /// Sets the most recent term, and cast vote (if any).
+</a><a href="#h0-0-16" id="h0-0-16" class="i">+    pub fn set_term(&amp;mut self, term: Term, voted_for: Option&lt;&amp;str&gt;) -&gt; Result&lt;()&gt; {
+</a><a href="#h0-0-17" id="h0-0-17" class="i">+        self.store.set_metadata(&amp;Key::TermVote.encode(), bincode::serialize(&amp;(term, voted_for))?)
+</a><a href="#h0-0-18" id="h0-0-18" class="i">+    }
+</a><a href="#h0-0-19" id="h0-0-19" class="i">+
+</a>     /// Appends a command to the log, returning the entry.
+     pub fn append(&amp;mut self, term: Term, command: Option&lt;Vec&lt;u8&gt;&gt;) -&gt; Result&lt;Entry&gt; {
+         let entry = Entry { index: self.last_index + 1, term, command };
+<a href="#h0-1" id="h0-1" class="h">@@ -173,24 +190,6 @@ impl Log {
+</a>         self.last_term = term;
+         Ok(index)
+     }
+<a href="#h0-1-3" id="h0-1-3" class="d">-
+</a><a href="#h0-1-4" id="h0-1-4" class="d">-    /// Loads information about the most recent term known by the log, containing the term number (0
+</a><a href="#h0-1-5" id="h0-1-5" class="d">-    /// if none) and candidate voted for in current term (if any).
+</a><a href="#h0-1-6" id="h0-1-6" class="d">-    pub fn load_term(&amp;self) -&gt; Result&lt;(Term, Option&lt;String&gt;)&gt; {
+</a><a href="#h0-1-7" id="h0-1-7" class="d">-        let (term, voted_for) = self
+</a><a href="#h0-1-8" id="h0-1-8" class="d">-            .store
+</a><a href="#h0-1-9" id="h0-1-9" class="d">-            .get_metadata(&amp;Key::TermVote.encode())?
+</a><a href="#h0-1-10" id="h0-1-10" class="d">-            .map(|v| bincode::deserialize(&amp;v))
+</a><a href="#h0-1-11" id="h0-1-11" class="d">-            .transpose()?
+</a><a href="#h0-1-12" id="h0-1-12" class="d">-            .unwrap_or((0, None));
+</a><a href="#h0-1-13" id="h0-1-13" class="d">-        debug!(&quot;Loaded term {} and voted_for {:?} from log&quot;, term, voted_for);
+</a><a href="#h0-1-14" id="h0-1-14" class="d">-        Ok((term, voted_for))
+</a><a href="#h0-1-15" id="h0-1-15" class="d">-    }
+</a><a href="#h0-1-16" id="h0-1-16" class="d">-
+</a><a href="#h0-1-17" id="h0-1-17" class="d">-    /// Saves information about the most recent term.
+</a><a href="#h0-1-18" id="h0-1-18" class="d">-    pub fn save_term(&amp;mut self, term: Term, voted_for: Option&lt;&amp;str&gt;) -&gt; Result&lt;()&gt; {
+</a><a href="#h0-1-19" id="h0-1-19" class="d">-        self.store.set_metadata(&amp;Key::TermVote.encode(), bincode::serialize(&amp;(term, voted_for))?)
+</a><a href="#h0-1-20" id="h0-1-20" class="d">-    }
+</a> }
+ 
+ #[cfg(test)]
+<a href="#h0-2" id="h0-2" class="h">@@ -352,20 +351,20 @@ mod tests {
+</a>     fn load_save_term() -&gt; Result&lt;()&gt; {
+         // Test loading empty term
+         let (l, _) = setup()?;
+<a href="#h0-2-3" id="h0-2-3" class="d">-        assert_eq!((0, None), l.load_term()?);
+</a><a href="#h0-2-4" id="h0-2-4" class="i">+        assert_eq!((0, None), l.get_term()?);
+</a> 
+         // Test loading saved term
+         let (mut l, store) = setup()?;
+<a href="#h0-2-8" id="h0-2-8" class="d">-        l.save_term(1, Some(&quot;a&quot;))?;
+</a><a href="#h0-2-9" id="h0-2-9" class="i">+        l.set_term(1, Some(&quot;a&quot;))?;
+</a>         let l = Log::new(store)?;
+<a href="#h0-2-11" id="h0-2-11" class="d">-        assert_eq!((1, Some(&quot;a&quot;.into())), l.load_term()?);
+</a><a href="#h0-2-12" id="h0-2-12" class="i">+        assert_eq!((1, Some(&quot;a&quot;.into())), l.get_term()?);
+</a> 
+         // Test replacing saved term with none
+         let (mut l, _) = setup()?;
+<a href="#h0-2-16" id="h0-2-16" class="d">-        l.save_term(1, Some(&quot;a&quot;))?;
+</a><a href="#h0-2-17" id="h0-2-17" class="d">-        assert_eq!((1, Some(&quot;a&quot;.into())), l.load_term()?);
+</a><a href="#h0-2-18" id="h0-2-18" class="d">-        l.save_term(0, None)?;
+</a><a href="#h0-2-19" id="h0-2-19" class="d">-        assert_eq!((0, None), l.load_term()?);
+</a><a href="#h0-2-20" id="h0-2-20" class="i">+        l.set_term(1, Some(&quot;a&quot;))?;
+</a><a href="#h0-2-21" id="h0-2-21" class="i">+        assert_eq!((1, Some(&quot;a&quot;.into())), l.get_term()?);
+</a><a href="#h0-2-22" id="h0-2-22" class="i">+        l.set_term(0, None)?;
+</a><a href="#h0-2-23" id="h0-2-23" class="i">+        assert_eq!((0, None), l.get_term()?);
+</a>         Ok(())
+     }
+ 
+<b>diff --git a/<a id="h1" href="../file/src/raft/node/candidate.rs.html">src/raft/node/candidate.rs</a> b/<a href="../file/src/raft/node/candidate.rs.html">src/raft/node/candidate.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -33,7 +33,7 @@ impl RoleNode&lt;Candidate&gt; {
+</a>     fn become_follower(mut self, term: u64, leader: &amp;str) -&gt; Result&lt;RoleNode&lt;Follower&gt;&gt; {
+         info!(&quot;Discovered leader {} for term {}, following&quot;, leader, term);
+         self.term = term;
+<a href="#h1-0-3" id="h1-0-3" class="d">-        self.log.save_term(term, None)?;
+</a><a href="#h1-0-4" id="h1-0-4" class="i">+        self.log.set_term(term, None)?;
+</a>         let mut node = self.become_role(Follower::new(Some(leader), None))?;
+         node.abort_proxied()?;
+         node.forward_queued(Address::Peer(leader.to_string()))?;
+<a href="#h1-1" id="h1-1" class="h">@@ -114,7 +114,7 @@ impl RoleNode&lt;Candidate&gt; {
+</a>             info!(&quot;Election timed out, starting new election for term {}&quot;, self.term + 1);
+             let (last_index, last_term) = self.log.get_last_index();
+             self.term += 1;
+<a href="#h1-1-3" id="h1-1-3" class="d">-            self.log.save_term(self.term, None)?;
+</a><a href="#h1-1-4" id="h1-1-4" class="i">+            self.log.set_term(self.term, None)?;
+</a>             self.role = Candidate::new();
+             self.send(Address::Peers, Event::SolicitVote { last_index, last_term })?;
+         }
+<a href="#h1-2" id="h1-2" class="h">@@ -144,7 +144,7 @@ mod tests {
+</a>         log.append(1, Some(vec![0x02]))?;
+         log.append(2, Some(vec![0x03]))?;
+         log.commit(2)?;
+<a href="#h1-2-3" id="h1-2-3" class="d">-        log.save_term(3, None)?;
+</a><a href="#h1-2-4" id="h1-2-4" class="i">+        log.set_term(3, None)?;
+</a> 
+         let mut node = RoleNode {
+             id: &quot;a&quot;.into(),
+<b>diff --git a/<a id="h2" href="../file/src/raft/node/follower.rs.html">src/raft/node/follower.rs</a> b/<a href="../file/src/raft/node/follower.rs.html">src/raft/node/follower.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -38,7 +38,7 @@ impl RoleNode&lt;Follower&gt; {
+</a>         let (last_index, last_term) = self.log.get_last_index();
+         let mut node = self.become_role(Candidate::new())?;
+         node.term += 1;
+<a href="#h2-0-3" id="h2-0-3" class="d">-        node.log.save_term(node.term, None)?;
+</a><a href="#h2-0-4" id="h2-0-4" class="i">+        node.log.set_term(node.term, None)?;
+</a>         node.send(Address::Peers, Event::SolicitVote { last_index, last_term })?;
+         Ok(node)
+     }
+<a href="#h2-1" id="h2-1" class="h">@@ -49,7 +49,7 @@ impl RoleNode&lt;Follower&gt; {
+</a>         if term &gt; self.term {
+             info!(&quot;Discovered new term {}, following leader {}&quot;, term, leader);
+             self.term = term;
+<a href="#h2-1-3" id="h2-1-3" class="d">-            self.log.save_term(term, None)?;
+</a><a href="#h2-1-4" id="h2-1-4" class="i">+            self.log.set_term(term, None)?;
+</a>         } else {
+             info!(&quot;Discovered leader {}, following&quot;, leader);
+             voted_for = self.role.voted_for;
+<a href="#h2-2" id="h2-2" class="h">@@ -112,7 +112,7 @@ impl RoleNode&lt;Follower&gt; {
+</a>                 if let Address::Peer(from) = msg.from {
+                     info!(&quot;Voting for {} in term {} election&quot;, from, self.term);
+                     self.send(Address::Peer(from.clone()), Event::GrantVote)?;
+<a href="#h2-2-3" id="h2-2-3" class="d">-                    self.log.save_term(self.term, Some(&amp;from))?;
+</a><a href="#h2-2-4" id="h2-2-4" class="i">+                    self.log.set_term(self.term, Some(&amp;from))?;
+</a>                     self.role.voted_for = Some(from);
+                 }
+             }
+<a href="#h2-3" id="h2-3" class="h">@@ -198,7 +198,7 @@ pub mod tests {
+</a>         log.append(1, Some(vec![0x02]))?;
+         log.append(2, Some(vec![0x03]))?;
+         log.commit(2)?;
+<a href="#h2-3-3" id="h2-3-3" class="d">-        log.save_term(3, None)?;
+</a><a href="#h2-3-4" id="h2-3-4" class="i">+        log.set_term(3, None)?;
+</a> 
+         let node = RoleNode {
+             id: &quot;a&quot;.into(),
+<b>diff --git a/<a id="h3" href="../file/src/raft/node/leader.rs.html">src/raft/node/leader.rs</a> b/<a href="../file/src/raft/node/leader.rs.html">src/raft/node/leader.rs</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -37,7 +37,7 @@ impl RoleNode&lt;Leader&gt; {
+</a>     fn become_follower(mut self, term: u64, leader: &amp;str) -&gt; Result&lt;RoleNode&lt;Follower&gt;&gt; {
+         info!(&quot;Discovered new leader {} for term {}, following&quot;, leader, term);
+         self.term = term;
+<a href="#h3-0-3" id="h3-0-3" class="d">-        self.log.save_term(term, None)?;
+</a><a href="#h3-0-4" id="h3-0-4" class="i">+        self.log.set_term(term, None)?;
+</a>         self.state_tx.send(Instruction::Abort)?;
+         self.become_role(Follower::new(Some(leader), None))
+     }
+<a href="#h3-1" id="h3-1" class="h">@@ -244,7 +244,7 @@ mod tests {
+</a>         log.append(3, Some(vec![0x04]))?;
+         log.append(3, Some(vec![0x05]))?;
+         log.commit(2)?;
+<a href="#h3-1-3" id="h3-1-3" class="d">-        log.save_term(3, None)?;
+</a><a href="#h3-1-4" id="h3-1-4" class="i">+        log.set_term(3, None)?;
+</a> 
+         let node = RoleNode {
+             id: &quot;a&quot;.into(),
+<b>diff --git a/<a id="h4" href="../file/src/raft/node/mod.rs.html">src/raft/node/mod.rs</a> b/<a href="../file/src/raft/node/mod.rs.html">src/raft/node/mod.rs</a></b>
+<a href="#h4-0" id="h4-0" class="h">@@ -68,7 +68,7 @@ impl Node {
+</a>         };
+         tokio::spawn(driver.drive(state));
+ 
+<a href="#h4-0-3" id="h4-0-3" class="d">-        let (term, voted_for) = log.load_term()?;
+</a><a href="#h4-0-4" id="h4-0-4" class="i">+        let (term, voted_for) = log.get_term()?;
+</a>         let node = RoleNode {
+             id: id.to_owned(),
+             peers,
+<a href="#h4-1" id="h4-1" class="h">@@ -369,7 +369,7 @@ mod tests {
+</a>                 },
+                 &quot;Unexpected node term&quot;,
+             );
+<a href="#h4-1-3" id="h4-1-3" class="d">-            let (saved_term, saved_voted_for) = self.log().load_term().unwrap();
+</a><a href="#h4-1-4" id="h4-1-4" class="i">+            let (saved_term, saved_voted_for) = self.log().get_term().unwrap();
+</a>             assert_eq!(saved_term, term, &quot;Incorrect term stored in log&quot;);
+             assert_eq!(
+                 saved_voted_for,
+<a href="#h4-2" id="h4-2" class="h">@@ -393,7 +393,7 @@ mod tests {
+</a>                 },
+                 &quot;Unexpected voted_for&quot;
+             );
+<a href="#h4-2-3" id="h4-2-3" class="d">-            let (_, saved_voted_for) = self.log().load_term().unwrap();
+</a><a href="#h4-2-4" id="h4-2-4" class="i">+            let (_, saved_voted_for) = self.log().get_term().unwrap();
+</a>             assert_eq!(saved_voted_for.as_deref(), voted_for, &quot;Unexpected voted_for saved in log&quot;);
+             self
+         }
+<a href="#h4-3" id="h4-3" class="h">@@ -452,7 +452,7 @@ mod tests {
+</a>     async fn new_loads_term() -&gt; Result&lt;()&gt; {
+         let (node_tx, _) = mpsc::unbounded_channel();
+         let store = Box::new(log::Test::new());
+<a href="#h4-3-3" id="h4-3-3" class="d">-        Log::new(store.clone())?.save_term(3, Some(&quot;c&quot;))?;
+</a><a href="#h4-3-4" id="h4-3-4" class="i">+        Log::new(store.clone())?.set_term(3, Some(&quot;c&quot;))?;
+</a>         let node = Node::new(
+             &quot;a&quot;,
+             vec![&quot;b&quot;.into(), &quot;c&quot;.into()],
+</pre>
+</div>
+</body>
+</html>

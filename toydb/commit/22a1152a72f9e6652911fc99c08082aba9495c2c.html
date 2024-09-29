@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Return log index from `raft::Log::append()` - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/22a1152a72f9e6652911fc99c08082aba9495c2c.html">22a1152a72f9e6652911fc99c08082aba9495c2c</a>
+<b>parent</b> <a href="../commit/c102d8648f2dcc821b99ddca914238042796c8fd.html">c102d8648f2dcc821b99ddca914238042796c8fd</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Tue, 14 Nov 2023 20:08:52 +0100
+
+Return log index from `raft::Log::append()`
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/raft/log.rs</a></td><td> | </td><td class="num">13</td><td><span class="i">+++++</span><span class="d">--------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/raft/node/leader.rs</a></td><td> | </td><td class="num">4</td><td><span class="i">++</span><span class="d">--</span></td></tr>
+</table></pre><pre>2 files changed, 7 insertions(+), 10 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/raft/log.rs.html">src/raft/log.rs</a> b/<a href="../file/src/raft/log.rs.html">src/raft/log.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -106,14 +106,14 @@ impl Log {
+</a>         self.store.set_metadata(&amp;Key::TermVote.encode(), bincode::serialize(&amp;(term, voted_for))?)
+     }
+ 
+<a href="#h0-0-3" id="h0-0-3" class="d">-    /// Appends a command to the log, returning the entry.
+</a><a href="#h0-0-4" id="h0-0-4" class="d">-    pub fn append(&amp;mut self, term: Term, command: Option&lt;Vec&lt;u8&gt;&gt;) -&gt; Result&lt;Entry&gt; {
+</a><a href="#h0-0-5" id="h0-0-5" class="i">+    /// Appends a command to the log, returning the log index.
+</a><a href="#h0-0-6" id="h0-0-6" class="i">+    pub fn append(&amp;mut self, term: Term, command: Option&lt;Vec&lt;u8&gt;&gt;) -&gt; Result&lt;Index&gt; {
+</a>         let entry = Entry { index: self.last_index + 1, term, command };
+         debug!(&quot;Appending log entry {}: {:?}&quot;, entry.index, entry);
+         self.store.append(bincode::serialize(&amp;entry)?)?;
+         self.last_index = entry.index;
+         self.last_term = entry.term;
+<a href="#h0-0-12" id="h0-0-12" class="d">-        Ok(entry)
+</a><a href="#h0-0-13" id="h0-0-13" class="i">+        Ok(entry.index)
+</a>     }
+ 
+     /// Commits entries up to and including an index.
+<a href="#h0-1" id="h0-1" class="h">@@ -219,10 +219,7 @@ mod tests {
+</a>         let (mut l, _) = setup()?;
+         assert_eq!(Ok(None), l.get(1));
+ 
+<a href="#h0-1-3" id="h0-1-3" class="d">-        assert_eq!(
+</a><a href="#h0-1-4" id="h0-1-4" class="d">-            Entry { index: 1, term: 3, command: Some(vec![0x01]) },
+</a><a href="#h0-1-5" id="h0-1-5" class="d">-            l.append(3, Some(vec![0x01]))?
+</a><a href="#h0-1-6" id="h0-1-6" class="d">-        );
+</a><a href="#h0-1-7" id="h0-1-7" class="i">+        assert_eq!(1, l.append(3, Some(vec![0x01]))?);
+</a>         assert_eq!(Some(Entry { index: 1, term: 3, command: Some(vec![0x01]) }), l.get(1)?);
+         assert_eq!(None, l.get(2)?);
+ 
+<a href="#h0-2" id="h0-2" class="h">@@ -236,7 +233,7 @@ mod tests {
+</a>     #[test]
+     fn append_none() -&gt; Result&lt;()&gt; {
+         let (mut l, _) = setup()?;
+<a href="#h0-2-3" id="h0-2-3" class="d">-        assert_eq!(Entry { index: 1, term: 3, command: None }, l.append(3, None)?);
+</a><a href="#h0-2-4" id="h0-2-4" class="i">+        assert_eq!(1, l.append(3, None)?);
+</a>         assert_eq!(Some(Entry { index: 1, term: 3, command: None }), l.get(1)?);
+         Ok(())
+     }
+<b>diff --git a/<a id="h1" href="../file/src/raft/node/leader.rs.html">src/raft/node/leader.rs</a> b/<a href="../file/src/raft/node/leader.rs.html">src/raft/node/leader.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -44,11 +44,11 @@ impl RoleNode&lt;Leader&gt; {
+</a> 
+     /// Appends an entry to the log and replicates it to peers.
+     pub fn append(&amp;mut self, command: Option&lt;Vec&lt;u8&gt;&gt;) -&gt; Result&lt;u64&gt; {
+<a href="#h1-0-3" id="h1-0-3" class="d">-        let entry = self.log.append(self.term, command)?;
+</a><a href="#h1-0-4" id="h1-0-4" class="i">+        let index = self.log.append(self.term, command)?;
+</a>         for peer in self.peers.iter() {
+             self.replicate(peer)?;
+         }
+<a href="#h1-0-8" id="h1-0-8" class="d">-        Ok(entry.index)
+</a><a href="#h1-0-9" id="h1-0-9" class="i">+        Ok(index)
+</a>     }
+ 
+     /// Commits any pending log entries.
+</pre>
+</div>
+</body>
+</html>

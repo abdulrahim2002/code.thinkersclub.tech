@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>sql: return Result for tests - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/2e73c1c45675057e00640bb0c04609d45f367f70.html">2e73c1c45675057e00640bb0c04609d45f367f70</a>
+<b>parent</b> <a href="../commit/70ced0d85277562746f6e1a124883c60945cf3fa.html">70ced0d85277562746f6e1a124883c60945cf3fa</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Mon, 16 Dec 2019 08:50:48 +0100
+
+sql: return Result for tests
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/sql/tests.rs</a></td><td> | </td><td class="num">229</td><td><span class="i">++++++++++++++++++++++++++++</span><span class="d">---------------------------------------------------</span></td></tr>
+</table></pre><pre>1 file changed, 80 insertions(+), 149 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/sql/tests.rs.html">src/sql/tests.rs</a> b/<a href="../file/src/sql/tests.rs.html">src/sql/tests.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -3,8 +3,7 @@
+</a>  * and compares the results with golden files stored under src/sql/testdata/
+  */
+ use super::lexer::{Lexer, Token};
+<a href="#h0-0-3" id="h0-0-3" class="d">-use super::schema;
+</a><a href="#h0-0-4" id="h0-0-4" class="d">-use super::types::{DataType, Row, Value};
+</a><a href="#h0-0-5" id="h0-0-5" class="i">+use super::types::{Row, Value};
+</a> use super::{Context, Engine, Parser, Plan, Transaction};
+ use crate::kv;
+ use crate::Error;
+<a href="#h0-1" id="h0-1" class="h">@@ -15,14 +14,15 @@ macro_rules! test_expr {
+</a>     ( $( $name:ident: $expr:expr =&gt; $value:expr, )* ) =&gt; {
+     $(
+         #[test]
+<a href="#h0-1-3" id="h0-1-3" class="d">-        fn $name() {
+</a><a href="#h0-1-4" id="h0-1-4" class="i">+        fn $name() -&gt; Result&lt;(), Error&gt; {
+</a>             let engine = super::engine::KV::new(kv::MVCC::new(kv::storage::Memory::new()));
+<a href="#h0-1-6" id="h0-1-6" class="d">-            let mut txn = engine.begin().unwrap();
+</a><a href="#h0-1-7" id="h0-1-7" class="i">+            let mut txn = engine.begin()?;
+</a>             let ctx = Context{txn: &amp;mut txn};
+<a href="#h0-1-9" id="h0-1-9" class="d">-            let ast = Parser::new(&amp;format!(&quot;SELECT {}&quot;, $expr)).parse().unwrap();
+</a><a href="#h0-1-10" id="h0-1-10" class="d">-            let mut result = Plan::build(ast).unwrap().optimize().unwrap().execute(ctx).unwrap();
+</a><a href="#h0-1-11" id="h0-1-11" class="d">-            txn.rollback().unwrap();
+</a><a href="#h0-1-12" id="h0-1-12" class="d">-            assert_eq!($value, *result.next().unwrap().unwrap().get(0).unwrap())
+</a><a href="#h0-1-13" id="h0-1-13" class="i">+            let ast = Parser::new(&amp;format!(&quot;SELECT {}&quot;, $expr)).parse()?;
+</a><a href="#h0-1-14" id="h0-1-14" class="i">+            let mut result = Plan::build(ast)?.optimize()?.execute(ctx)?;
+</a><a href="#h0-1-15" id="h0-1-15" class="i">+            txn.rollback()?;
+</a><a href="#h0-1-16" id="h0-1-16" class="i">+            assert_eq!($value, *result.next().unwrap()?.get(0).unwrap());
+</a><a href="#h0-1-17" id="h0-1-17" class="i">+            Ok(())
+</a>         }
+     )*
+     }
+<a href="#h0-2" id="h0-2" class="h">@@ -32,199 +32,130 @@ macro_rules! test_sql {
+</a>     ( $( $name:ident: $sql:expr, )* ) =&gt; {
+     $(
+         #[test]
+<a href="#h0-2-3" id="h0-2-3" class="d">-        fn $name() {
+</a><a href="#h0-2-4" id="h0-2-4" class="i">+        fn $name() -&gt; Result&lt;(), Error&gt; {
+</a><a href="#h0-2-5" id="h0-2-5" class="i">+            let queries = vec![
+</a><a href="#h0-2-6" id="h0-2-6" class="i">+                &quot;CREATE TABLE genres (
+</a><a href="#h0-2-7" id="h0-2-7" class="i">+                    id INTEGER PRIMARY KEY,
+</a><a href="#h0-2-8" id="h0-2-8" class="i">+                    name VARCHAR NOT NULL
+</a><a href="#h0-2-9" id="h0-2-9" class="i">+                )&quot;,
+</a><a href="#h0-2-10" id="h0-2-10" class="i">+                &quot;CREATE TABLE movies (
+</a><a href="#h0-2-11" id="h0-2-11" class="i">+                    id INTEGER PRIMARY KEY,
+</a><a href="#h0-2-12" id="h0-2-12" class="i">+                    title VARCHAR NOT NULL,
+</a><a href="#h0-2-13" id="h0-2-13" class="i">+                    genre_id INTEGER NOT NULL,
+</a><a href="#h0-2-14" id="h0-2-14" class="i">+                    released INTEGER NOT NULL,
+</a><a href="#h0-2-15" id="h0-2-15" class="i">+                    rating FLOAT,
+</a><a href="#h0-2-16" id="h0-2-16" class="i">+                    bluray BOOLEAN
+</a><a href="#h0-2-17" id="h0-2-17" class="i">+                )&quot;,
+</a><a href="#h0-2-18" id="h0-2-18" class="i">+                &quot;INSERT INTO genres VALUES
+</a><a href="#h0-2-19" id="h0-2-19" class="i">+                    (1, &#39;Science Fiction&#39;),
+</a><a href="#h0-2-20" id="h0-2-20" class="i">+                    (2, &#39;Action&#39;)&quot;,
+</a><a href="#h0-2-21" id="h0-2-21" class="i">+                &quot;INSERT INTO movies VALUES
+</a><a href="#h0-2-22" id="h0-2-22" class="i">+                    (1, &#39;Stalker&#39;, 1, 1979, 8.2, FALSE),
+</a><a href="#h0-2-23" id="h0-2-23" class="i">+                    (2, &#39;Sicario&#39;, 2, 2015, 7.6, TRUE),
+</a><a href="#h0-2-24" id="h0-2-24" class="i">+                    (3, &#39;Primer&#39;, 1, 2004, 6.9, NULL),
+</a><a href="#h0-2-25" id="h0-2-25" class="i">+                    (4, &#39;Heat&#39;, 2, 1995, 8.2, TRUE),
+</a><a href="#h0-2-26" id="h0-2-26" class="i">+                    (5, &#39;The Fountain&#39;, 1, 2006, 7.2, TRUE)&quot;,
+</a><a href="#h0-2-27" id="h0-2-27" class="i">+            ];
+</a><a href="#h0-2-28" id="h0-2-28" class="i">+
+</a>             let engine = super::engine::KV::new(kv::MVCC::new(kv::storage::Memory::new()));
+<a href="#h0-2-30" id="h0-2-30" class="d">-            let mut txn = engine.begin().unwrap();
+</a><a href="#h0-2-31" id="h0-2-31" class="d">-            txn.create_table(&amp;schema::Table{
+</a><a href="#h0-2-32" id="h0-2-32" class="d">-                name: &quot;genres&quot;.into(),
+</a><a href="#h0-2-33" id="h0-2-33" class="d">-                columns: vec![
+</a><a href="#h0-2-34" id="h0-2-34" class="d">-                    schema::Column{
+</a><a href="#h0-2-35" id="h0-2-35" class="d">-                        name: &quot;id&quot;.into(),
+</a><a href="#h0-2-36" id="h0-2-36" class="d">-                        datatype: DataType::Integer,
+</a><a href="#h0-2-37" id="h0-2-37" class="d">-                        nullable: false,
+</a><a href="#h0-2-38" id="h0-2-38" class="d">-                    },
+</a><a href="#h0-2-39" id="h0-2-39" class="d">-                    schema::Column{
+</a><a href="#h0-2-40" id="h0-2-40" class="d">-                        name: &quot;name&quot;.into(),
+</a><a href="#h0-2-41" id="h0-2-41" class="d">-                        datatype: DataType::String,
+</a><a href="#h0-2-42" id="h0-2-42" class="d">-                        nullable: false,
+</a><a href="#h0-2-43" id="h0-2-43" class="d">-                    },
+</a><a href="#h0-2-44" id="h0-2-44" class="d">-                ],
+</a><a href="#h0-2-45" id="h0-2-45" class="d">-                primary_key: 0,
+</a><a href="#h0-2-46" id="h0-2-46" class="d">-            }).unwrap();
+</a><a href="#h0-2-47" id="h0-2-47" class="d">-            txn.create_table(&amp;schema::Table{
+</a><a href="#h0-2-48" id="h0-2-48" class="d">-                name: &quot;movies&quot;.into(),
+</a><a href="#h0-2-49" id="h0-2-49" class="d">-                columns: vec![
+</a><a href="#h0-2-50" id="h0-2-50" class="d">-                    schema::Column{
+</a><a href="#h0-2-51" id="h0-2-51" class="d">-                        name: &quot;id&quot;.into(),
+</a><a href="#h0-2-52" id="h0-2-52" class="d">-                        datatype: DataType::Integer,
+</a><a href="#h0-2-53" id="h0-2-53" class="d">-                        nullable: false,
+</a><a href="#h0-2-54" id="h0-2-54" class="d">-                    },
+</a><a href="#h0-2-55" id="h0-2-55" class="d">-                    schema::Column{
+</a><a href="#h0-2-56" id="h0-2-56" class="d">-                        name: &quot;title&quot;.into(),
+</a><a href="#h0-2-57" id="h0-2-57" class="d">-                        datatype: DataType::String,
+</a><a href="#h0-2-58" id="h0-2-58" class="d">-                        nullable: false,
+</a><a href="#h0-2-59" id="h0-2-59" class="d">-                    },
+</a><a href="#h0-2-60" id="h0-2-60" class="d">-                    schema::Column{
+</a><a href="#h0-2-61" id="h0-2-61" class="d">-                        name: &quot;genre_id&quot;.into(),
+</a><a href="#h0-2-62" id="h0-2-62" class="d">-                        datatype: DataType::Integer,
+</a><a href="#h0-2-63" id="h0-2-63" class="d">-                        nullable: false,
+</a><a href="#h0-2-64" id="h0-2-64" class="d">-                    },
+</a><a href="#h0-2-65" id="h0-2-65" class="d">-                    schema::Column{
+</a><a href="#h0-2-66" id="h0-2-66" class="d">-                        name: &quot;released&quot;.into(),
+</a><a href="#h0-2-67" id="h0-2-67" class="d">-                        datatype: DataType::Integer,
+</a><a href="#h0-2-68" id="h0-2-68" class="d">-                        nullable: false,
+</a><a href="#h0-2-69" id="h0-2-69" class="d">-                    },
+</a><a href="#h0-2-70" id="h0-2-70" class="d">-                    schema::Column{
+</a><a href="#h0-2-71" id="h0-2-71" class="d">-                        name: &quot;rating&quot;.into(),
+</a><a href="#h0-2-72" id="h0-2-72" class="d">-                        datatype: DataType::Float,
+</a><a href="#h0-2-73" id="h0-2-73" class="d">-                        nullable: true,
+</a><a href="#h0-2-74" id="h0-2-74" class="d">-                    },
+</a><a href="#h0-2-75" id="h0-2-75" class="d">-                    schema::Column{
+</a><a href="#h0-2-76" id="h0-2-76" class="d">-                        name: &quot;bluray&quot;.into(),
+</a><a href="#h0-2-77" id="h0-2-77" class="d">-                        datatype: DataType::Boolean,
+</a><a href="#h0-2-78" id="h0-2-78" class="d">-                        nullable: true,
+</a><a href="#h0-2-79" id="h0-2-79" class="d">-                    },
+</a><a href="#h0-2-80" id="h0-2-80" class="d">-                ],
+</a><a href="#h0-2-81" id="h0-2-81" class="d">-                primary_key: 0,
+</a><a href="#h0-2-82" id="h0-2-82" class="d">-            }).unwrap();
+</a><a href="#h0-2-83" id="h0-2-83" class="d">-            txn.create(&quot;genres&quot;, vec![
+</a><a href="#h0-2-84" id="h0-2-84" class="d">-                Value::Integer(1),
+</a><a href="#h0-2-85" id="h0-2-85" class="d">-                Value::String(&quot;Science Fiction&quot;.into()),
+</a><a href="#h0-2-86" id="h0-2-86" class="d">-            ]).unwrap();
+</a><a href="#h0-2-87" id="h0-2-87" class="d">-            txn.create(&quot;genres&quot;, vec![
+</a><a href="#h0-2-88" id="h0-2-88" class="d">-                Value::Integer(2),
+</a><a href="#h0-2-89" id="h0-2-89" class="d">-                Value::String(&quot;Action&quot;.into()),
+</a><a href="#h0-2-90" id="h0-2-90" class="d">-            ]).unwrap();
+</a><a href="#h0-2-91" id="h0-2-91" class="d">-            txn.create(&quot;movies&quot;, vec![
+</a><a href="#h0-2-92" id="h0-2-92" class="d">-                Value::Integer(1),
+</a><a href="#h0-2-93" id="h0-2-93" class="d">-                Value::String(&quot;Stalker&quot;.into()),
+</a><a href="#h0-2-94" id="h0-2-94" class="d">-                Value::Integer(1),
+</a><a href="#h0-2-95" id="h0-2-95" class="d">-                Value::Integer(1979),
+</a><a href="#h0-2-96" id="h0-2-96" class="d">-                Value::Float(8.2),
+</a><a href="#h0-2-97" id="h0-2-97" class="d">-                Value::Boolean(false),
+</a><a href="#h0-2-98" id="h0-2-98" class="d">-            ]).unwrap();
+</a><a href="#h0-2-99" id="h0-2-99" class="d">-            txn.create(&quot;movies&quot;, vec![
+</a><a href="#h0-2-100" id="h0-2-100" class="d">-                Value::Integer(2),
+</a><a href="#h0-2-101" id="h0-2-101" class="d">-                Value::String(&quot;Sicario&quot;.into()),
+</a><a href="#h0-2-102" id="h0-2-102" class="d">-                Value::Integer(2),
+</a><a href="#h0-2-103" id="h0-2-103" class="d">-                Value::Integer(2015),
+</a><a href="#h0-2-104" id="h0-2-104" class="d">-                Value::Float(7.6),
+</a><a href="#h0-2-105" id="h0-2-105" class="d">-                Value::Boolean(true),
+</a><a href="#h0-2-106" id="h0-2-106" class="d">-            ]).unwrap();
+</a><a href="#h0-2-107" id="h0-2-107" class="d">-            txn.create(&quot;movies&quot;, vec![
+</a><a href="#h0-2-108" id="h0-2-108" class="d">-                Value::Integer(3),
+</a><a href="#h0-2-109" id="h0-2-109" class="d">-                Value::String(&quot;Primer&quot;.into()),
+</a><a href="#h0-2-110" id="h0-2-110" class="d">-                Value::Integer(1),
+</a><a href="#h0-2-111" id="h0-2-111" class="d">-                Value::Integer(2004),
+</a><a href="#h0-2-112" id="h0-2-112" class="d">-                Value::Float(6.9),
+</a><a href="#h0-2-113" id="h0-2-113" class="d">-                Value::Null,
+</a><a href="#h0-2-114" id="h0-2-114" class="d">-            ]).unwrap();
+</a><a href="#h0-2-115" id="h0-2-115" class="d">-            txn.create(&quot;movies&quot;, vec![
+</a><a href="#h0-2-116" id="h0-2-116" class="d">-                Value::Integer(4),
+</a><a href="#h0-2-117" id="h0-2-117" class="d">-                Value::String(&quot;Heat&quot;.into()),
+</a><a href="#h0-2-118" id="h0-2-118" class="d">-                Value::Integer(2),
+</a><a href="#h0-2-119" id="h0-2-119" class="d">-                Value::Integer(1995),
+</a><a href="#h0-2-120" id="h0-2-120" class="d">-                Value::Float(8.2),
+</a><a href="#h0-2-121" id="h0-2-121" class="d">-                Value::Boolean(true),
+</a><a href="#h0-2-122" id="h0-2-122" class="d">-            ]).unwrap();
+</a><a href="#h0-2-123" id="h0-2-123" class="d">-            txn.create(&quot;movies&quot;, vec![
+</a><a href="#h0-2-124" id="h0-2-124" class="d">-                Value::Integer(5),
+</a><a href="#h0-2-125" id="h0-2-125" class="d">-                Value::String(&quot;The Fountain&quot;.into()),
+</a><a href="#h0-2-126" id="h0-2-126" class="d">-                Value::Integer(1),
+</a><a href="#h0-2-127" id="h0-2-127" class="d">-                Value::Integer(2006),
+</a><a href="#h0-2-128" id="h0-2-128" class="d">-                Value::Float(7.2),
+</a><a href="#h0-2-129" id="h0-2-129" class="d">-                Value::Boolean(true),
+</a><a href="#h0-2-130" id="h0-2-130" class="d">-            ]).unwrap();
+</a><a href="#h0-2-131" id="h0-2-131" class="d">-            txn.commit().unwrap();
+</a><a href="#h0-2-132" id="h0-2-132" class="i">+            let mut txn = engine.begin()?;
+</a><a href="#h0-2-133" id="h0-2-133" class="i">+            for query in queries {
+</a><a href="#h0-2-134" id="h0-2-134" class="i">+                let ast = Parser::new(query).parse()?;
+</a><a href="#h0-2-135" id="h0-2-135" class="i">+                let plan = Plan::build(ast)?.optimize()?;
+</a><a href="#h0-2-136" id="h0-2-136" class="i">+                plan.execute(Context{txn: &amp;mut txn})?;
+</a><a href="#h0-2-137" id="h0-2-137" class="i">+            }
+</a><a href="#h0-2-138" id="h0-2-138" class="i">+            txn.commit()?;
+</a> 
+             let mut mint = Mint::new(&quot;src/sql/testdata&quot;);
+<a href="#h0-2-141" id="h0-2-141" class="d">-            let mut f = mint.new_goldenfile(format!(&quot;{}&quot;, stringify!($name))).unwrap();
+</a><a href="#h0-2-142" id="h0-2-142" class="i">+            let mut f = mint.new_goldenfile(format!(&quot;{}&quot;, stringify!($name)))?;
+</a> 
+<a href="#h0-2-144" id="h0-2-144" class="d">-            write!(f, &quot;Query: {}\n\n&quot;, $sql).unwrap();
+</a><a href="#h0-2-145" id="h0-2-145" class="i">+            write!(f, &quot;Query: {}\n\n&quot;, $sql)?;
+</a> 
+<a href="#h0-2-147" id="h0-2-147" class="d">-            write!(f, &quot;Tokens:\n&quot;).unwrap();
+</a><a href="#h0-2-148" id="h0-2-148" class="i">+            write!(f, &quot;Tokens:\n&quot;)?;
+</a>             let tokens = match Lexer::new($sql).collect::&lt;Result&lt;Vec&lt;Token&gt;, Error&gt;&gt;() {
+                 Ok(tokens) =&gt; tokens,
+                 err =&gt; {
+<a href="#h0-2-152" id="h0-2-152" class="d">-                    write!(f, &quot;{:?}&quot;, err).unwrap();
+</a><a href="#h0-2-153" id="h0-2-153" class="d">-                    return
+</a><a href="#h0-2-154" id="h0-2-154" class="i">+                    write!(f, &quot;{:?}&quot;, err)?;
+</a><a href="#h0-2-155" id="h0-2-155" class="i">+                    return Ok(())
+</a>                 }
+             };
+             for token in tokens {
+<a href="#h0-2-159" id="h0-2-159" class="d">-                write!(f, &quot;  {:?}\n&quot;, token).unwrap();
+</a><a href="#h0-2-160" id="h0-2-160" class="i">+                write!(f, &quot;  {:?}\n&quot;, token)?;
+</a>             }
+<a href="#h0-2-162" id="h0-2-162" class="d">-            write!(f, &quot;\n&quot;).unwrap();
+</a><a href="#h0-2-163" id="h0-2-163" class="i">+            write!(f, &quot;\n&quot;)?;
+</a> 
+<a href="#h0-2-165" id="h0-2-165" class="d">-            write!(f, &quot;AST: &quot;).unwrap();
+</a><a href="#h0-2-166" id="h0-2-166" class="i">+            write!(f, &quot;AST: &quot;)?;
+</a>             let ast = match Parser::new($sql).parse() {
+                 Ok(ast) =&gt; ast,
+                 Err(err) =&gt; {
+<a href="#h0-2-170" id="h0-2-170" class="d">-                    write!(f, &quot;{:?}&quot;, err).unwrap();
+</a><a href="#h0-2-171" id="h0-2-171" class="d">-                    return
+</a><a href="#h0-2-172" id="h0-2-172" class="i">+                    write!(f, &quot;{:?}&quot;, err)?;
+</a><a href="#h0-2-173" id="h0-2-173" class="i">+                    return Ok(())
+</a>                 }
+             };
+<a href="#h0-2-176" id="h0-2-176" class="d">-            write!(f, &quot;{:#?}\n\n&quot;, ast).unwrap();
+</a><a href="#h0-2-177" id="h0-2-177" class="i">+            write!(f, &quot;{:#?}\n\n&quot;, ast)?;
+</a> 
+<a href="#h0-2-179" id="h0-2-179" class="d">-            write!(f, &quot;Plan: &quot;).unwrap();
+</a><a href="#h0-2-180" id="h0-2-180" class="i">+            write!(f, &quot;Plan: &quot;)?;
+</a>             let plan = match Plan::build(ast) {
+                 Ok(plan) =&gt; plan,
+                 Err(err) =&gt; {
+<a href="#h0-2-184" id="h0-2-184" class="d">-                    write!(f, &quot;{:?}&quot;, err).unwrap();
+</a><a href="#h0-2-185" id="h0-2-185" class="d">-                    return
+</a><a href="#h0-2-186" id="h0-2-186" class="i">+                    write!(f, &quot;{:?}&quot;, err)?;
+</a><a href="#h0-2-187" id="h0-2-187" class="i">+                    return Ok(())
+</a>                 }
+             };
+<a href="#h0-2-190" id="h0-2-190" class="d">-            write!(f, &quot;{:#?}\n\n&quot;, plan).unwrap();
+</a><a href="#h0-2-191" id="h0-2-191" class="i">+            write!(f, &quot;{:#?}\n\n&quot;, plan)?;
+</a> 
+<a href="#h0-2-193" id="h0-2-193" class="d">-            write!(f, &quot;Optimized plan: &quot;).unwrap();
+</a><a href="#h0-2-194" id="h0-2-194" class="i">+            write!(f, &quot;Optimized plan: &quot;)?;
+</a>             let plan = match plan.optimize() {
+                 Ok(plan) =&gt; plan,
+                 Err(err) =&gt; {
+<a href="#h0-2-198" id="h0-2-198" class="d">-                    write!(f, &quot;{:?}&quot;, err).unwrap();
+</a><a href="#h0-2-199" id="h0-2-199" class="d">-                    return
+</a><a href="#h0-2-200" id="h0-2-200" class="i">+                    write!(f, &quot;{:?}&quot;, err)?;
+</a><a href="#h0-2-201" id="h0-2-201" class="i">+                    return Ok(())
+</a>                 }
+             };
+<a href="#h0-2-204" id="h0-2-204" class="d">-            write!(f, &quot;{:#?}\n\n&quot;, plan).unwrap();
+</a><a href="#h0-2-205" id="h0-2-205" class="i">+            write!(f, &quot;{:#?}\n\n&quot;, plan)?;
+</a> 
+<a href="#h0-2-207" id="h0-2-207" class="d">-            write!(f, &quot;Query: {}\n\n&quot;, $sql).unwrap();
+</a><a href="#h0-2-208" id="h0-2-208" class="i">+            write!(f, &quot;Query: {}\n\n&quot;, $sql)?;
+</a> 
+<a href="#h0-2-210" id="h0-2-210" class="d">-            write!(f, &quot;Result:&quot;).unwrap();
+</a><a href="#h0-2-211" id="h0-2-211" class="d">-            let mut txn = engine.begin().unwrap();
+</a><a href="#h0-2-212" id="h0-2-212" class="i">+            write!(f, &quot;Result:&quot;)?;
+</a><a href="#h0-2-213" id="h0-2-213" class="i">+            let mut txn = engine.begin()?;
+</a>             let ctx = Context{txn: &amp;mut txn};
+             let result = match plan.execute(ctx) {
+                 Ok(result) =&gt; result,
+                 Err(err) =&gt; {
+<a href="#h0-2-218" id="h0-2-218" class="d">-                    write!(f, &quot; {:?}&quot;, err).unwrap();
+</a><a href="#h0-2-219" id="h0-2-219" class="d">-                    return
+</a><a href="#h0-2-220" id="h0-2-220" class="i">+                    write!(f, &quot; {:?}&quot;, err)?;
+</a><a href="#h0-2-221" id="h0-2-221" class="i">+                    return Ok(())
+</a>                 }
+             };
+<a href="#h0-2-224" id="h0-2-224" class="d">-            txn.commit().unwrap();
+</a><a href="#h0-2-225" id="h0-2-225" class="i">+            txn.commit()?;
+</a>             let columns = result.columns();
+             let rows: Vec&lt;Row&gt; = match result.collect() {
+                 Ok(rows) =&gt; rows,
+                 Err(err) =&gt; {
+<a href="#h0-2-230" id="h0-2-230" class="d">-                    write!(f, &quot; {:?}&quot;, err).unwrap();
+</a><a href="#h0-2-231" id="h0-2-231" class="d">-                    return
+</a><a href="#h0-2-232" id="h0-2-232" class="i">+                    write!(f, &quot; {:?}&quot;, err)?;
+</a><a href="#h0-2-233" id="h0-2-233" class="i">+                    return Ok(())
+</a>                 }
+             };
+             if !columns.is_empty() || !rows.is_empty() {
+<a href="#h0-2-237" id="h0-2-237" class="d">-                write!(f, &quot; [{:?}]\n&quot;, columns).unwrap();
+</a><a href="#h0-2-238" id="h0-2-238" class="i">+                write!(f, &quot; [{:?}]\n&quot;, columns)?;
+</a>                 for row in rows {
+<a href="#h0-2-240" id="h0-2-240" class="d">-                    write!(f, &quot;{:?}\n&quot;, row).unwrap();
+</a><a href="#h0-2-241" id="h0-2-241" class="i">+                    write!(f, &quot;{:?}\n&quot;, row)?;
+</a>                 }
+             } else {
+<a href="#h0-2-244" id="h0-2-244" class="d">-                write!(f, &quot; &lt;none&gt;\n&quot;).unwrap();
+</a><a href="#h0-2-245" id="h0-2-245" class="i">+                write!(f, &quot; &lt;none&gt;\n&quot;)?;
+</a>             }
+ 
+<a href="#h0-2-248" id="h0-2-248" class="d">-            write!(f, &quot;\nStorage:&quot;).unwrap();
+</a><a href="#h0-2-249" id="h0-2-249" class="d">-            let txn = engine.begin().unwrap();
+</a><a href="#h0-2-250" id="h0-2-250" class="d">-            for table in &amp;txn.list_tables().unwrap() {
+</a><a href="#h0-2-251" id="h0-2-251" class="d">-                let schema = &amp;txn.read_table(&amp;table.name).unwrap().unwrap();
+</a><a href="#h0-2-252" id="h0-2-252" class="d">-                write!(f, &quot;\n{}\n&quot;, schema.to_query()).unwrap();
+</a><a href="#h0-2-253" id="h0-2-253" class="d">-                for row in txn.scan(&amp;table.name).unwrap() {
+</a><a href="#h0-2-254" id="h0-2-254" class="d">-                    write!(f, &quot;{:?}\n&quot;, row.unwrap()).unwrap();
+</a><a href="#h0-2-255" id="h0-2-255" class="i">+            write!(f, &quot;\nStorage:&quot;)?;
+</a><a href="#h0-2-256" id="h0-2-256" class="i">+            let txn = engine.begin()?;
+</a><a href="#h0-2-257" id="h0-2-257" class="i">+            for table in &amp;txn.list_tables()? {
+</a><a href="#h0-2-258" id="h0-2-258" class="i">+                let schema = &amp;txn.read_table(&amp;table.name)?.unwrap();
+</a><a href="#h0-2-259" id="h0-2-259" class="i">+                write!(f, &quot;\n{}\n&quot;, schema.to_query())?;
+</a><a href="#h0-2-260" id="h0-2-260" class="i">+                for row in txn.scan(&amp;table.name)? {
+</a><a href="#h0-2-261" id="h0-2-261" class="i">+                    write!(f, &quot;{:?}\n&quot;, row?)?;
+</a>                 }
+             }
+<a href="#h0-2-264" id="h0-2-264" class="d">-            txn.rollback().unwrap();
+</a><a href="#h0-2-265" id="h0-2-265" class="i">+            txn.rollback()?;
+</a><a href="#h0-2-266" id="h0-2-266" class="i">+
+</a><a href="#h0-2-267" id="h0-2-267" class="i">+            Ok(())
+</a>         }
+     )*
+     }
+</pre>
+</div>
+</body>
+</html>

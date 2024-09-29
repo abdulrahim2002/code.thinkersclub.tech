@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>raft: take term parameter in `Log.commit()` - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/cc61d743dfbb243c003fc92112d2d21261d20368.html">cc61d743dfbb243c003fc92112d2d21261d20368</a>
+<b>parent</b> <a href="../commit/58d4497e0b31f02d89061b33cf02049c6caba7bc.html">58d4497e0b31f02d89061b33cf02049c6caba7bc</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Thu, 30 May 2024 14:43:28 +0200
+
+raft: take term parameter in `Log.commit()`
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/raft/log.rs</a></td><td> | </td><td class="num">28</td><td><span class="i">++++++++++++++</span><span class="d">--------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/raft/message.rs</a></td><td> | </td><td class="num">32</td><td><span class="i">++++++++++++++++++++++++++++</span><span class="d">----</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/raft/node.rs</a></td><td> | </td><td class="num">8</td><td><span class="i">++++</span><span class="d">----</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">src/raft/testscripts/log/commit</a></td><td> | </td><td class="num">29</td><td><span class="i">+++++++++++++++++++</span><span class="d">----------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h4">src/raft/testscripts/log/splice</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h5">src/raft/testscripts/log/status</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+</table></pre><pre>6 files changed, 67 insertions(+), 34 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/raft/log.rs.html">src/raft/log.rs</a> b/<a href="../file/src/raft/log.rs.html">src/raft/log.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -160,22 +160,20 @@ impl Log {
+</a>     }
+ 
+     /// Commits entries up to and including the given index. The index must
+<a href="#h0-0-3" id="h0-0-3" class="d">-    /// exist, and must be at or after the current commit index.
+</a><a href="#h0-0-4" id="h0-0-4" class="d">-    ///
+</a><a href="#h0-0-5" id="h0-0-5" class="d">-    /// TODO: this should take and verify the term as well, to ensure followers
+</a><a href="#h0-0-6" id="h0-0-6" class="d">-    /// don&#39;t commit an entry for a divergent log.
+</a><a href="#h0-0-7" id="h0-0-7" class="d">-    pub fn commit(&amp;mut self, index: Index) -&gt; Result&lt;Index&gt; {
+</a><a href="#h0-0-8" id="h0-0-8" class="i">+    /// exist, be at or after the current commit index, and have the given term.
+</a><a href="#h0-0-9" id="h0-0-9" class="i">+    pub fn commit(&amp;mut self, index: Index, term: Term) -&gt; Result&lt;Index&gt; {
+</a>         if index &lt; self.commit_index {
+             return errassert!(&quot;commit index regression {} → {}&quot;, self.commit_index, index);
+         }
+<a href="#h0-0-13" id="h0-0-13" class="d">-        let Some(entry) = self.get(index)? else {
+</a><a href="#h0-0-14" id="h0-0-14" class="d">-            return errassert!(&quot;can&#39;t commit non-existant index {index}&quot;);
+</a><a href="#h0-0-15" id="h0-0-15" class="i">+        match self.get(index)? {
+</a><a href="#h0-0-16" id="h0-0-16" class="i">+            Some(e) if e.term != term =&gt; return errassert!(&quot;commit term {term} != {}&quot;, e.term),
+</a><a href="#h0-0-17" id="h0-0-17" class="i">+            Some(_) =&gt; {}
+</a><a href="#h0-0-18" id="h0-0-18" class="i">+            None =&gt; return errassert!(&quot;commit index {index} does not exist&quot;),
+</a>         };
+<a href="#h0-0-20" id="h0-0-20" class="d">-        self.engine
+</a><a href="#h0-0-21" id="h0-0-21" class="d">-            .set(&amp;Key::CommitIndex.encode()?, bincode::serialize(&amp;(entry.index, entry.term))?)?;
+</a><a href="#h0-0-22" id="h0-0-22" class="i">+        self.engine.set(&amp;Key::CommitIndex.encode()?, bincode::serialize(&amp;(index, term))?)?;
+</a>         self.engine.flush()?;
+<a href="#h0-0-24" id="h0-0-24" class="d">-        self.commit_index = entry.index;
+</a><a href="#h0-0-25" id="h0-0-25" class="d">-        self.commit_term = entry.term;
+</a><a href="#h0-0-26" id="h0-0-26" class="i">+        self.commit_index = index;
+</a><a href="#h0-0-27" id="h0-0-27" class="i">+        self.commit_term = term;
+</a>         Ok(index)
+     }
+ 
+<a href="#h0-1" id="h0-1" class="h">@@ -304,12 +302,14 @@ mod tests {
+</a>                     output.push_str(&amp;format!(&quot;append → {}\n&quot;, Self::format_entry(&amp;entry)));
+                 }
+ 
+<a href="#h0-1-3" id="h0-1-3" class="d">-                // commit INDEX
+</a><a href="#h0-1-4" id="h0-1-4" class="i">+                // commit INDEX@TERM
+</a>                 &quot;commit&quot; =&gt; {
+                     let mut args = command.consume_args();
+<a href="#h0-1-7" id="h0-1-7" class="d">-                    let index = args.next_pos().ok_or(&quot;index not given&quot;)?.parse()?;
+</a><a href="#h0-1-8" id="h0-1-8" class="i">+                    let (index, term) = Self::parse_index_term(
+</a><a href="#h0-1-9" id="h0-1-9" class="i">+                        &amp;args.next_pos().ok_or(&quot;index/term not given&quot;)?.value,
+</a><a href="#h0-1-10" id="h0-1-10" class="i">+                    )?;
+</a>                     args.reject_rest()?;
+<a href="#h0-1-12" id="h0-1-12" class="d">-                    let index = self.log.commit(index)?;
+</a><a href="#h0-1-13" id="h0-1-13" class="i">+                    let index = self.log.commit(index, term)?;
+</a>                     let entry = self.log.get(index)?.expect(&quot;entry not found&quot;);
+                     output.push_str(&amp;format!(&quot;commit → {}\n&quot;, Self::format_entry(&amp;entry)));
+                 }
+<b>diff --git a/<a id="h1" href="../file/src/raft/message.rs.html">src/raft/message.rs</a> b/<a href="../file/src/raft/message.rs.html">src/raft/message.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -21,23 +21,44 @@ pub struct Envelope {
+</a> /// A message sent between Raft nodes.
+ #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+ pub enum Message {
+<a href="#h1-0-3" id="h1-0-3" class="d">-    /// Leaders send periodic heartbeats to its followers.
+</a><a href="#h1-0-4" id="h1-0-4" class="i">+    /// Leaders send heartbeats periodically, and on client read requests. This
+</a><a href="#h1-0-5" id="h1-0-5" class="i">+    /// serves several purposes:
+</a><a href="#h1-0-6" id="h1-0-6" class="i">+    ///
+</a><a href="#h1-0-7" id="h1-0-7" class="i">+    /// * Inform nodes about the leader, and prevent elections.
+</a><a href="#h1-0-8" id="h1-0-8" class="i">+    /// * Probe follower log progress.
+</a><a href="#h1-0-9" id="h1-0-9" class="i">+    /// * Advance followers&#39; commit indexes, so they can apply entries.
+</a><a href="#h1-0-10" id="h1-0-10" class="i">+    /// * Confirm leadership for client reads, to avoid stale reads.
+</a><a href="#h1-0-11" id="h1-0-11" class="i">+    ///
+</a><a href="#h1-0-12" id="h1-0-12" class="i">+    /// While some of this could be split out to other messages, the heartbeat
+</a><a href="#h1-0-13" id="h1-0-13" class="i">+    /// periodicity also implicitly provides retries, so it is convenient to
+</a><a href="#h1-0-14" id="h1-0-14" class="i">+    /// piggyback on it.
+</a><a href="#h1-0-15" id="h1-0-15" class="i">+    ///
+</a><a href="#h1-0-16" id="h1-0-16" class="i">+    /// The Raft paper does not have a distinct heartbeat message, and instead
+</a><a href="#h1-0-17" id="h1-0-17" class="i">+    /// uses an empty AppendEntries RPC, but we choose to add one for better
+</a><a href="#h1-0-18" id="h1-0-18" class="i">+    /// separation of concerns.
+</a>     Heartbeat {
+         /// The index of the leader&#39;s last committed log entry.
+         commit_index: Index,
+         /// The term of the leader&#39;s last committed log entry.
+<a href="#h1-0-23" id="h1-0-23" class="i">+        ///
+</a><a href="#h1-0-24" id="h1-0-24" class="i">+        /// The Raft paper does not propagate this, because it uses the
+</a><a href="#h1-0-25" id="h1-0-25" class="i">+        /// AppendEntries RPC for heartbeats and commit index propagation, which
+</a><a href="#h1-0-26" id="h1-0-26" class="i">+        /// includes a base index/term check guaranteeing that the commit index
+</a><a href="#h1-0-27" id="h1-0-27" class="i">+        /// is consistent with the leader. We need it to ensure a divergent
+</a><a href="#h1-0-28" id="h1-0-28" class="i">+        /// follower doesn&#39;t commit a stale entry from a different term.
+</a>         commit_term: Term,
+<a href="#h1-0-30" id="h1-0-30" class="d">-        /// The latest read sequence number of the leader.
+</a><a href="#h1-0-31" id="h1-0-31" class="i">+        /// The leader&#39;s latest read sequence number in this term. Read requests
+</a><a href="#h1-0-32" id="h1-0-32" class="i">+        /// are served once the sequence number has been confirmed by a quorum.
+</a>         read_seq: ReadSequence,
+     },
+ 
+<a href="#h1-0-36" id="h1-0-36" class="d">-    /// Followers confirm leader heartbeats.
+</a><a href="#h1-0-37" id="h1-0-37" class="i">+    /// Followers respond to leader heartbeats if they still consider it leader.
+</a>     HeartbeatResponse {
+         /// The index of the follower&#39;s last log entry.
+         last_index: Index,
+         /// The term of the follower&#39;s last log entry.
+         last_term: Term,
+<a href="#h1-0-43" id="h1-0-43" class="d">-        /// The read sequence number of the heartbeat we&#39;re responding to.
+</a><a href="#h1-0-44" id="h1-0-44" class="i">+        /// The heartbeat&#39;s read sequence number.
+</a>         read_seq: ReadSequence,
+     },
+ 
+<a href="#h1-1" id="h1-1" class="h">@@ -59,6 +80,9 @@ pub enum Message {
+</a>     /// Leaders replicate log entries to followers by appending to their logs.
+     Append {
+         /// The index of the log entry immediately preceding the submitted commands.
+<a href="#h1-1-3" id="h1-1-3" class="i">+        ///
+</a><a href="#h1-1-4" id="h1-1-4" class="i">+        /// TODO: this isn&#39;t needed -- determine it from the first entry, and
+</a><a href="#h1-1-5" id="h1-1-5" class="i">+        /// require it to be included.
+</a>         base_index: Index,
+         /// The term of the log entry immediately preceding the submitted commands.
+         base_term: Term,
+<b>diff --git a/<a id="h2" href="../file/src/raft/node.rs.html">src/raft/node.rs</a> b/<a href="../file/src/raft/node.rs.html">src/raft/node.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -560,10 +560,10 @@ impl RawNode&lt;Follower&gt; {
+</a>                 )?;
+ 
+                 // Advance commit index and apply entries.
+<a href="#h2-0-3" id="h2-0-3" class="d">-                if self.log.has(commit_index, commit_term)?
+</a><a href="#h2-0-4" id="h2-0-4" class="d">-                    &amp;&amp; commit_index &gt; self.log.get_commit_index().0
+</a><a href="#h2-0-5" id="h2-0-5" class="i">+                if commit_index &gt; self.log.get_commit_index().0
+</a><a href="#h2-0-6" id="h2-0-6" class="i">+                    &amp;&amp; self.log.has(commit_index, commit_term)?
+</a>                 {
+<a href="#h2-0-8" id="h2-0-8" class="d">-                    self.log.commit(commit_index)?;
+</a><a href="#h2-0-9" id="h2-0-9" class="i">+                    self.log.commit(commit_index, commit_term)?;
+</a>                     self.maybe_apply()?;
+                 }
+             }
+<a href="#h2-1" id="h2-1" class="h">@@ -1016,7 +1016,7 @@ impl RawNode&lt;Leader&gt; {
+</a>         };
+ 
+         // Commit the new entries.
+<a href="#h2-1-3" id="h2-1-3" class="d">-        self.log.commit(commit_index)?;
+</a><a href="#h2-1-4" id="h2-1-4" class="i">+        self.log.commit(commit_index, self.term)?;
+</a> 
+         // Apply entries and respond to client writers.
+         Self::maybe_apply_with(&amp;mut self.log, &amp;mut self.state, |index, result| -&gt; Result&lt;()&gt; {
+<b>diff --git a/<a id="h3" href="../file/src/raft/testscripts/log/commit.html">src/raft/testscripts/log/commit</a> b/<a href="../file/src/raft/testscripts/log/commit.html">src/raft/testscripts/log/commit</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -1,7 +1,7 @@
+</a> # Committing fails on an empty engine.
+<a href="#h3-0-1" id="h3-0-1" class="d">-!commit 1
+</a><a href="#h3-0-2" id="h3-0-2" class="i">+!commit 1@1
+</a> ---
+<a href="#h3-0-4" id="h3-0-4" class="d">-Error: assertion failed: can&#39;t commit non-existant index 1
+</a><a href="#h3-0-5" id="h3-0-5" class="i">+Error: assertion failed: commit index 1 does not exist
+</a> 
+ # Add some entries.
+ append 1
+<a href="#h3-1" id="h3-1" class="h">@@ -13,13 +13,13 @@ append → 2@1 foo
+</a> append → 3@2 bar
+ 
+ # Committing entry 0 fails.
+<a href="#h3-1-3" id="h3-1-3" class="d">-!commit 0
+</a><a href="#h3-1-4" id="h3-1-4" class="i">+!commit 0@0
+</a> ---
+<a href="#h3-1-6" id="h3-1-6" class="d">-Error: assertion failed: can&#39;t commit non-existant index 0
+</a><a href="#h3-1-7" id="h3-1-7" class="i">+Error: assertion failed: commit index 0 does not exist
+</a> 
+ # Committing entry 1 works, and updates the commit index. Dump the
+ # raw value too.
+<a href="#h3-1-11" id="h3-1-11" class="d">-commit 1
+</a><a href="#h3-1-12" id="h3-1-12" class="i">+commit 1@1
+</a> status
+ raw
+ ---
+<a href="#h3-2" id="h3-2" class="h">@@ -31,31 +31,40 @@ Entry(3) 0x000000000000000003 = 0x020103626172
+</a> CommitIndex 0x02 = 0x0101
+ 
+ # Commits are idempotent.
+<a href="#h3-2-3" id="h3-2-3" class="d">-commit 1
+</a><a href="#h3-2-4" id="h3-2-4" class="i">+commit 1@1
+</a> status
+ ---
+ commit → 1@1 None
+ last=3@2 commit=1@1
+ 
+<a href="#h3-2-10" id="h3-2-10" class="i">+# Commit term conflicts error, both for the current and next index.
+</a><a href="#h3-2-11" id="h3-2-11" class="i">+!commit 1@2
+</a><a href="#h3-2-12" id="h3-2-12" class="i">+!commit 2@2
+</a><a href="#h3-2-13" id="h3-2-13" class="i">+status
+</a><a href="#h3-2-14" id="h3-2-14" class="i">+---
+</a><a href="#h3-2-15" id="h3-2-15" class="i">+Error: assertion failed: commit term 2 != 1
+</a><a href="#h3-2-16" id="h3-2-16" class="i">+Error: assertion failed: commit term 2 != 1
+</a><a href="#h3-2-17" id="h3-2-17" class="i">+last=3@2 commit=1@1
+</a><a href="#h3-2-18" id="h3-2-18" class="i">+
+</a> # Commits can skip an entry.
+<a href="#h3-2-20" id="h3-2-20" class="d">-commit 3
+</a><a href="#h3-2-21" id="h3-2-21" class="i">+commit 3@2
+</a> status
+ ---
+ commit → 3@2 bar
+ last=3@2 commit=3@2
+ 
+ # Commit regressions error.
+<a href="#h3-2-28" id="h3-2-28" class="d">-!commit 2
+</a><a href="#h3-2-29" id="h3-2-29" class="i">+!commit 2@1
+</a> status
+ ---
+ Error: assertion failed: commit index regression 3 → 2
+ last=3@2 commit=3@2
+ 
+ # Committing non-existant indexes error.
+<a href="#h3-2-36" id="h3-2-36" class="d">-!commit 4
+</a><a href="#h3-2-37" id="h3-2-37" class="i">+!commit 4@2
+</a> status
+ ---
+<a href="#h3-2-40" id="h3-2-40" class="d">-Error: assertion failed: can&#39;t commit non-existant index 4
+</a><a href="#h3-2-41" id="h3-2-41" class="i">+Error: assertion failed: commit index 4 does not exist
+</a> last=3@2 commit=3@2
+ 
+ # Dump the raw value.
+<b>diff --git a/<a id="h4" href="../file/src/raft/testscripts/log/splice.html">src/raft/testscripts/log/splice</a> b/<a href="../file/src/raft/testscripts/log/splice.html">src/raft/testscripts/log/splice</a></b>
+<a href="#h4-0" id="h4-0" class="h">@@ -119,7 +119,7 @@ last=3@5 commit=0@0
+</a> 3@5 bar
+ 
+ # Splicing across the commit index should work, as long as the entries match.
+<a href="#h4-0-3" id="h4-0-3" class="d">-commit 2
+</a><a href="#h4-0-4" id="h4-0-4" class="i">+commit 2@5
+</a> splice 1@5= 2@5=foo 3@5=bar 4@5=
+ status
+ scan
+<b>diff --git a/<a id="h5" href="../file/src/raft/testscripts/log/status.html">src/raft/testscripts/log/status</a> b/<a href="../file/src/raft/testscripts/log/status.html">src/raft/testscripts/log/status</a></b>
+<a href="#h5-0" id="h5-0" class="h">@@ -15,7 +15,7 @@ set_term 2 1
+</a> append 1
+ append 1 foo
+ append 2 bar
+<a href="#h5-0-3" id="h5-0-3" class="d">-commit 2
+</a><a href="#h5-0-4" id="h5-0-4" class="i">+commit 2@1
+</a> ---
+ append → 1@1 None
+ append → 2@1 foo
+</pre>
+</div>
+</body>
+</html>

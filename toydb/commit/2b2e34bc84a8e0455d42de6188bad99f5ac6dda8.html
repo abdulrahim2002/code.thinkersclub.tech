@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Improve a few Raft assertions - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/2b2e34bc84a8e0455d42de6188bad99f5ac6dda8.html">2b2e34bc84a8e0455d42de6188bad99f5ac6dda8</a>
+<b>parent</b> <a href="../commit/a0849a97dee91af7336634db88bf74ef3d747786.html">a0849a97dee91af7336634db88bf74ef3d747786</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Sun, 19 Nov 2023 22:37:26 +0100
+
+Improve a few Raft assertions
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/raft/node/candidate.rs</a></td><td> | </td><td class="num">4</td><td><span class="i">++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/raft/node/follower.rs</a></td><td> | </td><td class="num">19</td><td><span class="i">++++++++</span><span class="d">-----------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/raft/node/leader.rs</a></td><td> | </td><td class="num">13</td><td><span class="i">+++++</span><span class="d">--------</span></td></tr>
+</table></pre><pre>3 files changed, 15 insertions(+), 21 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/raft/node/candidate.rs.html">src/raft/node/candidate.rs</a> b/<a href="../file/src/raft/node/candidate.rs.html">src/raft/node/candidate.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -2,7 +2,7 @@ use super::super::{Address, Event, Message};
+</a> use super::{rand_election_timeout, Follower, Leader, Node, NodeID, RawNode, Role, Term, Ticks};
+ use crate::error::{Error, Result};
+ 
+<a href="#h0-0-3" id="h0-0-3" class="d">-use ::log::{debug, info, warn};
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+use ::log::{debug, info};
+</a> use std::collections::HashSet;
+ 
+ /// A candidate is campaigning to become a leader.
+<a href="#h0-1" id="h0-1" class="h">@@ -134,7 +134,7 @@ impl RawNode&lt;Candidate&gt; {
+</a>             Event::ConfirmLeader { .. }
+             | Event::AcceptEntries { .. }
+             | Event::RejectEntries { .. }
+<a href="#h0-1-3" id="h0-1-3" class="d">-            | Event::ClientResponse { .. } =&gt; warn!(&quot;Received unexpected message {:?}&quot;, msg),
+</a><a href="#h0-1-4" id="h0-1-4" class="i">+            | Event::ClientResponse { .. } =&gt; panic!(&quot;Received unexpected message {:?}&quot;, msg),
+</a>         }
+         Ok(self.into())
+     }
+<b>diff --git a/<a id="h1" href="../file/src/raft/node/follower.rs.html">src/raft/node/follower.rs</a> b/<a href="../file/src/raft/node/follower.rs.html">src/raft/node/follower.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -2,7 +2,7 @@ use super::super::{Address, Event, Instruction, Log, Message, RequestID, Respons
+</a> use super::{rand_election_timeout, Candidate, Node, NodeID, RawNode, Role, Term, Ticks};
+ use crate::error::{Error, Result};
+ 
+<a href="#h1-0-3" id="h1-0-3" class="d">-use ::log::{debug, error, info, warn};
+</a><a href="#h1-0-4" id="h1-0-4" class="i">+use ::log::{debug, info};
+</a> use std::collections::HashSet;
+ use tokio::sync::mpsc;
+ 
+<a href="#h1-1" id="h1-1" class="h">@@ -205,13 +205,14 @@ impl RawNode&lt;Follower&gt; {
+</a>                 }
+             }
+ 
+<a href="#h1-1-3" id="h1-1-3" class="i">+            // We may receive a vote after we lost an election and followed a
+</a><a href="#h1-1-4" id="h1-1-4" class="i">+            // different leader. Ignore it.
+</a><a href="#h1-1-5" id="h1-1-5" class="i">+            Event::GrantVote =&gt; {}
+</a><a href="#h1-1-6" id="h1-1-6" class="i">+
+</a>             // Forward client requests to the leader, or abort them if there is
+             // none (the client must retry).
+             Event::ClientRequest { ref id, .. } =&gt; {
+<a href="#h1-1-10" id="h1-1-10" class="d">-                if msg.from != Address::Client {
+</a><a href="#h1-1-11" id="h1-1-11" class="d">-                    error!(&quot;Received client request from non-client {:?}&quot;, msg.from);
+</a><a href="#h1-1-12" id="h1-1-12" class="d">-                    return Ok(self.into());
+</a><a href="#h1-1-13" id="h1-1-13" class="d">-                }
+</a><a href="#h1-1-14" id="h1-1-14" class="i">+                assert_eq!(msg.from, Address::Client, &quot;Client request from non-client&quot;);
+</a> 
+                 let id = id.clone();
+                 if let Some(leader) = self.role.leader {
+<a href="#h1-2" id="h1-2" class="h">@@ -225,10 +226,7 @@ impl RawNode&lt;Follower&gt; {
+</a> 
+             // Returns client responses for forwarded requests.
+             Event::ClientResponse { id, mut response } =&gt; {
+<a href="#h1-2-3" id="h1-2-3" class="d">-                if !self.is_leader(&amp;msg.from) {
+</a><a href="#h1-2-4" id="h1-2-4" class="d">-                    error!(&quot;Received client response from non-leader {:?}&quot;, msg.from);
+</a><a href="#h1-2-5" id="h1-2-5" class="d">-                    return Ok(self.into());
+</a><a href="#h1-2-6" id="h1-2-6" class="d">-                }
+</a><a href="#h1-2-7" id="h1-2-7" class="i">+                assert!(self.is_leader(&amp;msg.from), &quot;Client response from non-leader&quot;);
+</a> 
+                 // TODO: Get rid of this field, it should be returned at the RPC
+                 // server level instead.
+<a href="#h1-3" id="h1-3" class="h">@@ -243,8 +241,7 @@ impl RawNode&lt;Follower&gt; {
+</a>             // We&#39;re not a leader nor candidate in this term, so we shoudn&#39;t see these.
+             Event::ConfirmLeader { .. }
+             | Event::AcceptEntries { .. }
+<a href="#h1-3-3" id="h1-3-3" class="d">-            | Event::RejectEntries { .. }
+</a><a href="#h1-3-4" id="h1-3-4" class="d">-            | Event::GrantVote { .. } =&gt; warn!(&quot;Received unexpected message {:?}&quot;, msg),
+</a><a href="#h1-3-5" id="h1-3-5" class="i">+            | Event::RejectEntries { .. } =&gt; panic!(&quot;Received unexpected message {:?}&quot;, msg),
+</a>         };
+         Ok(self.into())
+     }
+<b>diff --git a/<a id="h2" href="../file/src/raft/node/leader.rs.html">src/raft/node/leader.rs</a> b/<a href="../file/src/raft/node/leader.rs.html">src/raft/node/leader.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -1,4 +1,4 @@
+</a><a href="#h2-0-0" id="h2-0-0" class="d">-use super::super::{Address, Event, Index, Instruction, Message, Request, Response, Status};
+</a><a href="#h2-0-1" id="h2-0-1" class="i">+use super::super::{Address, Event, Index, Instruction, Message, Request, Status};
+</a> use super::{Follower, Node, NodeID, RawNode, Role, Term, Ticks, HEARTBEAT_INTERVAL};
+ use crate::error::Result;
+ 
+<a href="#h2-1" id="h2-1" class="h">@@ -177,15 +177,12 @@ impl RawNode&lt;Leader&gt; {
+</a>                 self.state_tx.send(Instruction::Status { id, address: msg.from, status })?
+             }
+ 
+<a href="#h2-1-3" id="h2-1-3" class="d">-            Event::ClientResponse { id, mut response } =&gt; {
+</a><a href="#h2-1-4" id="h2-1-4" class="d">-                if let Ok(Response::Status(ref mut status)) = response {
+</a><a href="#h2-1-5" id="h2-1-5" class="d">-                    status.server = self.id;
+</a><a href="#h2-1-6" id="h2-1-6" class="d">-                }
+</a><a href="#h2-1-7" id="h2-1-7" class="d">-                self.send(Address::Client, Event::ClientResponse { id, response })?;
+</a><a href="#h2-1-8" id="h2-1-8" class="d">-            }
+</a><a href="#h2-1-9" id="h2-1-9" class="d">-
+</a>             // Votes can come in after we won the election, ignore them.
+             Event::SolicitVote { .. } | Event::GrantVote =&gt; {}
+<a href="#h2-1-12" id="h2-1-12" class="i">+
+</a><a href="#h2-1-13" id="h2-1-13" class="i">+            // Leaders never proxy client requests, so we don&#39;t expect to see
+</a><a href="#h2-1-14" id="h2-1-14" class="i">+            // responses from other nodes.
+</a><a href="#h2-1-15" id="h2-1-15" class="i">+            Event::ClientResponse { .. } =&gt; panic!(&quot;Unexpected message {:?}&quot;, msg),
+</a>         }
+ 
+         Ok(self.into())
+</pre>
+</div>
+</body>
+</html>

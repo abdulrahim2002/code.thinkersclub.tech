@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Use Raft Index and Term types. - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/a04f09815f90cd2d2612f29a3ce2126e1509e959.html">a04f09815f90cd2d2612f29a3ce2126e1509e959</a>
+<b>parent</b> <a href="../commit/56fd065511c1f8211b8601193ce8c39ec29d56be.html">56fd065511c1f8211b8601193ce8c39ec29d56be</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Sat, 18 Nov 2023 11:50:41 +0100
+
+Use Raft Index and Term types.
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/raft/log.rs</a></td><td> | </td><td class="num">10</td><td><span class="i">+++</span><span class="d">-------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/raft/message.rs</a></td><td> | </td><td class="num">20</td><td><span class="i">++++++++++</span><span class="d">----------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/raft/mod.rs</a></td><td> | </td><td class="num">4</td><td><span class="i">++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">src/raft/node/candidate.rs</a></td><td> | </td><td class="num">6</td><td><span class="i">++++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h4">src/raft/node/follower.rs</a></td><td> | </td><td class="num">4</td><td><span class="i">++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h5">src/raft/node/leader.rs</a></td><td> | </td><td class="num">18</td><td><span class="i">+++++++++</span><span class="d">---------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h6">src/raft/node/mod.rs</a></td><td> | </td><td class="num">21</td><td><span class="i">++++++++++++</span><span class="d">---------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h7">src/raft/state.rs</a></td><td> | </td><td class="num">34</td><td><span class="i">+++++++++++++++++</span><span class="d">-----------------</span></td></tr>
+</table></pre><pre>8 files changed, 59 insertions(+), 58 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/raft/log.rs.html">src/raft/log.rs</a> b/<a href="../file/src/raft/log.rs.html">src/raft/log.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -4,15 +4,11 @@ use crate::storage::{self, bincode, keycode};
+</a> use ::log::debug;
+ use serde::{Deserialize, Serialize};
+ 
+<a href="#h0-0-3" id="h0-0-3" class="d">-use super::NodeID;
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+use super::{NodeID, Term};
+</a> 
+ /// A log index.
+ pub type Index = u64;
+ 
+<a href="#h0-0-9" id="h0-0-9" class="d">-/// A Raft leadership term.
+</a><a href="#h0-0-10" id="h0-0-10" class="d">-/// TODO: Consider moving this to the module root.
+</a><a href="#h0-0-11" id="h0-0-11" class="d">-pub type Term = u64;
+</a><a href="#h0-0-12" id="h0-0-12" class="d">-
+</a> /// A log entry.
+ #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+ pub struct Entry {
+<a href="#h0-1" id="h0-1" class="h">@@ -165,7 +161,7 @@ impl Log {
+</a> 
+     /// Commits entries up to and including the given index. The index must
+     /// exist, and must be at or after the current commit index.
+<a href="#h0-1-3" id="h0-1-3" class="d">-    pub fn commit(&amp;mut self, index: Index) -&gt; Result&lt;u64&gt; {
+</a><a href="#h0-1-4" id="h0-1-4" class="i">+    pub fn commit(&amp;mut self, index: Index) -&gt; Result&lt;Index&gt; {
+</a>         if index &lt; self.commit_index {
+             return Err(Error::Internal(format!(
+                 &quot;Commit index regression {} -&gt; {}&quot;,
+<a href="#h0-2" id="h0-2" class="h">@@ -223,7 +219,7 @@ impl Log {
+</a>     /// and the first entry must be at most last_index+1. If an entry does not
+     /// exist, append it. If an existing entry has a term mismatch, replace it
+     /// and all following entries.
+<a href="#h0-2-3" id="h0-2-3" class="d">-    pub fn splice(&amp;mut self, entries: Vec&lt;Entry&gt;) -&gt; Result&lt;u64&gt; {
+</a><a href="#h0-2-4" id="h0-2-4" class="i">+    pub fn splice(&amp;mut self, entries: Vec&lt;Entry&gt;) -&gt; Result&lt;Index&gt; {
+</a>         if entries.is_empty() {
+             return Ok(self.last_index);
+         }
+<b>diff --git a/<a id="h1" href="../file/src/raft/message.rs.html">src/raft/message.rs</a> b/<a href="../file/src/raft/message.rs.html">src/raft/message.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -1,4 +1,4 @@
+</a><a href="#h1-0-0" id="h1-0-0" class="d">-use super::{Entry, NodeID, Status};
+</a><a href="#h1-0-1" id="h1-0-1" class="i">+use super::{Entry, Index, NodeID, Status, Term};
+</a> use crate::error::Result;
+ 
+ use serde_derive::{Deserialize, Serialize};
+<a href="#h1-1" id="h1-1" class="h">@@ -20,7 +20,7 @@ pub enum Address {
+</a> #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+ pub struct Message {
+     /// The current term of the sender.
+<a href="#h1-1-3" id="h1-1-3" class="d">-    pub term: u64,
+</a><a href="#h1-1-4" id="h1-1-4" class="i">+    pub term: Term,
+</a>     /// The sender address.
+     pub from: Address,
+     /// The recipient address.
+<a href="#h1-2" id="h1-2" class="h">@@ -35,15 +35,15 @@ pub enum Event {
+</a>     /// Leaders send periodic heartbeats to its followers.
+     Heartbeat {
+         /// The index of the leader&#39;s last committed log entry.
+<a href="#h1-2-3" id="h1-2-3" class="d">-        commit_index: u64,
+</a><a href="#h1-2-4" id="h1-2-4" class="i">+        commit_index: Index,
+</a>         /// The term of the leader&#39;s last committed log entry.
+<a href="#h1-2-6" id="h1-2-6" class="d">-        commit_term: u64,
+</a><a href="#h1-2-7" id="h1-2-7" class="i">+        commit_term: Term,
+</a>     },
+     /// Followers confirm loyalty to leader after heartbeats.
+     ConfirmLeader {
+         /// The commit_index of the original leader heartbeat, to confirm
+         /// read requests.
+<a href="#h1-2-13" id="h1-2-13" class="d">-        commit_index: u64,
+</a><a href="#h1-2-14" id="h1-2-14" class="i">+        commit_index: Index,
+</a>         /// If false, the follower does not have the entry at commit_index
+         /// and would like the leader to replicate it.
+         has_committed: bool,
+<a href="#h1-3" id="h1-3" class="h">@@ -51,25 +51,25 @@ pub enum Event {
+</a>     /// Candidates solicit votes from all peers.
+     SolicitVote {
+         // The index of the candidate&#39;s last stored log entry
+<a href="#h1-3-3" id="h1-3-3" class="d">-        last_index: u64,
+</a><a href="#h1-3-4" id="h1-3-4" class="i">+        last_index: Index,
+</a>         // The term of the candidate&#39;s last stored log entry
+<a href="#h1-3-6" id="h1-3-6" class="d">-        last_term: u64,
+</a><a href="#h1-3-7" id="h1-3-7" class="i">+        last_term: Term,
+</a>     },
+     /// Followers may grant votes to candidates.
+     GrantVote,
+     /// Leaders replicate a set of log entries to followers.
+     ReplicateEntries {
+         /// The index of the log entry immediately preceding the submitted commands.
+<a href="#h1-3-14" id="h1-3-14" class="d">-        base_index: u64,
+</a><a href="#h1-3-15" id="h1-3-15" class="i">+        base_index: Index,
+</a>         /// The term of the log entry immediately preceding the submitted commands.
+<a href="#h1-3-17" id="h1-3-17" class="d">-        base_term: u64,
+</a><a href="#h1-3-18" id="h1-3-18" class="i">+        base_term: Term,
+</a>         /// Commands to replicate.
+         entries: Vec&lt;Entry&gt;,
+     },
+     /// Followers may accept a set of log entries from a leader.
+     AcceptEntries {
+         /// The index of the last log entry.
+<a href="#h1-3-25" id="h1-3-25" class="d">-        last_index: u64,
+</a><a href="#h1-3-26" id="h1-3-26" class="i">+        last_index: Index,
+</a>     },
+     /// Followers may also reject a set of log entries from a leader.
+     RejectEntries,
+<b>diff --git a/<a id="h2" href="../file/src/raft/mod.rs.html">src/raft/mod.rs</a> b/<a href="../file/src/raft/mod.rs.html">src/raft/mod.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -4,8 +4,8 @@ mod node;
+</a> mod server;
+ mod state;
+ 
+<a href="#h2-0-3" id="h2-0-3" class="d">-pub use self::log::{Engine, Entry, Log, Scan};
+</a><a href="#h2-0-4" id="h2-0-4" class="i">+pub use self::log::{Engine, Entry, Index, Log, Scan};
+</a> pub use message::{Address, Event, Message, Request, Response};
+<a href="#h2-0-6" id="h2-0-6" class="d">-pub use node::{Node, NodeID, Status};
+</a><a href="#h2-0-7" id="h2-0-7" class="i">+pub use node::{Node, NodeID, Status, Term};
+</a> pub use server::Server;
+ pub use state::{Driver, Instruction, State};
+<b>diff --git a/<a id="h3" href="../file/src/raft/node/candidate.rs.html">src/raft/node/candidate.rs</a> b/<a href="../file/src/raft/node/candidate.rs.html">src/raft/node/candidate.rs</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -1,5 +1,7 @@
+</a> use super::super::{Address, Event, Message, Response};
+<a href="#h3-0-1" id="h3-0-1" class="d">-use super::{Follower, Leader, Node, NodeID, RoleNode, ELECTION_TIMEOUT_MAX, ELECTION_TIMEOUT_MIN};
+</a><a href="#h3-0-2" id="h3-0-2" class="i">+use super::{
+</a><a href="#h3-0-3" id="h3-0-3" class="i">+    Follower, Leader, Node, NodeID, RoleNode, Term, ELECTION_TIMEOUT_MAX, ELECTION_TIMEOUT_MIN,
+</a><a href="#h3-0-4" id="h3-0-4" class="i">+};
+</a> use crate::error::Result;
+ 
+ use ::log::{debug, info, warn};
+<a href="#h3-1" id="h3-1" class="h">@@ -30,7 +32,7 @@ impl Candidate {
+</a> 
+ impl RoleNode&lt;Candidate&gt; {
+     /// Transition to follower role.
+<a href="#h3-1-3" id="h3-1-3" class="d">-    fn become_follower(mut self, term: u64, leader: NodeID) -&gt; Result&lt;RoleNode&lt;Follower&gt;&gt; {
+</a><a href="#h3-1-4" id="h3-1-4" class="i">+    fn become_follower(mut self, term: Term, leader: NodeID) -&gt; Result&lt;RoleNode&lt;Follower&gt;&gt; {
+</a>         info!(&quot;Discovered leader {} for term {}, following&quot;, leader, term);
+         self.term = term;
+         self.log.set_term(term, None)?;
+<b>diff --git a/<a id="h4" href="../file/src/raft/node/follower.rs.html">src/raft/node/follower.rs</a> b/<a href="../file/src/raft/node/follower.rs.html">src/raft/node/follower.rs</a></b>
+<a href="#h4-0" id="h4-0" class="h">@@ -1,5 +1,5 @@
+</a> use super::super::{Address, Event, Instruction, Message, Response};
+<a href="#h4-0-1" id="h4-0-1" class="d">-use super::{Candidate, Node, NodeID, RoleNode, ELECTION_TIMEOUT_MAX, ELECTION_TIMEOUT_MIN};
+</a><a href="#h4-0-2" id="h4-0-2" class="i">+use super::{Candidate, Node, NodeID, RoleNode, Term, ELECTION_TIMEOUT_MAX, ELECTION_TIMEOUT_MIN};
+</a> use crate::error::Result;
+ 
+ use ::log::{debug, info, warn};
+<a href="#h4-1" id="h4-1" class="h">@@ -44,7 +44,7 @@ impl RoleNode&lt;Follower&gt; {
+</a>     }
+ 
+     /// Transforms the node into a follower for a new leader.
+<a href="#h4-1-3" id="h4-1-3" class="d">-    fn become_follower(mut self, leader: NodeID, term: u64) -&gt; Result&lt;RoleNode&lt;Follower&gt;&gt; {
+</a><a href="#h4-1-4" id="h4-1-4" class="i">+    fn become_follower(mut self, leader: NodeID, term: Term) -&gt; Result&lt;RoleNode&lt;Follower&gt;&gt; {
+</a>         let mut voted_for = None;
+         if term &gt; self.term {
+             info!(&quot;Discovered new term {}, following leader {}&quot;, term, leader);
+<b>diff --git a/<a id="h5" href="../file/src/raft/node/leader.rs.html">src/raft/node/leader.rs</a> b/<a href="../file/src/raft/node/leader.rs.html">src/raft/node/leader.rs</a></b>
+<a href="#h5-0" id="h5-0" class="h">@@ -1,5 +1,5 @@
+</a><a href="#h5-0-0" id="h5-0-0" class="d">-use super::super::{Address, Event, Instruction, Message, Request, Response, Status};
+</a><a href="#h5-0-1" id="h5-0-1" class="d">-use super::{Follower, Node, NodeID, RoleNode, HEARTBEAT_INTERVAL};
+</a><a href="#h5-0-2" id="h5-0-2" class="i">+use super::super::{Address, Event, Index, Instruction, Message, Request, Response, Status};
+</a><a href="#h5-0-3" id="h5-0-3" class="i">+use super::{Follower, Node, NodeID, RoleNode, Term, HEARTBEAT_INTERVAL};
+</a> use crate::error::{Error, Result};
+ 
+ use ::log::{debug, info, warn};
+<a href="#h5-1" id="h5-1" class="h">@@ -11,14 +11,14 @@ pub struct Leader {
+</a>     /// Number of ticks since last heartbeat.
+     heartbeat_ticks: u64,
+     /// The next index to replicate to a peer.
+<a href="#h5-1-3" id="h5-1-3" class="d">-    peer_next_index: HashMap&lt;NodeID, u64&gt;,
+</a><a href="#h5-1-4" id="h5-1-4" class="i">+    peer_next_index: HashMap&lt;NodeID, Index&gt;,
+</a>     /// The last index known to be replicated on a peer.
+<a href="#h5-1-6" id="h5-1-6" class="d">-    peer_last_index: HashMap&lt;NodeID, u64&gt;,
+</a><a href="#h5-1-7" id="h5-1-7" class="i">+    peer_last_index: HashMap&lt;NodeID, Index&gt;,
+</a> }
+ 
+ impl Leader {
+     /// Creates a new leader role.
+<a href="#h5-1-12" id="h5-1-12" class="d">-    pub fn new(peers: Vec&lt;NodeID&gt;, last_index: u64) -&gt; Self {
+</a><a href="#h5-1-13" id="h5-1-13" class="i">+    pub fn new(peers: Vec&lt;NodeID&gt;, last_index: Index) -&gt; Self {
+</a>         let mut leader = Self {
+             heartbeat_ticks: 0,
+             peer_next_index: HashMap::new(),
+<a href="#h5-2" id="h5-2" class="h">@@ -34,7 +34,7 @@ impl Leader {
+</a> 
+ impl RoleNode&lt;Leader&gt; {
+     /// Transforms the leader into a follower
+<a href="#h5-2-3" id="h5-2-3" class="d">-    fn become_follower(mut self, term: u64, leader: NodeID) -&gt; Result&lt;RoleNode&lt;Follower&gt;&gt; {
+</a><a href="#h5-2-4" id="h5-2-4" class="i">+    fn become_follower(mut self, term: Term, leader: NodeID) -&gt; Result&lt;RoleNode&lt;Follower&gt;&gt; {
+</a>         info!(&quot;Discovered new leader {} for term {}, following&quot;, leader, term);
+         self.term = term;
+         self.log.set_term(term, None)?;
+<a href="#h5-3" id="h5-3" class="h">@@ -43,7 +43,7 @@ impl RoleNode&lt;Leader&gt; {
+</a>     }
+ 
+     /// Appends an entry to the log and replicates it to peers.
+<a href="#h5-3-3" id="h5-3-3" class="d">-    pub fn append(&amp;mut self, command: Option&lt;Vec&lt;u8&gt;&gt;) -&gt; Result&lt;u64&gt; {
+</a><a href="#h5-3-4" id="h5-3-4" class="i">+    pub fn append(&amp;mut self, command: Option&lt;Vec&lt;u8&gt;&gt;) -&gt; Result&lt;Index&gt; {
+</a>         let index = self.log.append(self.term, command)?;
+         for peer in self.peers.clone() {
+             self.replicate(peer)?;
+<a href="#h5-4" id="h5-4" class="h">@@ -52,7 +52,7 @@ impl RoleNode&lt;Leader&gt; {
+</a>     }
+ 
+     /// Commits any pending log entries.
+<a href="#h5-4-3" id="h5-4-3" class="d">-    fn commit(&amp;mut self) -&gt; Result&lt;u64&gt; {
+</a><a href="#h5-4-4" id="h5-4-4" class="i">+    fn commit(&amp;mut self) -&gt; Result&lt;Index&gt; {
+</a>         let mut last_indexes = vec![self.log.get_last_index().0];
+         last_indexes.extend(self.role.peer_last_index.values());
+         last_indexes.sort_unstable();
+<a href="#h5-5" id="h5-5" class="h">@@ -529,7 +529,7 @@ mod tests {
+</a>                     to: Address::Peer(2),
+                     term: 3,
+                     event: Event::ReplicateEntries {
+<a href="#h5-5-3" id="h5-5-3" class="d">-                        base_index: index as u64,
+</a><a href="#h5-5-4" id="h5-5-4" class="i">+                        base_index: index as Index,
+</a>                         base_term: if index &gt; 0 {
+                             entries.get(index - 1).map(|e| e.term).unwrap()
+                         } else {
+<b>diff --git a/<a id="h6" href="../file/src/raft/node/mod.rs.html">src/raft/node/mod.rs</a> b/<a href="../file/src/raft/node/mod.rs.html">src/raft/node/mod.rs</a></b>
+<a href="#h6-0" id="h6-0" class="h">@@ -2,7 +2,7 @@ mod candidate;
+</a> mod follower;
+ mod leader;
+ 
+<a href="#h6-0-3" id="h6-0-3" class="d">-use super::{Address, Driver, Event, Instruction, Log, Message, State};
+</a><a href="#h6-0-4" id="h6-0-4" class="i">+use super::{Address, Driver, Event, Index, Instruction, Log, Message, State};
+</a> use crate::error::{Error, Result};
+ use candidate::Candidate;
+ use follower::Follower;
+<a href="#h6-1" id="h6-1" class="h">@@ -16,6 +16,9 @@ use tokio::sync::mpsc;
+</a> /// A node ID.
+ pub type NodeID = u8;
+ 
+<a href="#h6-1-3" id="h6-1-3" class="i">+/// A leader term.
+</a><a href="#h6-1-4" id="h6-1-4" class="i">+pub type Term = u64;
+</a><a href="#h6-1-5" id="h6-1-5" class="i">+
+</a> /// The interval between leader heartbeats, in ticks.
+ const HEARTBEAT_INTERVAL: u64 = 1;
+ 
+<a href="#h6-2" id="h6-2" class="h">@@ -30,10 +33,10 @@ const ELECTION_TIMEOUT_MAX: u64 = 15 * HEARTBEAT_INTERVAL;
+</a> pub struct Status {
+     pub server: NodeID,
+     pub leader: NodeID,
+<a href="#h6-2-3" id="h6-2-3" class="d">-    pub term: u64,
+</a><a href="#h6-2-4" id="h6-2-4" class="d">-    pub node_last_index: HashMap&lt;NodeID, u64&gt;,
+</a><a href="#h6-2-5" id="h6-2-5" class="d">-    pub commit_index: u64,
+</a><a href="#h6-2-6" id="h6-2-6" class="d">-    pub apply_index: u64,
+</a><a href="#h6-2-7" id="h6-2-7" class="i">+    pub term: Term,
+</a><a href="#h6-2-8" id="h6-2-8" class="i">+    pub node_last_index: HashMap&lt;NodeID, Index&gt;,
+</a><a href="#h6-2-9" id="h6-2-9" class="i">+    pub commit_index: Index,
+</a><a href="#h6-2-10" id="h6-2-10" class="i">+    pub apply_index: Index,
+</a>     pub storage: String,
+     pub storage_size: u64,
+ }
+<a href="#h6-3" id="h6-3" class="h">@@ -143,7 +146,7 @@ impl From&lt;RoleNode&lt;Leader&gt;&gt; for Node {
+</a> pub struct RoleNode&lt;R&gt; {
+     id: NodeID,
+     peers: Vec&lt;NodeID&gt;,
+<a href="#h6-3-3" id="h6-3-3" class="d">-    term: u64,
+</a><a href="#h6-3-4" id="h6-3-4" class="i">+    term: Term,
+</a>     log: Log,
+     node_tx: mpsc::UnboundedSender&lt;Message&gt;,
+     state_tx: mpsc::UnboundedSender&lt;Instruction&gt;,
+<a href="#h6-4" id="h6-4" class="h">@@ -277,12 +280,12 @@ mod tests {
+</a>             }
+         }
+ 
+<a href="#h6-4-3" id="h6-4-3" class="d">-        pub fn committed(mut self, index: u64) -&gt; Self {
+</a><a href="#h6-4-4" id="h6-4-4" class="i">+        pub fn committed(mut self, index: Index) -&gt; Self {
+</a>             assert_eq!(index, self.log().get_commit_index().0, &quot;Unexpected committed index&quot;);
+             self
+         }
+ 
+<a href="#h6-4-9" id="h6-4-9" class="d">-        pub fn last(mut self, index: u64) -&gt; Self {
+</a><a href="#h6-4-10" id="h6-4-10" class="i">+        pub fn last(mut self, index: Index) -&gt; Self {
+</a>             assert_eq!(index, self.log().get_last_index().0, &quot;Unexpected last index&quot;);
+             self
+         }
+<a href="#h6-5" id="h6-5" class="h">@@ -362,7 +365,7 @@ mod tests {
+</a>             self
+         }
+ 
+<a href="#h6-5-3" id="h6-5-3" class="d">-        pub fn term(mut self, term: u64) -&gt; Self {
+</a><a href="#h6-5-4" id="h6-5-4" class="i">+        pub fn term(mut self, term: Term) -&gt; Self {
+</a>             assert_eq!(
+                 term,
+                 match self.node {
+<b>diff --git a/<a id="h7" href="../file/src/raft/state.rs.html">src/raft/state.rs</a> b/<a href="../file/src/raft/state.rs.html">src/raft/state.rs</a></b>
+<a href="#h7-0" id="h7-0" class="h">@@ -1,4 +1,4 @@
+</a><a href="#h7-0-0" id="h7-0-0" class="d">-use super::{Address, Entry, Event, Message, Response, Scan, Status};
+</a><a href="#h7-0-1" id="h7-0-1" class="i">+use super::{Address, Entry, Event, Index, Message, Response, Scan, Status, Term};
+</a> use crate::error::{Error, Result};
+ 
+ use log::{debug, error};
+<a href="#h7-1" id="h7-1" class="h">@@ -10,11 +10,11 @@ use tokio_stream::StreamExt as _;
+</a> /// A Raft-managed state machine.
+ pub trait State: Send {
+     /// Returns the last applied index from the state machine, used when initializing the driver.
+<a href="#h7-1-3" id="h7-1-3" class="d">-    fn applied_index(&amp;self) -&gt; u64;
+</a><a href="#h7-1-4" id="h7-1-4" class="i">+    fn applied_index(&amp;self) -&gt; Index;
+</a> 
+     /// Mutates the state machine. If the state machine returns Error::Internal, the Raft node
+     /// halts. For any other error, the state is applied and the error propagated to the caller.
+<a href="#h7-1-8" id="h7-1-8" class="d">-    fn mutate(&amp;mut self, index: u64, command: Vec&lt;u8&gt;) -&gt; Result&lt;Vec&lt;u8&gt;&gt;;
+</a><a href="#h7-1-9" id="h7-1-9" class="i">+    fn mutate(&amp;mut self, index: Index, command: Vec&lt;u8&gt;) -&gt; Result&lt;Vec&lt;u8&gt;&gt;;
+</a> 
+     /// Queries the state machine. All errors are propagated to the caller.
+     fn query(&amp;self, command: Vec&lt;u8&gt;) -&gt; Result&lt;Vec&lt;u8&gt;&gt;;
+<a href="#h7-2" id="h7-2" class="h">@@ -28,19 +28,19 @@ pub enum Instruction {
+</a>     /// Apply a log entry.
+     Apply { entry: Entry },
+     /// Notify the given address with the result of applying the entry at the given index.
+<a href="#h7-2-3" id="h7-2-3" class="d">-    Notify { id: Vec&lt;u8&gt;, address: Address, index: u64 },
+</a><a href="#h7-2-4" id="h7-2-4" class="i">+    Notify { id: Vec&lt;u8&gt;, address: Address, index: Index },
+</a>     /// Query the state machine when the given term and index has been confirmed by vote.
+<a href="#h7-2-6" id="h7-2-6" class="d">-    Query { id: Vec&lt;u8&gt;, address: Address, command: Vec&lt;u8&gt;, term: u64, index: u64, quorum: u64 },
+</a><a href="#h7-2-7" id="h7-2-7" class="i">+    Query { id: Vec&lt;u8&gt;, address: Address, command: Vec&lt;u8&gt;, term: Term, index: Index, quorum: u64 },
+</a>     /// Extend the given server status and return it to the given address.
+     Status { id: Vec&lt;u8&gt;, address: Address, status: Box&lt;Status&gt; },
+     /// Votes for queries at the given term and commit index.
+<a href="#h7-2-11" id="h7-2-11" class="d">-    Vote { term: u64, index: u64, address: Address },
+</a><a href="#h7-2-12" id="h7-2-12" class="i">+    Vote { term: Term, index: Index, address: Address },
+</a> }
+ 
+ /// A driver query.
+ struct Query {
+     id: Vec&lt;u8&gt;,
+<a href="#h7-2-18" id="h7-2-18" class="d">-    term: u64,
+</a><a href="#h7-2-19" id="h7-2-19" class="i">+    term: Term,
+</a>     address: Address,
+     command: Vec&lt;u8&gt;,
+     quorum: u64,
+<a href="#h7-3" id="h7-3" class="h">@@ -51,11 +51,11 @@ struct Query {
+</a> pub struct Driver {
+     state_rx: UnboundedReceiverStream&lt;Instruction&gt;,
+     node_tx: mpsc::UnboundedSender&lt;Message&gt;,
+<a href="#h7-3-3" id="h7-3-3" class="d">-    applied_index: u64,
+</a><a href="#h7-3-4" id="h7-3-4" class="i">+    applied_index: Index,
+</a>     /// Notify clients when their mutation is applied. &lt;index, (client, id)&gt;
+<a href="#h7-3-6" id="h7-3-6" class="d">-    notify: HashMap&lt;u64, (Address, Vec&lt;u8&gt;)&gt;,
+</a><a href="#h7-3-7" id="h7-3-7" class="i">+    notify: HashMap&lt;Index, (Address, Vec&lt;u8&gt;)&gt;,
+</a>     /// Execute client queries when they receive a quorum. &lt;index, &lt;id, query&gt;&gt;
+<a href="#h7-3-9" id="h7-3-9" class="d">-    queries: BTreeMap&lt;u64, BTreeMap&lt;Vec&lt;u8&gt;, Query&gt;&gt;,
+</a><a href="#h7-3-10" id="h7-3-10" class="i">+    queries: BTreeMap&lt;Index, BTreeMap&lt;Vec&lt;u8&gt;, Query&gt;&gt;,
+</a> }
+ 
+ impl Driver {
+<a href="#h7-4" id="h7-4" class="h">@@ -166,7 +166,7 @@ impl Driver {
+</a>     }
+ 
+     /// Notifies a client about an applied log entry, if any.
+<a href="#h7-4-3" id="h7-4-3" class="d">-    fn notify_applied(&amp;mut self, index: u64, result: Result&lt;Vec&lt;u8&gt;&gt;) -&gt; Result&lt;()&gt; {
+</a><a href="#h7-4-4" id="h7-4-4" class="i">+    fn notify_applied(&amp;mut self, index: Index, result: Result&lt;Vec&lt;u8&gt;&gt;) -&gt; Result&lt;()&gt; {
+</a>         if let Some((to, id)) = self.notify.remove(&amp;index) {
+             self.send(to, Event::ClientResponse { id, response: result.map(Response::State) })?;
+         }
+<a href="#h7-5" id="h7-5" class="h">@@ -203,7 +203,7 @@ impl Driver {
+</a>     }
+ 
+     /// Fetches and removes any ready queries, where index &lt;= applied_index.
+<a href="#h7-5-3" id="h7-5-3" class="d">-    fn query_ready(&amp;mut self, applied_index: u64) -&gt; Vec&lt;Query&gt; {
+</a><a href="#h7-5-4" id="h7-5-4" class="i">+    fn query_ready(&amp;mut self, applied_index: Index) -&gt; Vec&lt;Query&gt; {
+</a>         let mut ready = Vec::new();
+         let mut empty = Vec::new();
+         for (index, queries) in self.queries.range_mut(..=applied_index) {
+<a href="#h7-6" id="h7-6" class="h">@@ -229,7 +229,7 @@ impl Driver {
+</a>     }
+ 
+     /// Votes for queries up to and including a given commit index for a term by an address.
+<a href="#h7-6-3" id="h7-6-3" class="d">-    fn query_vote(&amp;mut self, term: u64, commit_index: u64, address: Address) {
+</a><a href="#h7-6-4" id="h7-6-4" class="i">+    fn query_vote(&amp;mut self, term: Term, commit_index: Index, address: Address) {
+</a>         for (_, queries) in self.queries.range_mut(..=commit_index) {
+             for (_, query) in queries.iter_mut() {
+                 if term &gt;= query.term {
+<a href="#h7-7" id="h7-7" class="h">@@ -256,11 +256,11 @@ pub mod tests {
+</a>     #[derive(Clone, Debug)]
+     pub struct TestState {
+         commands: Arc&lt;Mutex&lt;Vec&lt;Vec&lt;u8&gt;&gt;&gt;&gt;,
+<a href="#h7-7-3" id="h7-7-3" class="d">-        applied_index: Arc&lt;Mutex&lt;u64&gt;&gt;,
+</a><a href="#h7-7-4" id="h7-7-4" class="i">+        applied_index: Arc&lt;Mutex&lt;Index&gt;&gt;,
+</a>     }
+ 
+     impl TestState {
+<a href="#h7-7-8" id="h7-7-8" class="d">-        pub fn new(applied_index: u64) -&gt; Self {
+</a><a href="#h7-7-9" id="h7-7-9" class="i">+        pub fn new(applied_index: Index) -&gt; Self {
+</a>             Self {
+                 commands: Arc::new(Mutex::new(Vec::new())),
+                 applied_index: Arc::new(Mutex::new(applied_index)),
+<a href="#h7-8" id="h7-8" class="h">@@ -273,12 +273,12 @@ pub mod tests {
+</a>     }
+ 
+     impl State for TestState {
+<a href="#h7-8-3" id="h7-8-3" class="d">-        fn applied_index(&amp;self) -&gt; u64 {
+</a><a href="#h7-8-4" id="h7-8-4" class="i">+        fn applied_index(&amp;self) -&gt; Index {
+</a>             *self.applied_index.lock().unwrap()
+         }
+ 
+         // Appends the command to the internal commands list.
+<a href="#h7-8-9" id="h7-8-9" class="d">-        fn mutate(&amp;mut self, index: u64, command: Vec&lt;u8&gt;) -&gt; Result&lt;Vec&lt;u8&gt;&gt; {
+</a><a href="#h7-8-10" id="h7-8-10" class="i">+        fn mutate(&amp;mut self, index: Index, command: Vec&lt;u8&gt;) -&gt; Result&lt;Vec&lt;u8&gt;&gt; {
+</a>             self.commands.lock()?.push(command.clone());
+             *self.applied_index.lock()? = index;
+             Ok(command)
+</pre>
+</div>
+</body>
+</html>

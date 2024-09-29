@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>kv: cleaned up MVCC key handling - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/3fa4095c60259f849d1e7b79cabca332b452e5f1.html">3fa4095c60259f849d1e7b79cabca332b452e5f1</a>
+<b>parent</b> <a href="../commit/0eb761d1007c82e516474b30fd74c16ae5770534.html">0eb761d1007c82e516474b30fd74c16ae5770534</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Sun, 29 Dec 2019 13:12:13 +0100
+
+kv: cleaned up MVCC key handling
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/kv/mvcc.rs</a></td><td> | </td><td class="num">151</td><td><span class="i">++++++++++++++++++++++++++++++++++++++</span><span class="d">-----------------------------------------</span></td></tr>
+</table></pre><pre>1 file changed, 72 insertions(+), 79 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/kv/mvcc.rs.html">src/kv/mvcc.rs</a> b/<a href="../file/src/kv/mvcc.rs.html">src/kv/mvcc.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -148,7 +148,11 @@ impl&lt;S: Storage&gt; Transaction&lt;S&gt; {
+</a>         let storage = self.storage.read()?;
+         let mut range = storage.scan(from..=to).rev();
+         while let Some((k, v)) = range.next().transpose()? {
+<a href="#h0-0-3" id="h0-0-3" class="d">-            if !self.snapshot.is_visible(Key::decode(k)?.version()?) {
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+            let version = match Key::decode(k)? {
+</a><a href="#h0-0-5" id="h0-0-5" class="i">+                Key::Record(_, version) =&gt; version,
+</a><a href="#h0-0-6" id="h0-0-6" class="i">+                k =&gt; return Err(Error::Value(format!(&quot;Unexpected MVCC key {:?} &quot;, k))),
+</a><a href="#h0-0-7" id="h0-0-7" class="i">+            };
+</a><a href="#h0-0-8" id="h0-0-8" class="i">+            if !self.snapshot.is_visible(version) {
+</a>                 continue;
+             }
+             return match Value::decode(v)? {
+<a href="#h0-1" id="h0-1" class="h">@@ -190,7 +194,11 @@ impl&lt;S: Storage&gt; Transaction&lt;S&gt; {
+</a>         let to = Key::Record(key.to_vec(), std::u64::MAX).encode();
+         let mut range = storage.scan(from..to);
+         while let Some((k, _)) = range.next().transpose()? {
+<a href="#h0-1-3" id="h0-1-3" class="d">-            if !self.snapshot.is_visible(Key::decode(k)?.version()?) {
+</a><a href="#h0-1-4" id="h0-1-4" class="i">+            let version = match Key::decode(k)? {
+</a><a href="#h0-1-5" id="h0-1-5" class="i">+                Key::Record(_, version) =&gt; version,
+</a><a href="#h0-1-6" id="h0-1-6" class="i">+                k =&gt; return Err(Error::Value(format!(&quot;Unexpected MVCC key {:?} &quot;, k))),
+</a><a href="#h0-1-7" id="h0-1-7" class="i">+            };
+</a><a href="#h0-1-8" id="h0-1-8" class="i">+            if !self.snapshot.is_visible(version) {
+</a>                 return Ok(true);
+             }
+         }
+<a href="#h0-2" id="h0-2" class="h">@@ -290,16 +298,18 @@ impl&lt;&#39;a, S: Storage&gt; Scan&lt;&#39;a, S&gt; {
+</a>         range: impl RangeBounds&lt;Vec&lt;u8&gt;&gt;,
+     ) -&gt; Result&lt;Self, Error&gt; {
+         let from = match range.start_bound() {
+<a href="#h0-2-3" id="h0-2-3" class="d">-            Bound::Excluded(key) =&gt; Bound::Included(Key::Record(key.clone(), 0).encode()),
+</a><a href="#h0-2-4" id="h0-2-4" class="i">+            Bound::Excluded(key) =&gt; {
+</a><a href="#h0-2-5" id="h0-2-5" class="i">+                Bound::Included(Key::Record(key.clone(), std::u64::MAX).encode())
+</a><a href="#h0-2-6" id="h0-2-6" class="i">+            }
+</a>             Bound::Included(key) =&gt; Bound::Included(Key::Record(key.clone(), 0).encode()),
+<a href="#h0-2-8" id="h0-2-8" class="d">-            Bound::Unbounded =&gt; Bound::Included(Key::RecordStart.encode()),
+</a><a href="#h0-2-9" id="h0-2-9" class="i">+            Bound::Unbounded =&gt; Bound::Included(Key::Record(vec![], 0).encode()),
+</a>         };
+         let to = match range.end_bound() {
+             Bound::Excluded(key) =&gt; Bound::Excluded(Key::Record(key.clone(), 0).encode()),
+             Bound::Included(key) =&gt; {
+                 Bound::Included(Key::Record(key.clone(), std::u64::MAX).encode())
+             }
+<a href="#h0-2-16" id="h0-2-16" class="d">-            Bound::Unbounded =&gt; Bound::Included(Key::RecordEnd.encode()),
+</a><a href="#h0-2-17" id="h0-2-17" class="i">+            Bound::Unbounded =&gt; Bound::Unbounded,
+</a>         };
+ 
+         Ok(Self {
+<a href="#h0-3" id="h0-3" class="h">@@ -401,91 +411,86 @@ impl&lt;&#39;a, S: Storage&gt; DoubleEndedIterator for Scan&lt;&#39;a, S&gt; {
+</a>     }
+ }
+ 
+<a href="#h0-3-3" id="h0-3-3" class="d">-/// Key encoding and decoding
+</a><a href="#h0-3-4" id="h0-3-4" class="i">+/// MVCC keys. The encoding must preserve the grouping and ordering of keys.
+</a><a href="#h0-3-5" id="h0-3-5" class="i">+///
+</a><a href="#h0-3-6" id="h0-3-6" class="i">+/// The first byte determines the key type. u64 is encoded in big-endian byte order. For Vec&lt;u8&gt;, we
+</a><a href="#h0-3-7" id="h0-3-7" class="i">+/// use 0x00 0xff as an escape sequence for 0x00, and 0x00 0x00 as a terminator, to avoid
+</a><a href="#h0-3-8" id="h0-3-8" class="i">+/// key/version overlaps from messing up the key sequence during scans - see:
+</a><a href="#h0-3-9" id="h0-3-9" class="i">+/// https://activesphere.com/blog/2018/08/17/order-preserving-serialization
+</a> #[derive(Debug)]
+ enum Key {
+<a href="#h0-3-12" id="h0-3-12" class="d">-    /// The next available transaction ID.
+</a><a href="#h0-3-13" id="h0-3-13" class="i">+    /// The next available txn ID. Used when starting new txns.
+</a>     TxnNext,
+<a href="#h0-3-15" id="h0-3-15" class="d">-    /// Marker for active transactions, containing the transaction mode.
+</a><a href="#h0-3-16" id="h0-3-16" class="i">+    /// Marker for active txns, containing the txn mode. Used to detect concurrent txns, and
+</a><a href="#h0-3-17" id="h0-3-17" class="i">+    /// to resume txns.
+</a>     TxnActive(u64),
+<a href="#h0-3-19" id="h0-3-19" class="d">-    /// Transaction snapshot, containing concurrent transactions at start.
+</a><a href="#h0-3-20" id="h0-3-20" class="i">+    /// Txn snapshot, containing concurrent active txns at start of txn.
+</a>     TxnSnapshot(u64),
+<a href="#h0-3-22" id="h0-3-22" class="d">-    /// Update entry for a transaction ID and key.
+</a><a href="#h0-3-23" id="h0-3-23" class="i">+    /// Update marker for a txn ID and key, used for rollback.
+</a>     TxnUpdate(u64, Vec&lt;u8&gt;),
+<a href="#h0-3-25" id="h0-3-25" class="i">+    /// A record for a key/version pair.
+</a>     Record(Vec&lt;u8&gt;, u64),
+<a href="#h0-3-27" id="h0-3-27" class="d">-    RecordStart,
+</a><a href="#h0-3-28" id="h0-3-28" class="d">-    RecordEnd,
+</a> }
+ 
+ impl Key {
+<a href="#h0-3-32" id="h0-3-32" class="i">+    /// Decodes a key from a byte representation.
+</a>     fn decode(key: Vec&lt;u8&gt;) -&gt; Result&lt;Self, Error&gt; {
+         let mut iter = key.into_iter();
+         match iter.next() {
+             Some(0x01) =&gt; Ok(Key::TxnNext),
+<a href="#h0-3-37" id="h0-3-37" class="d">-            Some(0x02) =&gt; {
+</a><a href="#h0-3-38" id="h0-3-38" class="d">-                let bytes: Vec&lt;u8&gt; = iter.collect();
+</a><a href="#h0-3-39" id="h0-3-39" class="d">-                if bytes.len() != 8 {
+</a><a href="#h0-3-40" id="h0-3-40" class="d">-                    return Err(Error::Value(&quot;Unable to parse MVCC active transaction ID&quot;.into()));
+</a><a href="#h0-3-41" id="h0-3-41" class="d">-                }
+</a><a href="#h0-3-42" id="h0-3-42" class="d">-                let mut id = [0; 8];
+</a><a href="#h0-3-43" id="h0-3-43" class="d">-                id.copy_from_slice(&amp;bytes[..]);
+</a><a href="#h0-3-44" id="h0-3-44" class="d">-                Ok(Key::TxnActive(u64::from_be_bytes(id)))
+</a><a href="#h0-3-45" id="h0-3-45" class="d">-            }
+</a><a href="#h0-3-46" id="h0-3-46" class="d">-            Some(0x03) =&gt; {
+</a><a href="#h0-3-47" id="h0-3-47" class="d">-                let bytes: Vec&lt;u8&gt; = iter.collect();
+</a><a href="#h0-3-48" id="h0-3-48" class="d">-                if bytes.len() != 8 {
+</a><a href="#h0-3-49" id="h0-3-49" class="d">-                    return Err(Error::Value(&quot;Unable to parse MVCC snapshot version&quot;.into()));
+</a><a href="#h0-3-50" id="h0-3-50" class="d">-                }
+</a><a href="#h0-3-51" id="h0-3-51" class="d">-                let mut version = [0; 8];
+</a><a href="#h0-3-52" id="h0-3-52" class="d">-                version.copy_from_slice(&amp;bytes[..]);
+</a><a href="#h0-3-53" id="h0-3-53" class="d">-                Ok(Key::TxnSnapshot(u64::from_be_bytes(version)))
+</a><a href="#h0-3-54" id="h0-3-54" class="d">-            }
+</a><a href="#h0-3-55" id="h0-3-55" class="d">-            Some(0x04) =&gt; {
+</a><a href="#h0-3-56" id="h0-3-56" class="d">-                let bytes: Vec&lt;u8&gt; = iter.collect();
+</a><a href="#h0-3-57" id="h0-3-57" class="d">-                if bytes.len() &lt; 9 {
+</a><a href="#h0-3-58" id="h0-3-58" class="d">-                    return Err(Error::Value(&quot;Unable to parse MVCC update key&quot;.into()));
+</a><a href="#h0-3-59" id="h0-3-59" class="d">-                }
+</a><a href="#h0-3-60" id="h0-3-60" class="d">-                let mut id = [0; 8];
+</a><a href="#h0-3-61" id="h0-3-61" class="d">-                id.copy_from_slice(&amp;bytes[0..8]);
+</a><a href="#h0-3-62" id="h0-3-62" class="d">-                let id = u64::from_be_bytes(id);
+</a><a href="#h0-3-63" id="h0-3-63" class="d">-                let key = bytes[8..].to_vec();
+</a><a href="#h0-3-64" id="h0-3-64" class="d">-                Ok(Key::TxnUpdate(id, key))
+</a><a href="#h0-3-65" id="h0-3-65" class="i">+            Some(0x02) =&gt; Ok(Key::TxnActive(Self::decode_u64(&amp;mut iter)?)),
+</a><a href="#h0-3-66" id="h0-3-66" class="i">+            Some(0x03) =&gt; Ok(Key::TxnSnapshot(Self::decode_u64(&amp;mut iter)?)),
+</a><a href="#h0-3-67" id="h0-3-67" class="i">+            Some(0x04) =&gt; Ok(Key::TxnUpdate(Self::decode_u64(&amp;mut iter)?, iter.collect())),
+</a><a href="#h0-3-68" id="h0-3-68" class="i">+            Some(0xff) =&gt; {
+</a><a href="#h0-3-69" id="h0-3-69" class="i">+                Ok(Self::Record(Self::decode_bytes(&amp;mut iter)?, Self::decode_u64(&amp;mut iter)?))
+</a>             }
+<a href="#h0-3-71" id="h0-3-71" class="d">-            Some(0xf1) =&gt; {
+</a><a href="#h0-3-72" id="h0-3-72" class="d">-                let mut key: Vec&lt;u8&gt; = iter.collect();
+</a><a href="#h0-3-73" id="h0-3-73" class="d">-                if key.len() &lt; 9 {
+</a><a href="#h0-3-74" id="h0-3-74" class="d">-                    return Err(Error::Value(&quot;Unable to parse MVCC record key&quot;.into()));
+</a><a href="#h0-3-75" id="h0-3-75" class="d">-                }
+</a><a href="#h0-3-76" id="h0-3-76" class="d">-                let mut v = [0; 8];
+</a><a href="#h0-3-77" id="h0-3-77" class="d">-                v.copy_from_slice(&amp;key.split_off(key.len() - 8)[..]);
+</a><a href="#h0-3-78" id="h0-3-78" class="d">-                assert_eq!(Some(0x00), key.pop());
+</a><a href="#h0-3-79" id="h0-3-79" class="d">-                let version = u64::from_be_bytes(v);
+</a><a href="#h0-3-80" id="h0-3-80" class="i">+            _ =&gt; Err(Error::Value(&quot;Unable to parse MVCC key&quot;.into())),
+</a><a href="#h0-3-81" id="h0-3-81" class="i">+        }
+</a><a href="#h0-3-82" id="h0-3-82" class="i">+    }
+</a> 
+<a href="#h0-3-84" id="h0-3-84" class="d">-                Ok(Self::Record(Self::unescape(key), version))
+</a><a href="#h0-3-85" id="h0-3-85" class="i">+    /// Decodes a byte vector from a byte representation. See encode_bytes() for format.
+</a><a href="#h0-3-86" id="h0-3-86" class="i">+    fn decode_bytes&lt;I: Iterator&lt;Item = u8&gt;&gt;(iter: &amp;mut I) -&gt; Result&lt;Vec&lt;u8&gt;, Error&gt; {
+</a><a href="#h0-3-87" id="h0-3-87" class="i">+        let mut bytes = Vec::new();
+</a><a href="#h0-3-88" id="h0-3-88" class="i">+        loop {
+</a><a href="#h0-3-89" id="h0-3-89" class="i">+            match iter.next() {
+</a><a href="#h0-3-90" id="h0-3-90" class="i">+                Some(0x00) =&gt; match iter.next() {
+</a><a href="#h0-3-91" id="h0-3-91" class="i">+                    Some(0x00) =&gt; break,            // 0x00 0x00 is terminator
+</a><a href="#h0-3-92" id="h0-3-92" class="i">+                    Some(0xff) =&gt; bytes.push(0x00), // 0x00 0xff is escape sequence for 0x00
+</a><a href="#h0-3-93" id="h0-3-93" class="i">+                    b =&gt; return Err(Error::Value(format!(&quot;Unexpected 0x00 encoding {:?}&quot;, b))),
+</a><a href="#h0-3-94" id="h0-3-94" class="i">+                },
+</a><a href="#h0-3-95" id="h0-3-95" class="i">+                Some(b) =&gt; bytes.push(b),
+</a><a href="#h0-3-96" id="h0-3-96" class="i">+                None =&gt; return Err(Error::Value(&quot;Unexpected end of input&quot;.into())),
+</a>             }
+<a href="#h0-3-98" id="h0-3-98" class="d">-            _ =&gt; Err(Error::Value(&quot;Unable to parse MVCC key&quot;.into())),
+</a>         }
+<a href="#h0-3-100" id="h0-3-100" class="i">+        Ok(bytes)
+</a><a href="#h0-3-101" id="h0-3-101" class="i">+    }
+</a><a href="#h0-3-102" id="h0-3-102" class="i">+
+</a><a href="#h0-3-103" id="h0-3-103" class="i">+    /// Decodes a u64 from a byte representation.
+</a><a href="#h0-3-104" id="h0-3-104" class="i">+    fn decode_u64&lt;I: Iterator&lt;Item = u8&gt;&gt;(iter: &amp;mut I) -&gt; Result&lt;u64, Error&gt; {
+</a><a href="#h0-3-105" id="h0-3-105" class="i">+        let bytes = iter.take(8).collect::&lt;Vec&lt;u8&gt;&gt;();
+</a><a href="#h0-3-106" id="h0-3-106" class="i">+        if bytes.len() &lt; 8 {
+</a><a href="#h0-3-107" id="h0-3-107" class="i">+            return Err(Error::Value(format!(&quot;Unable to decode u64, got {} bytes&quot;, bytes.len())));
+</a><a href="#h0-3-108" id="h0-3-108" class="i">+        }
+</a><a href="#h0-3-109" id="h0-3-109" class="i">+        let mut buf = [0; 8];
+</a><a href="#h0-3-110" id="h0-3-110" class="i">+        buf.copy_from_slice(&amp;bytes[..]);
+</a><a href="#h0-3-111" id="h0-3-111" class="i">+        Ok(u64::from_be_bytes(buf))
+</a>     }
+ 
+<a href="#h0-3-114" id="h0-3-114" class="i">+    /// Encodes a key into a byte vector.
+</a>     fn encode(self) -&gt; Vec&lt;u8&gt; {
+         match self {
+             Self::TxnNext =&gt; vec![0x01],
+<a href="#h0-3-118" id="h0-3-118" class="d">-            Self::TxnActive(id) =&gt; [vec![0x02], id.to_be_bytes().to_vec()].concat(),
+</a><a href="#h0-3-119" id="h0-3-119" class="d">-            Self::TxnSnapshot(version) =&gt; [vec![0x03], version.to_be_bytes().to_vec()].concat(),
+</a><a href="#h0-3-120" id="h0-3-120" class="d">-            Self::TxnUpdate(id, key) =&gt; [vec![0x04], id.to_be_bytes().to_vec(), key].concat(),
+</a><a href="#h0-3-121" id="h0-3-121" class="d">-            Self::RecordStart =&gt; vec![0xf0],
+</a><a href="#h0-3-122" id="h0-3-122" class="i">+            Self::TxnActive(id) =&gt; [vec![0x02], Self::encode_u64(id)].concat(),
+</a><a href="#h0-3-123" id="h0-3-123" class="i">+            Self::TxnSnapshot(version) =&gt; [vec![0x03], Self::encode_u64(version)].concat(),
+</a><a href="#h0-3-124" id="h0-3-124" class="i">+            Self::TxnUpdate(id, key) =&gt; [vec![0x04], Self::encode_u64(id), key].concat(),
+</a>             Self::Record(key, version) =&gt; {
+<a href="#h0-3-126" id="h0-3-126" class="d">-                // We have to use 0x00 as a key/version separator, and use 0x00 0xff as an
+</a><a href="#h0-3-127" id="h0-3-127" class="d">-                // escape sequence for 0x00 in order to avoid key/version overlaps from
+</a><a href="#h0-3-128" id="h0-3-128" class="d">-                // messing up the key sequence during scans. For more information, see:
+</a><a href="#h0-3-129" id="h0-3-129" class="d">-                // https://activesphere.com/blog/2018/08/17/order-preserving-serialization
+</a><a href="#h0-3-130" id="h0-3-130" class="d">-                [vec![0xf1], Self::escape(key), vec![0x00], version.to_be_bytes().to_vec()].concat()
+</a><a href="#h0-3-131" id="h0-3-131" class="i">+                [vec![0xff], Self::encode_bytes(key), Self::encode_u64(version)].concat()
+</a>             }
+<a href="#h0-3-133" id="h0-3-133" class="d">-            Self::RecordEnd =&gt; vec![0xf2],
+</a>         }
+     }
+ 
+<a href="#h0-3-137" id="h0-3-137" class="d">-    fn escape(bytes: Vec&lt;u8&gt;) -&gt; Vec&lt;u8&gt; {
+</a><a href="#h0-3-138" id="h0-3-138" class="i">+    /// Encodes a byte vector.
+</a><a href="#h0-3-139" id="h0-3-139" class="i">+    fn encode_bytes(bytes: Vec&lt;u8&gt;) -&gt; Vec&lt;u8&gt; {
+</a>         let mut escaped = vec![];
+         for b in bytes.into_iter() {
+             escaped.push(b);
+<a href="#h0-4" id="h0-4" class="h">@@ -493,26 +498,14 @@ impl Key {
+</a>                 escaped.push(0xff);
+             }
+         }
+<a href="#h0-4-3" id="h0-4-3" class="i">+        escaped.push(0x00);
+</a><a href="#h0-4-4" id="h0-4-4" class="i">+        escaped.push(0x00);
+</a>         escaped
+     }
+ 
+<a href="#h0-4-8" id="h0-4-8" class="d">-    fn unescape(bytes: Vec&lt;u8&gt;) -&gt; Vec&lt;u8&gt; {
+</a><a href="#h0-4-9" id="h0-4-9" class="d">-        let mut unescaped = vec![];
+</a><a href="#h0-4-10" id="h0-4-10" class="d">-        let mut iter = bytes.into_iter();
+</a><a href="#h0-4-11" id="h0-4-11" class="d">-        while let Some(b) = iter.next() {
+</a><a href="#h0-4-12" id="h0-4-12" class="d">-            unescaped.push(b);
+</a><a href="#h0-4-13" id="h0-4-13" class="d">-            if b == 0x00 {
+</a><a href="#h0-4-14" id="h0-4-14" class="d">-                assert_eq!(Some(0xff), iter.next())
+</a><a href="#h0-4-15" id="h0-4-15" class="d">-            }
+</a><a href="#h0-4-16" id="h0-4-16" class="d">-        }
+</a><a href="#h0-4-17" id="h0-4-17" class="d">-        unescaped
+</a><a href="#h0-4-18" id="h0-4-18" class="d">-    }
+</a><a href="#h0-4-19" id="h0-4-19" class="d">-
+</a><a href="#h0-4-20" id="h0-4-20" class="d">-    fn version(&amp;self) -&gt; Result&lt;u64, Error&gt; {
+</a><a href="#h0-4-21" id="h0-4-21" class="d">-        match self {
+</a><a href="#h0-4-22" id="h0-4-22" class="d">-            Self::Record(_, version) =&gt; Ok(*version),
+</a><a href="#h0-4-23" id="h0-4-23" class="d">-            _ =&gt; Err(Error::Value(format!(&quot;MVCC key {:?} has no version&quot;, self))),
+</a><a href="#h0-4-24" id="h0-4-24" class="d">-        }
+</a><a href="#h0-4-25" id="h0-4-25" class="i">+    /// Encodes a u64.
+</a><a href="#h0-4-26" id="h0-4-26" class="i">+    fn encode_u64(n: u64) -&gt; Vec&lt;u8&gt; {
+</a><a href="#h0-4-27" id="h0-4-27" class="i">+        n.to_be_bytes().to_vec()
+</a>     }
+ }
+ 
+</pre>
+</div>
+</body>
+</html>

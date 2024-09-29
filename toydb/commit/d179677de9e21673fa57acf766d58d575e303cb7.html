@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Use BitCask storage by default. - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/d179677de9e21673fa57acf766d58d575e303cb7.html">d179677de9e21673fa57acf766d58d575e303cb7</a>
+<b>parent</b> <a href="../commit/8acfa05fd582886c3ba5c2d9a429ac34bc85a630.html">8acfa05fd582886c3ba5c2d9a429ac34bc85a630</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Thu, 31 Aug 2023 21:49:00 +0200
+
+Use BitCask storage by default.
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">README.md</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">config/toydb.yaml</a></td><td> | </td><td class="num">6</td><td><span class="i">+++</span><span class="d">---</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">docs/architecture.md</a></td><td> | </td><td class="num">37</td><td><span class="i">++++++++++++</span><span class="d">-------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">docs/examples.md</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h4">src/bin/toydb.rs</a></td><td> | </td><td class="num">6</td><td><span class="i">+++</span><span class="d">---</span></td></tr>
+</table></pre><pre>5 files changed, 20 insertions(+), 33 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/README.md.html">README.md</a> b/<a href="../file/README.md.html">README.md</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -9,7 +9,7 @@ scratch, including:
+</a> 
+ * ACID-compliant transaction engine with MVCC-based snapshot isolation.
+ 
+<a href="#h0-0-3" id="h0-0-3" class="d">-* Pluggable storage engine with B+tree and log-structured backends.
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+* Pluggable storage engine with BitCask and in-memory backends.
+</a> 
+ * Iterator-based query engine with heuristic optimization and time-travel support.
+ 
+<b>diff --git a/<a id="h1" href="../file/config/toydb.yaml.html">config/toydb.yaml</a> b/<a href="../file/config/toydb.yaml.html">config/toydb.yaml</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -25,7 +25,7 @@ sync: true
+</a> storage_raft: hybrid
+ 
+ # SQL key-value storage engine
+<a href="#h1-0-3" id="h1-0-3" class="d">-# - bitcask: uses BitCask, an append-only log-structure store.
+</a><a href="#h1-0-4" id="h1-0-4" class="d">-# - memory: (default) uses an in-memory B+tree. Durability is provided by the Raft log.
+</a><a href="#h1-0-5" id="h1-0-5" class="i">+# - bitcask (default): uses BitCask, an append-only log-structure store.
+</a><a href="#h1-0-6" id="h1-0-6" class="i">+# - memory: uses an in-memory B+tree. Durability is provided by the Raft log.
+</a> # - stdmemory: uses the Rust standard library BTreeMap.
+<a href="#h1-0-8" id="h1-0-8" class="d">-storage_sql: memory
+</a><a href="#h1-0-9" id="h1-0-9" class="i">+storage_sql: bitcask
+</a><b>diff --git a/<a id="h2" href="../file/docs/architecture.md.html">docs/architecture.md</a> b/<a href="../file/docs/architecture.md.html">docs/architecture.md</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -129,33 +129,21 @@ encoding:
+</a> * `sql::Value`: As above, with type prefix `0x00`=`Null`, `0x01`=`Boolean`, `0x02`=`Float`,
+   `0x03`=`Integer`, `0x04`=`String`
+ 
+<a href="#h2-0-3" id="h2-0-3" class="d">-The default key/value store is
+</a><a href="#h2-0-4" id="h2-0-4" class="d">-[`storage::kv::Memory`](https://github.com/erikgrinaker/toydb/blob/master/src/storage/kv/memory.rs).
+</a><a href="#h2-0-5" id="h2-0-5" class="d">-This is an in-memory [B+tree](https://en.wikipedia.org/wiki/B%2B_tree), a search tree
+</a><a href="#h2-0-6" id="h2-0-6" class="d">-variant with multiple keys per node (to make use of cache locality) and values only in leaf nodes.
+</a><a href="#h2-0-7" id="h2-0-7" class="d">-As key/value pairs are added and removed, tree nodes are split, merged, and rotated to keep them 
+</a><a href="#h2-0-8" id="h2-0-8" class="d">-balanced and at least half-full.
+</a><a href="#h2-0-9" id="h2-0-9" class="d">-
+</a><a href="#h2-0-10" id="h2-0-10" class="d">-Although key/value data is stored in memory, toyDB provides durability via the Raft log which
+</a><a href="#h2-0-11" id="h2-0-11" class="d">-is persisted to disk. On startup, the Raft log is replayed to populate the in-memory store.
+</a><a href="#h2-0-12" id="h2-0-12" class="i">+The default key/value store is a simple variant of
+</a><a href="#h2-0-13" id="h2-0-13" class="i">+[`storage::kv::BitCask`](https://github.com/erikgrinaker/toydb/blob/master/src/storage/kv/bitcask.rs),
+</a><a href="#h2-0-14" id="h2-0-14" class="i">+an append-only log-structured storage engine. All writes are appended to a log
+</a><a href="#h2-0-15" id="h2-0-15" class="i">+file, with an index mapping live keys to file positions maintained in memory.
+</a><a href="#h2-0-16" id="h2-0-16" class="i">+When the amount of garbage (replaced or deleted keys) in the file exceeds 20%, a
+</a><a href="#h2-0-17" id="h2-0-17" class="i">+new log file is written containing only live keys, replacing the old log file.
+</a> 
+ #### Key/Value Tradeoffs
+ 
+<a href="#h2-0-21" id="h2-0-21" class="d">-**In-memory storage:** storing key/value data in memory has much better performance and is
+</a><a href="#h2-0-22" id="h2-0-22" class="d">-simpler to implement than on-disk storage, but requires that the data set fits in memory.
+</a><a href="#h2-0-23" id="h2-0-23" class="d">-Replaying the Raft log on startup can also take considerable time for large data sets. However,
+</a><a href="#h2-0-24" id="h2-0-24" class="d">-as toyDB datasets are expected to be small, this is mostly advantageous.
+</a><a href="#h2-0-25" id="h2-0-25" class="d">-
+</a><a href="#h2-0-26" id="h2-0-26" class="d">-**Byte serialization:** since the primary storage is in memory, (de)serializing key/value
+</a><a href="#h2-0-27" id="h2-0-27" class="d">-pairs adds significant unnecessary overhead. However, at the outset it was not clear that toyDB
+</a><a href="#h2-0-28" id="h2-0-28" class="d">-would use in-memory storage, and byte slices is a simple interface that can be used regardless
+</a><a href="#h2-0-29" id="h2-0-29" class="d">-of storage medium.
+</a><a href="#h2-0-30" id="h2-0-30" class="i">+**Keyset in memory:** BitCask requires the entire key set to fit in memory, and must also scan
+</a><a href="#h2-0-31" id="h2-0-31" class="i">+the log file on startup to construct the key index.
+</a> 
+<a href="#h2-0-33" id="h2-0-33" class="d">-**B+tree scans:** B+trees often have pointers between neighboring leaf nodes for more efficient
+</a><a href="#h2-0-34" id="h2-0-34" class="d">-range scans, but toyDB&#39;s implementation does not. This would complicate the implementation, and
+</a><a href="#h2-0-35" id="h2-0-35" class="d">-the performance benefits are usually not as great in memory where random access latency is low.
+</a><a href="#h2-0-36" id="h2-0-36" class="d">-However, this along with other implementation details cause range scans to be O(log n) rather
+</a><a href="#h2-0-37" id="h2-0-37" class="d">-than O(1) per step.
+</a><a href="#h2-0-38" id="h2-0-38" class="i">+**Compaction volume:** unlike an LSM tree, this single-file BitCask
+</a><a href="#h2-0-39" id="h2-0-39" class="i">+implementation requires rewriting the entire dataset during compactions, which
+</a><a href="#h2-0-40" id="h2-0-40" class="i">+can produce significant write amplification over time.
+</a> 
+ **Key encoding:** does not make use of any compression, e.g. variable-length integers, preferring
+ simplicity and correctness.
+<a href="#h2-1" id="h2-1" class="h">@@ -294,8 +282,7 @@ problem, and it avoid having to do additional (possibly random) disk IO, greatly
+</a> performance.
+ 
+ **Garbage collection:** there is no garbage collection of old log entries, so the log will grow
+<a href="#h2-1-3" id="h2-1-3" class="d">-without bound. However, this is a necessity since the the default toyDB configuration uses
+</a><a href="#h2-1-4" id="h2-1-4" class="d">-in-memory key/value storage by default and there is no other durable storage.
+</a><a href="#h2-1-5" id="h2-1-5" class="i">+without bound.
+</a> 
+ ## Raft Consensus Engine
+ 
+<b>diff --git a/<a id="h3" href="../file/docs/examples.md.html">docs/examples.md</a> b/<a href="../file/docs/examples.md.html">docs/examples.md</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -40,7 +40,7 @@ toydb&gt; !status
+</a> Server:    toydb-e (leader toydb-d in term 1 with 5 nodes)
+ Raft log:  1 committed, 0 applied, 0.000 MB (hybrid storage)
+ Node logs: toydb-a:1 toydb-b:1 toydb-c:1 toydb-d:1 toydb-e:1
+<a href="#h3-0-3" id="h3-0-3" class="d">-SQL txns:  0 active, 0 total (memory storage)
+</a><a href="#h3-0-4" id="h3-0-4" class="i">+SQL txns:  0 active, 0 total (bitcask storage)
+</a> ```
+ 
+ The cluster is shut down by pressing Ctrl-C. Data is saved under `clusters/local/toydb-?/data/`,
+<b>diff --git a/<a id="h4" href="../file/src/bin/toydb.rs.html">src/bin/toydb.rs</a> b/<a href="../file/src/bin/toydb.rs.html">src/bin/toydb.rs</a></b>
+<a href="#h4-0" id="h4-0" class="h">@@ -39,10 +39,10 @@ async fn main() -&gt; Result&lt;()&gt; {
+</a>         name =&gt; return Err(Error::Config(format!(&quot;Unknown Raft storage engine {}&quot;, name))),
+     };
+     let sql_store: Box&lt;dyn storage::kv::Store&gt; = match cfg.storage_sql.as_str() {
+<a href="#h4-0-3" id="h4-0-3" class="d">-        &quot;bitcask&quot; =&gt; {
+</a><a href="#h4-0-4" id="h4-0-4" class="i">+        &quot;bitcask&quot; | &quot;&quot; =&gt; {
+</a>             Box::new(storage::kv::BitCask::new_compact(path.join(&quot;state&quot;), cfg.compact_threshold)?)
+         }
+<a href="#h4-0-7" id="h4-0-7" class="d">-        &quot;memory&quot; | &quot;&quot; =&gt; Box::new(storage::kv::Memory::new()),
+</a><a href="#h4-0-8" id="h4-0-8" class="i">+        &quot;memory&quot; =&gt; Box::new(storage::kv::Memory::new()),
+</a>         &quot;stdmemory&quot; =&gt; Box::new(storage::kv::StdMemory::new()),
+         name =&gt; return Err(Error::Config(format!(&quot;Unknown SQL storage engine {}&quot;, name))),
+     };
+<a href="#h4-1" id="h4-1" class="h">@@ -81,7 +81,7 @@ impl Config {
+</a>             .set_default(&quot;compact_threshold&quot;, 0.2)?
+             .set_default(&quot;sync&quot;, true)?
+             .set_default(&quot;storage_raft&quot;, &quot;hybrid&quot;)?
+<a href="#h4-1-3" id="h4-1-3" class="d">-            .set_default(&quot;storage_sql&quot;, &quot;memory&quot;)?
+</a><a href="#h4-1-4" id="h4-1-4" class="i">+            .set_default(&quot;storage_sql&quot;, &quot;bitcask&quot;)?
+</a>             .add_source(config::File::with_name(file))
+             .add_source(config::Environment::with_prefix(&quot;TOYDB&quot;))
+             .build()?
+</pre>
+</div>
+</body>
+</html>

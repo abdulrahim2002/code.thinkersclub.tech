@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>sql: made assert (prefix +) an actual operator, to error on non-numeric operands - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/410c862dc460e0dab901626c408d607f386dae38.html">410c862dc460e0dab901626c408d607f386dae38</a>
+<b>parent</b> <a href="../commit/c4b11b0399b7839308f52a81035f4b454fb0f8d6.html">c4b11b0399b7839308f52a81035f4b454fb0f8d6</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Mon, 16 Dec 2019 19:31:29 +0100
+
+sql: made assert (prefix +) an actual operator, to error on non-numeric operands
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/sql/expression.rs</a></td><td> | </td><td class="num">12</td><td><span class="i">+++++++++++</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/sql/parser/ast.rs</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/sql/parser/mod.rs</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">src/sql/planner/mod.rs</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h4">src/sql/tests.rs</a></td><td> | </td><td class="num">2</td><td><span class="i">++</span><span class="d"></span></td></tr>
+</table></pre><pre>5 files changed, 16 insertions(+), 2 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/sql/expression.rs.html">src/sql/expression.rs</a> b/<a href="../file/src/sql/expression.rs.html">src/sql/expression.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -24,6 +24,7 @@ pub enum Expression {
+</a> 
+     // Mathematical operations
+     Add(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+<a href="#h0-0-3" id="h0-0-3" class="i">+    Assert(Box&lt;Expression&gt;),
+</a>     Divide(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+     Exponentiate(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+     Factorial(Box&lt;Expression&gt;),
+<a href="#h0-1" id="h0-1" class="h">@@ -136,6 +137,12 @@ impl Expression {
+</a>                 (Null, Null) =&gt; Null,
+                 (lhs, rhs) =&gt; return Err(Error::Value(format!(&quot;Can&#39;t add {} and {}&quot;, lhs, rhs))),
+             },
+<a href="#h0-1-3" id="h0-1-3" class="i">+            Self::Assert(expr) =&gt; match expr.evaluate(e)? {
+</a><a href="#h0-1-4" id="h0-1-4" class="i">+                Float(f) =&gt; Float(f),
+</a><a href="#h0-1-5" id="h0-1-5" class="i">+                Integer(i) =&gt; Integer(i),
+</a><a href="#h0-1-6" id="h0-1-6" class="i">+                Null =&gt; Null,
+</a><a href="#h0-1-7" id="h0-1-7" class="i">+                expr =&gt; return Err(Error::Value(format!(&quot;Can&#39;t take the positive of {}&quot;, expr))),
+</a><a href="#h0-1-8" id="h0-1-8" class="i">+            },
+</a>             Self::Divide(lhs, rhs) =&gt; match (lhs.evaluate(e)?, rhs.evaluate(e)?) {
+                 (Integer(lhs), Integer(rhs)) =&gt; Integer(lhs / rhs),
+                 (Integer(lhs), Float(rhs)) =&gt; Float(lhs as f64 / rhs),
+<a href="#h0-2" id="h0-2" class="h">@@ -252,6 +259,7 @@ impl Expression {
+</a>             Self::Add(lhs, rhs) =&gt; {
+                 Self::Add(lhs.transform(pre, post)?.into(), rhs.transform(pre, post)?.into())
+             }
+<a href="#h0-2-3" id="h0-2-3" class="i">+            Self::Assert(expr) =&gt; Self::Assert(expr.transform(pre, post)?.into()),
+</a>             Self::Divide(lhs, rhs) =&gt; {
+                 Self::Divide(lhs.transform(pre, post)?.into(), rhs.transform(pre, post)?.into())
+             }
+<a href="#h0-3" id="h0-3" class="h">@@ -296,7 +304,9 @@ impl Expression {
+</a>             | Self::Or(lhs, rhs)
+             | Self::Subtract(lhs, rhs) =&gt; lhs.walk(visitor) &amp;&amp; rhs.walk(visitor),
+ 
+<a href="#h0-3-3" id="h0-3-3" class="d">-            Self::Factorial(expr) | Self::Negate(expr) | Self::Not(expr) =&gt; expr.walk(visitor),
+</a><a href="#h0-3-4" id="h0-3-4" class="i">+            Self::Assert(expr) | Self::Factorial(expr) | Self::Negate(expr) | Self::Not(expr) =&gt; {
+</a><a href="#h0-3-5" id="h0-3-5" class="i">+                expr.walk(visitor)
+</a><a href="#h0-3-6" id="h0-3-6" class="i">+            }
+</a> 
+             Self::Constant(_) | Self::Field(_) =&gt; true,
+         } {
+<b>diff --git a/<a id="h1" href="../file/src/sql/parser/ast.rs.html">src/sql/parser/ast.rs</a> b/<a href="../file/src/sql/parser/ast.rs.html">src/sql/parser/ast.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -119,6 +119,7 @@ pub enum Operation {
+</a> 
+     // Mathematical operators
+     Add(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+<a href="#h1-0-3" id="h1-0-3" class="i">+    Assert(Box&lt;Expression&gt;),
+</a>     Divide(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+     Exponentiate(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+     Factorial(Box&lt;Expression&gt;),
+<b>diff --git a/<a id="h2" href="../file/src/sql/parser/mod.rs.html">src/sql/parser/mod.rs</a> b/<a href="../file/src/sql/parser/mod.rs.html">src/sql/parser/mod.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -453,7 +453,7 @@ enum PrefixOperator {
+</a> impl PrefixOperator {
+     fn build(&amp;self, rhs: ast::Expression) -&gt; ast::Expression {
+         match self {
+<a href="#h2-0-3" id="h2-0-3" class="d">-            Self::Plus =&gt; rhs,
+</a><a href="#h2-0-4" id="h2-0-4" class="i">+            Self::Plus =&gt; ast::Operation::Assert(Box::new(rhs)).into(),
+</a>             Self::Minus =&gt; ast::Operation::Negate(Box::new(rhs)).into(),
+             Self::Not =&gt; ast::Operation::Not(Box::new(rhs)).into(),
+         }
+<b>diff --git a/<a id="h3" href="../file/src/sql/planner/mod.rs.html">src/sql/planner/mod.rs</a> b/<a href="../file/src/sql/planner/mod.rs.html">src/sql/planner/mod.rs</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -180,6 +180,7 @@ impl From&lt;ast::Expression&gt; for Expression {
+</a>                 ast::Operation::CompareNE(lhs, rhs) =&gt; Self::CompareNE(lhs.into(), rhs.into()),
+ 
+                 // Mathematical operators
+<a href="#h3-0-3" id="h3-0-3" class="i">+                ast::Operation::Assert(expr) =&gt; Self::Assert(expr.into()),
+</a>                 ast::Operation::Add(lhs, rhs) =&gt; Self::Add(lhs.into(), rhs.into()),
+                 ast::Operation::Divide(lhs, rhs) =&gt; Self::Divide(lhs.into(), rhs.into()),
+                 ast::Operation::Exponentiate(lhs, rhs) =&gt; {
+<b>diff --git a/<a id="h4" href="../file/src/sql/tests.rs.html">src/sql/tests.rs</a> b/<a href="../file/src/sql/tests.rs.html">src/sql/tests.rs</a></b>
+<a href="#h4-0" id="h4-0" class="h">@@ -272,8 +272,10 @@ test_expr! {
+</a>     op_add_error_strings: &quot;&#39;a&#39; + &#39;b&#39;&quot; =&gt; Err(Error::Value(&quot;Can&#39;t add a and b&quot;.into())),
+ 
+     op_assert: &quot;+1&quot; =&gt; Ok(Integer(1)),
+<a href="#h4-0-3" id="h4-0-3" class="i">+    op_assert_bool: &quot;+TRUE&quot; =&gt; Err(Error::Value(&quot;Can&#39;t take the positive of TRUE&quot;.into())),
+</a>     op_assert_float: &quot;+3.72&quot; =&gt; Ok(Float(3.72)),
+     op_assert_multi: &quot;+++1&quot; =&gt; Ok(Integer(1)),
+<a href="#h4-0-6" id="h4-0-6" class="i">+    op_assert_null: &quot;+NULL&quot; =&gt; Ok(Null),
+</a> 
+     op_eq_bool_false_false: &quot;FALSE = FALSE&quot; =&gt; Ok(Boolean(true)),
+     op_eq_bool_true_false: &quot;TRUE = FALSE&quot; =&gt; Ok(Boolean(false)),
+</pre>
+</div>
+</body>
+</html>

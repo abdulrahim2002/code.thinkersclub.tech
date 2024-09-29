@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>error: add `Error::Assert` and use it in `raft::Log` - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/58d4497e0b31f02d89061b33cf02049c6caba7bc.html">58d4497e0b31f02d89061b33cf02049c6caba7bc</a>
+<b>parent</b> <a href="../commit/2bd6243c93d6f4afc2c046a84bdcc3699d7189c1.html">2bd6243c93d6f4afc2c046a84bdcc3699d7189c1</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Thu, 30 May 2024 13:16:14 +0200
+
+error: add `Error::Assert` and use it in `raft::Log`
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/error.rs</a></td><td> | </td><td class="num">33</td><td><span class="i">+++++++++++++++++++++++++++++</span><span class="d">----</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/raft/log.rs</a></td><td> | </td><td class="num">28</td><td><span class="i">+++++++++++++</span><span class="d">---------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/raft/state.rs</a></td><td> | </td><td class="num">3</td><td><span class="i">++</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">src/raft/testscripts/log/commit</a></td><td> | </td><td class="num">8</td><td><span class="i">++++</span><span class="d">----</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h4">src/raft/testscripts/log/splice</a></td><td> | </td><td class="num">12</td><td><span class="i">++++++</span><span class="d">------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h5">src/raft/testscripts/log/term</a></td><td> | </td><td class="num">8</td><td><span class="i">++++</span><span class="d">----</span></td></tr>
+</table></pre><pre>6 files changed, 58 insertions(+), 34 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/error.rs.html">src/error.rs</a> b/<a href="../file/src/error.rs.html">src/error.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -3,16 +3,40 @@ use serde_derive::{Deserialize, Serialize};
+</a> /// Result returning Error.
+ pub type Result&lt;T&gt; = std::result::Result&lt;T, Error&gt;;
+ 
+<a href="#h0-0-3" id="h0-0-3" class="i">+impl&lt;T&gt; From&lt;Error&gt; for Result&lt;T&gt; {
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+    fn from(error: Error) -&gt; Self {
+</a><a href="#h0-0-5" id="h0-0-5" class="i">+        Err(error)
+</a><a href="#h0-0-6" id="h0-0-6" class="i">+    }
+</a><a href="#h0-0-7" id="h0-0-7" class="i">+}
+</a><a href="#h0-0-8" id="h0-0-8" class="i">+
+</a> /// toyDB errors. All except Internal are considered user-facing.
+<a href="#h0-0-10" id="h0-0-10" class="i">+///
+</a><a href="#h0-0-11" id="h0-0-11" class="i">+/// TODO: simplify these. Add an IO kind that is used to signal Raft application
+</a><a href="#h0-0-12" id="h0-0-12" class="i">+/// failure.
+</a> #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+ pub enum Error {
+     Abort,
+<a href="#h0-0-16" id="h0-0-16" class="d">-    Config(String),
+</a><a href="#h0-0-17" id="h0-0-17" class="d">-    Internal(String),
+</a><a href="#h0-0-18" id="h0-0-18" class="d">-    Parse(String),
+</a><a href="#h0-0-19" id="h0-0-19" class="i">+    Assert(String),   // TODO include backtrace
+</a><a href="#h0-0-20" id="h0-0-20" class="i">+    Config(String),   // TODO replace with Input
+</a><a href="#h0-0-21" id="h0-0-21" class="i">+    Internal(String), // TODO remove
+</a><a href="#h0-0-22" id="h0-0-22" class="i">+    Parse(String),    // TODO replace with Input
+</a>     ReadOnly,
+     Serialization,
+<a href="#h0-0-25" id="h0-0-25" class="d">-    Value(String),
+</a><a href="#h0-0-26" id="h0-0-26" class="i">+    Value(String), // TODO replace with Input or Data
+</a><a href="#h0-0-27" id="h0-0-27" class="i">+}
+</a><a href="#h0-0-28" id="h0-0-28" class="i">+
+</a><a href="#h0-0-29" id="h0-0-29" class="i">+/// Constructs an Error::Assert via format!() and into().
+</a><a href="#h0-0-30" id="h0-0-30" class="i">+#[macro_export]
+</a><a href="#h0-0-31" id="h0-0-31" class="i">+macro_rules! errassert {
+</a><a href="#h0-0-32" id="h0-0-32" class="i">+    ($($args:tt)*) =&gt; { Error::Assert(format!($($args)*)).into() };
+</a><a href="#h0-0-33" id="h0-0-33" class="i">+}
+</a><a href="#h0-0-34" id="h0-0-34" class="i">+
+</a><a href="#h0-0-35" id="h0-0-35" class="i">+/// Returns an Error::Assert if the given condition is false.
+</a><a href="#h0-0-36" id="h0-0-36" class="i">+#[macro_export]
+</a><a href="#h0-0-37" id="h0-0-37" class="i">+macro_rules! asserterr {
+</a><a href="#h0-0-38" id="h0-0-38" class="i">+    ($cond:expr, $($args:tt)*) =&gt; {
+</a><a href="#h0-0-39" id="h0-0-39" class="i">+        if !$cond { return errassert!($($args)*) }
+</a><a href="#h0-0-40" id="h0-0-40" class="i">+    };
+</a> }
+ 
+ impl std::error::Error for Error {}
+<a href="#h0-1" id="h0-1" class="h">@@ -23,6 +47,7 @@ impl std::fmt::Display for Error {
+</a>             Error::Config(s) | Error::Internal(s) | Error::Parse(s) | Error::Value(s) =&gt; {
+                 write!(f, &quot;{}&quot;, s)
+             }
+<a href="#h0-1-3" id="h0-1-3" class="i">+            Error::Assert(s) =&gt; write!(f, &quot;assertion failed: {s}&quot;),
+</a>             Error::Abort =&gt; write!(f, &quot;Operation aborted&quot;),
+             Error::Serialization =&gt; write!(f, &quot;Serialization failure, retry transaction&quot;),
+             Error::ReadOnly =&gt; write!(f, &quot;Read-only transaction&quot;),
+<b>diff --git a/<a id="h1" href="../file/src/raft/log.rs.html">src/raft/log.rs</a> b/<a href="../file/src/raft/log.rs.html">src/raft/log.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -1,5 +1,6 @@
+</a> use super::{NodeID, Term};
+ use crate::encoding::{bincode, keycode};
+<a href="#h1-0-2" id="h1-0-2" class="i">+use crate::errassert;
+</a> use crate::error::{Error, Result};
+ use crate::storage;
+ 
+<a href="#h1-1" id="h1-1" class="h">@@ -135,13 +136,13 @@ impl Log {
+</a>     /// term does not regress, and that we only vote for one node in a term.
+     pub fn set_term(&amp;mut self, term: Term, vote: Option&lt;NodeID&gt;) -&gt; Result&lt;()&gt; {
+         match self.get_term()? {
+<a href="#h1-1-3" id="h1-1-3" class="d">-            (t, _) if term &lt; t =&gt; Err(Error::Value(format!(&quot;term regression {t} → {term}&quot;))),
+</a><a href="#h1-1-4" id="h1-1-4" class="d">-            (t, _) if term &gt; t =&gt; Ok(()), // below, term == t
+</a><a href="#h1-1-5" id="h1-1-5" class="d">-            (0, _) =&gt; Err(Error::Value(&quot;can&#39;t set term 0&quot;.to_string())),
+</a><a href="#h1-1-6" id="h1-1-6" class="d">-            (_, None) =&gt; Ok(()),
+</a><a href="#h1-1-7" id="h1-1-7" class="d">-            (_, v) if vote != v =&gt; Err(Error::Value(format!(&quot;can&#39;t change vote {v:?} → {vote:?}&quot;))),
+</a><a href="#h1-1-8" id="h1-1-8" class="d">-            (_, _) =&gt; Ok(()),
+</a><a href="#h1-1-9" id="h1-1-9" class="d">-        }?;
+</a><a href="#h1-1-10" id="h1-1-10" class="i">+            (t, _) if term &lt; t =&gt; return errassert!(&quot;term regression {t} → {term}&quot;),
+</a><a href="#h1-1-11" id="h1-1-11" class="i">+            (t, _) if term &gt; t =&gt; {} // below, term == t
+</a><a href="#h1-1-12" id="h1-1-12" class="i">+            (0, _) =&gt; return errassert!(&quot;can&#39;t set term 0&quot;),
+</a><a href="#h1-1-13" id="h1-1-13" class="i">+            (_, None) =&gt; {}
+</a><a href="#h1-1-14" id="h1-1-14" class="i">+            (_, v) if vote != v =&gt; return errassert!(&quot;can&#39;t change vote {v:?} → {vote:?}&quot;),
+</a><a href="#h1-1-15" id="h1-1-15" class="i">+            (_, _) =&gt; {}
+</a><a href="#h1-1-16" id="h1-1-16" class="i">+        };
+</a>         self.engine.set(&amp;Key::TermVote.encode()?, bincode::serialize(&amp;(term, vote))?)?;
+         self.engine.flush()?;
+         Ok(())
+<a href="#h1-2" id="h1-2" class="h">@@ -165,13 +166,10 @@ impl Log {
+</a>     /// don&#39;t commit an entry for a divergent log.
+     pub fn commit(&amp;mut self, index: Index) -&gt; Result&lt;Index&gt; {
+         if index &lt; self.commit_index {
+<a href="#h1-2-3" id="h1-2-3" class="d">-            return Err(Error::Internal(format!(
+</a><a href="#h1-2-4" id="h1-2-4" class="d">-                &quot;Commit index regression {} -&gt; {}&quot;,
+</a><a href="#h1-2-5" id="h1-2-5" class="d">-                self.commit_index, index
+</a><a href="#h1-2-6" id="h1-2-6" class="d">-            )));
+</a><a href="#h1-2-7" id="h1-2-7" class="i">+            return errassert!(&quot;commit index regression {} → {}&quot;, self.commit_index, index);
+</a>         }
+         let Some(entry) = self.get(index)? else {
+<a href="#h1-2-10" id="h1-2-10" class="d">-            return Err(Error::Internal(format!(&quot;Can&#39;t commit non-existant index {}&quot;, index)));
+</a><a href="#h1-2-11" id="h1-2-11" class="i">+            return errassert!(&quot;can&#39;t commit non-existant index {index}&quot;);
+</a>         };
+         self.engine
+             .set(&amp;Key::CommitIndex.encode()?, bincode::serialize(&amp;(entry.index, entry.term))?)?;
+<a href="#h1-3" id="h1-3" class="h">@@ -234,10 +232,10 @@ impl Log {
+</a>             return Ok(self.last_index);
+         }
+         if entries[0].index == 0 || entries[0].index &gt; self.last_index + 1 {
+<a href="#h1-3-3" id="h1-3-3" class="d">-            return Err(Error::Internal(&quot;Spliced entries must begin before last index&quot;.into()));
+</a><a href="#h1-3-4" id="h1-3-4" class="i">+            return errassert!(&quot;spliced entries must begin before last index&quot;);
+</a>         }
+         if !entries.windows(2).all(|w| w[0].index + 1 == w[1].index) {
+<a href="#h1-3-7" id="h1-3-7" class="d">-            return Err(Error::Internal(&quot;Spliced entries must be contiguous&quot;.into()));
+</a><a href="#h1-3-8" id="h1-3-8" class="i">+            return errassert!(&quot;spliced entries must be contiguous&quot;);
+</a>         }
+         let (last_index, last_term) = entries.last().map(|e| (e.index, e.term)).unwrap();
+ 
+<a href="#h1-4" id="h1-4" class="h">@@ -253,7 +251,7 @@ impl Log {
+</a>         drop(scan);
+ 
+         if !entries.is_empty() &amp;&amp; entries[0].index &lt;= self.commit_index {
+<a href="#h1-4-3" id="h1-4-3" class="d">-            return Err(Error::Internal(&quot;Spliced entries must begin after commit index&quot;.into()));
+</a><a href="#h1-4-4" id="h1-4-4" class="i">+            return errassert!(&quot;spliced entries must begin after commit index&quot;);
+</a>         }
+ 
+         // Write any entries not already in the log.
+<b>diff --git a/<a id="h2" href="../file/src/raft/state.rs.html">src/raft/state.rs</a> b/<a href="../file/src/raft/state.rs.html">src/raft/state.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -14,7 +14,8 @@ pub trait State: Send {
+</a>     /// leader changes. This still needs to be applied to the state machine to
+     /// properly track the applied index, and returns an empty result.
+     ///
+<a href="#h2-0-3" id="h2-0-3" class="d">-    /// TODO: consider using runtime assertions instead of Error::Internal.
+</a><a href="#h2-0-4" id="h2-0-4" class="i">+    /// TODO: add an IO error kind instead to signify non-deterministic
+</a><a href="#h2-0-5" id="h2-0-5" class="i">+    /// application failure which should not consider the command applied.
+</a>     fn apply(&amp;mut self, entry: Entry) -&gt; Result&lt;Vec&lt;u8&gt;&gt;;
+ 
+     /// Reads from the state machine. All errors are propagated to the caller.
+<b>diff --git a/<a id="h3" href="../file/src/raft/testscripts/log/commit.html">src/raft/testscripts/log/commit</a> b/<a href="../file/src/raft/testscripts/log/commit.html">src/raft/testscripts/log/commit</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -1,7 +1,7 @@
+</a> # Committing fails on an empty engine.
+ !commit 1
+ ---
+<a href="#h3-0-3" id="h3-0-3" class="d">-Error: Can&#39;t commit non-existant index 1
+</a><a href="#h3-0-4" id="h3-0-4" class="i">+Error: assertion failed: can&#39;t commit non-existant index 1
+</a> 
+ # Add some entries.
+ append 1
+<a href="#h3-1" id="h3-1" class="h">@@ -15,7 +15,7 @@ append → 3@2 bar
+</a> # Committing entry 0 fails.
+ !commit 0
+ ---
+<a href="#h3-1-3" id="h3-1-3" class="d">-Error: Can&#39;t commit non-existant index 0
+</a><a href="#h3-1-4" id="h3-1-4" class="i">+Error: assertion failed: can&#39;t commit non-existant index 0
+</a> 
+ # Committing entry 1 works, and updates the commit index. Dump the
+ # raw value too.
+<a href="#h3-2" id="h3-2" class="h">@@ -48,14 +48,14 @@ last=3@2 commit=3@2
+</a> !commit 2
+ status
+ ---
+<a href="#h3-2-3" id="h3-2-3" class="d">-Error: Commit index regression 3 -&gt; 2
+</a><a href="#h3-2-4" id="h3-2-4" class="i">+Error: assertion failed: commit index regression 3 → 2
+</a> last=3@2 commit=3@2
+ 
+ # Committing non-existant indexes error.
+ !commit 4
+ status
+ ---
+<a href="#h3-2-11" id="h3-2-11" class="d">-Error: Can&#39;t commit non-existant index 4
+</a><a href="#h3-2-12" id="h3-2-12" class="i">+Error: assertion failed: can&#39;t commit non-existant index 4
+</a> last=3@2 commit=3@2
+ 
+ # Dump the raw value.
+<b>diff --git a/<a id="h4" href="../file/src/raft/testscripts/log/splice.html">src/raft/testscripts/log/splice</a> b/<a href="../file/src/raft/testscripts/log/splice.html">src/raft/testscripts/log/splice</a></b>
+<a href="#h4-0" id="h4-0" class="h">@@ -1,12 +1,12 @@
+</a> # Splicing at index 0 should fail.
+ !splice 0@1=foo
+ ---
+<a href="#h4-0-3" id="h4-0-3" class="d">-Error: Spliced entries must begin before last index
+</a><a href="#h4-0-4" id="h4-0-4" class="i">+Error: assertion failed: spliced entries must begin before last index
+</a> 
+ # Splicing at index 2 should fail (not contiguous).
+ !splice 2@1=foo
+ ---
+<a href="#h4-0-9" id="h4-0-9" class="d">-Error: Spliced entries must begin before last index
+</a><a href="#h4-0-10" id="h4-0-10" class="i">+Error: assertion failed: spliced entries must begin before last index
+</a> 
+ # Splicing entries at start should work, both with and without
+ # commands, and starting at a term after 1. It should also update
+<a href="#h4-1" id="h4-1" class="h">@@ -24,12 +24,12 @@ last=2@2 commit=0@0
+</a> # Splicing multiple duplicate entries should fail.
+ !splice 3@2= 3@2=
+ ---
+<a href="#h4-1-3" id="h4-1-3" class="d">-Error: Spliced entries must be contiguous
+</a><a href="#h4-1-4" id="h4-1-4" class="i">+Error: assertion failed: spliced entries must be contiguous
+</a> 
+ # Splicing entries with a gap should fail.
+ !splice 3@2= 5@2=
+ ---
+<a href="#h4-1-9" id="h4-1-9" class="d">-Error: Spliced entries must be contiguous
+</a><a href="#h4-1-10" id="h4-1-10" class="i">+Error: assertion failed: spliced entries must be contiguous
+</a> 
+ # Splicing with a term regression should fail.
+ # TODO: fix this.
+<a href="#h4-2" id="h4-2" class="h">@@ -148,8 +148,8 @@ last=4@6 commit=2@5
+</a> !splice 2@7=
+ !splice 1@7=
+ ---
+<a href="#h4-2-3" id="h4-2-3" class="d">-Error: Spliced entries must begin after commit index
+</a><a href="#h4-2-4" id="h4-2-4" class="d">-Error: Spliced entries must begin after commit index
+</a><a href="#h4-2-5" id="h4-2-5" class="i">+Error: assertion failed: spliced entries must begin after commit index
+</a><a href="#h4-2-6" id="h4-2-6" class="i">+Error: assertion failed: spliced entries must begin after commit index
+</a> 
+ # Dump the raw data.
+ raw
+<b>diff --git a/<a id="h5" href="../file/src/raft/testscripts/log/term.html">src/raft/testscripts/log/term</a> b/<a href="../file/src/raft/testscripts/log/term.html">src/raft/testscripts/log/term</a></b>
+<a href="#h5-0" id="h5-0" class="h">@@ -6,7 +6,7 @@ term=0 vote=None
+</a> # Storing a 0 term errors.
+ !set_term 0
+ ---
+<a href="#h5-0-3" id="h5-0-3" class="d">-Error: can&#39;t set term 0
+</a><a href="#h5-0-4" id="h5-0-4" class="i">+Error: assertion failed: can&#39;t set term 0
+</a> 
+ # set_term stores a term and empty vote.
+ set_term 3
+<a href="#h5-1" id="h5-1" class="h">@@ -45,17 +45,17 @@ term=9 vote=1
+</a> # Regressing the term errors.
+ !set_term 8
+ ---
+<a href="#h5-1-3" id="h5-1-3" class="d">-Error: term regression 9 → 8
+</a><a href="#h5-1-4" id="h5-1-4" class="i">+Error: assertion failed: term regression 9 → 8
+</a> 
+ # Clearing the vote errors.
+ !set_term 9
+ ---
+<a href="#h5-1-9" id="h5-1-9" class="d">-Error: can&#39;t change vote Some(1) → None
+</a><a href="#h5-1-10" id="h5-1-10" class="i">+Error: assertion failed: can&#39;t change vote Some(1) → None
+</a> 
+ # Changing the vote errors.
+ !set_term 9 2
+ ---
+<a href="#h5-1-15" id="h5-1-15" class="d">-Error: can&#39;t change vote Some(1) → Some(2)
+</a><a href="#h5-1-16" id="h5-1-16" class="i">+Error: assertion failed: can&#39;t change vote Some(1) → Some(2)
+</a> 
+ # The above errors should not have changed the term/vote.
+ get_term
+</pre>
+</div>
+</body>
+</html>

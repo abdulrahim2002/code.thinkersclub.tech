@@ -1,0 +1,765 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>client: simplified protocol and added basic tests - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/3af544410723174f6ffe5f073803aca3b0bbfa79.html">3af544410723174f6ffe5f073803aca3b0bbfa79</a>
+<b>parent</b> <a href="../commit/de2d5c43b9c6c1ebd97f994f137be088c7ade100.html">de2d5c43b9c6c1ebd97f994f137be088c7ade100</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Fri, 10 Apr 2020 17:52:01 +0200
+
+client: simplified protocol and added basic tests
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">Cargo.lock</a></td><td> | </td><td class="num">87</td><td><span class="i">+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">Cargo.toml</a></td><td> | </td><td class="num">8</td><td><span class="i">++++++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">protobuf/toydb.proto</a></td><td> | </td><td class="num">44</td><td><span class="i">++++++++++</span><span class="d">----------------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">src/bin/toysql.rs</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h4">src/client.rs</a></td><td> | </td><td class="num">54</td><td><span class="i">+++++++++++++++++++++++++++++++</span><span class="d">-----------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h5">src/error.rs</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h6">src/server/mod.rs</a></td><td> | </td><td class="num">2</td><td><span class="i">++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h7">src/server/toydb.rs</a></td><td> | </td><td class="num">101</td><td><span class="i">+++++++++++++++++++++++++++++++++++++++++++++</span><span class="d">----------------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h8">src/sql/mod.rs</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h9">src/sql/types/schema.rs</a></td><td> | </td><td class="num">4</td><td><span class="i">++</span><span class="d">--</span></td></tr>
+<tr><td class="A">A</td><td><a href="#h10">tests/client_server.rs</a></td><td> | </td><td class="num">190</td><td><span class="i">+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d"></span></td></tr>
+</table></pre><pre>11 files changed, 389 insertions(+), 107 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/Cargo.lock.html">Cargo.lock</a> b/<a href="../file/Cargo.lock.html">Cargo.lock</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -284,6 +284,15 @@ dependencies = [
+</a> ]
+ 
+ [[package]]
+<a href="#h0-0-3" id="h0-0-3" class="i">+name = &quot;ctor&quot;
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+version = &quot;0.1.13&quot;
+</a><a href="#h0-0-5" id="h0-0-5" class="i">+source = &quot;registry+https://github.com/rust-lang/crates.io-index&quot;
+</a><a href="#h0-0-6" id="h0-0-6" class="i">+dependencies = [
+</a><a href="#h0-0-7" id="h0-0-7" class="i">+ &quot;quote 1.0.3 (registry+https://github.com/rust-lang/crates.io-index)&quot;,
+</a><a href="#h0-0-8" id="h0-0-8" class="i">+ &quot;syn 1.0.17 (registry+https://github.com/rust-lang/crates.io-index)&quot;,
+</a><a href="#h0-0-9" id="h0-0-9" class="i">+]
+</a><a href="#h0-0-10" id="h0-0-10" class="i">+
+</a><a href="#h0-0-11" id="h0-0-11" class="i">+[[package]]
+</a> name = &quot;difference&quot;
+ version = &quot;2.0.0&quot;
+ source = &quot;registry+https://github.com/rust-lang/crates.io-index&quot;
+<a href="#h0-1" id="h0-1" class="h">@@ -647,6 +656,14 @@ dependencies = [
+</a> ]
+ 
+ [[package]]
+<a href="#h0-1-3" id="h0-1-3" class="i">+name = &quot;output_vt100&quot;
+</a><a href="#h0-1-4" id="h0-1-4" class="i">+version = &quot;0.1.2&quot;
+</a><a href="#h0-1-5" id="h0-1-5" class="i">+source = &quot;registry+https://github.com/rust-lang/crates.io-index&quot;
+</a><a href="#h0-1-6" id="h0-1-6" class="i">+dependencies = [
+</a><a href="#h0-1-7" id="h0-1-7" class="i">+ &quot;winapi 0.3.8 (registry+https://github.com/rust-lang/crates.io-index)&quot;,
+</a><a href="#h0-1-8" id="h0-1-8" class="i">+]
+</a><a href="#h0-1-9" id="h0-1-9" class="i">+
+</a><a href="#h0-1-10" id="h0-1-10" class="i">+[[package]]
+</a> name = &quot;owning_ref&quot;
+ version = &quot;0.4.1&quot;
+ source = &quot;registry+https://github.com/rust-lang/crates.io-index&quot;
+<a href="#h0-2" id="h0-2" class="h">@@ -674,6 +691,15 @@ dependencies = [
+</a> ]
+ 
+ [[package]]
+<a href="#h0-2-3" id="h0-2-3" class="i">+name = &quot;parking_lot&quot;
+</a><a href="#h0-2-4" id="h0-2-4" class="i">+version = &quot;0.10.0&quot;
+</a><a href="#h0-2-5" id="h0-2-5" class="i">+source = &quot;registry+https://github.com/rust-lang/crates.io-index&quot;
+</a><a href="#h0-2-6" id="h0-2-6" class="i">+dependencies = [
+</a><a href="#h0-2-7" id="h0-2-7" class="i">+ &quot;lock_api 0.3.3 (registry+https://github.com/rust-lang/crates.io-index)&quot;,
+</a><a href="#h0-2-8" id="h0-2-8" class="i">+ &quot;parking_lot_core 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)&quot;,
+</a><a href="#h0-2-9" id="h0-2-9" class="i">+]
+</a><a href="#h0-2-10" id="h0-2-10" class="i">+
+</a><a href="#h0-2-11" id="h0-2-11" class="i">+[[package]]
+</a> name = &quot;parking_lot_core&quot;
+ version = &quot;0.3.1&quot;
+ source = &quot;registry+https://github.com/rust-lang/crates.io-index&quot;
+<a href="#h0-3" id="h0-3" class="h">@@ -700,11 +726,35 @@ dependencies = [
+</a> ]
+ 
+ [[package]]
+<a href="#h0-3-3" id="h0-3-3" class="i">+name = &quot;parking_lot_core&quot;
+</a><a href="#h0-3-4" id="h0-3-4" class="i">+version = &quot;0.7.0&quot;
+</a><a href="#h0-3-5" id="h0-3-5" class="i">+source = &quot;registry+https://github.com/rust-lang/crates.io-index&quot;
+</a><a href="#h0-3-6" id="h0-3-6" class="i">+dependencies = [
+</a><a href="#h0-3-7" id="h0-3-7" class="i">+ &quot;cfg-if 0.1.10 (registry+https://github.com/rust-lang/crates.io-index)&quot;,
+</a><a href="#h0-3-8" id="h0-3-8" class="i">+ &quot;cloudabi 0.0.3 (registry+https://github.com/rust-lang/crates.io-index)&quot;,
+</a><a href="#h0-3-9" id="h0-3-9" class="i">+ &quot;libc 0.2.68 (registry+https://github.com/rust-lang/crates.io-index)&quot;,
+</a><a href="#h0-3-10" id="h0-3-10" class="i">+ &quot;redox_syscall 0.1.56 (registry+https://github.com/rust-lang/crates.io-index)&quot;,
+</a><a href="#h0-3-11" id="h0-3-11" class="i">+ &quot;smallvec 1.3.0 (registry+https://github.com/rust-lang/crates.io-index)&quot;,
+</a><a href="#h0-3-12" id="h0-3-12" class="i">+ &quot;winapi 0.3.8 (registry+https://github.com/rust-lang/crates.io-index)&quot;,
+</a><a href="#h0-3-13" id="h0-3-13" class="i">+]
+</a><a href="#h0-3-14" id="h0-3-14" class="i">+
+</a><a href="#h0-3-15" id="h0-3-15" class="i">+[[package]]
+</a> name = &quot;ppv-lite86&quot;
+ version = &quot;0.2.6&quot;
+ source = &quot;registry+https://github.com/rust-lang/crates.io-index&quot;
+ 
+ [[package]]
+<a href="#h0-3-21" id="h0-3-21" class="i">+name = &quot;pretty_assertions&quot;
+</a><a href="#h0-3-22" id="h0-3-22" class="i">+version = &quot;0.6.1&quot;
+</a><a href="#h0-3-23" id="h0-3-23" class="i">+source = &quot;registry+https://github.com/rust-lang/crates.io-index&quot;
+</a><a href="#h0-3-24" id="h0-3-24" class="i">+dependencies = [
+</a><a href="#h0-3-25" id="h0-3-25" class="i">+ &quot;ansi_term 0.11.0 (registry+https://github.com/rust-lang/crates.io-index)&quot;,
+</a><a href="#h0-3-26" id="h0-3-26" class="i">+ &quot;ctor 0.1.13 (registry+https://github.com/rust-lang/crates.io-index)&quot;,
+</a><a href="#h0-3-27" id="h0-3-27" class="i">+ &quot;difference 2.0.0 (registry+https://github.com/rust-lang/crates.io-index)&quot;,
+</a><a href="#h0-3-28" id="h0-3-28" class="i">+ &quot;output_vt100 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)&quot;,
+</a><a href="#h0-3-29" id="h0-3-29" class="i">+]
+</a><a href="#h0-3-30" id="h0-3-30" class="i">+
+</a><a href="#h0-3-31" id="h0-3-31" class="i">+[[package]]
+</a> name = &quot;proc-macro2&quot;
+ version = &quot;1.0.9&quot;
+ source = &quot;registry+https://github.com/rust-lang/crates.io-index&quot;
+<a href="#h0-4" id="h0-4" class="h">@@ -1046,6 +1096,26 @@ dependencies = [
+</a> ]
+ 
+ [[package]]
+<a href="#h0-4-3" id="h0-4-3" class="i">+name = &quot;serial_test&quot;
+</a><a href="#h0-4-4" id="h0-4-4" class="i">+version = &quot;0.4.0&quot;
+</a><a href="#h0-4-5" id="h0-4-5" class="i">+source = &quot;registry+https://github.com/rust-lang/crates.io-index&quot;
+</a><a href="#h0-4-6" id="h0-4-6" class="i">+dependencies = [
+</a><a href="#h0-4-7" id="h0-4-7" class="i">+ &quot;lazy_static 1.4.0 (registry+https://github.com/rust-lang/crates.io-index)&quot;,
+</a><a href="#h0-4-8" id="h0-4-8" class="i">+ &quot;parking_lot 0.10.0 (registry+https://github.com/rust-lang/crates.io-index)&quot;,
+</a><a href="#h0-4-9" id="h0-4-9" class="i">+ &quot;serial_test_derive 0.4.0 (registry+https://github.com/rust-lang/crates.io-index)&quot;,
+</a><a href="#h0-4-10" id="h0-4-10" class="i">+]
+</a><a href="#h0-4-11" id="h0-4-11" class="i">+
+</a><a href="#h0-4-12" id="h0-4-12" class="i">+[[package]]
+</a><a href="#h0-4-13" id="h0-4-13" class="i">+name = &quot;serial_test_derive&quot;
+</a><a href="#h0-4-14" id="h0-4-14" class="i">+version = &quot;0.4.0&quot;
+</a><a href="#h0-4-15" id="h0-4-15" class="i">+source = &quot;registry+https://github.com/rust-lang/crates.io-index&quot;
+</a><a href="#h0-4-16" id="h0-4-16" class="i">+dependencies = [
+</a><a href="#h0-4-17" id="h0-4-17" class="i">+ &quot;proc-macro2 1.0.9 (registry+https://github.com/rust-lang/crates.io-index)&quot;,
+</a><a href="#h0-4-18" id="h0-4-18" class="i">+ &quot;quote 1.0.3 (registry+https://github.com/rust-lang/crates.io-index)&quot;,
+</a><a href="#h0-4-19" id="h0-4-19" class="i">+ &quot;syn 1.0.17 (registry+https://github.com/rust-lang/crates.io-index)&quot;,
+</a><a href="#h0-4-20" id="h0-4-20" class="i">+]
+</a><a href="#h0-4-21" id="h0-4-21" class="i">+
+</a><a href="#h0-4-22" id="h0-4-22" class="i">+[[package]]
+</a> name = &quot;simplelog&quot;
+ version = &quot;0.7.4&quot;
+ source = &quot;registry+https://github.com/rust-lang/crates.io-index&quot;
+<a href="#h0-5" id="h0-5" class="h">@@ -1074,6 +1144,11 @@ dependencies = [
+</a> ]
+ 
+ [[package]]
+<a href="#h0-5-3" id="h0-5-3" class="i">+name = &quot;smallvec&quot;
+</a><a href="#h0-5-4" id="h0-5-4" class="i">+version = &quot;1.3.0&quot;
+</a><a href="#h0-5-5" id="h0-5-5" class="i">+source = &quot;registry+https://github.com/rust-lang/crates.io-index&quot;
+</a><a href="#h0-5-6" id="h0-5-6" class="i">+
+</a><a href="#h0-5-7" id="h0-5-7" class="i">+[[package]]
+</a> name = &quot;stable_deref_trait&quot;
+ version = &quot;1.1.1&quot;
+ source = &quot;registry+https://github.com/rust-lang/crates.io-index&quot;
+<a href="#h0-6" id="h0-6" class="h">@@ -1412,15 +1487,19 @@ dependencies = [
+</a>  &quot;lazy_static 1.4.0 (registry+https://github.com/rust-lang/crates.io-index)&quot;,
+  &quot;log 0.4.8 (registry+https://github.com/rust-lang/crates.io-index)&quot;,
+  &quot;names 0.9.0 (registry+https://github.com/rust-lang/crates.io-index)&quot;,
+<a href="#h0-6-3" id="h0-6-3" class="i">+ &quot;pretty_assertions 0.6.1 (registry+https://github.com/rust-lang/crates.io-index)&quot;,
+</a>  &quot;protobuf 2.8.2 (registry+https://github.com/rust-lang/crates.io-index)&quot;,
+  &quot;protoc-rust-grpc 0.6.2 (registry+https://github.com/rust-lang/crates.io-index)&quot;,
+  &quot;rand 0.7.3 (registry+https://github.com/rust-lang/crates.io-index)&quot;,
+  &quot;regex 1.3.5 (registry+https://github.com/rust-lang/crates.io-index)&quot;,
+  &quot;rmp-serde 0.14.3 (registry+https://github.com/rust-lang/crates.io-index)&quot;,
+  &quot;rustyline 5.0.6 (registry+https://github.com/rust-lang/crates.io-index)&quot;,
+<a href="#h0-6-10" id="h0-6-10" class="i">+ &quot;scopeguard 1.1.0 (registry+https://github.com/rust-lang/crates.io-index)&quot;,
+</a>  &quot;serde 1.0.105 (registry+https://github.com/rust-lang/crates.io-index)&quot;,
+  &quot;serde_derive 1.0.105 (registry+https://github.com/rust-lang/crates.io-index)&quot;,
+<a href="#h0-6-13" id="h0-6-13" class="i">+ &quot;serial_test 0.4.0 (registry+https://github.com/rust-lang/crates.io-index)&quot;,
+</a>  &quot;simplelog 0.7.4 (registry+https://github.com/rust-lang/crates.io-index)&quot;,
+<a href="#h0-6-15" id="h0-6-15" class="i">+ &quot;tempdir 0.3.7 (registry+https://github.com/rust-lang/crates.io-index)&quot;,
+</a>  &quot;tempfile 3.1.0 (registry+https://github.com/rust-lang/crates.io-index)&quot;,
+  &quot;uuid 0.8.1 (registry+https://github.com/rust-lang/crates.io-index)&quot;,
+ ]
+<a href="#h0-7" id="h0-7" class="h">@@ -1562,6 +1641,7 @@ dependencies = [
+</a> &quot;checksum crossbeam-utils 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)&quot; = &quot;677d453a17e8bd2b913fa38e8b9cf04bcdbb5be790aa294f2389661d72036015&quot;
+ &quot;checksum crossbeam-utils 0.6.6 (registry+https://github.com/rust-lang/crates.io-index)&quot; = &quot;04973fa96e96579258a5091af6003abde64af786b860f18622b82e026cca60e6&quot;
+ &quot;checksum crossbeam-utils 0.7.2 (registry+https://github.com/rust-lang/crates.io-index)&quot; = &quot;c3c7c73a2d1e9fc0886a08b93e98eb643461230d5f1925e4036204d5f2e261a8&quot;
+<a href="#h0-7-3" id="h0-7-3" class="i">+&quot;checksum ctor 0.1.13 (registry+https://github.com/rust-lang/crates.io-index)&quot; = &quot;47c5e5ac752e18207b12e16b10631ae5f7f68f8805f335f9b817ead83d9ffce1&quot;
+</a> &quot;checksum difference 2.0.0 (registry+https://github.com/rust-lang/crates.io-index)&quot; = &quot;524cbf6897b527295dff137cec09ecf3a05f4fddffd7dfcd1585403449e74198&quot;
+ &quot;checksum dirs 2.0.2 (registry+https://github.com/rust-lang/crates.io-index)&quot; = &quot;13aea89a5c93364a98e9b37b2fa237effbb694d5cfe01c5b70941f7eb087d5e3&quot;
+ &quot;checksum dirs-sys 0.3.4 (registry+https://github.com/rust-lang/crates.io-index)&quot; = &quot;afa0b23de8fd801745c471deffa6e12d248f962c9fd4b4c33787b055599bde7b&quot;
+<a href="#h0-8" id="h0-8" class="h">@@ -1605,12 +1685,16 @@ dependencies = [
+</a> &quot;checksum num-traits 0.1.43 (registry+https://github.com/rust-lang/crates.io-index)&quot; = &quot;92e5113e9fd4cc14ded8e499429f396a20f98c772a47cc8622a736e1ec843c31&quot;
+ &quot;checksum num-traits 0.2.11 (registry+https://github.com/rust-lang/crates.io-index)&quot; = &quot;c62be47e61d1842b9170f0fdeec8eba98e60e90e5446449a0545e5152acd7096&quot;
+ &quot;checksum num_cpus 1.12.0 (registry+https://github.com/rust-lang/crates.io-index)&quot; = &quot;46203554f085ff89c235cd12f7075f3233af9b11ed7c9e16dfe2560d03313ce6&quot;
+<a href="#h0-8-3" id="h0-8-3" class="i">+&quot;checksum output_vt100 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)&quot; = &quot;53cdc5b785b7a58c5aad8216b3dfa114df64b0b06ae6e1501cef91df2fbdf8f9&quot;
+</a> &quot;checksum owning_ref 0.4.1 (registry+https://github.com/rust-lang/crates.io-index)&quot; = &quot;6ff55baddef9e4ad00f88b6c743a2a8062d4c6ade126c2a528644b8e444d52ce&quot;
+<a href="#h0-8-5" id="h0-8-5" class="i">+&quot;checksum parking_lot 0.10.0 (registry+https://github.com/rust-lang/crates.io-index)&quot; = &quot;92e98c49ab0b7ce5b222f2cc9193fc4efe11c6d0bd4f648e374684a6857b1cfc&quot;
+</a> &quot;checksum parking_lot 0.6.4 (registry+https://github.com/rust-lang/crates.io-index)&quot; = &quot;f0802bff09003b291ba756dc7e79313e51cc31667e94afbe847def490424cde5&quot;
+ &quot;checksum parking_lot 0.9.0 (registry+https://github.com/rust-lang/crates.io-index)&quot; = &quot;f842b1982eb6c2fe34036a4fbfb06dd185a3f5c8edfaacdf7d1ea10b07de6252&quot;
+ &quot;checksum parking_lot_core 0.3.1 (registry+https://github.com/rust-lang/crates.io-index)&quot; = &quot;ad7f7e6ebdc79edff6fdcb87a55b620174f7a989e3eb31b65231f4af57f00b8c&quot;
+ &quot;checksum parking_lot_core 0.6.2 (registry+https://github.com/rust-lang/crates.io-index)&quot; = &quot;b876b1b9e7ac6e1a74a6da34d25c42e17e8862aa409cbbbdcfc8d86c6f3bc62b&quot;
+<a href="#h0-8-10" id="h0-8-10" class="i">+&quot;checksum parking_lot_core 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)&quot; = &quot;7582838484df45743c8434fbff785e8edf260c28748353d44bc0da32e0ceabf1&quot;
+</a> &quot;checksum ppv-lite86 0.2.6 (registry+https://github.com/rust-lang/crates.io-index)&quot; = &quot;74490b50b9fbe561ac330df47c08f3f33073d2d00c150f719147d7c54522fa1b&quot;
+<a href="#h0-8-12" id="h0-8-12" class="i">+&quot;checksum pretty_assertions 0.6.1 (registry+https://github.com/rust-lang/crates.io-index)&quot; = &quot;3f81e1644e1b54f5a68959a29aa86cde704219254669da328ecfdf6a1f09d427&quot;
+</a> &quot;checksum proc-macro2 1.0.9 (registry+https://github.com/rust-lang/crates.io-index)&quot; = &quot;6c09721c6781493a2a492a96b5a5bf19b65917fe6728884e7c44dd0c60ca3435&quot;
+ &quot;checksum protobuf 2.8.2 (registry+https://github.com/rust-lang/crates.io-index)&quot; = &quot;70731852eec72c56d11226c8a5f96ad5058a3dab73647ca5f7ee351e464f2571&quot;
+ &quot;checksum protobuf-codegen 2.8.2 (registry+https://github.com/rust-lang/crates.io-index)&quot; = &quot;3d74b9cbbf2ac9a7169c85a3714ec16c51ee9ec7cfd511549527e9a7df720795&quot;
+<a href="#h0-9" id="h0-9" class="h">@@ -1652,10 +1736,13 @@ dependencies = [
+</a> &quot;checksum serde_derive 1.0.105 (registry+https://github.com/rust-lang/crates.io-index)&quot; = &quot;ac5d00fc561ba2724df6758a17de23df5914f20e41cb00f94d5b7ae42fffaff8&quot;
+ &quot;checksum serde_json 1.0.48 (registry+https://github.com/rust-lang/crates.io-index)&quot; = &quot;9371ade75d4c2d6cb154141b9752cf3781ec9c05e0e5cf35060e1e70ee7b9c25&quot;
+ &quot;checksum serde_test 0.8.23 (registry+https://github.com/rust-lang/crates.io-index)&quot; = &quot;110b3dbdf8607ec493c22d5d947753282f3bae73c0f56d322af1e8c78e4c23d5&quot;
+<a href="#h0-9-3" id="h0-9-3" class="i">+&quot;checksum serial_test 0.4.0 (registry+https://github.com/rust-lang/crates.io-index)&quot; = &quot;fef5f7c7434b2f2c598adc6f9494648a1e41274a75c0ba4056f680ae0c117fd6&quot;
+</a><a href="#h0-9-4" id="h0-9-4" class="i">+&quot;checksum serial_test_derive 0.4.0 (registry+https://github.com/rust-lang/crates.io-index)&quot; = &quot;d08338d8024b227c62bd68a12c7c9883f5c66780abaef15c550dc56f46ee6515&quot;
+</a> &quot;checksum simplelog 0.7.4 (registry+https://github.com/rust-lang/crates.io-index)&quot; = &quot;05a3e303ace6adb0a60a9e9e2fbc6a33e1749d1e43587e2125f7efa9c5e107c5&quot;
+ &quot;checksum slab 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)&quot; = &quot;17b4fcaed89ab08ef143da37bc52adbcc04d4a69014f4c1208d6b51f0c47bc23&quot;
+ &quot;checksum slab 0.4.2 (registry+https://github.com/rust-lang/crates.io-index)&quot; = &quot;c111b5bd5695e56cffe5129854aa230b39c93a305372fdbb2668ca2394eea9f8&quot;
+ &quot;checksum smallvec 0.6.13 (registry+https://github.com/rust-lang/crates.io-index)&quot; = &quot;f7b0758c52e15a8b5e3691eae6cc559f08eee9406e548a4477ba4e67770a82b6&quot;
+<a href="#h0-9-9" id="h0-9-9" class="i">+&quot;checksum smallvec 1.3.0 (registry+https://github.com/rust-lang/crates.io-index)&quot; = &quot;05720e22615919e4734f6a99ceae50d00226c3c5aca406e102ebc33298214e0a&quot;
+</a> &quot;checksum stable_deref_trait 1.1.1 (registry+https://github.com/rust-lang/crates.io-index)&quot; = &quot;dba1a27d3efae4351c8051072d619e3ade2820635c3958d826bfea39d59b54c8&quot;
+ &quot;checksum strsim 0.8.0 (registry+https://github.com/rust-lang/crates.io-index)&quot; = &quot;8ea5119cdb4c55b55d432abb513a0429384878c15dde60cc77b1c99de1a95a6a&quot;
+ &quot;checksum syn 1.0.17 (registry+https://github.com/rust-lang/crates.io-index)&quot; = &quot;0df0eb663f387145cab623dea85b09c2c5b4b0aef44e945d928e682fce71bb03&quot;
+<b>diff --git a/<a id="h1" href="../file/Cargo.toml.html">Cargo.toml</a> b/<a href="../file/Cargo.toml.html">Cargo.toml</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -34,4 +34,8 @@ protoc-rust-grpc = &quot;~0.6.1&quot;
+</a> [dev-dependencies]
+ assert_matches = &quot;~1.3.0&quot;
+ goldenfile = &quot;~1.1.0&quot;
+<a href="#h1-0-3" id="h1-0-3" class="d">-tempfile = &quot;~3.1.0&quot;
+</a><a href="#h1-0-4" id="h1-0-4" class="d">-\ No newline at end of file
+</a><a href="#h1-0-5" id="h1-0-5" class="i">+pretty_assertions = &quot;0.6.1&quot;
+</a><a href="#h1-0-6" id="h1-0-6" class="i">+tempdir = &quot;~0.3.7&quot;
+</a><a href="#h1-0-7" id="h1-0-7" class="i">+tempfile = &quot;~3.1.0&quot;
+</a><a href="#h1-0-8" id="h1-0-8" class="i">+scopeguard = &quot;~1.1.0&quot;
+</a><a href="#h1-0-9" id="h1-0-9" class="i">+serial_test = &quot;~0.4.0&quot;
+</a><a href="#h1-0-10" id="h1-0-10" class="i">+\ No newline at end of file
+</a><b>diff --git a/<a id="h2" href="../file/protobuf/toydb.proto.html">protobuf/toydb.proto</a> b/<a href="../file/protobuf/toydb.proto.html">protobuf/toydb.proto</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -1,31 +1,22 @@
+</a> syntax = &quot;proto3&quot;;
+ 
+<a href="#h2-0-2" id="h2-0-2" class="d">-// The main ToyDB service used by ToyDB clients.
+</a><a href="#h2-0-3" id="h2-0-3" class="i">+// The main ToyDB service used by ToyDB clients. Passes byte buffers since we&#39;ll be
+</a><a href="#h2-0-4" id="h2-0-4" class="i">+// transitioning away from Protobuf and gRPC for client/server communication.
+</a> service ToyDB {
+<a href="#h2-0-6" id="h2-0-6" class="d">-  // GetTable fetches the schema for a table
+</a><a href="#h2-0-7" id="h2-0-7" class="d">-  rpc GetTable(GetTableRequest) returns (GetTableResponse) {};
+</a><a href="#h2-0-8" id="h2-0-8" class="d">-
+</a><a href="#h2-0-9" id="h2-0-9" class="d">-  // ListTables lists the database tables
+</a><a href="#h2-0-10" id="h2-0-10" class="d">-  rpc ListTables(Empty) returns (ListTablesResponse) {};
+</a><a href="#h2-0-11" id="h2-0-11" class="d">-
+</a><a href="#h2-0-12" id="h2-0-12" class="d">-  // Status asks the server for its status.
+</a><a href="#h2-0-13" id="h2-0-13" class="d">-  rpc Status(StatusRequest) returns (StatusResponse) {};
+</a><a href="#h2-0-14" id="h2-0-14" class="d">-
+</a><a href="#h2-0-15" id="h2-0-15" class="d">-  // Query runs an SQL query.
+</a><a href="#h2-0-16" id="h2-0-16" class="i">+  rpc Call(Request) returns (Result) {};
+</a>   rpc Query(QueryRequest) returns (stream Row) {};
+ };
+ 
+<a href="#h2-0-20" id="h2-0-20" class="d">-message Empty {}
+</a><a href="#h2-0-21" id="h2-0-21" class="d">-
+</a> message Error { string message = 1; }
+ 
+<a href="#h2-0-24" id="h2-0-24" class="d">-message StatusRequest {};
+</a><a href="#h2-0-25" id="h2-0-25" class="i">+message Request {
+</a><a href="#h2-0-26" id="h2-0-26" class="i">+  bytes body = 1;
+</a><a href="#h2-0-27" id="h2-0-27" class="i">+}
+</a> 
+<a href="#h2-0-29" id="h2-0-29" class="d">-message StatusResponse {
+</a><a href="#h2-0-30" id="h2-0-30" class="d">-  Error error = 1;
+</a><a href="#h2-0-31" id="h2-0-31" class="d">-  string id = 2;
+</a><a href="#h2-0-32" id="h2-0-32" class="d">-  string version = 3;
+</a><a href="#h2-0-33" id="h2-0-33" class="d">-};
+</a><a href="#h2-0-34" id="h2-0-34" class="i">+message Result {
+</a><a href="#h2-0-35" id="h2-0-35" class="i">+  bytes ok = 1;
+</a><a href="#h2-0-36" id="h2-0-36" class="i">+  bytes err = 2;
+</a><a href="#h2-0-37" id="h2-0-37" class="i">+}
+</a> 
+ message QueryRequest {
+   string query = 1;
+<a href="#h2-1" id="h2-1" class="h">@@ -45,17 +36,3 @@ message Field {
+</a>     string string = 4;
+   };
+ }
+<a href="#h2-1-3" id="h2-1-3" class="d">-
+</a><a href="#h2-1-4" id="h2-1-4" class="d">-message GetTableRequest { string name = 1; }
+</a><a href="#h2-1-5" id="h2-1-5" class="d">-
+</a><a href="#h2-1-6" id="h2-1-6" class="d">-// FIXME We currently just return the CREATE TABLE query for the table,
+</a><a href="#h2-1-7" id="h2-1-7" class="d">-// to avoid having to map the entire schema data structure to Protobuf.
+</a><a href="#h2-1-8" id="h2-1-8" class="d">-message GetTableResponse {
+</a><a href="#h2-1-9" id="h2-1-9" class="d">-  Error error = 1;
+</a><a href="#h2-1-10" id="h2-1-10" class="d">-  string sql = 2;
+</a><a href="#h2-1-11" id="h2-1-11" class="d">-}
+</a><a href="#h2-1-12" id="h2-1-12" class="d">-
+</a><a href="#h2-1-13" id="h2-1-13" class="d">-message ListTablesResponse {
+</a><a href="#h2-1-14" id="h2-1-14" class="d">-  Error error = 1;
+</a><a href="#h2-1-15" id="h2-1-15" class="d">-  repeated string name = 2;
+</a><a href="#h2-1-16" id="h2-1-16" class="d">-}
+</a><a href="#h2-1-17" id="h2-1-17" class="d">-\ No newline at end of file
+</a><b>diff --git a/<a id="h3" href="../file/src/bin/toysql.rs.html">src/bin/toysql.rs</a> b/<a href="../file/src/bin/toysql.rs.html">src/bin/toysql.rs</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -122,7 +122,7 @@ Semicolons are not supported. The following !-commands are also available:
+</a>             ),
+             &quot;!table&quot; =&gt; {
+                 let args = getargs(1)?;
+<a href="#h3-0-3" id="h3-0-3" class="d">-                println!(&quot;{}&quot;, self.client.get_table(args[0])?);
+</a><a href="#h3-0-4" id="h3-0-4" class="i">+                println!(&quot;{}&quot;, self.client.get_table(args[0])?.as_sql());
+</a>             }
+             &quot;!tables&quot; =&gt; {
+                 getargs(0)?;
+<b>diff --git a/<a id="h4" href="../file/src/client.rs.html">src/client.rs</a> b/<a href="../file/src/client.rs.html">src/client.rs</a></b>
+<a href="#h4-0" id="h4-0" class="h">@@ -1,6 +1,10 @@
+</a><a href="#h4-0-0" id="h4-0-0" class="i">+pub use crate::server::Status;
+</a><a href="#h4-0-1" id="h4-0-1" class="i">+use crate::server::{Request, Response};
+</a> use crate::service;
+<a href="#h4-0-3" id="h4-0-3" class="d">-pub use crate::sql::{Effect, Mode, ResultColumns, ResultSet, Row, Value};
+</a><a href="#h4-0-4" id="h4-0-4" class="d">-use crate::utility::deserialize;
+</a><a href="#h4-0-5" id="h4-0-5" class="i">+pub use crate::sql::types::schema::Column;
+</a><a href="#h4-0-6" id="h4-0-6" class="i">+pub use crate::sql::types::DataType;
+</a><a href="#h4-0-7" id="h4-0-7" class="i">+pub use crate::sql::{Effect, Mode, ResultColumns, ResultSet, Row, Table, Value};
+</a><a href="#h4-0-8" id="h4-0-8" class="i">+use crate::utility::{deserialize, serialize};
+</a> use crate::Error;
+ use grpc::ClientStubExt;
+ use service::ToyDB;
+<a href="#h4-1" id="h4-1" class="h">@@ -20,25 +24,36 @@ impl Client {
+</a>         })
+     }
+ 
+<a href="#h4-1-3" id="h4-1-3" class="d">-    /// Fetches the table schema as SQL
+</a><a href="#h4-1-4" id="h4-1-4" class="d">-    pub fn get_table(&amp;self, table: &amp;str) -&gt; Result&lt;String, Error&gt; {
+</a><a href="#h4-1-5" id="h4-1-5" class="i">+    /// Call a server method
+</a><a href="#h4-1-6" id="h4-1-6" class="i">+    fn call(&amp;self, req: Request) -&gt; Result&lt;Response, Error&gt; {
+</a>         let (_, resp, _) = self
+             .client
+<a href="#h4-1-9" id="h4-1-9" class="d">-            .get_table(
+</a><a href="#h4-1-10" id="h4-1-10" class="i">+            .call(
+</a>                 grpc::RequestOptions::new(),
+<a href="#h4-1-12" id="h4-1-12" class="d">-                service::GetTableRequest { name: table.to_string(), ..Default::default() },
+</a><a href="#h4-1-13" id="h4-1-13" class="i">+                service::Request { body: serialize(&amp;req)?, ..Default::default() },
+</a>             )
+             .wait()?;
+<a href="#h4-1-16" id="h4-1-16" class="d">-        error_from_protobuf(resp.error)?;
+</a><a href="#h4-1-17" id="h4-1-17" class="d">-        Ok(resp.sql)
+</a><a href="#h4-1-18" id="h4-1-18" class="i">+        if !resp.err.is_empty() {
+</a><a href="#h4-1-19" id="h4-1-19" class="i">+            Err(deserialize(&amp;resp.err)?)
+</a><a href="#h4-1-20" id="h4-1-20" class="i">+        } else {
+</a><a href="#h4-1-21" id="h4-1-21" class="i">+            Ok(deserialize(&amp;resp.ok)?)
+</a><a href="#h4-1-22" id="h4-1-22" class="i">+        }
+</a><a href="#h4-1-23" id="h4-1-23" class="i">+    }
+</a><a href="#h4-1-24" id="h4-1-24" class="i">+
+</a><a href="#h4-1-25" id="h4-1-25" class="i">+    /// Fetches the table schema as SQL
+</a><a href="#h4-1-26" id="h4-1-26" class="i">+    pub fn get_table(&amp;self, table: &amp;str) -&gt; Result&lt;Table, Error&gt; {
+</a><a href="#h4-1-27" id="h4-1-27" class="i">+        match self.call(Request::GetTable(table.into()))? {
+</a><a href="#h4-1-28" id="h4-1-28" class="i">+            Response::GetTable(t) =&gt; Ok(t),
+</a><a href="#h4-1-29" id="h4-1-29" class="i">+            resp =&gt; Err(Error::Value(format!(&quot;Unexpected response: {:?}&quot;, resp))),
+</a><a href="#h4-1-30" id="h4-1-30" class="i">+        }
+</a>     }
+ 
+     /// Lists database tables
+     pub fn list_tables(&amp;self) -&gt; Result&lt;Vec&lt;String&gt;, Error&gt; {
+<a href="#h4-1-35" id="h4-1-35" class="d">-        let (_, resp, _) =
+</a><a href="#h4-1-36" id="h4-1-36" class="d">-            self.client.list_tables(grpc::RequestOptions::new(), service::Empty::new()).wait()?;
+</a><a href="#h4-1-37" id="h4-1-37" class="d">-        error_from_protobuf(resp.error)?;
+</a><a href="#h4-1-38" id="h4-1-38" class="d">-        Ok(resp.name.to_vec())
+</a><a href="#h4-1-39" id="h4-1-39" class="i">+        match self.call(Request::ListTables)? {
+</a><a href="#h4-1-40" id="h4-1-40" class="i">+            Response::ListTables(t) =&gt; Ok(t),
+</a><a href="#h4-1-41" id="h4-1-41" class="i">+            resp =&gt; Err(Error::Value(format!(&quot;Unexpected response: {:?}&quot;, resp))),
+</a><a href="#h4-1-42" id="h4-1-42" class="i">+        }
+</a>     }
+ 
+     /// Returns the client transaction info, if any
+<a href="#h4-2" id="h4-2" class="h">@@ -74,20 +89,13 @@ impl Client {
+</a> 
+     /// Checks server status
+     pub fn status(&amp;self) -&gt; Result&lt;Status, Error&gt; {
+<a href="#h4-2-3" id="h4-2-3" class="d">-        let (_, resp, _) = self
+</a><a href="#h4-2-4" id="h4-2-4" class="d">-            .client
+</a><a href="#h4-2-5" id="h4-2-5" class="d">-            .status(grpc::RequestOptions::new(), service::StatusRequest::new())
+</a><a href="#h4-2-6" id="h4-2-6" class="d">-            .wait()?;
+</a><a href="#h4-2-7" id="h4-2-7" class="d">-        Ok(Status { id: resp.id, version: resp.version })
+</a><a href="#h4-2-8" id="h4-2-8" class="i">+        match self.call(Request::Status)? {
+</a><a href="#h4-2-9" id="h4-2-9" class="i">+            Response::Status(s) =&gt; Ok(s),
+</a><a href="#h4-2-10" id="h4-2-10" class="i">+            resp =&gt; Err(Error::Value(format!(&quot;Unexpected response: {:?}&quot;, resp))),
+</a><a href="#h4-2-11" id="h4-2-11" class="i">+        }
+</a>     }
+ }
+ 
+<a href="#h4-2-15" id="h4-2-15" class="d">-/// Server status
+</a><a href="#h4-2-16" id="h4-2-16" class="d">-pub struct Status {
+</a><a href="#h4-2-17" id="h4-2-17" class="d">-    pub id: String,
+</a><a href="#h4-2-18" id="h4-2-18" class="d">-    pub version: String,
+</a><a href="#h4-2-19" id="h4-2-19" class="d">-}
+</a><a href="#h4-2-20" id="h4-2-20" class="d">-
+</a> /// Converts a protobuf error into a toyDB error
+ fn error_from_protobuf(err: protobuf::SingularPtrField&lt;service::Error&gt;) -&gt; Result&lt;(), Error&gt; {
+     match err.into_option() {
+<b>diff --git a/<a id="h5" href="../file/src/error.rs.html">src/error.rs</a> b/<a href="../file/src/error.rs.html">src/error.rs</a></b>
+<a href="#h5-0" id="h5-0" class="h">@@ -1,5 +1,5 @@
+</a> /// Errors, all except Internal are considered user-facing
+<a href="#h5-0-1" id="h5-0-1" class="d">-#[derive(Clone, Debug, PartialEq)]
+</a><a href="#h5-0-2" id="h5-0-2" class="i">+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+</a> pub enum Error {
+     Config(String),
+     Internal(String),
+<b>diff --git a/<a id="h6" href="../file/src/server/mod.rs.html">src/server/mod.rs</a> b/<a href="../file/src/server/mod.rs.html">src/server/mod.rs</a></b>
+<a href="#h6-0" id="h6-0" class="h">@@ -1,6 +1,8 @@
+</a> mod raft;
+ mod toydb;
+ 
+<a href="#h6-0-3" id="h6-0-3" class="i">+pub use self::toydb::{Request, Response, Status};
+</a><a href="#h6-0-4" id="h6-0-4" class="i">+
+</a> use self::toydb::ToyDB;
+ use crate::error::Error;
+ use crate::kv;
+<b>diff --git a/<a id="h7" href="../file/src/server/toydb.rs.html">src/server/toydb.rs</a> b/<a href="../file/src/server/toydb.rs.html">src/server/toydb.rs</a></b>
+<a href="#h7-0" id="h7-0" class="h">@@ -2,10 +2,30 @@ use crate::raft::Raft;
+</a> use crate::service;
+ use crate::sql;
+ use crate::sql::types::{Row, Value};
+<a href="#h7-0-3" id="h7-0-3" class="d">-use crate::utility::serialize;
+</a><a href="#h7-0-4" id="h7-0-4" class="i">+use crate::utility::{deserialize, serialize};
+</a> use crate::Error;
+ use sql::engine::{Engine, Transaction};
+ 
+<a href="#h7-0-8" id="h7-0-8" class="i">+#[derive(Clone, Debug, Serialize, Deserialize)]
+</a><a href="#h7-0-9" id="h7-0-9" class="i">+pub enum Request {
+</a><a href="#h7-0-10" id="h7-0-10" class="i">+    GetTable(String),
+</a><a href="#h7-0-11" id="h7-0-11" class="i">+    ListTables,
+</a><a href="#h7-0-12" id="h7-0-12" class="i">+    Status,
+</a><a href="#h7-0-13" id="h7-0-13" class="i">+}
+</a><a href="#h7-0-14" id="h7-0-14" class="i">+
+</a><a href="#h7-0-15" id="h7-0-15" class="i">+#[derive(Clone, Debug, Serialize, Deserialize)]
+</a><a href="#h7-0-16" id="h7-0-16" class="i">+pub enum Response {
+</a><a href="#h7-0-17" id="h7-0-17" class="i">+    GetTable(sql::Table),
+</a><a href="#h7-0-18" id="h7-0-18" class="i">+    ListTables(Vec&lt;String&gt;),
+</a><a href="#h7-0-19" id="h7-0-19" class="i">+    Status(Status),
+</a><a href="#h7-0-20" id="h7-0-20" class="i">+}
+</a><a href="#h7-0-21" id="h7-0-21" class="i">+
+</a><a href="#h7-0-22" id="h7-0-22" class="i">+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+</a><a href="#h7-0-23" id="h7-0-23" class="i">+pub struct Status {
+</a><a href="#h7-0-24" id="h7-0-24" class="i">+    pub id: String,
+</a><a href="#h7-0-25" id="h7-0-25" class="i">+    pub version: String,
+</a><a href="#h7-0-26" id="h7-0-26" class="i">+}
+</a><a href="#h7-0-27" id="h7-0-27" class="i">+
+</a> pub struct ToyDB {
+     pub id: String,
+     pub raft: Raft,
+<a href="#h7-1" id="h7-1" class="h">@@ -13,41 +33,25 @@ pub struct ToyDB {
+</a> }
+ 
+ impl service::ToyDB for ToyDB {
+<a href="#h7-1-3" id="h7-1-3" class="d">-    fn get_table(
+</a><a href="#h7-1-4" id="h7-1-4" class="i">+    fn call(
+</a>         &amp;self,
+         _: grpc::RequestOptions,
+<a href="#h7-1-7" id="h7-1-7" class="d">-        req: service::GetTableRequest,
+</a><a href="#h7-1-8" id="h7-1-8" class="d">-    ) -&gt; grpc::SingleResponse&lt;service::GetTableResponse&gt; {
+</a><a href="#h7-1-9" id="h7-1-9" class="d">-        let mut resp = service::GetTableResponse::new();
+</a><a href="#h7-1-10" id="h7-1-10" class="d">-        let txn = self.engine.begin().unwrap();
+</a><a href="#h7-1-11" id="h7-1-11" class="d">-        match txn.read_table(&amp;req.name) {
+</a><a href="#h7-1-12" id="h7-1-12" class="d">-            Ok(Some(schema)) =&gt; resp.sql = schema.as_sql(),
+</a><a href="#h7-1-13" id="h7-1-13" class="d">-            Ok(None) =&gt; {
+</a><a href="#h7-1-14" id="h7-1-14" class="d">-                resp.error = Self::error_to_protobuf(Error::Value(format!(
+</a><a href="#h7-1-15" id="h7-1-15" class="d">-                    &quot;Table {} does not exist&quot;,
+</a><a href="#h7-1-16" id="h7-1-16" class="d">-                    req.name
+</a><a href="#h7-1-17" id="h7-1-17" class="i">+        req: service::Request,
+</a><a href="#h7-1-18" id="h7-1-18" class="i">+    ) -&gt; grpc::SingleResponse&lt;service::Result&gt; {
+</a><a href="#h7-1-19" id="h7-1-19" class="i">+        let mut resp = service::Result::new();
+</a><a href="#h7-1-20" id="h7-1-20" class="i">+        match deserialize(&amp;req.body) {
+</a><a href="#h7-1-21" id="h7-1-21" class="i">+            Ok(req) =&gt; match self.call(req) {
+</a><a href="#h7-1-22" id="h7-1-22" class="i">+                Ok(r) =&gt; resp.ok = serialize(&amp;r).unwrap(),
+</a><a href="#h7-1-23" id="h7-1-23" class="i">+                Err(e) =&gt; resp.err = serialize(&amp;e).unwrap(),
+</a><a href="#h7-1-24" id="h7-1-24" class="i">+            },
+</a><a href="#h7-1-25" id="h7-1-25" class="i">+            Err(e) =&gt; {
+</a><a href="#h7-1-26" id="h7-1-26" class="i">+                resp.err = serialize(&amp;Error::Value(format!(
+</a><a href="#h7-1-27" id="h7-1-27" class="i">+                    &quot;Failed to deserialize request request: {}&quot;,
+</a><a href="#h7-1-28" id="h7-1-28" class="i">+                    e
+</a>                 )))
+<a href="#h7-1-30" id="h7-1-30" class="i">+                .unwrap()
+</a>             }
+<a href="#h7-1-32" id="h7-1-32" class="d">-            Err(err) =&gt; resp.error = Self::error_to_protobuf(err),
+</a><a href="#h7-1-33" id="h7-1-33" class="d">-        };
+</a><a href="#h7-1-34" id="h7-1-34" class="d">-        txn.rollback().unwrap();
+</a><a href="#h7-1-35" id="h7-1-35" class="d">-        grpc::SingleResponse::completed(resp)
+</a><a href="#h7-1-36" id="h7-1-36" class="d">-    }
+</a><a href="#h7-1-37" id="h7-1-37" class="d">-
+</a><a href="#h7-1-38" id="h7-1-38" class="d">-    fn list_tables(
+</a><a href="#h7-1-39" id="h7-1-39" class="d">-        &amp;self,
+</a><a href="#h7-1-40" id="h7-1-40" class="d">-        _: grpc::RequestOptions,
+</a><a href="#h7-1-41" id="h7-1-41" class="d">-        _: service::Empty,
+</a><a href="#h7-1-42" id="h7-1-42" class="d">-    ) -&gt; grpc::SingleResponse&lt;service::ListTablesResponse&gt; {
+</a><a href="#h7-1-43" id="h7-1-43" class="d">-        let mut resp = service::ListTablesResponse::new();
+</a><a href="#h7-1-44" id="h7-1-44" class="d">-        let txn = self.engine.begin().unwrap();
+</a><a href="#h7-1-45" id="h7-1-45" class="d">-        match txn.scan_tables() {
+</a><a href="#h7-1-46" id="h7-1-46" class="d">-            Ok(iter) =&gt; {
+</a><a href="#h7-1-47" id="h7-1-47" class="d">-                resp.name = protobuf::RepeatedField::from_vec(iter.map(|s| s.name).collect())
+</a><a href="#h7-1-48" id="h7-1-48" class="d">-            }
+</a><a href="#h7-1-49" id="h7-1-49" class="d">-            Err(err) =&gt; resp.error = Self::error_to_protobuf(err),
+</a><a href="#h7-1-50" id="h7-1-50" class="d">-        };
+</a><a href="#h7-1-51" id="h7-1-51" class="d">-        txn.rollback().unwrap();
+</a><a href="#h7-1-52" id="h7-1-52" class="i">+        }
+</a>         grpc::SingleResponse::completed(resp)
+     }
+ 
+<a href="#h7-2" id="h7-2" class="h">@@ -86,21 +90,32 @@ impl service::ToyDB for ToyDB {
+</a>             }),
+         )
+     }
+<a href="#h7-2-3" id="h7-2-3" class="i">+}
+</a> 
+<a href="#h7-2-5" id="h7-2-5" class="d">-    fn status(
+</a><a href="#h7-2-6" id="h7-2-6" class="d">-        &amp;self,
+</a><a href="#h7-2-7" id="h7-2-7" class="d">-        _: grpc::RequestOptions,
+</a><a href="#h7-2-8" id="h7-2-8" class="d">-        _: service::StatusRequest,
+</a><a href="#h7-2-9" id="h7-2-9" class="d">-    ) -&gt; grpc::SingleResponse&lt;service::StatusResponse&gt; {
+</a><a href="#h7-2-10" id="h7-2-10" class="d">-        grpc::SingleResponse::completed(service::StatusResponse {
+</a><a href="#h7-2-11" id="h7-2-11" class="d">-            id: self.id.clone(),
+</a><a href="#h7-2-12" id="h7-2-12" class="d">-            version: env!(&quot;CARGO_PKG_VERSION&quot;).into(),
+</a><a href="#h7-2-13" id="h7-2-13" class="d">-            ..Default::default()
+</a><a href="#h7-2-14" id="h7-2-14" class="i">+impl ToyDB {
+</a><a href="#h7-2-15" id="h7-2-15" class="i">+    fn call(&amp;self, req: Request) -&gt; Result&lt;Response, Error&gt; {
+</a><a href="#h7-2-16" id="h7-2-16" class="i">+        Ok(match req {
+</a><a href="#h7-2-17" id="h7-2-17" class="i">+            Request::GetTable(table) =&gt; Response::GetTable(self.get_table(&amp;table)?),
+</a><a href="#h7-2-18" id="h7-2-18" class="i">+            Request::ListTables =&gt; Response::ListTables(self.list_tables()?),
+</a><a href="#h7-2-19" id="h7-2-19" class="i">+            Request::Status =&gt; Response::Status(Status {
+</a><a href="#h7-2-20" id="h7-2-20" class="i">+                id: self.id.clone(),
+</a><a href="#h7-2-21" id="h7-2-21" class="i">+                version: env!(&quot;CARGO_PKG_VERSION&quot;).into(),
+</a><a href="#h7-2-22" id="h7-2-22" class="i">+            }),
+</a>         })
+     }
+<a href="#h7-2-25" id="h7-2-25" class="d">-}
+</a> 
+<a href="#h7-2-27" id="h7-2-27" class="d">-impl ToyDB {
+</a><a href="#h7-2-28" id="h7-2-28" class="i">+    fn get_table(&amp;self, name: &amp;str) -&gt; Result&lt;sql::Table, Error&gt; {
+</a><a href="#h7-2-29" id="h7-2-29" class="i">+        self.engine.with_txn(sql::Mode::ReadOnly, |txn| match txn.read_table(name)? {
+</a><a href="#h7-2-30" id="h7-2-30" class="i">+            Some(t) =&gt; Ok(t),
+</a><a href="#h7-2-31" id="h7-2-31" class="i">+            None =&gt; Err(Error::Value(format!(&quot;Table {} does not exist&quot;, name))),
+</a><a href="#h7-2-32" id="h7-2-32" class="i">+        })
+</a><a href="#h7-2-33" id="h7-2-33" class="i">+    }
+</a><a href="#h7-2-34" id="h7-2-34" class="i">+
+</a><a href="#h7-2-35" id="h7-2-35" class="i">+    fn list_tables(&amp;self) -&gt; Result&lt;Vec&lt;String&gt;, Error&gt; {
+</a><a href="#h7-2-36" id="h7-2-36" class="i">+        self.engine
+</a><a href="#h7-2-37" id="h7-2-37" class="i">+            .with_txn(sql::Mode::ReadOnly, |txn| Ok(txn.scan_tables()?.map(|t| t.name).collect()))
+</a><a href="#h7-2-38" id="h7-2-38" class="i">+    }
+</a><a href="#h7-2-39" id="h7-2-39" class="i">+
+</a>     /// Converts an error into a protobuf object
+     fn error_to_protobuf(err: Error) -&gt; protobuf::SingularPtrField&lt;service::Error&gt; {
+         protobuf::SingularPtrField::from(Some(service::Error {
+<b>diff --git a/<a id="h8" href="../file/src/sql/mod.rs.html">src/sql/mod.rs</a> b/<a href="../file/src/sql/mod.rs.html">src/sql/mod.rs</a></b>
+<a href="#h8-0" id="h8-0" class="h">@@ -11,4 +11,4 @@ pub use engine::{Engine, Mode, Transaction};
+</a> pub use executor::{Context, Effect, ResultColumns, ResultSet};
+ pub use parser::{ast, lexer, Parser};
+ pub use planner::Plan;
+<a href="#h8-0-3" id="h8-0-3" class="d">-pub use types::{Row, Value};
+</a><a href="#h8-0-4" id="h8-0-4" class="i">+pub use types::{schema::Table, Row, Value};
+</a><b>diff --git a/<a id="h9" href="../file/src/sql/types/schema.rs.html">src/sql/types/schema.rs</a> b/<a href="../file/src/sql/types/schema.rs.html">src/sql/types/schema.rs</a></b>
+<a href="#h9-0" id="h9-0" class="h">@@ -6,7 +6,7 @@ use crate::Error;
+</a> use std::collections::HashMap;
+ 
+ /// A table schema
+<a href="#h9-0-3" id="h9-0-3" class="d">-#[derive(Clone, Debug, Deserialize, Serialize)]
+</a><a href="#h9-0-4" id="h9-0-4" class="i">+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+</a> pub struct Table {
+     /// The table name
+     pub name: String,
+<a href="#h9-1" id="h9-1" class="h">@@ -200,7 +200,7 @@ impl Table {
+</a> }
+ 
+ /// A table column schema
+<a href="#h9-1-3" id="h9-1-3" class="d">-#[derive(Clone, Debug, Deserialize, Serialize)]
+</a><a href="#h9-1-4" id="h9-1-4" class="i">+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+</a> pub struct Column {
+     /// Column name
+     pub name: String,
+<b>diff --git a/<a id="h10" href="../file/tests/client_server.rs.html">tests/client_server.rs</a> b/<a href="../file/tests/client_server.rs.html">tests/client_server.rs</a></b>
+<a href="#h10-0" id="h10-0" class="h">@@ -0,0 +1,190 @@
+</a><a href="#h10-0-0" id="h10-0-0" class="i">+#[macro_use]
+</a><a href="#h10-0-1" id="h10-0-1" class="i">+extern crate scopeguard;
+</a><a href="#h10-0-2" id="h10-0-2" class="i">+extern crate serial_test;
+</a><a href="#h10-0-3" id="h10-0-3" class="i">+extern crate tempdir;
+</a><a href="#h10-0-4" id="h10-0-4" class="i">+extern crate toydb;
+</a><a href="#h10-0-5" id="h10-0-5" class="i">+
+</a><a href="#h10-0-6" id="h10-0-6" class="i">+use toydb::client::{Column, DataType, Status, Table, Value};
+</a><a href="#h10-0-7" id="h10-0-7" class="i">+use toydb::Error;
+</a><a href="#h10-0-8" id="h10-0-8" class="i">+
+</a><a href="#h10-0-9" id="h10-0-9" class="i">+use pretty_assertions::assert_eq;
+</a><a href="#h10-0-10" id="h10-0-10" class="i">+use serial_test::serial;
+</a><a href="#h10-0-11" id="h10-0-11" class="i">+use std::collections::HashMap;
+</a><a href="#h10-0-12" id="h10-0-12" class="i">+
+</a><a href="#h10-0-13" id="h10-0-13" class="i">+fn setup(queries: Vec&lt;&amp;str&gt;) -&gt; Result&lt;(toydb::Client, Box&lt;dyn FnOnce()&gt;), Error&gt; {
+</a><a href="#h10-0-14" id="h10-0-14" class="i">+    let data_dir = tempdir::TempDir::new(&quot;toydb&quot;)?;
+</a><a href="#h10-0-15" id="h10-0-15" class="i">+    let mut srv = toydb::Server::new(&quot;test&quot;, HashMap::new(), &amp;data_dir.path().to_string_lossy())?;
+</a><a href="#h10-0-16" id="h10-0-16" class="i">+    srv.listen(&quot;127.0.0.1:9605&quot;, 4)?;
+</a><a href="#h10-0-17" id="h10-0-17" class="i">+
+</a><a href="#h10-0-18" id="h10-0-18" class="i">+    let mut client = toydb::Client::new(&quot;127.0.0.1&quot;, 9605)?;
+</a><a href="#h10-0-19" id="h10-0-19" class="i">+    client.query(&quot;BEGIN&quot;)?;
+</a><a href="#h10-0-20" id="h10-0-20" class="i">+    for query in queries {
+</a><a href="#h10-0-21" id="h10-0-21" class="i">+        client.query(&amp;query)?;
+</a><a href="#h10-0-22" id="h10-0-22" class="i">+    }
+</a><a href="#h10-0-23" id="h10-0-23" class="i">+    client.query(&quot;COMMIT&quot;)?;
+</a><a href="#h10-0-24" id="h10-0-24" class="i">+
+</a><a href="#h10-0-25" id="h10-0-25" class="i">+    let client = toydb::Client::new(&quot;127.0.0.1&quot;, 9605)?;
+</a><a href="#h10-0-26" id="h10-0-26" class="i">+
+</a><a href="#h10-0-27" id="h10-0-27" class="i">+    Ok((
+</a><a href="#h10-0-28" id="h10-0-28" class="i">+        client,
+</a><a href="#h10-0-29" id="h10-0-29" class="i">+        Box::new(move || {
+</a><a href="#h10-0-30" id="h10-0-30" class="i">+            srv.shutdown().unwrap();
+</a><a href="#h10-0-31" id="h10-0-31" class="i">+            std::mem::drop(data_dir)
+</a><a href="#h10-0-32" id="h10-0-32" class="i">+        }),
+</a><a href="#h10-0-33" id="h10-0-33" class="i">+    ))
+</a><a href="#h10-0-34" id="h10-0-34" class="i">+}
+</a><a href="#h10-0-35" id="h10-0-35" class="i">+
+</a><a href="#h10-0-36" id="h10-0-36" class="i">+fn setup_movies() -&gt; Result&lt;(toydb::Client, Box&lt;dyn FnOnce()&gt;), Error&gt; {
+</a><a href="#h10-0-37" id="h10-0-37" class="i">+    setup(vec![
+</a><a href="#h10-0-38" id="h10-0-38" class="i">+        &quot;CREATE TABLE countries (
+</a><a href="#h10-0-39" id="h10-0-39" class="i">+            id STRING PRIMARY KEY,
+</a><a href="#h10-0-40" id="h10-0-40" class="i">+            name STRING NOT NULL
+</a><a href="#h10-0-41" id="h10-0-41" class="i">+        )&quot;,
+</a><a href="#h10-0-42" id="h10-0-42" class="i">+        &quot;INSERT INTO countries VALUES
+</a><a href="#h10-0-43" id="h10-0-43" class="i">+            (&#39;fr&#39;, &#39;France&#39;),
+</a><a href="#h10-0-44" id="h10-0-44" class="i">+            (&#39;ru&#39;, &#39;Russia&#39;),
+</a><a href="#h10-0-45" id="h10-0-45" class="i">+            (&#39;us&#39;, &#39;United States of America&#39;)&quot;,
+</a><a href="#h10-0-46" id="h10-0-46" class="i">+        &quot;CREATE TABLE genres (
+</a><a href="#h10-0-47" id="h10-0-47" class="i">+            id INTEGER PRIMARY KEY,
+</a><a href="#h10-0-48" id="h10-0-48" class="i">+            name STRING NOT NULL
+</a><a href="#h10-0-49" id="h10-0-49" class="i">+        )&quot;,
+</a><a href="#h10-0-50" id="h10-0-50" class="i">+        &quot;INSERT INTO genres VALUES
+</a><a href="#h10-0-51" id="h10-0-51" class="i">+            (1, &#39;Science Fiction&#39;),
+</a><a href="#h10-0-52" id="h10-0-52" class="i">+            (2, &#39;Action&#39;),
+</a><a href="#h10-0-53" id="h10-0-53" class="i">+            (3, &#39;Comedy&#39;)&quot;,
+</a><a href="#h10-0-54" id="h10-0-54" class="i">+        &quot;CREATE TABLE studios (
+</a><a href="#h10-0-55" id="h10-0-55" class="i">+            id INTEGER PRIMARY KEY,
+</a><a href="#h10-0-56" id="h10-0-56" class="i">+            name STRING NOT NULL,
+</a><a href="#h10-0-57" id="h10-0-57" class="i">+            country_id STRING REFERENCES countries
+</a><a href="#h10-0-58" id="h10-0-58" class="i">+        )&quot;,
+</a><a href="#h10-0-59" id="h10-0-59" class="i">+        &quot;INSERT INTO studios VALUES
+</a><a href="#h10-0-60" id="h10-0-60" class="i">+            (1, &#39;Mosfilm&#39;, &#39;ru&#39;),
+</a><a href="#h10-0-61" id="h10-0-61" class="i">+            (2, &#39;Lionsgate&#39;, &#39;us&#39;),
+</a><a href="#h10-0-62" id="h10-0-62" class="i">+            (3, &#39;StudioCanal&#39;, &#39;fr&#39;),
+</a><a href="#h10-0-63" id="h10-0-63" class="i">+            (4, &#39;Warner Bros&#39;, &#39;us&#39;)&quot;,
+</a><a href="#h10-0-64" id="h10-0-64" class="i">+        &quot;CREATE TABLE movies (
+</a><a href="#h10-0-65" id="h10-0-65" class="i">+            id INTEGER PRIMARY KEY,
+</a><a href="#h10-0-66" id="h10-0-66" class="i">+            title STRING NOT NULL,
+</a><a href="#h10-0-67" id="h10-0-67" class="i">+            studio_id INTEGER NOT NULL REFERENCES studios,
+</a><a href="#h10-0-68" id="h10-0-68" class="i">+            genre_id INTEGER NOT NULL REFERENCES genres,
+</a><a href="#h10-0-69" id="h10-0-69" class="i">+            released INTEGER NOT NULL,
+</a><a href="#h10-0-70" id="h10-0-70" class="i">+            rating FLOAT,
+</a><a href="#h10-0-71" id="h10-0-71" class="i">+            ultrahd BOOLEAN
+</a><a href="#h10-0-72" id="h10-0-72" class="i">+        )&quot;,
+</a><a href="#h10-0-73" id="h10-0-73" class="i">+        &quot;INSERT INTO movies VALUES
+</a><a href="#h10-0-74" id="h10-0-74" class="i">+            (1, &#39;Stalker&#39;, 1, 1, 1979, 8.2, NULL),
+</a><a href="#h10-0-75" id="h10-0-75" class="i">+            (2, &#39;Sicario&#39;, 2, 2, 2015, 7.6, TRUE),
+</a><a href="#h10-0-76" id="h10-0-76" class="i">+            (3, &#39;Primer&#39;, 3, 1, 2004, 6.9, NULL),
+</a><a href="#h10-0-77" id="h10-0-77" class="i">+            (4, &#39;Heat&#39;, 4, 2, 1995, 8.2, TRUE),
+</a><a href="#h10-0-78" id="h10-0-78" class="i">+            (5, &#39;The Fountain&#39;, 4, 1, 2006, 7.2, FALSE),
+</a><a href="#h10-0-79" id="h10-0-79" class="i">+            (6, &#39;Solaris&#39;, 1, 1, 1972, 8.1, NULL),
+</a><a href="#h10-0-80" id="h10-0-80" class="i">+            (7, &#39;Gravity&#39;, 4, 1, 2013, 7.7, TRUE),
+</a><a href="#h10-0-81" id="h10-0-81" class="i">+            (8, &#39;Blindspotting&#39;, 2, 3, 2018, 7.4, TRUE),
+</a><a href="#h10-0-82" id="h10-0-82" class="i">+            (9, &#39;Birdman&#39;, 4, 3, 2014, 7.7, TRUE),
+</a><a href="#h10-0-83" id="h10-0-83" class="i">+            (10, &#39;Inception&#39;, 4, 1, 2010, 8.8, TRUE)&quot;,
+</a><a href="#h10-0-84" id="h10-0-84" class="i">+    ])
+</a><a href="#h10-0-85" id="h10-0-85" class="i">+}
+</a><a href="#h10-0-86" id="h10-0-86" class="i">+
+</a><a href="#h10-0-87" id="h10-0-87" class="i">+#[test]
+</a><a href="#h10-0-88" id="h10-0-88" class="i">+#[serial]
+</a><a href="#h10-0-89" id="h10-0-89" class="i">+fn test_get_table() -&gt; Result&lt;(), Error&gt; {
+</a><a href="#h10-0-90" id="h10-0-90" class="i">+    let (c, teardown) = setup_movies()?;
+</a><a href="#h10-0-91" id="h10-0-91" class="i">+    defer!(teardown());
+</a><a href="#h10-0-92" id="h10-0-92" class="i">+
+</a><a href="#h10-0-93" id="h10-0-93" class="i">+    assert_eq!(c.get_table(&quot;unknown&quot;), Err(Error::Value(&quot;Table unknown does not exist&quot;.into())));
+</a><a href="#h10-0-94" id="h10-0-94" class="i">+    assert_eq!(
+</a><a href="#h10-0-95" id="h10-0-95" class="i">+        c.get_table(&quot;movies&quot;)?,
+</a><a href="#h10-0-96" id="h10-0-96" class="i">+        Table {
+</a><a href="#h10-0-97" id="h10-0-97" class="i">+            name: &quot;movies&quot;.into(),
+</a><a href="#h10-0-98" id="h10-0-98" class="i">+            columns: vec![
+</a><a href="#h10-0-99" id="h10-0-99" class="i">+                Column {
+</a><a href="#h10-0-100" id="h10-0-100" class="i">+                    name: &quot;id&quot;.into(),
+</a><a href="#h10-0-101" id="h10-0-101" class="i">+                    datatype: DataType::Integer,
+</a><a href="#h10-0-102" id="h10-0-102" class="i">+                    primary_key: true,
+</a><a href="#h10-0-103" id="h10-0-103" class="i">+                    nullable: false,
+</a><a href="#h10-0-104" id="h10-0-104" class="i">+                    default: None,
+</a><a href="#h10-0-105" id="h10-0-105" class="i">+                    unique: true,
+</a><a href="#h10-0-106" id="h10-0-106" class="i">+                    references: None,
+</a><a href="#h10-0-107" id="h10-0-107" class="i">+                },
+</a><a href="#h10-0-108" id="h10-0-108" class="i">+                Column {
+</a><a href="#h10-0-109" id="h10-0-109" class="i">+                    name: &quot;title&quot;.into(),
+</a><a href="#h10-0-110" id="h10-0-110" class="i">+                    datatype: DataType::String,
+</a><a href="#h10-0-111" id="h10-0-111" class="i">+                    primary_key: false,
+</a><a href="#h10-0-112" id="h10-0-112" class="i">+                    nullable: false,
+</a><a href="#h10-0-113" id="h10-0-113" class="i">+                    default: None,
+</a><a href="#h10-0-114" id="h10-0-114" class="i">+                    unique: false,
+</a><a href="#h10-0-115" id="h10-0-115" class="i">+                    references: None,
+</a><a href="#h10-0-116" id="h10-0-116" class="i">+                },
+</a><a href="#h10-0-117" id="h10-0-117" class="i">+                Column {
+</a><a href="#h10-0-118" id="h10-0-118" class="i">+                    name: &quot;studio_id&quot;.into(),
+</a><a href="#h10-0-119" id="h10-0-119" class="i">+                    datatype: DataType::Integer,
+</a><a href="#h10-0-120" id="h10-0-120" class="i">+                    primary_key: false,
+</a><a href="#h10-0-121" id="h10-0-121" class="i">+                    nullable: false,
+</a><a href="#h10-0-122" id="h10-0-122" class="i">+                    default: None,
+</a><a href="#h10-0-123" id="h10-0-123" class="i">+                    unique: false,
+</a><a href="#h10-0-124" id="h10-0-124" class="i">+                    references: Some(&quot;studios&quot;.into()),
+</a><a href="#h10-0-125" id="h10-0-125" class="i">+                },
+</a><a href="#h10-0-126" id="h10-0-126" class="i">+                Column {
+</a><a href="#h10-0-127" id="h10-0-127" class="i">+                    name: &quot;genre_id&quot;.into(),
+</a><a href="#h10-0-128" id="h10-0-128" class="i">+                    datatype: DataType::Integer,
+</a><a href="#h10-0-129" id="h10-0-129" class="i">+                    primary_key: false,
+</a><a href="#h10-0-130" id="h10-0-130" class="i">+                    nullable: false,
+</a><a href="#h10-0-131" id="h10-0-131" class="i">+                    default: None,
+</a><a href="#h10-0-132" id="h10-0-132" class="i">+                    unique: false,
+</a><a href="#h10-0-133" id="h10-0-133" class="i">+                    references: Some(&quot;genres&quot;.into()),
+</a><a href="#h10-0-134" id="h10-0-134" class="i">+                },
+</a><a href="#h10-0-135" id="h10-0-135" class="i">+                Column {
+</a><a href="#h10-0-136" id="h10-0-136" class="i">+                    name: &quot;released&quot;.into(),
+</a><a href="#h10-0-137" id="h10-0-137" class="i">+                    datatype: DataType::Integer,
+</a><a href="#h10-0-138" id="h10-0-138" class="i">+                    primary_key: false,
+</a><a href="#h10-0-139" id="h10-0-139" class="i">+                    nullable: false,
+</a><a href="#h10-0-140" id="h10-0-140" class="i">+                    default: None,
+</a><a href="#h10-0-141" id="h10-0-141" class="i">+                    unique: false,
+</a><a href="#h10-0-142" id="h10-0-142" class="i">+                    references: None,
+</a><a href="#h10-0-143" id="h10-0-143" class="i">+                },
+</a><a href="#h10-0-144" id="h10-0-144" class="i">+                Column {
+</a><a href="#h10-0-145" id="h10-0-145" class="i">+                    name: &quot;rating&quot;.into(),
+</a><a href="#h10-0-146" id="h10-0-146" class="i">+                    datatype: DataType::Float,
+</a><a href="#h10-0-147" id="h10-0-147" class="i">+                    primary_key: false,
+</a><a href="#h10-0-148" id="h10-0-148" class="i">+                    nullable: true,
+</a><a href="#h10-0-149" id="h10-0-149" class="i">+                    default: Some(Value::Null),
+</a><a href="#h10-0-150" id="h10-0-150" class="i">+                    unique: false,
+</a><a href="#h10-0-151" id="h10-0-151" class="i">+                    references: None,
+</a><a href="#h10-0-152" id="h10-0-152" class="i">+                },
+</a><a href="#h10-0-153" id="h10-0-153" class="i">+                Column {
+</a><a href="#h10-0-154" id="h10-0-154" class="i">+                    name: &quot;ultrahd&quot;.into(),
+</a><a href="#h10-0-155" id="h10-0-155" class="i">+                    datatype: DataType::Boolean,
+</a><a href="#h10-0-156" id="h10-0-156" class="i">+                    primary_key: false,
+</a><a href="#h10-0-157" id="h10-0-157" class="i">+                    nullable: true,
+</a><a href="#h10-0-158" id="h10-0-158" class="i">+                    default: Some(Value::Null),
+</a><a href="#h10-0-159" id="h10-0-159" class="i">+                    unique: false,
+</a><a href="#h10-0-160" id="h10-0-160" class="i">+                    references: None,
+</a><a href="#h10-0-161" id="h10-0-161" class="i">+                },
+</a><a href="#h10-0-162" id="h10-0-162" class="i">+            ]
+</a><a href="#h10-0-163" id="h10-0-163" class="i">+        }
+</a><a href="#h10-0-164" id="h10-0-164" class="i">+    );
+</a><a href="#h10-0-165" id="h10-0-165" class="i">+    Ok(())
+</a><a href="#h10-0-166" id="h10-0-166" class="i">+}
+</a><a href="#h10-0-167" id="h10-0-167" class="i">+
+</a><a href="#h10-0-168" id="h10-0-168" class="i">+#[test]
+</a><a href="#h10-0-169" id="h10-0-169" class="i">+#[serial]
+</a><a href="#h10-0-170" id="h10-0-170" class="i">+fn test_list_tables() -&gt; Result&lt;(), Error&gt; {
+</a><a href="#h10-0-171" id="h10-0-171" class="i">+    let (c, teardown) = setup_movies()?;
+</a><a href="#h10-0-172" id="h10-0-172" class="i">+    defer!(teardown());
+</a><a href="#h10-0-173" id="h10-0-173" class="i">+
+</a><a href="#h10-0-174" id="h10-0-174" class="i">+    assert_eq!(c.list_tables()?, vec![&quot;countries&quot;, &quot;genres&quot;, &quot;movies&quot;, &quot;studios&quot;]);
+</a><a href="#h10-0-175" id="h10-0-175" class="i">+    Ok(())
+</a><a href="#h10-0-176" id="h10-0-176" class="i">+}
+</a><a href="#h10-0-177" id="h10-0-177" class="i">+
+</a><a href="#h10-0-178" id="h10-0-178" class="i">+#[test]
+</a><a href="#h10-0-179" id="h10-0-179" class="i">+#[serial]
+</a><a href="#h10-0-180" id="h10-0-180" class="i">+fn test_status() -&gt; Result&lt;(), Error&gt; {
+</a><a href="#h10-0-181" id="h10-0-181" class="i">+    let (c, teardown) = setup_movies()?;
+</a><a href="#h10-0-182" id="h10-0-182" class="i">+    defer!(teardown());
+</a><a href="#h10-0-183" id="h10-0-183" class="i">+
+</a><a href="#h10-0-184" id="h10-0-184" class="i">+    assert_eq!(
+</a><a href="#h10-0-185" id="h10-0-185" class="i">+        c.status()?,
+</a><a href="#h10-0-186" id="h10-0-186" class="i">+        Status { id: &quot;test&quot;.into(), version: env!(&quot;CARGO_PKG_VERSION&quot;).into() }
+</a><a href="#h10-0-187" id="h10-0-187" class="i">+    );
+</a><a href="#h10-0-188" id="h10-0-188" class="i">+    Ok(())
+</a><a href="#h10-0-189" id="h10-0-189" class="i">+}
+</a></pre>
+</div>
+</body>
+</html>

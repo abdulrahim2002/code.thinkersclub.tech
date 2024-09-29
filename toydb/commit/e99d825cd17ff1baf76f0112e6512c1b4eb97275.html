@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>sql: initial support for function parsing - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/e99d825cd17ff1baf76f0112e6512c1b4eb97275.html">e99d825cd17ff1baf76f0112e6512c1b4eb97275</a>
+<b>parent</b> <a href="../commit/7ea77c8d2876892dababb330a5eb1bd1c390bfec.html">7ea77c8d2876892dababb330a5eb1bd1c390bfec</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Sun,  2 Feb 2020 19:01:35 +0100
+
+sql: initial support for function parsing
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">docs/README.md</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/sql/parser/ast.rs</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/sql/parser/mod.rs</a></td><td> | </td><td class="num">23</td><td><span class="i">+++++++++++++++++</span><span class="d">------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">src/sql/planner/mod.rs</a></td><td> | </td><td class="num">8</td><td><span class="i">+++++++</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h4">src/sql/tests/expression.rs</a></td><td> | </td><td class="num">8</td><td><span class="i">++++++++</span><span class="d"></span></td></tr>
+</table></pre><pre>5 files changed, 34 insertions(+), 8 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/docs/README.md.html">docs/README.md</a> b/<a href="../file/docs/README.md.html">docs/README.md</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -57,7 +57,7 @@ The `-` prefix operator can be used to take negative numbers.
+</a> 
+ ### Expressions
+ 
+<a href="#h0-0-3" id="h0-0-3" class="d">-Expressions can be used wherever a value is expected, e.g. as `SELECT` fields and `INSERT` values, and can be either a constant, a column reference, or an operator invocation.
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+Expressions can be used wherever a value is expected, e.g. as `SELECT` fields and `INSERT` values, and can be either a constant, a column reference, an operator invocation, or a function call.
+</a> 
+ Column references can either be unqualified, e.g. `name`, or prefixed with the relation identifier separated by `.`, e.g. `person.name`. Unqualified identifiers must be unambiguous, otherwise an error is returned.
+ 
+<b>diff --git a/<a id="h1" href="../file/src/sql/parser/ast.rs.html">src/sql/parser/ast.rs</a> b/<a href="../file/src/sql/parser/ast.rs.html">src/sql/parser/ast.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -100,6 +100,7 @@ pub enum Order {
+</a> pub enum Expression {
+     Field(Option&lt;String&gt;, String),
+     Literal(Literal),
+<a href="#h1-0-3" id="h1-0-3" class="i">+    Function(String, Expressions),
+</a>     Operation(Operation),
+ }
+ 
+<b>diff --git a/<a id="h2" href="../file/src/sql/parser/mod.rs.html">src/sql/parser/mod.rs</a> b/<a href="../file/src/sql/parser/mod.rs.html">src/sql/parser/mod.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -492,13 +492,24 @@ impl&lt;&#39;a&gt; Parser&lt;&#39;a&gt; {
+</a>     fn parse_expression_atom(&amp;mut self) -&gt; Result&lt;ast::Expression, Error&gt; {
+         Ok(match self.next()? {
+             Token::Ident(i) =&gt; {
+<a href="#h2-0-3" id="h2-0-3" class="d">-                let mut relation = None;
+</a><a href="#h2-0-4" id="h2-0-4" class="d">-                let mut field = i;
+</a><a href="#h2-0-5" id="h2-0-5" class="d">-                if self.next_if_token(Token::Period).is_some() {
+</a><a href="#h2-0-6" id="h2-0-6" class="d">-                    relation = Some(field);
+</a><a href="#h2-0-7" id="h2-0-7" class="d">-                    field = self.next_ident()?;
+</a><a href="#h2-0-8" id="h2-0-8" class="i">+                if self.next_if_token(Token::OpenParen).is_some() {
+</a><a href="#h2-0-9" id="h2-0-9" class="i">+                    let mut args = Vec::new();
+</a><a href="#h2-0-10" id="h2-0-10" class="i">+                    while self.next_if_token(Token::CloseParen).is_none() {
+</a><a href="#h2-0-11" id="h2-0-11" class="i">+                        if !args.is_empty() {
+</a><a href="#h2-0-12" id="h2-0-12" class="i">+                            self.next_expect(Some(Token::Comma))?;
+</a><a href="#h2-0-13" id="h2-0-13" class="i">+                        }
+</a><a href="#h2-0-14" id="h2-0-14" class="i">+                        args.push(self.parse_expression(0)?);
+</a><a href="#h2-0-15" id="h2-0-15" class="i">+                    }
+</a><a href="#h2-0-16" id="h2-0-16" class="i">+                    ast::Expression::Function(i, args)
+</a><a href="#h2-0-17" id="h2-0-17" class="i">+                } else {
+</a><a href="#h2-0-18" id="h2-0-18" class="i">+                    let mut relation = None;
+</a><a href="#h2-0-19" id="h2-0-19" class="i">+                    let mut field = i;
+</a><a href="#h2-0-20" id="h2-0-20" class="i">+                    if self.next_if_token(Token::Period).is_some() {
+</a><a href="#h2-0-21" id="h2-0-21" class="i">+                        relation = Some(field);
+</a><a href="#h2-0-22" id="h2-0-22" class="i">+                        field = self.next_ident()?;
+</a><a href="#h2-0-23" id="h2-0-23" class="i">+                    }
+</a><a href="#h2-0-24" id="h2-0-24" class="i">+                    ast::Expression::Field(relation, field)
+</a>                 }
+<a href="#h2-0-26" id="h2-0-26" class="d">-                ast::Expression::Field(relation, field)
+</a>             }
+             Token::Number(n) =&gt; {
+                 if n.chars().all(|c| c.is_digit(10)) {
+<b>diff --git a/<a id="h3" href="../file/src/sql/planner/mod.rs.html">src/sql/planner/mod.rs</a> b/<a href="../file/src/sql/planner/mod.rs.html">src/sql/planner/mod.rs</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -142,7 +142,12 @@ impl Planner {
+</a> 
+     /// Builds a plan expression from an AST expression
+     fn build_expression(&amp;self, expr: ast::Expression) -&gt; Result&lt;Expression, Error&gt; {
+<a href="#h3-0-3" id="h3-0-3" class="d">-        Ok(expr.into())
+</a><a href="#h3-0-4" id="h3-0-4" class="i">+        if let ast::Expression::Function(name, _) = expr {
+</a><a href="#h3-0-5" id="h3-0-5" class="i">+            // All functions right now are aggregate functions
+</a><a href="#h3-0-6" id="h3-0-6" class="i">+            Err(Error::Value(format!(&quot;Unknown function {}&quot;, name)))
+</a><a href="#h3-0-7" id="h3-0-7" class="i">+        } else {
+</a><a href="#h3-0-8" id="h3-0-8" class="i">+            Ok(expr.into())
+</a><a href="#h3-0-9" id="h3-0-9" class="i">+        }
+</a>     }
+ 
+     /// Builds an array of plan expressions from AST expressions
+<a href="#h3-1" id="h3-1" class="h">@@ -228,6 +233,7 @@ impl From&lt;ast::Expression&gt; for Expression {
+</a>         match expr {
+             ast::Expression::Literal(l) =&gt; Expression::Constant(l.into()),
+             ast::Expression::Field(rel, name) =&gt; Expression::Field(rel, name),
+<a href="#h3-1-3" id="h3-1-3" class="i">+            ast::Expression::Function(_, _) =&gt; unimplemented!(), // Not supported
+</a>             ast::Expression::Operation(op) =&gt; match op {
+                 // Logical operators
+                 ast::Operation::And(lhs, rhs) =&gt; Self::And(lhs.into(), rhs.into()),
+<b>diff --git a/<a id="h4" href="../file/src/sql/tests/expression.rs.html">src/sql/tests/expression.rs</a> b/<a href="../file/src/sql/tests/expression.rs.html">src/sql/tests/expression.rs</a></b>
+<a href="#h4-0" id="h4-0" class="h">@@ -69,6 +69,14 @@ test_expr! {
+</a>     lit_string_whitespace: &quot;&#39; Has \n newlines and \t tabs  &#39;&quot; =&gt; Ok(String(&quot; Has \n newlines and \t tabs  &quot;.into())),
+     lit_string_long: &amp;format!(&quot;&#39;{}&#39;&quot;, &quot;a&quot;.repeat(4096)) =&gt; Ok(&quot;a&quot;.repeat(4096).into()),
+ 
+<a href="#h4-0-3" id="h4-0-3" class="i">+    // Functions
+</a><a href="#h4-0-4" id="h4-0-4" class="i">+    func_unknown: &quot;unknown()&quot; =&gt; Err(Error::Value(&quot;Unknown function unknown&quot;.into())),
+</a><a href="#h4-0-5" id="h4-0-5" class="i">+    func_unknown_case: &quot;UnKnown ( )&quot; =&gt; Err(Error::Value(&quot;Unknown function unknown&quot;.into())),
+</a><a href="#h4-0-6" id="h4-0-6" class="i">+    func_unknown_space: &quot;unknown ( )&quot; =&gt; Err(Error::Value(&quot;Unknown function unknown&quot;.into())),
+</a><a href="#h4-0-7" id="h4-0-7" class="i">+    func_unknown_args: &quot;unknown(a, b, c)&quot; =&gt; Err(Error::Value(&quot;Unknown function unknown&quot;.into())),
+</a><a href="#h4-0-8" id="h4-0-8" class="i">+    func_unknown_open: &quot;unknown(a, b, c&quot; =&gt; Err(Error::Parse(&quot;Unexpected end of input&quot;.into())),
+</a><a href="#h4-0-9" id="h4-0-9" class="i">+    func_unknown_trailing_comma: &quot;unknown(a, b, c,)&quot; =&gt; Err(Error::Parse(&quot;Expected expression atom, found )&quot;.into())),
+</a><a href="#h4-0-10" id="h4-0-10" class="i">+
+</a>     // Logical operators
+     op_and_true_true: &quot;TRUE AND TRUE&quot; =&gt; Ok(Boolean(true)),
+     op_and_true_false: &quot;TRUE AND FALSE&quot; =&gt; Ok(Boolean(false)),
+</pre>
+</div>
+</body>
+</html>

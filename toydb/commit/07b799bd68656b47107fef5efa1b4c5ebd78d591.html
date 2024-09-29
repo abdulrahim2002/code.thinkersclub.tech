@@ -1,0 +1,536 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>sql: cleaned up the SQL engine somewhat - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/07b799bd68656b47107fef5efa1b4c5ebd78d591.html">07b799bd68656b47107fef5efa1b4c5ebd78d591</a>
+<b>parent</b> <a href="../commit/793075a5f0b7c2dc1695b830b3a43a02f8bd877a.html">793075a5f0b7c2dc1695b830b3a43a02f8bd877a</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Sat, 11 Jan 2020 17:16:30 +0100
+
+sql: cleaned up the SQL engine somewhat
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/sql/engine/kv.rs</a></td><td> | </td><td class="num">53</td><td><span class="i">++++++++++++++++++++++++++++++++++</span><span class="d">-------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/sql/engine/mod.rs</a></td><td> | </td><td class="num">51</td><td><span class="i">++++++++++++++++++++++++++++++++++++++</span><span class="d">-------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/sql/engine/raft.rs</a></td><td> | </td><td class="num">116</td><td><span class="i">++++++++++++++++++++++++++++++++++++++++++++</span><span class="d">-----------------------------------</span></td></tr>
+</table></pre><pre>3 files changed, 136 insertions(+), 84 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/sql/engine/kv.rs.html">src/sql/engine/kv.rs</a> b/<a href="../file/src/sql/engine/kv.rs.html">src/sql/engine/kv.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -1,15 +1,17 @@
+</a><a href="#h0-0-0" id="h0-0-0" class="d">-use super::super::types;
+</a><a href="#h0-0-1" id="h0-0-1" class="d">-use super::super::types::schema;
+</a><a href="#h0-0-2" id="h0-0-2" class="d">-use super::Mode;
+</a><a href="#h0-0-3" id="h0-0-3" class="i">+use super::super::types::schema::Table;
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+use super::super::types::{Row, Value};
+</a> use crate::kv;
+ use crate::utility::{deserialize, serialize};
+ use crate::Error;
+ 
+<a href="#h0-0-9" id="h0-0-9" class="i">+/// A SQL engine based on an underlying MVCC key/value store
+</a> pub struct KV&lt;S: kv::storage::Storage&gt; {
+<a href="#h0-0-11" id="h0-0-11" class="i">+    /// The underlying key/value store
+</a>     kv: kv::MVCC&lt;S&gt;,
+ }
+ 
+ impl&lt;S: kv::storage::Storage&gt; KV&lt;S&gt; {
+<a href="#h0-0-16" id="h0-0-16" class="i">+    /// Creates a new key/value-based SQL engine
+</a>     pub fn new(kv: kv::MVCC&lt;S&gt;) -&gt; Self {
+         Self { kv }
+     }
+<a href="#h0-1" id="h0-1" class="h">@@ -18,7 +20,7 @@ impl&lt;S: kv::storage::Storage&gt; KV&lt;S&gt; {
+</a> impl&lt;S: kv::storage::Storage&gt; super::Engine for KV&lt;S&gt; {
+     type Transaction = Transaction&lt;S&gt;;
+ 
+<a href="#h0-1-3" id="h0-1-3" class="d">-    fn begin_with_mode(&amp;self, mode: Mode) -&gt; Result&lt;Self::Transaction, Error&gt; {
+</a><a href="#h0-1-4" id="h0-1-4" class="i">+    fn begin_with_mode(&amp;self, mode: super::Mode) -&gt; Result&lt;Self::Transaction, Error&gt; {
+</a>         Ok(Self::Transaction::new(self.kv.begin_with_mode(mode)?))
+     }
+ 
+<a href="#h0-2" id="h0-2" class="h">@@ -27,11 +29,13 @@ impl&lt;S: kv::storage::Storage&gt; super::Engine for KV&lt;S&gt; {
+</a>     }
+ }
+ 
+<a href="#h0-2-3" id="h0-2-3" class="i">+/// An SQL transaction based on an MVCC key/value transaction
+</a> pub struct Transaction&lt;S: kv::storage::Storage&gt; {
+     txn: kv::Transaction&lt;S&gt;,
+ }
+ 
+ impl&lt;S: kv::storage::Storage&gt; Transaction&lt;S&gt; {
+<a href="#h0-2-9" id="h0-2-9" class="i">+    /// Creates a new SQL transaction from an MVCC transaction
+</a>     fn new(txn: kv::Transaction&lt;S&gt;) -&gt; Self {
+         Self { txn }
+     }
+<a href="#h0-3" id="h0-3" class="h">@@ -42,7 +46,7 @@ impl&lt;S: kv::storage::Storage&gt; super::Transaction for Transaction&lt;S&gt; {
+</a>         self.txn.id()
+     }
+ 
+<a href="#h0-3-3" id="h0-3-3" class="d">-    fn mode(&amp;self) -&gt; Mode {
+</a><a href="#h0-3-4" id="h0-3-4" class="i">+    fn mode(&amp;self) -&gt; super::Mode {
+</a>         self.txn.mode()
+     }
+ 
+<a href="#h0-4" id="h0-4" class="h">@@ -54,7 +58,7 @@ impl&lt;S: kv::storage::Storage&gt; super::Transaction for Transaction&lt;S&gt; {
+</a>         self.txn.rollback()
+     }
+ 
+<a href="#h0-4-3" id="h0-4-3" class="d">-    fn create(&amp;mut self, table: &amp;str, row: types::Row) -&gt; Result&lt;(), Error&gt; {
+</a><a href="#h0-4-4" id="h0-4-4" class="i">+    fn create(&amp;mut self, table: &amp;str, row: Row) -&gt; Result&lt;(), Error&gt; {
+</a>         let table = self.must_read_table(&amp;table)?;
+         table.validate_row(&amp;row, self)?;
+         let id = table.get_row_key(&amp;row)?;
+<a href="#h0-5" id="h0-5" class="h">@@ -67,13 +71,13 @@ impl&lt;S: kv::storage::Storage&gt; super::Transaction for Transaction&lt;S&gt; {
+</a>         self.txn.set(&amp;Key::Row(&amp;table.name, &amp;id).encode(), serialize(&amp;row)?)
+     }
+ 
+<a href="#h0-5-3" id="h0-5-3" class="d">-    fn delete(&amp;mut self, table: &amp;str, id: &amp;types::Value) -&gt; Result&lt;(), Error&gt; {
+</a><a href="#h0-5-4" id="h0-5-4" class="i">+    fn delete(&amp;mut self, table: &amp;str, id: &amp;Value) -&gt; Result&lt;(), Error&gt; {
+</a>         let table = self.must_read_table(&amp;table)?;
+         table.assert_unreferenced_key(id, self)?;
+         self.txn.delete(&amp;Key::Row(&amp;table.name, id).encode())
+     }
+ 
+<a href="#h0-5-10" id="h0-5-10" class="d">-    fn read(&amp;self, table: &amp;str, id: &amp;types::Value) -&gt; Result&lt;Option&lt;types::Row&gt;, Error&gt; {
+</a><a href="#h0-5-11" id="h0-5-11" class="i">+    fn read(&amp;self, table: &amp;str, id: &amp;Value) -&gt; Result&lt;Option&lt;Row&gt;, Error&gt; {
+</a>         self.txn.get(&amp;Key::Row(table, id).encode())?.map(|v| deserialize(&amp;v)).transpose()
+     }
+ 
+<a href="#h0-6" id="h0-6" class="h">@@ -88,7 +92,7 @@ impl&lt;S: kv::storage::Storage&gt; super::Transaction for Transaction&lt;S&gt; {
+</a>         ))
+     }
+ 
+<a href="#h0-6-3" id="h0-6-3" class="d">-    fn update(&amp;mut self, table: &amp;str, id: &amp;types::Value, row: types::Row) -&gt; Result&lt;(), Error&gt; {
+</a><a href="#h0-6-4" id="h0-6-4" class="i">+    fn update(&amp;mut self, table: &amp;str, id: &amp;Value, row: Row) -&gt; Result&lt;(), Error&gt; {
+</a>         let table = self.must_read_table(&amp;table)?;
+         // If the primary key changes we do a delete and create, otherwise we replace the row
+         if id != &amp;table.get_row_key(&amp;row)? {
+<a href="#h0-7" id="h0-7" class="h">@@ -100,7 +104,7 @@ impl&lt;S: kv::storage::Storage&gt; super::Transaction for Transaction&lt;S&gt; {
+</a>         }
+     }
+ 
+<a href="#h0-7-3" id="h0-7-3" class="d">-    fn create_table(&amp;mut self, table: &amp;schema::Table) -&gt; Result&lt;(), Error&gt; {
+</a><a href="#h0-7-4" id="h0-7-4" class="i">+    fn create_table(&amp;mut self, table: &amp;Table) -&gt; Result&lt;(), Error&gt; {
+</a>         if self.read_table(&amp;table.name)?.is_some() {
+             return Err(Error::Value(format!(&quot;Table {} already exists&quot;, table.name)));
+         }
+<a href="#h0-8" id="h0-8" class="h">@@ -111,11 +115,14 @@ impl&lt;S: kv::storage::Storage&gt; super::Transaction for Transaction&lt;S&gt; {
+</a>     fn delete_table(&amp;mut self, table: &amp;str) -&gt; Result&lt;(), Error&gt; {
+         let table = self.must_read_table(&amp;table)?;
+         table.assert_unreferenced(self)?;
+<a href="#h0-8-3" id="h0-8-3" class="d">-        // FIXME Needs to delete all table data as well
+</a><a href="#h0-8-4" id="h0-8-4" class="i">+        let mut scan = self.scan(&amp;table.name)?;
+</a><a href="#h0-8-5" id="h0-8-5" class="i">+        while let Some(row) = scan.next().transpose()? {
+</a><a href="#h0-8-6" id="h0-8-6" class="i">+            self.delete(&amp;table.name, &amp;table.get_row_key(&amp;row)?)?
+</a><a href="#h0-8-7" id="h0-8-7" class="i">+        }
+</a>         self.txn.delete(&amp;Key::Table(&amp;table.name).encode())
+     }
+ 
+<a href="#h0-8-11" id="h0-8-11" class="d">-    fn read_table(&amp;self, table: &amp;str) -&gt; Result&lt;Option&lt;schema::Table&gt;, Error&gt; {
+</a><a href="#h0-8-12" id="h0-8-12" class="i">+    fn read_table(&amp;self, table: &amp;str) -&gt; Result&lt;Option&lt;Table&gt;, Error&gt; {
+</a>         self.txn.get(&amp;Key::Table(table).encode())?.map(|v| deserialize(&amp;v)).transpose()
+     }
+ 
+<a href="#h0-9" id="h0-9" class="h">@@ -130,16 +137,24 @@ impl&lt;S: kv::storage::Storage&gt; super::Transaction for Transaction&lt;S&gt; {
+</a>     }
+ }
+ 
+<a href="#h0-9-3" id="h0-9-3" class="i">+/// Encodes tables and rows as MVCC key/value keys
+</a> enum Key&lt;&#39;a&gt; {
+<a href="#h0-9-5" id="h0-9-5" class="i">+    /// The start of the table schema keyspace
+</a>     TableStart,
+<a href="#h0-9-7" id="h0-9-7" class="i">+    /// A table schema key for the given table name
+</a>     Table(&amp;&#39;a str),
+<a href="#h0-9-9" id="h0-9-9" class="i">+    /// The end of the table schema keyspace
+</a>     TableEnd,
+<a href="#h0-9-11" id="h0-9-11" class="i">+    /// The start of the row keyspace of the given table name
+</a>     RowStart(&amp;&#39;a str),
+<a href="#h0-9-13" id="h0-9-13" class="d">-    Row(&amp;&#39;a str, &amp;&#39;a types::Value),
+</a><a href="#h0-9-14" id="h0-9-14" class="i">+    /// A key for a row identified by table name and row primary key
+</a><a href="#h0-9-15" id="h0-9-15" class="i">+    Row(&amp;&#39;a str, &amp;&#39;a Value),
+</a><a href="#h0-9-16" id="h0-9-16" class="i">+    /// The end of the row keyspace of the given table name
+</a>     RowEnd(&amp;&#39;a str),
+ }
+ 
+ impl&lt;&#39;a&gt; Key&lt;&#39;a&gt; {
+<a href="#h0-9-21" id="h0-9-21" class="i">+    /// Encodes the key as a byte vector
+</a>     fn encode(self) -&gt; Vec&lt;u8&gt; {
+         match self {
+             Self::TableStart =&gt; vec![0x01],
+<a href="#h0-10" id="h0-10" class="h">@@ -151,12 +166,12 @@ impl&lt;&#39;a&gt; Key&lt;&#39;a&gt; {
+</a>                 table.as_bytes().to_vec(),
+                 vec![0x00],
+                 match pk {
+<a href="#h0-10-3" id="h0-10-3" class="d">-                    types::Value::Boolean(b) if *b =&gt; vec![0x01],
+</a><a href="#h0-10-4" id="h0-10-4" class="d">-                    types::Value::Boolean(_) =&gt; vec![0x00],
+</a><a href="#h0-10-5" id="h0-10-5" class="d">-                    types::Value::Float(f) =&gt; f.to_be_bytes().to_vec(),
+</a><a href="#h0-10-6" id="h0-10-6" class="d">-                    types::Value::Integer(i) =&gt; i.to_be_bytes().to_vec(),
+</a><a href="#h0-10-7" id="h0-10-7" class="d">-                    types::Value::String(s) =&gt; s.as_bytes().to_vec(),
+</a><a href="#h0-10-8" id="h0-10-8" class="d">-                    types::Value::Null =&gt; panic!(&quot;Received NULL primary key&quot;),
+</a><a href="#h0-10-9" id="h0-10-9" class="i">+                    Value::Boolean(b) if *b =&gt; vec![0x01],
+</a><a href="#h0-10-10" id="h0-10-10" class="i">+                    Value::Boolean(_) =&gt; vec![0x00],
+</a><a href="#h0-10-11" id="h0-10-11" class="i">+                    Value::Float(f) =&gt; f.to_be_bytes().to_vec(),
+</a><a href="#h0-10-12" id="h0-10-12" class="i">+                    Value::Integer(i) =&gt; i.to_be_bytes().to_vec(),
+</a><a href="#h0-10-13" id="h0-10-13" class="i">+                    Value::String(s) =&gt; s.as_bytes().to_vec(),
+</a><a href="#h0-10-14" id="h0-10-14" class="i">+                    Value::Null =&gt; panic!(&quot;Received NULL primary key&quot;),
+</a>                 },
+             ]
+             .concat(),
+<b>diff --git a/<a id="h1" href="../file/src/sql/engine/mod.rs.html">src/sql/engine/mod.rs</a> b/<a href="../file/src/sql/engine/mod.rs.html">src/sql/engine/mod.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -1,49 +1,74 @@
+</a><a href="#h1-0-0" id="h1-0-0" class="i">+//! The SQL engine provides fundamental CRUD storage operations.
+</a> mod kv;
+ mod raft;
+ 
+<a href="#h1-0-4" id="h1-0-4" class="d">-pub use crate::kv::Mode;
+</a> pub use kv::KV;
+ pub use raft::Raft;
+ 
+<a href="#h1-0-8" id="h1-0-8" class="d">-use super::types;
+</a><a href="#h1-0-9" id="h1-0-9" class="d">-use super::types::schema;
+</a><a href="#h1-0-10" id="h1-0-10" class="i">+use super::types::schema::Table;
+</a><a href="#h1-0-11" id="h1-0-11" class="i">+use super::types::{Row, Value};
+</a> use crate::Error;
+ 
+<a href="#h1-0-14" id="h1-0-14" class="i">+/// The SQL engine interface
+</a> pub trait Engine {
+<a href="#h1-0-16" id="h1-0-16" class="i">+    /// The transaction type
+</a>     type Transaction: Transaction;
+ 
+<a href="#h1-0-19" id="h1-0-19" class="i">+    /// Begins a typical read-write transaction
+</a>     fn begin(&amp;self) -&gt; Result&lt;Self::Transaction, Error&gt; {
+         self.begin_with_mode(Mode::ReadWrite)
+     }
+ 
+<a href="#h1-0-24" id="h1-0-24" class="i">+    /// Begins a transaction in the given mode
+</a>     fn begin_with_mode(&amp;self, mode: Mode) -&gt; Result&lt;Self::Transaction, Error&gt;;
+<a href="#h1-0-26" id="h1-0-26" class="i">+
+</a><a href="#h1-0-27" id="h1-0-27" class="i">+    /// Resumes an active transaction with the given ID
+</a>     fn resume(&amp;self, id: u64) -&gt; Result&lt;Self::Transaction, Error&gt;;
+ }
+ 
+<a href="#h1-0-31" id="h1-0-31" class="i">+/// An SQL transaction
+</a> pub trait Transaction {
+<a href="#h1-0-33" id="h1-0-33" class="i">+    /// The transaction ID
+</a>     fn id(&amp;self) -&gt; u64;
+<a href="#h1-0-35" id="h1-0-35" class="i">+    /// The transaction mode
+</a>     fn mode(&amp;self) -&gt; Mode;
+<a href="#h1-0-37" id="h1-0-37" class="i">+    /// Commits the transaction
+</a>     fn commit(self) -&gt; Result&lt;(), Error&gt;;
+<a href="#h1-0-39" id="h1-0-39" class="i">+    /// Rolls back the transaction
+</a>     fn rollback(self) -&gt; Result&lt;(), Error&gt;;
+ 
+<a href="#h1-0-42" id="h1-0-42" class="d">-    fn create(&amp;mut self, table: &amp;str, row: types::Row) -&gt; Result&lt;(), Error&gt;;
+</a><a href="#h1-0-43" id="h1-0-43" class="d">-    fn delete(&amp;mut self, table: &amp;str, id: &amp;types::Value) -&gt; Result&lt;(), Error&gt;;
+</a><a href="#h1-0-44" id="h1-0-44" class="d">-    fn read(&amp;self, table: &amp;str, id: &amp;types::Value) -&gt; Result&lt;Option&lt;types::Row&gt;, Error&gt;;
+</a><a href="#h1-0-45" id="h1-0-45" class="i">+    /// Creates a new table row
+</a><a href="#h1-0-46" id="h1-0-46" class="i">+    fn create(&amp;mut self, table: &amp;str, row: Row) -&gt; Result&lt;(), Error&gt;;
+</a><a href="#h1-0-47" id="h1-0-47" class="i">+    /// Deletes a table row
+</a><a href="#h1-0-48" id="h1-0-48" class="i">+    fn delete(&amp;mut self, table: &amp;str, id: &amp;Value) -&gt; Result&lt;(), Error&gt;;
+</a><a href="#h1-0-49" id="h1-0-49" class="i">+    /// Reads a table row, if it exists
+</a><a href="#h1-0-50" id="h1-0-50" class="i">+    fn read(&amp;self, table: &amp;str, id: &amp;Value) -&gt; Result&lt;Option&lt;Row&gt;, Error&gt;;
+</a><a href="#h1-0-51" id="h1-0-51" class="i">+    /// Scans a table&#39;s rows
+</a>     fn scan(&amp;self, table: &amp;str) -&gt; Result&lt;Scan, Error&gt;;
+<a href="#h1-0-53" id="h1-0-53" class="d">-    fn update(&amp;mut self, table: &amp;str, id: &amp;types::Value, row: types::Row) -&gt; Result&lt;(), Error&gt;;
+</a><a href="#h1-0-54" id="h1-0-54" class="i">+    /// Updates a table row
+</a><a href="#h1-0-55" id="h1-0-55" class="i">+    fn update(&amp;mut self, table: &amp;str, id: &amp;Value, row: Row) -&gt; Result&lt;(), Error&gt;;
+</a> 
+<a href="#h1-0-57" id="h1-0-57" class="d">-    fn create_table(&amp;mut self, table: &amp;schema::Table) -&gt; Result&lt;(), Error&gt;;
+</a><a href="#h1-0-58" id="h1-0-58" class="i">+    /// Creates a new table
+</a><a href="#h1-0-59" id="h1-0-59" class="i">+    fn create_table(&amp;mut self, table: &amp;Table) -&gt; Result&lt;(), Error&gt;;
+</a><a href="#h1-0-60" id="h1-0-60" class="i">+    /// Deletes an existing table, or errors if it does not exist
+</a>     fn delete_table(&amp;mut self, table: &amp;str) -&gt; Result&lt;(), Error&gt;;
+<a href="#h1-0-62" id="h1-0-62" class="d">-    fn read_table(&amp;self, table: &amp;str) -&gt; Result&lt;Option&lt;schema::Table&gt;, Error&gt;;
+</a><a href="#h1-0-63" id="h1-0-63" class="i">+    /// Reads a table, if it exists
+</a><a href="#h1-0-64" id="h1-0-64" class="i">+    fn read_table(&amp;self, table: &amp;str) -&gt; Result&lt;Option&lt;Table&gt;, Error&gt;;
+</a><a href="#h1-0-65" id="h1-0-65" class="i">+    /// Iterates over all tables
+</a>     fn scan_tables(&amp;self) -&gt; Result&lt;TableScan, Error&gt;;
+ 
+<a href="#h1-0-68" id="h1-0-68" class="d">-    fn must_read_table(&amp;self, table: &amp;str) -&gt; Result&lt;schema::Table, Error&gt; {
+</a><a href="#h1-0-69" id="h1-0-69" class="i">+    /// Reads a table, and errors if it does not exist
+</a><a href="#h1-0-70" id="h1-0-70" class="i">+    fn must_read_table(&amp;self, table: &amp;str) -&gt; Result&lt;Table, Error&gt; {
+</a>         self.read_table(table)?
+             .ok_or_else(|| Error::Value(format!(&quot;Table {} does not exist&quot;, table)))
+     }
+ }
+ 
+<a href="#h1-0-76" id="h1-0-76" class="d">-pub type Scan =
+</a><a href="#h1-0-77" id="h1-0-77" class="d">-    Box&lt;dyn DoubleEndedIterator&lt;Item = Result&lt;types::Row, Error&gt;&gt; + &#39;static + Sync + Send&gt;;
+</a><a href="#h1-0-78" id="h1-0-78" class="i">+/// The transaction mode
+</a><a href="#h1-0-79" id="h1-0-79" class="i">+pub type Mode = crate::kv::Mode;
+</a><a href="#h1-0-80" id="h1-0-80" class="i">+
+</a><a href="#h1-0-81" id="h1-0-81" class="i">+/// A row scan iterator
+</a><a href="#h1-0-82" id="h1-0-82" class="i">+pub type Scan = Box&lt;dyn DoubleEndedIterator&lt;Item = Result&lt;Row, Error&gt;&gt; + &#39;static + Sync + Send&gt;;
+</a> 
+<a href="#h1-0-84" id="h1-0-84" class="d">-pub type TableScan = Box&lt;dyn DoubleEndedIterator&lt;Item = schema::Table&gt; + &#39;static + Sync + Send&gt;;
+</a><a href="#h1-0-85" id="h1-0-85" class="i">+/// A table scan iterator
+</a><a href="#h1-0-86" id="h1-0-86" class="i">+pub type TableScan = Box&lt;dyn DoubleEndedIterator&lt;Item = Table&gt; + &#39;static + Sync + Send&gt;;
+</a><b>diff --git a/<a id="h2" href="../file/src/sql/engine/raft.rs.html">src/sql/engine/raft.rs</a> b/<a href="../file/src/sql/engine/raft.rs.html">src/sql/engine/raft.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -1,46 +1,60 @@
+</a><a href="#h2-0-0" id="h2-0-0" class="d">-use super::super::types;
+</a><a href="#h2-0-1" id="h2-0-1" class="d">-use super::super::types::schema;
+</a><a href="#h2-0-2" id="h2-0-2" class="i">+use super::super::types::schema::Table;
+</a><a href="#h2-0-3" id="h2-0-3" class="i">+use super::super::types::{Row, Value};
+</a> use super::Engine as _;
+<a href="#h2-0-5" id="h2-0-5" class="d">-use super::Mode;
+</a> use super::Transaction as _;
+ use crate::kv;
+ use crate::raft;
+ use crate::utility::{deserialize, serialize};
+ use crate::Error;
+ 
+<a href="#h2-0-12" id="h2-0-12" class="d">-/// A state machine mutation
+</a><a href="#h2-0-13" id="h2-0-13" class="i">+/// A Raft state machine mutation
+</a> #[derive(Clone, Serialize, Deserialize)]
+ enum Mutation {
+<a href="#h2-0-16" id="h2-0-16" class="d">-    Begin(Mode),
+</a><a href="#h2-0-17" id="h2-0-17" class="i">+    /// Begins a transaction in the given mode
+</a><a href="#h2-0-18" id="h2-0-18" class="i">+    Begin(super::Mode),
+</a><a href="#h2-0-19" id="h2-0-19" class="i">+    /// Commits the transaction with the given ID
+</a>     Commit(u64),
+<a href="#h2-0-21" id="h2-0-21" class="i">+    /// Rolls back the transaction with the given ID
+</a>     Rollback(u64),
+ 
+<a href="#h2-0-24" id="h2-0-24" class="d">-    Create { txn_id: u64, table: String, row: types::Row },
+</a><a href="#h2-0-25" id="h2-0-25" class="d">-    Delete { txn_id: u64, table: String, id: types::Value },
+</a><a href="#h2-0-26" id="h2-0-26" class="d">-    Update { txn_id: u64, table: String, id: types::Value, row: types::Row },
+</a><a href="#h2-0-27" id="h2-0-27" class="i">+    /// Creates a new row
+</a><a href="#h2-0-28" id="h2-0-28" class="i">+    Create { txn_id: u64, table: String, row: Row },
+</a><a href="#h2-0-29" id="h2-0-29" class="i">+    /// Deletes a row
+</a><a href="#h2-0-30" id="h2-0-30" class="i">+    Delete { txn_id: u64, table: String, id: Value },
+</a><a href="#h2-0-31" id="h2-0-31" class="i">+    /// Updates a row
+</a><a href="#h2-0-32" id="h2-0-32" class="i">+    Update { txn_id: u64, table: String, id: Value, row: Row },
+</a> 
+<a href="#h2-0-34" id="h2-0-34" class="d">-    CreateTable { txn_id: u64, schema: schema::Table },
+</a><a href="#h2-0-35" id="h2-0-35" class="i">+    /// Creates a table
+</a><a href="#h2-0-36" id="h2-0-36" class="i">+    CreateTable { txn_id: u64, schema: Table },
+</a><a href="#h2-0-37" id="h2-0-37" class="i">+    /// Deletes a table
+</a>     DeleteTable { txn_id: u64, table: String },
+ }
+ 
+<a href="#h2-0-41" id="h2-0-41" class="d">-/// A state machine query
+</a><a href="#h2-0-42" id="h2-0-42" class="i">+/// A Raft state machine query
+</a> #[derive(Clone, Serialize, Deserialize)]
+ enum Query {
+<a href="#h2-0-45" id="h2-0-45" class="i">+    /// Resumes the active transaction with the given ID
+</a>     Resume(u64),
+ 
+<a href="#h2-0-48" id="h2-0-48" class="d">-    Read { txn_id: u64, table: String, id: types::Value },
+</a><a href="#h2-0-49" id="h2-0-49" class="i">+    /// Reads a row
+</a><a href="#h2-0-50" id="h2-0-50" class="i">+    Read { txn_id: u64, table: String, id: Value },
+</a><a href="#h2-0-51" id="h2-0-51" class="i">+    /// Scans a table&#39;s rows
+</a>     Scan { txn_id: u64, table: String },
+ 
+<a href="#h2-0-54" id="h2-0-54" class="i">+    /// Scans the tables
+</a>     ScanTables { txn_id: u64 },
+<a href="#h2-0-56" id="h2-0-56" class="i">+    /// Reads a table
+</a>     ReadTable { txn_id: u64, table: String },
+ }
+ 
+<a href="#h2-0-60" id="h2-0-60" class="i">+/// An SQL engine that wraps a Raft cluster.
+</a> pub struct Raft {
+<a href="#h2-0-62" id="h2-0-62" class="i">+    /// The underlying Raft cluster.
+</a>     raft: raft::Raft,
+ }
+ 
+ impl Raft {
+<a href="#h2-0-67" id="h2-0-67" class="d">-    /// Creates a new SQL engine around a Raft cluster.
+</a><a href="#h2-0-68" id="h2-0-68" class="i">+    /// Creates a new Raft SQL engine.
+</a>     pub fn new(raft: raft::Raft) -&gt; Self {
+         Self { raft }
+     }
+<a href="#h2-1" id="h2-1" class="h">@@ -54,7 +68,7 @@ impl Raft {
+</a> impl super::Engine for Raft {
+     type Transaction = Transaction;
+ 
+<a href="#h2-1-3" id="h2-1-3" class="d">-    fn begin_with_mode(&amp;self, mode: Mode) -&gt; Result&lt;Self::Transaction, Error&gt; {
+</a><a href="#h2-1-4" id="h2-1-4" class="i">+    fn begin_with_mode(&amp;self, mode: super::Mode) -&gt; Result&lt;Self::Transaction, Error&gt; {
+</a>         Transaction::begin_with_mode(self.raft.clone(), mode)
+     }
+ 
+<a href="#h2-2" id="h2-2" class="h">@@ -63,19 +77,25 @@ impl super::Engine for Raft {
+</a>     }
+ }
+ 
+<a href="#h2-2-3" id="h2-2-3" class="i">+/// A Raft-based SQL transaction
+</a> #[derive(Clone)]
+ pub struct Transaction {
+<a href="#h2-2-6" id="h2-2-6" class="i">+    /// The underlying Raft cluster
+</a>     raft: raft::Raft,
+<a href="#h2-2-8" id="h2-2-8" class="i">+    /// The transaction ID
+</a>     id: u64,
+<a href="#h2-2-10" id="h2-2-10" class="d">-    mode: Mode,
+</a><a href="#h2-2-11" id="h2-2-11" class="i">+    /// The transaction mode
+</a><a href="#h2-2-12" id="h2-2-12" class="i">+    mode: super::Mode,
+</a> }
+ 
+ impl Transaction {
+<a href="#h2-2-16" id="h2-2-16" class="d">-    fn begin_with_mode(raft: raft::Raft, mode: Mode) -&gt; Result&lt;Self, Error&gt; {
+</a><a href="#h2-2-17" id="h2-2-17" class="i">+    /// Starts a transaction in the given mode
+</a><a href="#h2-2-18" id="h2-2-18" class="i">+    fn begin_with_mode(raft: raft::Raft, mode: super::Mode) -&gt; Result&lt;Self, Error&gt; {
+</a>         let id = deserialize(&amp;raft.mutate(serialize(&amp;Mutation::Begin(mode.clone()))?)?)?;
+         Ok(Self { raft, id, mode })
+     }
+ 
+<a href="#h2-2-23" id="h2-2-23" class="i">+    /// Resumes an active transaction
+</a>     fn resume(raft: raft::Raft, id: u64) -&gt; Result&lt;Self, Error&gt; {
+         let (id, mode) = deserialize(&amp;raft.query(serialize(&amp;Query::Resume(id))?)?)?;
+         Ok(Self { raft, id, mode })
+<a href="#h2-3" id="h2-3" class="h">@@ -87,7 +107,7 @@ impl super::Transaction for Transaction {
+</a>         self.id
+     }
+ 
+<a href="#h2-3-3" id="h2-3-3" class="d">-    fn mode(&amp;self) -&gt; Mode {
+</a><a href="#h2-3-4" id="h2-3-4" class="i">+    fn mode(&amp;self) -&gt; super::Mode {
+</a>         self.mode.clone()
+     }
+ 
+<a href="#h2-4" id="h2-4" class="h">@@ -99,52 +119,53 @@ impl super::Transaction for Transaction {
+</a>         deserialize(&amp;self.raft.mutate(serialize(&amp;Mutation::Rollback(self.id))?)?)
+     }
+ 
+<a href="#h2-4-3" id="h2-4-3" class="d">-    fn create(&amp;mut self, table: &amp;str, row: types::Row) -&gt; Result&lt;(), Error&gt; {
+</a><a href="#h2-4-4" id="h2-4-4" class="i">+    fn create(&amp;mut self, table: &amp;str, row: Row) -&gt; Result&lt;(), Error&gt; {
+</a>         deserialize(&amp;self.raft.mutate(serialize(&amp;Mutation::Create {
+             txn_id: self.id,
+<a href="#h2-4-7" id="h2-4-7" class="d">-            table: table.into(),
+</a><a href="#h2-4-8" id="h2-4-8" class="i">+            table: table.to_string(),
+</a>             row,
+         })?)?)
+     }
+ 
+<a href="#h2-4-13" id="h2-4-13" class="d">-    fn delete(&amp;mut self, table: &amp;str, id: &amp;types::Value) -&gt; Result&lt;(), Error&gt; {
+</a><a href="#h2-4-14" id="h2-4-14" class="i">+    fn delete(&amp;mut self, table: &amp;str, id: &amp;Value) -&gt; Result&lt;(), Error&gt; {
+</a>         deserialize(&amp;self.raft.mutate(serialize(&amp;Mutation::Delete {
+             txn_id: self.id,
+<a href="#h2-4-17" id="h2-4-17" class="d">-            table: table.into(),
+</a><a href="#h2-4-18" id="h2-4-18" class="i">+            table: table.to_string(),
+</a>             id: id.clone(),
+         })?)?)
+     }
+ 
+<a href="#h2-4-23" id="h2-4-23" class="d">-    fn read(&amp;self, table: &amp;str, id: &amp;types::Value) -&gt; Result&lt;Option&lt;types::Row&gt;, Error&gt; {
+</a><a href="#h2-4-24" id="h2-4-24" class="i">+    fn read(&amp;self, table: &amp;str, id: &amp;Value) -&gt; Result&lt;Option&lt;Row&gt;, Error&gt; {
+</a>         deserialize(&amp;self.raft.query(serialize(&amp;Query::Read {
+             txn_id: self.id,
+<a href="#h2-4-27" id="h2-4-27" class="d">-            table: table.into(),
+</a><a href="#h2-4-28" id="h2-4-28" class="i">+            table: table.to_string(),
+</a>             id: id.clone(),
+         })?)?)
+     }
+ 
+     fn scan(&amp;self, table: &amp;str) -&gt; Result&lt;super::Scan, Error&gt; {
+         Ok(Box::new(
+<a href="#h2-4-35" id="h2-4-35" class="d">-            deserialize::&lt;Vec&lt;types::Row&gt;&gt;(
+</a><a href="#h2-4-36" id="h2-4-36" class="d">-                &amp;self
+</a><a href="#h2-4-37" id="h2-4-37" class="d">-                    .raft
+</a><a href="#h2-4-38" id="h2-4-38" class="d">-                    .query(serialize(&amp;Query::Scan { txn_id: self.id, table: table.into() })?)?,
+</a><a href="#h2-4-39" id="h2-4-39" class="i">+            deserialize::&lt;Vec&lt;_&gt;&gt;(
+</a><a href="#h2-4-40" id="h2-4-40" class="i">+                &amp;self.raft.query(serialize(&amp;Query::Scan {
+</a><a href="#h2-4-41" id="h2-4-41" class="i">+                    txn_id: self.id,
+</a><a href="#h2-4-42" id="h2-4-42" class="i">+                    table: table.to_string(),
+</a><a href="#h2-4-43" id="h2-4-43" class="i">+                })?)?,
+</a>             )?
+             .into_iter()
+             .map(Ok),
+         ))
+     }
+ 
+<a href="#h2-4-50" id="h2-4-50" class="d">-    fn update(&amp;mut self, table: &amp;str, id: &amp;types::Value, row: types::Row) -&gt; Result&lt;(), Error&gt; {
+</a><a href="#h2-4-51" id="h2-4-51" class="i">+    fn update(&amp;mut self, table: &amp;str, id: &amp;Value, row: Row) -&gt; Result&lt;(), Error&gt; {
+</a>         deserialize(&amp;self.raft.mutate(serialize(&amp;Mutation::Update {
+             txn_id: self.id,
+<a href="#h2-4-54" id="h2-4-54" class="d">-            table: table.into(),
+</a><a href="#h2-4-55" id="h2-4-55" class="i">+            table: table.to_string(),
+</a>             id: id.clone(),
+             row,
+         })?)?)
+     }
+ 
+<a href="#h2-4-61" id="h2-4-61" class="d">-    fn create_table(&amp;mut self, table: &amp;schema::Table) -&gt; Result&lt;(), Error&gt; {
+</a><a href="#h2-4-62" id="h2-4-62" class="i">+    fn create_table(&amp;mut self, table: &amp;Table) -&gt; Result&lt;(), Error&gt; {
+</a>         deserialize(&amp;self.raft.mutate(serialize(&amp;Mutation::CreateTable {
+             txn_id: self.id,
+             schema: table.clone(),
+<a href="#h2-5" id="h2-5" class="h">@@ -152,19 +173,18 @@ impl super::Transaction for Transaction {
+</a>     }
+ 
+     fn delete_table(&amp;mut self, table: &amp;str) -&gt; Result&lt;(), Error&gt; {
+<a href="#h2-5-3" id="h2-5-3" class="d">-        deserialize(
+</a><a href="#h2-5-4" id="h2-5-4" class="d">-            &amp;self.raft.mutate(serialize(&amp;Mutation::DeleteTable {
+</a><a href="#h2-5-5" id="h2-5-5" class="d">-                txn_id: self.id,
+</a><a href="#h2-5-6" id="h2-5-6" class="d">-                table: table.into(),
+</a><a href="#h2-5-7" id="h2-5-7" class="d">-            })?)?,
+</a><a href="#h2-5-8" id="h2-5-8" class="d">-        )
+</a><a href="#h2-5-9" id="h2-5-9" class="i">+        deserialize(&amp;self.raft.mutate(serialize(&amp;Mutation::DeleteTable {
+</a><a href="#h2-5-10" id="h2-5-10" class="i">+            txn_id: self.id,
+</a><a href="#h2-5-11" id="h2-5-11" class="i">+            table: table.to_string(),
+</a><a href="#h2-5-12" id="h2-5-12" class="i">+        })?)?)
+</a>     }
+ 
+<a href="#h2-5-15" id="h2-5-15" class="d">-    fn read_table(&amp;self, table: &amp;str) -&gt; Result&lt;Option&lt;schema::Table&gt;, Error&gt; {
+</a><a href="#h2-5-16" id="h2-5-16" class="i">+    fn read_table(&amp;self, table: &amp;str) -&gt; Result&lt;Option&lt;Table&gt;, Error&gt; {
+</a>         deserialize(
+<a href="#h2-5-18" id="h2-5-18" class="d">-            &amp;self
+</a><a href="#h2-5-19" id="h2-5-19" class="d">-                .raft
+</a><a href="#h2-5-20" id="h2-5-20" class="d">-                .query(serialize(&amp;Query::ReadTable { txn_id: self.id, table: table.into() })?)?,
+</a><a href="#h2-5-21" id="h2-5-21" class="i">+            &amp;self.raft.query(serialize(&amp;Query::ReadTable {
+</a><a href="#h2-5-22" id="h2-5-22" class="i">+                txn_id: self.id,
+</a><a href="#h2-5-23" id="h2-5-23" class="i">+                table: table.to_string(),
+</a><a href="#h2-5-24" id="h2-5-24" class="i">+            })?)?,
+</a>         )
+     }
+ 
+<a href="#h2-6" id="h2-6" class="h">@@ -178,18 +198,14 @@ impl super::Transaction for Transaction {
+</a>     }
+ }
+ 
+<a href="#h2-6-3" id="h2-6-3" class="d">-/// The underlying state machine for the Raft-based engine
+</a><a href="#h2-6-4" id="h2-6-4" class="i">+/// The Raft state machine for the Raft-based SQL engine, using a KV SQL engine
+</a> pub struct State&lt;S: kv::storage::Storage&gt; {
+<a href="#h2-6-6" id="h2-6-6" class="i">+    /// The underlying KV SQL engine
+</a>     engine: super::KV&lt;S&gt;,
+ }
+ 
+<a href="#h2-6-10" id="h2-6-10" class="d">-impl&lt;S: kv::storage::Storage&gt; std::fmt::Debug for State&lt;S&gt; {
+</a><a href="#h2-6-11" id="h2-6-11" class="d">-    fn fmt(&amp;self, f: &amp;mut std::fmt::Formatter&lt;&#39;_&gt;) -&gt; std::fmt::Result {
+</a><a href="#h2-6-12" id="h2-6-12" class="d">-        write!(f, &quot;State&quot;)
+</a><a href="#h2-6-13" id="h2-6-13" class="d">-    }
+</a><a href="#h2-6-14" id="h2-6-14" class="d">-}
+</a><a href="#h2-6-15" id="h2-6-15" class="d">-
+</a> impl&lt;S: kv::storage::Storage&gt; State&lt;S&gt; {
+<a href="#h2-6-17" id="h2-6-17" class="i">+    /// Creates a new Raft state maching using the given MVCC key/value store
+</a>     pub fn new(store: kv::MVCC&lt;S&gt;) -&gt; Self {
+         State { engine: super::KV::new(store) }
+     }
+<a href="#h2-7" id="h2-7" class="h">@@ -231,13 +247,9 @@ impl&lt;S: kv::storage::Storage&gt; raft::State for State&lt;S&gt; {
+</a>             Query::Read { txn_id, table, id } =&gt; {
+                 serialize(&amp;self.engine.resume(txn_id)?.read(&amp;table, &amp;id)?)
+             }
+<a href="#h2-7-3" id="h2-7-3" class="d">-            // FIXME This needs to stream rows
+</a><a href="#h2-7-4" id="h2-7-4" class="i">+            // FIXME This needs to stream rows somehow
+</a>             Query::Scan { txn_id, table } =&gt; serialize(
+<a href="#h2-7-6" id="h2-7-6" class="d">-                &amp;self
+</a><a href="#h2-7-7" id="h2-7-7" class="d">-                    .engine
+</a><a href="#h2-7-8" id="h2-7-8" class="d">-                    .resume(txn_id)?
+</a><a href="#h2-7-9" id="h2-7-9" class="d">-                    .scan(&amp;table)?
+</a><a href="#h2-7-10" id="h2-7-10" class="d">-                    .collect::&lt;Result&lt;Vec&lt;types::Row&gt;, Error&gt;&gt;()?,
+</a><a href="#h2-7-11" id="h2-7-11" class="i">+                &amp;self.engine.resume(txn_id)?.scan(&amp;table)?.collect::&lt;Result&lt;Vec&lt;_&gt;, Error&gt;&gt;()?,
+</a>             ),
+ 
+             Query::ReadTable { txn_id, table } =&gt; {
+</pre>
+</div>
+</body>
+</html>

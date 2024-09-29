@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>sql: added schema::Catalog - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/1da3a6fd75007d0e8b62bf9b478fbabcbc2769bc.html">1da3a6fd75007d0e8b62bf9b478fbabcbc2769bc</a>
+<b>parent</b> <a href="../commit/404d5ff23f33079cc8335e7c1475c4741664b0a9.html">404d5ff23f33079cc8335e7c1475c4741664b0a9</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Sun, 12 Apr 2020 20:53:36 +0200
+
+sql: added schema::Catalog
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/server/toydb.rs</a></td><td> | </td><td class="num">4</td><td><span class="i">++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/sql/engine/kv.rs</a></td><td> | </td><td class="num">7</td><td><span class="i">+++++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/sql/engine/mod.rs</a></td><td> | </td><td class="num">22</td><td><span class="i">++</span><span class="d">--------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">src/sql/engine/raft.rs</a></td><td> | </td><td class="num">6</td><td><span class="i">++++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h4">src/sql/schema.rs</a></td><td> | </td><td class="num">21</td><td><span class="i">+++++++++++++++++++++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h5">tests/sql/dml.rs</a></td><td> | </td><td class="num">3</td><td><span class="i">++</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h6">tests/sql/schema.rs</a></td><td> | </td><td class="num">3</td><td><span class="i">++</span><span class="d">-</span></td></tr>
+</table></pre><pre>7 files changed, 38 insertions(+), 28 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/server/toydb.rs.html">src/server/toydb.rs</a> b/<a href="../file/src/server/toydb.rs.html">src/server/toydb.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -1,8 +1,8 @@
+</a> use crate::raft::Raft;
+ use crate::service;
+<a href="#h0-0-2" id="h0-0-2" class="d">-use crate::sql::engine::{Engine, Mode, Transaction};
+</a><a href="#h0-0-3" id="h0-0-3" class="i">+use crate::sql::engine::{Engine as _, Mode};
+</a> use crate::sql::execution::ResultSet;
+<a href="#h0-0-5" id="h0-0-5" class="d">-use crate::sql::schema::Table;
+</a><a href="#h0-0-6" id="h0-0-6" class="i">+use crate::sql::schema::{Catalog as _, Table};
+</a> use crate::sql::types::{Relation, Row};
+ use crate::utility::{deserialize, serialize};
+ use crate::Error;
+<b>diff --git a/<a id="h1" href="../file/src/sql/engine/kv.rs.html">src/sql/engine/kv.rs</a> b/<a href="../file/src/sql/engine/kv.rs.html">src/sql/engine/kv.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -1,5 +1,6 @@
+</a><a href="#h1-0-0" id="h1-0-0" class="d">-use super::super::schema::Table;
+</a><a href="#h1-0-1" id="h1-0-1" class="i">+use super::super::schema::{Catalog, Table, Tables};
+</a> use super::super::types::{Expression, Row, Value};
+<a href="#h1-0-3" id="h1-0-3" class="i">+use super::Transaction as _;
+</a> use crate::kv;
+ use crate::utility::{deserialize, serialize};
+ use crate::Error;
+<a href="#h1-1" id="h1-1" class="h">@@ -125,7 +126,9 @@ impl&lt;S: kv::storage::Storage&gt; super::Transaction for Transaction&lt;S&gt; {
+</a>             self.txn.set(&amp;Key::Row(&amp;table.name, &amp;id).encode(), serialize(&amp;row)?)
+         }
+     }
+<a href="#h1-1-3" id="h1-1-3" class="i">+}
+</a> 
+<a href="#h1-1-5" id="h1-1-5" class="i">+impl&lt;S: kv::storage::Storage&gt; Catalog for Transaction&lt;S&gt; {
+</a>     fn create_table(&amp;mut self, table: &amp;Table) -&gt; Result&lt;(), Error&gt; {
+         if self.read_table(&amp;table.name)?.is_some() {
+             return Err(Error::Value(format!(&quot;Table {} already exists&quot;, table.name)));
+<a href="#h1-2" id="h1-2" class="h">@@ -148,7 +151,7 @@ impl&lt;S: kv::storage::Storage&gt; super::Transaction for Transaction&lt;S&gt; {
+</a>         self.txn.get(&amp;Key::Table(table).encode())?.map(|v| deserialize(&amp;v)).transpose()
+     }
+ 
+<a href="#h1-2-3" id="h1-2-3" class="d">-    fn scan_tables(&amp;self) -&gt; Result&lt;super::TableScan, Error&gt; {
+</a><a href="#h1-2-4" id="h1-2-4" class="i">+    fn scan_tables(&amp;self) -&gt; Result&lt;Tables, Error&gt; {
+</a>         Ok(Box::new(
+             self.txn
+                 .scan(&amp;Key::TableStart.encode()..&amp;Key::TableEnd.encode())?
+<b>diff --git a/<a id="h2" href="../file/src/sql/engine/mod.rs.html">src/sql/engine/mod.rs</a> b/<a href="../file/src/sql/engine/mod.rs.html">src/sql/engine/mod.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -7,7 +7,7 @@ pub use raft::Raft;
+</a> use super::execution::{Context, ResultSet};
+ use super::parser::{ast, Parser};
+ use super::plan::Plan;
+<a href="#h2-0-3" id="h2-0-3" class="d">-use super::schema::Table;
+</a><a href="#h2-0-4" id="h2-0-4" class="i">+use super::schema::Catalog;
+</a> use super::types::{Expression, Row, Value};
+ use crate::Error;
+ 
+<a href="#h2-1" id="h2-1" class="h">@@ -46,7 +46,7 @@ pub trait Engine: Clone {
+</a> }
+ 
+ /// An SQL transaction
+<a href="#h2-1-3" id="h2-1-3" class="d">-pub trait Transaction {
+</a><a href="#h2-1-4" id="h2-1-4" class="i">+pub trait Transaction: Catalog {
+</a>     /// The transaction ID
+     fn id(&amp;self) -&gt; u64;
+     /// The transaction mode
+<a href="#h2-2" id="h2-2" class="h">@@ -66,21 +66,6 @@ pub trait Transaction {
+</a>     fn scan(&amp;self, table: &amp;str, filter: Option&lt;Expression&gt;) -&gt; Result&lt;Scan, Error&gt;;
+     /// Updates a table row
+     fn update(&amp;mut self, table: &amp;str, id: &amp;Value, row: Row) -&gt; Result&lt;(), Error&gt;;
+<a href="#h2-2-3" id="h2-2-3" class="d">-
+</a><a href="#h2-2-4" id="h2-2-4" class="d">-    /// Creates a new table
+</a><a href="#h2-2-5" id="h2-2-5" class="d">-    fn create_table(&amp;mut self, table: &amp;Table) -&gt; Result&lt;(), Error&gt;;
+</a><a href="#h2-2-6" id="h2-2-6" class="d">-    /// Deletes an existing table, or errors if it does not exist
+</a><a href="#h2-2-7" id="h2-2-7" class="d">-    fn delete_table(&amp;mut self, table: &amp;str) -&gt; Result&lt;(), Error&gt;;
+</a><a href="#h2-2-8" id="h2-2-8" class="d">-    /// Reads a table, if it exists
+</a><a href="#h2-2-9" id="h2-2-9" class="d">-    fn read_table(&amp;self, table: &amp;str) -&gt; Result&lt;Option&lt;Table&gt;, Error&gt;;
+</a><a href="#h2-2-10" id="h2-2-10" class="d">-    /// Iterates over all tables
+</a><a href="#h2-2-11" id="h2-2-11" class="d">-    fn scan_tables(&amp;self) -&gt; Result&lt;TableScan, Error&gt;;
+</a><a href="#h2-2-12" id="h2-2-12" class="d">-
+</a><a href="#h2-2-13" id="h2-2-13" class="d">-    /// Reads a table, and errors if it does not exist
+</a><a href="#h2-2-14" id="h2-2-14" class="d">-    fn must_read_table(&amp;self, table: &amp;str) -&gt; Result&lt;Table, Error&gt; {
+</a><a href="#h2-2-15" id="h2-2-15" class="d">-        self.read_table(table)?
+</a><a href="#h2-2-16" id="h2-2-16" class="d">-            .ok_or_else(|| Error::Value(format!(&quot;Table {} does not exist&quot;, table)))
+</a><a href="#h2-2-17" id="h2-2-17" class="d">-    }
+</a> }
+ 
+ /// An SQL session, which handles transaction control and simplified query execution
+<a href="#h2-3" id="h2-3" class="h">@@ -168,6 +153,3 @@ pub type Mode = crate::kv::Mode;
+</a> 
+ /// A row scan iterator
+ pub type Scan = Box&lt;dyn DoubleEndedIterator&lt;Item = Result&lt;Row, Error&gt;&gt; + Send&gt;;
+<a href="#h2-3-3" id="h2-3-3" class="d">-
+</a><a href="#h2-3-4" id="h2-3-4" class="d">-/// A table scan iterator
+</a><a href="#h2-3-5" id="h2-3-5" class="d">-pub type TableScan = Box&lt;dyn DoubleEndedIterator&lt;Item = Table&gt; + Send&gt;;
+</a><b>diff --git a/<a id="h3" href="../file/src/sql/engine/raft.rs.html">src/sql/engine/raft.rs</a> b/<a href="../file/src/sql/engine/raft.rs.html">src/sql/engine/raft.rs</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -1,4 +1,4 @@
+</a><a href="#h3-0-0" id="h3-0-0" class="d">-use super::super::schema::Table;
+</a><a href="#h3-0-1" id="h3-0-1" class="i">+use super::super::schema::{Catalog, Table, Tables};
+</a> use super::super::types::{Expression, Row, Value};
+ use super::{Engine as _, Transaction as _};
+ use crate::kv;
+<a href="#h3-1" id="h3-1" class="h">@@ -163,7 +163,9 @@ impl super::Transaction for Transaction {
+</a>             row,
+         })?)?)
+     }
+<a href="#h3-1-3" id="h3-1-3" class="i">+}
+</a> 
+<a href="#h3-1-5" id="h3-1-5" class="i">+impl Catalog for Transaction {
+</a>     fn create_table(&amp;mut self, table: &amp;Table) -&gt; Result&lt;(), Error&gt; {
+         deserialize(&amp;self.raft.mutate(serialize(&amp;Mutation::CreateTable {
+             txn_id: self.id,
+<a href="#h3-2" id="h3-2" class="h">@@ -187,7 +189,7 @@ impl super::Transaction for Transaction {
+</a>         )
+     }
+ 
+<a href="#h3-2-3" id="h3-2-3" class="d">-    fn scan_tables(&amp;self) -&gt; Result&lt;super::TableScan, Error&gt; {
+</a><a href="#h3-2-4" id="h3-2-4" class="i">+    fn scan_tables(&amp;self) -&gt; Result&lt;Tables, Error&gt; {
+</a>         Ok(Box::new(
+             deserialize::&lt;Vec&lt;_&gt;&gt;(
+                 &amp;self.raft.query(serialize(&amp;Query::ScanTables { txn_id: self.id })?)?,
+<b>diff --git a/<a id="h4" href="../file/src/sql/schema.rs.html">src/sql/schema.rs</a> b/<a href="../file/src/sql/schema.rs.html">src/sql/schema.rs</a></b>
+<a href="#h4-0" id="h4-0" class="h">@@ -5,6 +5,27 @@ use crate::Error;
+</a> 
+ use std::collections::HashMap;
+ 
+<a href="#h4-0-3" id="h4-0-3" class="i">+/// The catalog stores schema information
+</a><a href="#h4-0-4" id="h4-0-4" class="i">+pub trait Catalog {
+</a><a href="#h4-0-5" id="h4-0-5" class="i">+    /// Creates a new table
+</a><a href="#h4-0-6" id="h4-0-6" class="i">+    fn create_table(&amp;mut self, table: &amp;Table) -&gt; Result&lt;(), Error&gt;;
+</a><a href="#h4-0-7" id="h4-0-7" class="i">+    /// Deletes an existing table, or errors if it does not exist
+</a><a href="#h4-0-8" id="h4-0-8" class="i">+    fn delete_table(&amp;mut self, table: &amp;str) -&gt; Result&lt;(), Error&gt;;
+</a><a href="#h4-0-9" id="h4-0-9" class="i">+    /// Reads a table, if it exists
+</a><a href="#h4-0-10" id="h4-0-10" class="i">+    fn read_table(&amp;self, table: &amp;str) -&gt; Result&lt;Option&lt;Table&gt;, Error&gt;;
+</a><a href="#h4-0-11" id="h4-0-11" class="i">+    /// Iterates over all tables
+</a><a href="#h4-0-12" id="h4-0-12" class="i">+    fn scan_tables(&amp;self) -&gt; Result&lt;Tables, Error&gt;;
+</a><a href="#h4-0-13" id="h4-0-13" class="i">+
+</a><a href="#h4-0-14" id="h4-0-14" class="i">+    /// Reads a table, and errors if it does not exist
+</a><a href="#h4-0-15" id="h4-0-15" class="i">+    fn must_read_table(&amp;self, table: &amp;str) -&gt; Result&lt;Table, Error&gt; {
+</a><a href="#h4-0-16" id="h4-0-16" class="i">+        self.read_table(table)?
+</a><a href="#h4-0-17" id="h4-0-17" class="i">+            .ok_or_else(|| Error::Value(format!(&quot;Table {} does not exist&quot;, table)))
+</a><a href="#h4-0-18" id="h4-0-18" class="i">+    }
+</a><a href="#h4-0-19" id="h4-0-19" class="i">+}
+</a><a href="#h4-0-20" id="h4-0-20" class="i">+
+</a><a href="#h4-0-21" id="h4-0-21" class="i">+/// A table scan iterator
+</a><a href="#h4-0-22" id="h4-0-22" class="i">+pub type Tables = Box&lt;dyn DoubleEndedIterator&lt;Item = Table&gt; + Send&gt;;
+</a><a href="#h4-0-23" id="h4-0-23" class="i">+
+</a> /// A table schema
+ #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+ pub struct Table {
+<b>diff --git a/<a id="h5" href="../file/tests/sql/dml.rs.html">tests/sql/dml.rs</a> b/<a href="../file/tests/sql/dml.rs.html">tests/sql/dml.rs</a></b>
+<a href="#h5-0" id="h5-0" class="h">@@ -1,6 +1,7 @@
+</a> ///! DML-related tests, using an in-memory database against golden files in tests/sql/dml/
+ ///! Note that schema-related tests are in schema.rs, this is just for the basic DML functionality
+<a href="#h5-0-2" id="h5-0-2" class="d">-use toydb::sql::engine::{Engine, Transaction};
+</a><a href="#h5-0-3" id="h5-0-3" class="i">+use toydb::sql::engine::{Engine as _, Transaction as _};
+</a><a href="#h5-0-4" id="h5-0-4" class="i">+use toydb::sql::schema::Catalog as _;
+</a> use toydb::Error;
+ 
+ use goldenfile::Mint;
+<b>diff --git a/<a id="h6" href="../file/tests/sql/schema.rs.html">tests/sql/schema.rs</a> b/<a href="../file/tests/sql/schema.rs.html">tests/sql/schema.rs</a></b>
+<a href="#h6-0" id="h6-0" class="h">@@ -1,5 +1,6 @@
+</a> ///! Schema-related tests, using an in-memory database against golden files in tests/sql/chema/
+<a href="#h6-0-1" id="h6-0-1" class="d">-use toydb::sql::engine::{Engine, Transaction};
+</a><a href="#h6-0-2" id="h6-0-2" class="i">+use toydb::sql::engine::{Engine as _, Transaction as _};
+</a><a href="#h6-0-3" id="h6-0-3" class="i">+use toydb::sql::schema::Catalog as _;
+</a> use toydb::Error;
+ 
+ use goldenfile::Mint;
+</pre>
+</div>
+</body>
+</html>

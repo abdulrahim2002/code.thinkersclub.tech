@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Handle single-node Raft leaders during construction again - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/2f9fd16429dd17ff22dcc04d0f43a11173f0a8a4.html">2f9fd16429dd17ff22dcc04d0f43a11173f0a8a4</a>
+<b>parent</b> <a href="../commit/d1db7d73ab1e2ddde4fcedee9aca5bf667c7b555.html">d1db7d73ab1e2ddde4fcedee9aca5bf667c7b555</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Sat,  6 Jan 2024 21:54:23 +0100
+
+Handle single-node Raft leaders during construction again
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/raft/node/follower.rs</a></td><td> | </td><td class="num">7</td><td><span class="i">+</span><span class="d">------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/raft/node/mod.rs</a></td><td> | </td><td class="num">11</td><td><span class="i">++++++++</span><span class="d">---</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">tests/client/mod.rs</a></td><td> | </td><td class="num">8</td><td><span class="i">++++</span><span class="d">----</span></td></tr>
+</table></pre><pre>3 files changed, 13 insertions(+), 13 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/raft/node/follower.rs.html">src/raft/node/follower.rs</a> b/<a href="../file/src/raft/node/follower.rs.html">src/raft/node/follower.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -59,7 +59,7 @@ impl RoleNode&lt;Follower&gt; {
+</a> 
+     /// Transforms the node into a candidate, by campaigning for leadership in a
+     /// new term.
+<a href="#h0-0-3" id="h0-0-3" class="d">-    fn become_candidate(mut self) -&gt; Result&lt;RoleNode&lt;Candidate&gt;&gt; {
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+    pub(super) fn become_candidate(mut self) -&gt; Result&lt;RoleNode&lt;Candidate&gt;&gt; {
+</a>         // Abort any forwarded requests. These must be retried with new leader.
+         self.abort_forwarded()?;
+ 
+<a href="#h0-1" id="h0-1" class="h">@@ -232,11 +232,6 @@ impl RoleNode&lt;Follower&gt; {
+</a>     pub fn tick(mut self) -&gt; Result&lt;Node&gt; {
+         self.assert()?;
+ 
+<a href="#h0-1-3" id="h0-1-3" class="d">-        // If there are no peers, transition to leader immediately.
+</a><a href="#h0-1-4" id="h0-1-4" class="d">-        if self.peers.is_empty() {
+</a><a href="#h0-1-5" id="h0-1-5" class="d">-            return Ok(self.become_candidate()?.become_leader()?.into());
+</a><a href="#h0-1-6" id="h0-1-6" class="d">-        }
+</a><a href="#h0-1-7" id="h0-1-7" class="d">-
+</a>         self.role.leader_seen += 1;
+         if self.role.leader_seen &gt;= self.role.election_timeout {
+             return Ok(self.become_candidate()?.into());
+<b>diff --git a/<a id="h1" href="../file/src/raft/node/mod.rs.html">src/raft/node/mod.rs</a> b/<a href="../file/src/raft/node/mod.rs.html">src/raft/node/mod.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -70,7 +70,7 @@ impl Node {
+</a>         tokio::spawn(driver.drive(state));
+ 
+         let (term, voted_for) = log.get_term()?;
+<a href="#h1-0-3" id="h1-0-3" class="d">-        Ok(Node::Follower(RoleNode {
+</a><a href="#h1-0-4" id="h1-0-4" class="i">+        let node = RoleNode {
+</a>             id,
+             peers,
+             term,
+<a href="#h1-1" id="h1-1" class="h">@@ -78,7 +78,12 @@ impl Node {
+</a>             node_tx,
+             state_tx,
+             role: Follower::new(None, voted_for),
+<a href="#h1-1-3" id="h1-1-3" class="d">-        }))
+</a><a href="#h1-1-4" id="h1-1-4" class="i">+        };
+</a><a href="#h1-1-5" id="h1-1-5" class="i">+        if node.peers.is_empty() {
+</a><a href="#h1-1-6" id="h1-1-6" class="i">+            // If there are no peers, become leader immediately.
+</a><a href="#h1-1-7" id="h1-1-7" class="i">+            return Ok(node.become_candidate()?.become_leader()?.into());
+</a><a href="#h1-1-8" id="h1-1-8" class="i">+        }
+</a><a href="#h1-1-9" id="h1-1-9" class="i">+        Ok(node.into())
+</a>     }
+ 
+     /// Returns the node ID.
+<a href="#h1-2" id="h1-2" class="h">@@ -460,7 +465,7 @@ mod tests {
+</a> 
+     #[tokio::test]
+     async fn new_single() -&gt; Result&lt;()&gt; {
+<a href="#h1-2-3" id="h1-2-3" class="d">-        let (node_tx, _) = mpsc::unbounded_channel();
+</a><a href="#h1-2-4" id="h1-2-4" class="i">+        let (node_tx, _node_rx) = mpsc::unbounded_channel();
+</a>         let node = Node::new(
+             1,
+             HashSet::new(),
+<b>diff --git a/<a id="h2" href="../file/tests/client/mod.rs.html">tests/client/mod.rs</a> b/<a href="../file/tests/client/mod.rs.html">tests/client/mod.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -125,11 +125,11 @@ async fn status() -&gt; Result&lt;()&gt; {
+</a>                 server: 1,
+                 leader: 1,
+                 term: 1,
+<a href="#h2-0-3" id="h2-0-3" class="d">-                node_last_index: vec![(1, 26)].into_iter().collect(),
+</a><a href="#h2-0-4" id="h2-0-4" class="d">-                commit_index: 26,
+</a><a href="#h2-0-5" id="h2-0-5" class="d">-                apply_index: 26,
+</a><a href="#h2-0-6" id="h2-0-6" class="i">+                node_last_index: [(1, 27)].into(),
+</a><a href="#h2-0-7" id="h2-0-7" class="i">+                commit_index: 27,
+</a><a href="#h2-0-8" id="h2-0-8" class="i">+                apply_index: 27,
+</a>                 storage: &quot;bitcask&quot;.into(),
+<a href="#h2-0-10" id="h2-0-10" class="d">-                storage_size: 1313,
+</a><a href="#h2-0-11" id="h2-0-11" class="i">+                storage_size: 1324,
+</a>             },
+             mvcc: mvcc::Status {
+                 versions: 1,
+</pre>
+</div>
+</body>
+</html>

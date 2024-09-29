@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>sql: improve ORDER BY hidden field construction - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/ab617d0e4b85ce76193c6755d963195b4057396e.html">ab617d0e4b85ce76193c6755d963195b4057396e</a>
+<b>parent</b> <a href="../commit/309cf828e1970212d31bbd5bedd3d3580fe0ff4e.html">309cf828e1970212d31bbd5bedd3d3580fe0ff4e</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Thu, 11 Jul 2024 11:04:21 +0200
+
+sql: improve ORDER BY hidden field construction
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/sql/planner/planner.rs</a></td><td> | </td><td class="num">65</td><td><span class="i">+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d">------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/sql/testscripts/queries/order</a></td><td> | </td><td class="num">107</td><td><span class="i">+++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d">------------------------------</span></td></tr>
+</table></pre><pre>2 files changed, 125 insertions(+), 47 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/sql/planner/planner.rs.html">src/sql/planner/planner.rs</a> b/<a href="../file/src/sql/planner/planner.rs.html">src/sql/planner/planner.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -153,7 +153,7 @@ impl&lt;&#39;a, C: Catalog&gt; Planner&lt;&#39;a, C&gt; {
+</a>         r#where: Option&lt;ast::Expression&gt;,
+         group_by: Vec&lt;ast::Expression&gt;,
+         mut having: Option&lt;ast::Expression&gt;,
+<a href="#h0-0-3" id="h0-0-3" class="d">-        mut order: Vec&lt;(ast::Expression, ast::Order)&gt;,
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+        order: Vec&lt;(ast::Expression, ast::Order)&gt;,
+</a>         offset: Option&lt;ast::Expression&gt;,
+         limit: Option&lt;ast::Expression&gt;,
+     ) -&gt; Result&lt;Plan&gt; {
+<a href="#h0-1" id="h0-1" class="h">@@ -183,9 +183,6 @@ impl&lt;&#39;a, C: Catalog&gt; Planner&lt;&#39;a, C&gt; {
+</a>             if let Some(ref mut expr) = having {
+                 hidden += self.inject_hidden(expr, &amp;mut select)?;
+             }
+<a href="#h0-1-3" id="h0-1-3" class="d">-            for (expr, _) in order.iter_mut() {
+</a><a href="#h0-1-4" id="h0-1-4" class="d">-                hidden += self.inject_hidden(expr, &amp;mut select)?;
+</a><a href="#h0-1-5" id="h0-1-5" class="d">-            }
+</a> 
+             // Extract any aggregate functions and GROUP BY expressions, replacing them with
+             // Column placeholders. Aggregations are handled by evaluating group expressions
+<a href="#h0-2" id="h0-2" class="h">@@ -202,6 +199,8 @@ impl&lt;&#39;a, C: Catalog&gt; Planner&lt;&#39;a, C&gt; {
+</a>             // - Projection: rating * 100, rating * 100, released - 2000
+             // - Aggregation: max(#0), min(#1) group by #2
+             // - Projection: (#0 - #1) / 100
+<a href="#h0-2-3" id="h0-2-3" class="i">+            //
+</a><a href="#h0-2-4" id="h0-2-4" class="i">+            // TODO: handle ORDER BY aggregates.
+</a>             let aggregates = self.extract_aggregates(&amp;mut select)?;
+             let groups = self.extract_groups(&amp;mut select, group_by, aggregates.len())?;
+             if !aggregates.is_empty() || !groups.is_empty() {
+<a href="#h0-3" id="h0-3" class="h">@@ -210,11 +209,21 @@ impl&lt;&#39;a, C: Catalog&gt; Planner&lt;&#39;a, C&gt; {
+</a> 
+             // Build the remaining non-aggregate projection.
+             let labels = select.iter().map(|(_, l)| Label::maybe_name(l.clone())).collect_vec();
+<a href="#h0-3-3" id="h0-3-3" class="d">-            let expressions = select
+</a><a href="#h0-3-4" id="h0-3-4" class="i">+            let mut expressions = select
+</a>                 .into_iter()
+                 .map(|(e, _)| Self::build_expression(e, &amp;scope))
+                 .collect::&lt;Result&lt;Vec&lt;_&gt;&gt;&gt;()?;
+<a href="#h0-3-8" id="h0-3-8" class="d">-            scope = scope.project(&amp;expressions, &amp;labels)?;
+</a><a href="#h0-3-9" id="h0-3-9" class="i">+            let parent_scope = scope;
+</a><a href="#h0-3-10" id="h0-3-10" class="i">+            scope = parent_scope.project(&amp;expressions, &amp;labels)?;
+</a><a href="#h0-3-11" id="h0-3-11" class="i">+
+</a><a href="#h0-3-12" id="h0-3-12" class="i">+            // Add hidden columns for any ORDER BY fields not in the projection.
+</a><a href="#h0-3-13" id="h0-3-13" class="i">+            // TODO: track hidden fields in Scope.
+</a><a href="#h0-3-14" id="h0-3-14" class="i">+            let size = expressions.len();
+</a><a href="#h0-3-15" id="h0-3-15" class="i">+            for (expr, _) in &amp;order {
+</a><a href="#h0-3-16" id="h0-3-16" class="i">+                self.build_hidden(&amp;mut scope, &amp;parent_scope, &amp;mut expressions, expr);
+</a><a href="#h0-3-17" id="h0-3-17" class="i">+            }
+</a><a href="#h0-3-18" id="h0-3-18" class="i">+            hidden += expressions.len() - size;
+</a><a href="#h0-3-19" id="h0-3-19" class="i">+
+</a>             node = Node::Projection { source: Box::new(node), expressions, labels };
+         };
+ 
+<a href="#h0-4" id="h0-4" class="h">@@ -253,6 +262,9 @@ impl&lt;&#39;a, C: Catalog&gt; Planner&lt;&#39;a, C&gt; {
+</a> 
+         // Add a final projection that removes hidden columns, only passing
+         // through the originally requested columns.
+<a href="#h0-4-3" id="h0-4-3" class="i">+        //
+</a><a href="#h0-4-4" id="h0-4-4" class="i">+        // TODO: add a separate plan node kind for this, and also use it for
+</a><a href="#h0-4-5" id="h0-4-5" class="i">+        // RIGHT JOIN projections.
+</a>         if hidden &gt; 0 {
+             let columns = scope.len() - hidden;
+             let labels = vec![Label::None; columns];
+<a href="#h0-5" id="h0-5" class="h">@@ -478,6 +490,47 @@ impl&lt;&#39;a, C: Catalog&gt; Planner&lt;&#39;a, C&gt; {
+</a>         Ok(groups)
+     }
+ 
+<a href="#h0-5-3" id="h0-5-3" class="i">+    /// Adds hidden columns to a projection to pass through fields that are used
+</a><a href="#h0-5-4" id="h0-5-4" class="i">+    /// by downstream nodes. Consider e.g.:
+</a><a href="#h0-5-5" id="h0-5-5" class="i">+    ///
+</a><a href="#h0-5-6" id="h0-5-6" class="i">+    /// SELECT id FROM table ORDER BY value
+</a><a href="#h0-5-7" id="h0-5-7" class="i">+    ///
+</a><a href="#h0-5-8" id="h0-5-8" class="i">+    /// The ORDER BY node is evaluated after the projection (it may need to
+</a><a href="#h0-5-9" id="h0-5-9" class="i">+    /// order on projected fields like &quot;foo + bar AS alias&quot;), but &quot;value&quot; isn&#39;t
+</a><a href="#h0-5-10" id="h0-5-10" class="i">+    /// projected and so isn&#39;t available to the ORDER BY node. We add a hidden
+</a><a href="#h0-5-11" id="h0-5-11" class="i">+    /// column to the projection such that the effective projection is:
+</a><a href="#h0-5-12" id="h0-5-12" class="i">+    ///
+</a><a href="#h0-5-13" id="h0-5-13" class="i">+    /// SELECT id, value FROM table ORDER BY value
+</a><a href="#h0-5-14" id="h0-5-14" class="i">+    fn build_hidden(
+</a><a href="#h0-5-15" id="h0-5-15" class="i">+        &amp;self,
+</a><a href="#h0-5-16" id="h0-5-16" class="i">+        scope: &amp;mut Scope,
+</a><a href="#h0-5-17" id="h0-5-17" class="i">+        parent_scope: &amp;Scope,
+</a><a href="#h0-5-18" id="h0-5-18" class="i">+        projection: &amp;mut Vec&lt;Expression&gt;,
+</a><a href="#h0-5-19" id="h0-5-19" class="i">+        expr: &amp;ast::Expression,
+</a><a href="#h0-5-20" id="h0-5-20" class="i">+    ) {
+</a><a href="#h0-5-21" id="h0-5-21" class="i">+        expr.walk(&amp;mut |e| {
+</a><a href="#h0-5-22" id="h0-5-22" class="i">+            // Look for field references.
+</a><a href="#h0-5-23" id="h0-5-23" class="i">+            let ast::Expression::Field(table, name) = e else {
+</a><a href="#h0-5-24" id="h0-5-24" class="i">+                return true;
+</a><a href="#h0-5-25" id="h0-5-25" class="i">+            };
+</a><a href="#h0-5-26" id="h0-5-26" class="i">+            // If the field already exists post-projection, do nothing.
+</a><a href="#h0-5-27" id="h0-5-27" class="i">+            if scope.get_column_index(table.as_deref(), name).is_ok() {
+</a><a href="#h0-5-28" id="h0-5-28" class="i">+                return true;
+</a><a href="#h0-5-29" id="h0-5-29" class="i">+            }
+</a><a href="#h0-5-30" id="h0-5-30" class="i">+            // If the field doesn&#39;t exist in the parent scope either, we simply
+</a><a href="#h0-5-31" id="h0-5-31" class="i">+            // don&#39;t build a hidden column for it. The field evaluation will
+</a><a href="#h0-5-32" id="h0-5-32" class="i">+            // error when building the downstream node (e.g. ORDER BY).
+</a><a href="#h0-5-33" id="h0-5-33" class="i">+            let Ok(index) = parent_scope.get_column_index(table.as_deref(), name) else {
+</a><a href="#h0-5-34" id="h0-5-34" class="i">+                return true;
+</a><a href="#h0-5-35" id="h0-5-35" class="i">+            };
+</a><a href="#h0-5-36" id="h0-5-36" class="i">+            // Add a hidden column to the projection.
+</a><a href="#h0-5-37" id="h0-5-37" class="i">+            let label = Label::maybe_qualified(table.clone(), name.clone());
+</a><a href="#h0-5-38" id="h0-5-38" class="i">+            scope.add_column(label.clone());
+</a><a href="#h0-5-39" id="h0-5-39" class="i">+            projection.push(Expression::Field(index, label));
+</a><a href="#h0-5-40" id="h0-5-40" class="i">+            true
+</a><a href="#h0-5-41" id="h0-5-41" class="i">+        });
+</a><a href="#h0-5-42" id="h0-5-42" class="i">+    }
+</a><a href="#h0-5-43" id="h0-5-43" class="i">+
+</a>     /// Injects hidden expressions into SELECT expressions. This is used for ORDER BY and HAVING, in
+     /// order to apply these to fields or aggregates that are not present in the SELECT output, e.g.
+     /// to order on a column that is not selected. This is done by replacing the relevant parts of
+<b>diff --git a/<a id="h1" href="../file/src/sql/testscripts/queries/order.html">src/sql/testscripts/queries/order</a> b/<a href="../file/src/sql/testscripts/queries/order.html">src/sql/testscripts/queries/order</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -238,13 +238,11 @@ Order: id desc
+</a> 1, 1, TRUE, 0, a
+ 
+ # Can order by expressions.
+<a href="#h1-0-3" id="h1-0-3" class="d">-# TODO: the additional float projection here is unnecessary.
+</a> [plan]&gt; SELECT id, &quot;float&quot; FROM test ORDER BY &quot;float&quot; ^ 2
+ ---
+<a href="#h1-0-6" id="h1-0-6" class="d">-Projection: #0, #1
+</a><a href="#h1-0-7" id="h1-0-7" class="d">-└─ Order: test.float ^ 2 asc
+</a><a href="#h1-0-8" id="h1-0-8" class="d">-   └─ Projection: id, float, float
+</a><a href="#h1-0-9" id="h1-0-9" class="d">-      └─ Scan: test
+</a><a href="#h1-0-10" id="h1-0-10" class="i">+Order: float ^ 2 asc
+</a><a href="#h1-0-11" id="h1-0-11" class="i">+└─ Projection: id, float
+</a><a href="#h1-0-12" id="h1-0-12" class="i">+   └─ Scan: test
+</a> 0, NULL
+ 8, NULL
+ 9, NULL
+<a href="#h1-1" id="h1-1" class="h">@@ -256,11 +254,29 @@ Projection: #0, #1
+</a> 6, -inf
+ 7, NaN
+ 
+<a href="#h1-1-3" id="h1-1-3" class="d">-# Can order by columns not in the result.
+</a><a href="#h1-1-4" id="h1-1-4" class="i">+# Can order by columns not in the result. Multiple references to the same column
+</a><a href="#h1-1-5" id="h1-1-5" class="i">+# only result in one hidden column.
+</a> [plan]&gt; SELECT id, &quot;int&quot; FROM test ORDER BY &quot;bool&quot; DESC
+ ---
+ Projection: #0, #1
+<a href="#h1-1-9" id="h1-1-9" class="d">-└─ Order: test.bool desc
+</a><a href="#h1-1-10" id="h1-1-10" class="i">+└─ Order: bool desc
+</a><a href="#h1-1-11" id="h1-1-11" class="i">+   └─ Projection: id, int, bool
+</a><a href="#h1-1-12" id="h1-1-12" class="i">+      └─ Scan: test
+</a><a href="#h1-1-13" id="h1-1-13" class="i">+1, 0
+</a><a href="#h1-1-14" id="h1-1-14" class="i">+2, -1
+</a><a href="#h1-1-15" id="h1-1-15" class="i">+0, NULL
+</a><a href="#h1-1-16" id="h1-1-16" class="i">+3, 1
+</a><a href="#h1-1-17" id="h1-1-17" class="i">+4, 1000
+</a><a href="#h1-1-18" id="h1-1-18" class="i">+5, -1000
+</a><a href="#h1-1-19" id="h1-1-19" class="i">+6, 7
+</a><a href="#h1-1-20" id="h1-1-20" class="i">+7, -9
+</a><a href="#h1-1-21" id="h1-1-21" class="i">+8, NULL
+</a><a href="#h1-1-22" id="h1-1-22" class="i">+9, NULL
+</a><a href="#h1-1-23" id="h1-1-23" class="i">+
+</a><a href="#h1-1-24" id="h1-1-24" class="i">+[plan]&gt; SELECT id, &quot;int&quot; FROM test ORDER BY &quot;bool&quot; DESC, &quot;bool&quot; ASC
+</a><a href="#h1-1-25" id="h1-1-25" class="i">+---
+</a><a href="#h1-1-26" id="h1-1-26" class="i">+Projection: #0, #1
+</a><a href="#h1-1-27" id="h1-1-27" class="i">+└─ Order: bool desc, bool asc
+</a>    └─ Projection: id, int, bool
+       └─ Scan: test
+ 1, 0
+<a href="#h1-2" id="h1-2" class="h">@@ -278,7 +294,7 @@ Projection: #0, #1
+</a> [plan]&gt; SELECT id FROM test ORDER BY &quot;float&quot; ^ 2 - &quot;int&quot; ^ 2 DESC
+ ---
+ Projection: #0
+<a href="#h1-2-3" id="h1-2-3" class="d">-└─ Order: test.float ^ 2 - test.int ^ 2 desc
+</a><a href="#h1-2-4" id="h1-2-4" class="i">+└─ Order: float ^ 2 - int ^ 2 desc
+</a>    └─ Projection: id, float, int
+       └─ Scan: test
+ 7
+<a href="#h1-3" id="h1-3" class="h">@@ -334,20 +350,43 @@ Projection: #0
+</a> 5, 1000000
+ 
+ # Errors if the field is ambiguous.
+<a href="#h1-3-3" id="h1-3-3" class="d">-# TODO: this should error.
+</a><a href="#h1-3-4" id="h1-3-4" class="d">-# TODO: when fixed, test qualified field names, and aliases vs unqualified columns.
+</a><a href="#h1-3-5" id="h1-3-5" class="d">-&gt; SELECT id, &quot;int&quot; ^ 2 AS foo, &quot;int&quot; AS foo FROM test ORDER BY foo ASC
+</a><a href="#h1-3-6" id="h1-3-6" class="d">----
+</a><a href="#h1-3-7" id="h1-3-7" class="d">-0, NULL, NULL
+</a><a href="#h1-3-8" id="h1-3-8" class="d">-8, NULL, NULL
+</a><a href="#h1-3-9" id="h1-3-9" class="d">-9, NULL, NULL
+</a><a href="#h1-3-10" id="h1-3-10" class="d">-1, 0, 0
+</a><a href="#h1-3-11" id="h1-3-11" class="d">-2, 1, -1
+</a><a href="#h1-3-12" id="h1-3-12" class="d">-3, 1, 1
+</a><a href="#h1-3-13" id="h1-3-13" class="d">-6, 49, 7
+</a><a href="#h1-3-14" id="h1-3-14" class="d">-7, 81, -9
+</a><a href="#h1-3-15" id="h1-3-15" class="d">-4, 1000000, 1000
+</a><a href="#h1-3-16" id="h1-3-16" class="d">-5, 1000000, -1000
+</a><a href="#h1-3-17" id="h1-3-17" class="i">+!&gt; SELECT id, &quot;int&quot; ^ 2 AS foo, &quot;int&quot; AS foo FROM test ORDER BY foo ASC
+</a><a href="#h1-3-18" id="h1-3-18" class="i">+---
+</a><a href="#h1-3-19" id="h1-3-19" class="i">+Error: invalid input: ambiguous field foo
+</a><a href="#h1-3-20" id="h1-3-20" class="i">+
+</a><a href="#h1-3-21" id="h1-3-21" class="i">+# Prefers alias over table column if ambiguous, but not if fully qualified.
+</a><a href="#h1-3-22" id="h1-3-22" class="i">+[plan]&gt; SELECT id AS &quot;int&quot; FROM test ORDER BY &quot;int&quot; DESC
+</a><a href="#h1-3-23" id="h1-3-23" class="i">+---
+</a><a href="#h1-3-24" id="h1-3-24" class="i">+Order: int desc
+</a><a href="#h1-3-25" id="h1-3-25" class="i">+└─ Projection: id
+</a><a href="#h1-3-26" id="h1-3-26" class="i">+   └─ Scan: test
+</a><a href="#h1-3-27" id="h1-3-27" class="i">+9
+</a><a href="#h1-3-28" id="h1-3-28" class="i">+8
+</a><a href="#h1-3-29" id="h1-3-29" class="i">+7
+</a><a href="#h1-3-30" id="h1-3-30" class="i">+6
+</a><a href="#h1-3-31" id="h1-3-31" class="i">+5
+</a><a href="#h1-3-32" id="h1-3-32" class="i">+4
+</a><a href="#h1-3-33" id="h1-3-33" class="i">+3
+</a><a href="#h1-3-34" id="h1-3-34" class="i">+2
+</a><a href="#h1-3-35" id="h1-3-35" class="i">+1
+</a><a href="#h1-3-36" id="h1-3-36" class="i">+0
+</a><a href="#h1-3-37" id="h1-3-37" class="i">+
+</a><a href="#h1-3-38" id="h1-3-38" class="i">+[plan]&gt; SELECT id AS &quot;int&quot; FROM test ORDER BY test.&quot;int&quot; DESC
+</a><a href="#h1-3-39" id="h1-3-39" class="i">+---
+</a><a href="#h1-3-40" id="h1-3-40" class="i">+Projection: #0
+</a><a href="#h1-3-41" id="h1-3-41" class="i">+└─ Order: test.int desc
+</a><a href="#h1-3-42" id="h1-3-42" class="i">+   └─ Projection: id, test.int
+</a><a href="#h1-3-43" id="h1-3-43" class="i">+      └─ Scan: test
+</a><a href="#h1-3-44" id="h1-3-44" class="i">+4
+</a><a href="#h1-3-45" id="h1-3-45" class="i">+6
+</a><a href="#h1-3-46" id="h1-3-46" class="i">+3
+</a><a href="#h1-3-47" id="h1-3-47" class="i">+1
+</a><a href="#h1-3-48" id="h1-3-48" class="i">+2
+</a><a href="#h1-3-49" id="h1-3-49" class="i">+7
+</a><a href="#h1-3-50" id="h1-3-50" class="i">+5
+</a><a href="#h1-3-51" id="h1-3-51" class="i">+0
+</a><a href="#h1-3-52" id="h1-3-52" class="i">+8
+</a><a href="#h1-3-53" id="h1-3-53" class="i">+9
+</a> 
+ # Errors on unknown table or column, even the original table name when aliased.
+ !&gt; SELECT * FROM test ORDER BY unknown
+<a href="#h1-4" id="h1-4" class="h">@@ -431,25 +470,11 @@ Order: o.id desc, t.id asc
+</a> 9, NULL, NULL, NULL, 👍, 1, 1, a
+ 
+ # Order by aggregates, both when in SELECT and otherwise.
+<a href="#h1-4-3" id="h1-4-3" class="d">-[plan]&gt; SELECT &quot;bool&quot;, MAX(&quot;int&quot;) FROM test GROUP BY &quot;bool&quot; ORDER BY MAX(&quot;int&quot;) DESC
+</a><a href="#h1-4-4" id="h1-4-4" class="i">+# TODO: fix these.
+</a><a href="#h1-4-5" id="h1-4-5" class="i">+[plan]!&gt; SELECT &quot;bool&quot;, MAX(&quot;int&quot;) FROM test GROUP BY &quot;bool&quot; ORDER BY MAX(&quot;int&quot;) DESC
+</a> ---
+<a href="#h1-4-7" id="h1-4-7" class="d">-Order: #1 desc
+</a><a href="#h1-4-8" id="h1-4-8" class="d">-└─ Projection: test.bool, #0
+</a><a href="#h1-4-9" id="h1-4-9" class="d">-   └─ Aggregation: max
+</a><a href="#h1-4-10" id="h1-4-10" class="d">-      └─ Projection: int, bool
+</a><a href="#h1-4-11" id="h1-4-11" class="d">-         └─ Scan: test
+</a><a href="#h1-4-12" id="h1-4-12" class="d">-TRUE, 0
+</a><a href="#h1-4-13" id="h1-4-13" class="d">-FALSE, -1
+</a><a href="#h1-4-14" id="h1-4-14" class="d">-NULL, NULL
+</a><a href="#h1-4-15" id="h1-4-15" class="i">+Error: invalid input: unknown function max
+</a> 
+<a href="#h1-4-17" id="h1-4-17" class="d">-[plan]&gt; SELECT &quot;bool&quot; FROM test GROUP BY &quot;bool&quot; ORDER BY MAX(&quot;int&quot;) DESC
+</a><a href="#h1-4-18" id="h1-4-18" class="i">+[plan]!&gt; SELECT &quot;bool&quot; FROM test GROUP BY &quot;bool&quot; ORDER BY MAX(&quot;int&quot;) DESC
+</a> ---
+<a href="#h1-4-20" id="h1-4-20" class="d">-Projection: #0
+</a><a href="#h1-4-21" id="h1-4-21" class="d">-└─ Order: #1 desc
+</a><a href="#h1-4-22" id="h1-4-22" class="d">-   └─ Projection: test.bool, #0
+</a><a href="#h1-4-23" id="h1-4-23" class="d">-      └─ Aggregation: max
+</a><a href="#h1-4-24" id="h1-4-24" class="d">-         └─ Projection: int, bool
+</a><a href="#h1-4-25" id="h1-4-25" class="d">-            └─ Scan: test
+</a><a href="#h1-4-26" id="h1-4-26" class="d">-TRUE
+</a><a href="#h1-4-27" id="h1-4-27" class="d">-FALSE
+</a><a href="#h1-4-28" id="h1-4-28" class="d">-NULL
+</a><a href="#h1-4-29" id="h1-4-29" class="i">+Error: invalid input: unknown function max
+</a></pre>
+</div>
+</body>
+</html>

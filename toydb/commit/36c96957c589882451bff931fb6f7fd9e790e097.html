@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>raft: propose before heartbeating on election win - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/36c96957c589882451bff931fb6f7fd9e790e097.html">36c96957c589882451bff931fb6f7fd9e790e097</a>
+<b>parent</b> <a href="../commit/a1237011816eccf1f0ac05000db7a1578bfc9e4b.html">a1237011816eccf1f0ac05000db7a1578bfc9e4b</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Sun,  5 May 2024 21:57:10 +0200
+
+raft: propose before heartbeating on election win
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/raft/node/candidate.rs</a></td><td> | </td><td class="num">26</td><td><span class="i">+++++++++++++++</span><span class="d">-----------</span></td></tr>
+</table></pre><pre>1 file changed, 15 insertions(+), 11 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/raft/node/candidate.rs.html">src/raft/node/candidate.rs</a> b/<a href="../file/src/raft/node/candidate.rs.html">src/raft/node/candidate.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -76,11 +76,15 @@ impl RawNode&lt;Candidate&gt; {
+</a>         let peers = self.peers.clone();
+         let (last_index, _) = self.log.get_last_index();
+         let mut node = self.into_role(Leader::new(peers, last_index));
+<a href="#h0-0-3" id="h0-0-3" class="d">-        node.heartbeat()?;
+</a> 
+         // Propose an empty command when assuming leadership, to disambiguate
+         // previous entries in the log. See section 8 in the Raft paper.
+<a href="#h0-0-7" id="h0-0-7" class="i">+        //
+</a><a href="#h0-0-8" id="h0-0-8" class="i">+        // We do this prior to the heartbeat, to avoid a wasted replication
+</a><a href="#h0-0-9" id="h0-0-9" class="i">+        // roundtrip if the heartbeat response indicates the peer is behind.
+</a>         node.propose(None)?;
+<a href="#h0-0-11" id="h0-0-11" class="i">+        node.heartbeat()?;
+</a><a href="#h0-0-12" id="h0-0-12" class="i">+
+</a>         Ok(node)
+     }
+ 
+<a href="#h0-1" id="h0-1" class="h">@@ -294,9 +298,13 @@ mod tests {
+</a>                     from: 1,
+                     to,
+                     term: 3,
+<a href="#h0-1-3" id="h0-1-3" class="d">-                    message: Message::Heartbeat { commit_index: 2, commit_term: 1, read_seq: 0 },
+</a><a href="#h0-1-4" id="h0-1-4" class="d">-                },
+</a><a href="#h0-1-5" id="h0-1-5" class="d">-            );
+</a><a href="#h0-1-6" id="h0-1-6" class="i">+                    message: Message::Append {
+</a><a href="#h0-1-7" id="h0-1-7" class="i">+                        base_index: 3,
+</a><a href="#h0-1-8" id="h0-1-8" class="i">+                        base_term: 2,
+</a><a href="#h0-1-9" id="h0-1-9" class="i">+                        entries: vec![Entry { index: 4, term: 3, command: None }],
+</a><a href="#h0-1-10" id="h0-1-10" class="i">+                    },
+</a><a href="#h0-1-11" id="h0-1-11" class="i">+                }
+</a><a href="#h0-1-12" id="h0-1-12" class="i">+            )
+</a>         }
+ 
+         for to in peers.iter().copied().sorted() {
+<a href="#h0-2" id="h0-2" class="h">@@ -306,13 +314,9 @@ mod tests {
+</a>                     from: 1,
+                     to,
+                     term: 3,
+<a href="#h0-2-3" id="h0-2-3" class="d">-                    message: Message::Append {
+</a><a href="#h0-2-4" id="h0-2-4" class="d">-                        base_index: 3,
+</a><a href="#h0-2-5" id="h0-2-5" class="d">-                        base_term: 2,
+</a><a href="#h0-2-6" id="h0-2-6" class="d">-                        entries: vec![Entry { index: 4, term: 3, command: None }],
+</a><a href="#h0-2-7" id="h0-2-7" class="d">-                    },
+</a><a href="#h0-2-8" id="h0-2-8" class="d">-                }
+</a><a href="#h0-2-9" id="h0-2-9" class="d">-            )
+</a><a href="#h0-2-10" id="h0-2-10" class="i">+                    message: Message::Heartbeat { commit_index: 2, commit_term: 1, read_seq: 0 },
+</a><a href="#h0-2-11" id="h0-2-11" class="i">+                },
+</a><a href="#h0-2-12" id="h0-2-12" class="i">+            );
+</a>         }
+ 
+         assert_messages(&amp;mut node_rx, vec![]);
+</pre>
+</div>
+</body>
+</html>

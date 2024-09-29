@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>sql: make Engine::session() infallible - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/2f6302584683f09811b62fca21937621c48f4154.html">2f6302584683f09811b62fca21937621c48f4154</a>
+<b>parent</b> <a href="../commit/f81ac40107204028f409791a45e483711c74939e.html">f81ac40107204028f409791a45e483711c74939e</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Mon,  1 Apr 2024 04:21:16 +0200
+
+sql: make Engine::session() infallible
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/server.rs</a></td><td> | </td><td class="num">6</td><td><span class="i">+++</span><span class="d">---</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/sql/engine/mod.rs</a></td><td> | </td><td class="num">4</td><td><span class="i">++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">tests/sql/expression.rs</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">tests/sql/mod.rs</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h4">tests/sql/mutation.rs</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h5">tests/sql/schema.rs</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+</table></pre><pre>6 files changed, 9 insertions(+), 9 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/server.rs.html">src/server.rs</a> b/<a href="../file/src/server.rs.html">src/server.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -55,7 +55,7 @@ impl Server {
+</a>         let mut listener = TcpListenerStream::new(listener);
+         while let Some(socket) = listener.try_next().await? {
+             let peer = socket.peer_addr()?;
+<a href="#h0-0-3" id="h0-0-3" class="d">-            let session = Session::new(engine.clone())?;
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+            let session = Session::new(engine.clone());
+</a>             tokio::spawn(async move {
+                 info!(&quot;Client {} connected&quot;, peer);
+                 match session.handle(socket).await {
+<a href="#h0-1" id="h0-1" class="h">@@ -95,8 +95,8 @@ pub struct Session {
+</a> 
+ impl Session {
+     /// Creates a new client session.
+<a href="#h0-1-3" id="h0-1-3" class="d">-    fn new(engine: sql::engine::Raft) -&gt; Result&lt;Self&gt; {
+</a><a href="#h0-1-4" id="h0-1-4" class="d">-        Ok(Self { sql: engine.session()?, engine })
+</a><a href="#h0-1-5" id="h0-1-5" class="i">+    fn new(engine: sql::engine::Raft) -&gt; Self {
+</a><a href="#h0-1-6" id="h0-1-6" class="i">+        Self { sql: engine.session(), engine }
+</a>     }
+ 
+     /// Handles a client connection.
+<b>diff --git a/<a id="h1" href="../file/src/sql/engine/mod.rs.html">src/sql/engine/mod.rs</a> b/<a href="../file/src/sql/engine/mod.rs.html">src/sql/engine/mod.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -28,8 +28,8 @@ pub trait Engine: Clone {
+</a>     fn begin_as_of(&amp;self, version: u64) -&gt; Result&lt;Self::Transaction&gt;;
+ 
+     /// Begins a session for executing individual statements
+<a href="#h1-0-3" id="h1-0-3" class="d">-    fn session(&amp;self) -&gt; Result&lt;Session&lt;Self&gt;&gt; {
+</a><a href="#h1-0-4" id="h1-0-4" class="d">-        Ok(Session { engine: self.clone(), txn: None })
+</a><a href="#h1-0-5" id="h1-0-5" class="i">+    fn session(&amp;self) -&gt; Session&lt;Self&gt; {
+</a><a href="#h1-0-6" id="h1-0-6" class="i">+        Session { engine: self.clone(), txn: None }
+</a>     }
+ }
+ 
+<b>diff --git a/<a id="h2" href="../file/tests/sql/expression.rs.html">tests/sql/expression.rs</a> b/<a href="../file/tests/sql/expression.rs.html">tests/sql/expression.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -5,7 +5,7 @@ use toydb::sql::types::Value;
+</a> 
+ fn eval_expr(expr: &amp;str) -&gt; Result&lt;Value&gt; {
+     let engine = super::setup(Vec::new())?;
+<a href="#h2-0-3" id="h2-0-3" class="d">-    engine.session()?.execute(&amp;format!(&quot;SELECT {}&quot;, expr))?.into_value()
+</a><a href="#h2-0-4" id="h2-0-4" class="i">+    engine.session().execute(&amp;format!(&quot;SELECT {}&quot;, expr))?.into_value()
+</a> }
+ 
+ macro_rules! test_expr {
+<b>diff --git a/<a id="h3" href="../file/tests/sql/mod.rs.html">tests/sql/mod.rs</a> b/<a href="../file/tests/sql/mod.rs.html">tests/sql/mod.rs</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -10,7 +10,7 @@ use toydb::storage;
+</a> /// Sets up a basic in-memory SQL engine with an initial dataset.
+ fn setup(queries: Vec&lt;&amp;str&gt;) -&gt; Result&lt;KV&lt;storage::engine::Memory&gt;&gt; {
+     let engine = KV::new(storage::engine::Memory::new());
+<a href="#h3-0-3" id="h3-0-3" class="d">-    let mut session = engine.session()?;
+</a><a href="#h3-0-4" id="h3-0-4" class="i">+    let mut session = engine.session();
+</a>     session.execute(&quot;BEGIN&quot;)?;
+     for query in queries {
+         session.execute(query)?;
+<b>diff --git a/<a id="h4" href="../file/tests/sql/mutation.rs.html">tests/sql/mutation.rs</a> b/<a href="../file/tests/sql/mutation.rs.html">tests/sql/mutation.rs</a></b>
+<a href="#h4-0" id="h4-0" class="h">@@ -22,7 +22,7 @@ macro_rules! test_mutation {
+</a>                 let mut f = mint.new_goldenfile(stringify!($name))?;
+ 
+                 write!(f, &quot;Query: {}\n&quot;, $query.trim())?;
+<a href="#h4-0-3" id="h4-0-3" class="d">-                match engine.session()?.execute($query) {
+</a><a href="#h4-0-4" id="h4-0-4" class="i">+                match engine.session().execute($query) {
+</a>                     Ok(resultset) =&gt; {
+                         write!(f, &quot;Result: {:?}\n\n&quot;, resultset)?;
+                     },
+<b>diff --git a/<a id="h5" href="../file/tests/sql/schema.rs.html">tests/sql/schema.rs</a> b/<a href="../file/tests/sql/schema.rs.html">tests/sql/schema.rs</a></b>
+<a href="#h5-0" id="h5-0" class="h">@@ -22,7 +22,7 @@ macro_rules! test_schema {
+</a>                 let mut f = mint.new_goldenfile(stringify!($name))?;
+ 
+                 write!(f, &quot;Query: {}\n&quot;, $query.trim())?;
+<a href="#h5-0-3" id="h5-0-3" class="d">-                match engine.session()?.execute($query) {
+</a><a href="#h5-0-4" id="h5-0-4" class="i">+                match engine.session().execute($query) {
+</a>                     Ok(result) =&gt; write!(f, &quot;Result: {:?}\n\n&quot;, result)?,
+                     Err(err) =&gt; write!(f, &quot;Error: {:?}\n\n&quot;, err)?,
+                 };
+</pre>
+</div>
+</body>
+</html>

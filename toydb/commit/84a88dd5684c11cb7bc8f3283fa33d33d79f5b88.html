@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>error: use Error::Internal for all non-user errors - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/84a88dd5684c11cb7bc8f3283fa33d33d79f5b88.html">84a88dd5684c11cb7bc8f3283fa33d33d79f5b88</a>
+<b>parent</b> <a href="../commit/5db43e844fe48153744813fa1ed784a888ea4f79.html">5db43e844fe48153744813fa1ed784a888ea4f79</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Fri, 10 Apr 2020 13:59:12 +0200
+
+error: use Error::Internal for all non-user errors
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/bin/toysql.rs</a></td><td> | </td><td class="num">31</td><td><span class="i">+++++++++++</span><span class="d">--------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/error.rs</a></td><td> | </td><td class="num">32</td><td><span class="i">++++++++++++++</span><span class="d">------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/raft/mod.rs</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">src/raft/node/leader.rs</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h4">src/raft/transport.rs</a></td><td> | </td><td class="num">11</td><td><span class="i">+++++++</span><span class="d">----</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h5">src/server/raft.rs</a></td><td> | </td><td class="num">6</td><td><span class="i">+++</span><span class="d">---</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h6">src/utility/serialize.rs</a></td><td> | </td><td class="num">6</td><td><span class="i">+++</span><span class="d">---</span></td></tr>
+</table></pre><pre>7 files changed, 40 insertions(+), 50 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/bin/toysql.rs.html">src/bin/toysql.rs</a> b/<a href="../file/src/bin/toysql.rs.html">src/bin/toysql.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -12,8 +12,9 @@ extern crate toydb;
+</a> 
+ use rustyline::error::ReadlineError;
+ use toydb::client::{Effect, Mode};
+<a href="#h0-0-3" id="h0-0-3" class="i">+use toydb::Error;
+</a> 
+<a href="#h0-0-5" id="h0-0-5" class="d">-fn main() -&gt; Result&lt;(), toydb::Error&gt; {
+</a><a href="#h0-0-6" id="h0-0-6" class="i">+fn main() -&gt; Result&lt;(), Error&gt; {
+</a>     let opts = app_from_crate!()
+         .arg(clap::Arg::with_name(&quot;command&quot;))
+         .arg(clap::Arg::with_name(&quot;headers&quot;).short(&quot;H&quot;).long(&quot;headers&quot;).help(&quot;Show column headers&quot;))
+<a href="#h0-1" id="h0-1" class="h">@@ -60,7 +61,7 @@ struct ToySQL {
+</a> 
+ impl ToySQL {
+     /// Creates a new ToySQL REPL for the given server host and port
+<a href="#h0-1-3" id="h0-1-3" class="d">-    fn new(host: &amp;str, port: u16) -&gt; Result&lt;Self, toydb::Error&gt; {
+</a><a href="#h0-1-4" id="h0-1-4" class="i">+    fn new(host: &amp;str, port: u16) -&gt; Result&lt;Self, Error&gt; {
+</a>         Ok(Self {
+             client: toydb::Client::new(host, port)?,
+             editor: rustyline::Editor::&lt;()&gt;::new(),
+<a href="#h0-2" id="h0-2" class="h">@@ -71,7 +72,7 @@ impl ToySQL {
+</a>     }
+ 
+     /// Executes a line of input
+<a href="#h0-2-3" id="h0-2-3" class="d">-    fn execute(&amp;mut self, input: &amp;str) -&gt; Result&lt;(), toydb::Error&gt; {
+</a><a href="#h0-2-4" id="h0-2-4" class="i">+    fn execute(&amp;mut self, input: &amp;str) -&gt; Result&lt;(), Error&gt; {
+</a>         if input.starts_with(&#39;!&#39;) {
+             self.execute_command(&amp;input)
+         } else if !input.is_empty() {
+<a href="#h0-3" id="h0-3" class="h">@@ -82,7 +83,7 @@ impl ToySQL {
+</a>     }
+ 
+     /// Handles a REPL command (prefixed by !, e.g. !help)
+<a href="#h0-3-3" id="h0-3-3" class="d">-    fn execute_command(&amp;mut self, input: &amp;str) -&gt; Result&lt;(), toydb::Error&gt; {
+</a><a href="#h0-3-4" id="h0-3-4" class="i">+    fn execute_command(&amp;mut self, input: &amp;str) -&gt; Result&lt;(), Error&gt; {
+</a>         let mut input = input.split_ascii_whitespace();
+         let command =
+             input.next().ok_or_else(|| toydb::Error::Parse(&quot;Expected command.&quot;.to_string()))?;
+<a href="#h0-4" id="h0-4" class="h">@@ -90,12 +91,7 @@ impl ToySQL {
+</a>         let getargs = |n| {
+             let args: Vec&lt;&amp;str&gt; = input.collect();
+             if args.len() != n {
+<a href="#h0-4-3" id="h0-4-3" class="d">-                Err(toydb::Error::Parse(format!(
+</a><a href="#h0-4-4" id="h0-4-4" class="d">-                    &quot;{}: expected {} args, got {}&quot;,
+</a><a href="#h0-4-5" id="h0-4-5" class="d">-                    command,
+</a><a href="#h0-4-6" id="h0-4-6" class="d">-                    n,
+</a><a href="#h0-4-7" id="h0-4-7" class="d">-                    args.len()
+</a><a href="#h0-4-8" id="h0-4-8" class="d">-                )))
+</a><a href="#h0-4-9" id="h0-4-9" class="i">+                Err(Error::Parse(format!(&quot;{}: expected {} args, got {}&quot;, command, n, args.len())))
+</a>             } else {
+                 Ok(args)
+             }
+<a href="#h0-5" id="h0-5" class="h">@@ -111,12 +107,7 @@ impl ToySQL {
+</a>                     self.show_headers = false;
+                     println!(&quot;Headers disabled&quot;);
+                 }
+<a href="#h0-5-3" id="h0-5-3" class="d">-                v =&gt; {
+</a><a href="#h0-5-4" id="h0-5-4" class="d">-                    return Err(toydb::Error::Parse(format!(
+</a><a href="#h0-5-5" id="h0-5-5" class="d">-                        &quot;Invalid value {}, expected on or off&quot;,
+</a><a href="#h0-5-6" id="h0-5-6" class="d">-                        v
+</a><a href="#h0-5-7" id="h0-5-7" class="d">-                    )))
+</a><a href="#h0-5-8" id="h0-5-8" class="d">-                }
+</a><a href="#h0-5-9" id="h0-5-9" class="i">+                v =&gt; return Err(Error::Parse(format!(&quot;Invalid value {}, expected on or off&quot;, v))),
+</a>             },
+             &quot;!help&quot; =&gt; println!(
+                 r#&quot;
+<a href="#h0-6" id="h0-6" class="h">@@ -139,13 +130,13 @@ Semicolons are not supported. The following !-commands are also available:
+</a>                     println!(&quot;{}&quot;, table)
+                 }
+             }
+<a href="#h0-6-3" id="h0-6-3" class="d">-            c =&gt; return Err(toydb::Error::Parse(format!(&quot;Unknown command {}&quot;, c))),
+</a><a href="#h0-6-4" id="h0-6-4" class="i">+            c =&gt; return Err(Error::Parse(format!(&quot;Unknown command {}&quot;, c))),
+</a>         }
+         Ok(())
+     }
+ 
+     /// Runs a query and displays the results
+<a href="#h0-6-10" id="h0-6-10" class="d">-    fn execute_query(&amp;mut self, query: &amp;str) -&gt; Result&lt;(), toydb::Error&gt; {
+</a><a href="#h0-6-11" id="h0-6-11" class="i">+    fn execute_query(&amp;mut self, query: &amp;str) -&gt; Result&lt;(), Error&gt; {
+</a>         let resultset = self.client.query(query)?;
+ 
+         match resultset.effect() {
+<a href="#h0-7" id="h0-7" class="h">@@ -187,7 +178,7 @@ Semicolons are not supported. The following !-commands are also available:
+</a>     }
+ 
+     /// Prompts the user for input
+<a href="#h0-7-3" id="h0-7-3" class="d">-    fn prompt(&amp;mut self) -&gt; Result&lt;Option&lt;String&gt;, toydb::Error&gt; {
+</a><a href="#h0-7-4" id="h0-7-4" class="i">+    fn prompt(&amp;mut self) -&gt; Result&lt;Option&lt;String&gt;, Error&gt; {
+</a>         let prompt = match self.client.txn() {
+             Some((id, toydb::client::Mode::ReadWrite)) =&gt; format!(&quot;toydb:{}&gt; &quot;, id),
+             Some((id, toydb::client::Mode::ReadOnly)) =&gt; format!(&quot;toydb:{}&gt; &quot;, id),
+<a href="#h0-8" id="h0-8" class="h">@@ -205,7 +196,7 @@ Semicolons are not supported. The following !-commands are also available:
+</a>     }
+ 
+     /// Runs the ToySQL REPL
+<a href="#h0-8-3" id="h0-8-3" class="d">-    fn run(&amp;mut self) -&gt; Result&lt;(), toydb::Error&gt; {
+</a><a href="#h0-8-4" id="h0-8-4" class="i">+    fn run(&amp;mut self) -&gt; Result&lt;(), Error&gt; {
+</a>         if let Some(path) = &amp;self.history_path {
+             match self.editor.load_history(path) {
+                 Ok(_) =&gt; {}
+<b>diff --git a/<a id="h1" href="../file/src/error.rs.html">src/error.rs</a> b/<a href="../file/src/error.rs.html">src/error.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -1,24 +1,20 @@
+</a><a href="#h1-0-0" id="h1-0-0" class="i">+/// Errors, all except Internal are considered user-facing
+</a> #[derive(Clone, Debug, PartialEq)]
+ pub enum Error {
+<a href="#h1-0-3" id="h1-0-3" class="d">-    Serialization,
+</a><a href="#h1-0-4" id="h1-0-4" class="d">-    ReadOnly,
+</a>     Config(String),
+<a href="#h1-0-6" id="h1-0-6" class="d">-    IO(String),
+</a>     Internal(String),
+<a href="#h1-0-8" id="h1-0-8" class="d">-    Network(String),
+</a>     Parse(String),
+<a href="#h1-0-10" id="h1-0-10" class="i">+    ReadOnly,
+</a><a href="#h1-0-11" id="h1-0-11" class="i">+    Serialization,
+</a>     Value(String),
+ }
+ 
+ impl std::fmt::Display for Error {
+     fn fmt(&amp;self, f: &amp;mut std::fmt::Formatter) -&gt; std::fmt::Result {
+         match self {
+<a href="#h1-0-18" id="h1-0-18" class="d">-            Error::Config(s)
+</a><a href="#h1-0-19" id="h1-0-19" class="d">-            | Error::IO(s)
+</a><a href="#h1-0-20" id="h1-0-20" class="d">-            | Error::Internal(s)
+</a><a href="#h1-0-21" id="h1-0-21" class="d">-            | Error::Network(s)
+</a><a href="#h1-0-22" id="h1-0-22" class="d">-            | Error::Parse(s)
+</a><a href="#h1-0-23" id="h1-0-23" class="d">-            | Error::Value(s) =&gt; write!(f, &quot;{}&quot;, s),
+</a><a href="#h1-0-24" id="h1-0-24" class="i">+            Error::Config(s) | Error::Internal(s) | Error::Parse(s) | Error::Value(s) =&gt; {
+</a><a href="#h1-0-25" id="h1-0-25" class="i">+                write!(f, &quot;{}&quot;, s)
+</a><a href="#h1-0-26" id="h1-0-26" class="i">+            }
+</a>             Error::Serialization =&gt; write!(f, &quot;Serialization failure, retry transaction&quot;),
+             Error::ReadOnly =&gt; write!(f, &quot;Read-only transaction&quot;),
+         }
+<a href="#h1-1" id="h1-1" class="h">@@ -33,25 +29,25 @@ impl From&lt;config::ConfigError&gt; for Error {
+</a> 
+ impl From&lt;crossbeam_channel::RecvError&gt; for Error {
+     fn from(err: crossbeam_channel::RecvError) -&gt; Self {
+<a href="#h1-1-3" id="h1-1-3" class="d">-        Error::Network(err.to_string())
+</a><a href="#h1-1-4" id="h1-1-4" class="i">+        Error::Internal(err.to_string())
+</a>     }
+ }
+ 
+ impl&lt;T&gt; From&lt;crossbeam_channel::SendError&lt;T&gt;&gt; for Error {
+     fn from(err: crossbeam_channel::SendError&lt;T&gt;) -&gt; Self {
+<a href="#h1-1-10" id="h1-1-10" class="d">-        Error::Network(err.to_string())
+</a><a href="#h1-1-11" id="h1-1-11" class="i">+        Error::Internal(err.to_string())
+</a>     }
+ }
+ 
+ impl From&lt;grpc::Error&gt; for Error {
+     fn from(err: grpc::Error) -&gt; Self {
+<a href="#h1-1-17" id="h1-1-17" class="d">-        Error::Network(err.to_string())
+</a><a href="#h1-1-18" id="h1-1-18" class="i">+        Error::Internal(err.to_string())
+</a>     }
+ }
+ 
+ impl From&lt;httpbis::Error&gt; for Error {
+     fn from(err: httpbis::Error) -&gt; Self {
+<a href="#h1-1-24" id="h1-1-24" class="d">-        Error::Network(err.to_string())
+</a><a href="#h1-1-25" id="h1-1-25" class="i">+        Error::Internal(err.to_string())
+</a>     }
+ }
+ 
+<a href="#h1-2" id="h1-2" class="h">@@ -75,13 +71,13 @@ impl From&lt;regex::Error&gt; for Error {
+</a> 
+ impl From&lt;rmps::decode::Error&gt; for Error {
+     fn from(err: rmps::decode::Error) -&gt; Self {
+<a href="#h1-2-3" id="h1-2-3" class="d">-        Error::IO(err.to_string())
+</a><a href="#h1-2-4" id="h1-2-4" class="i">+        Error::Internal(err.to_string())
+</a>     }
+ }
+ 
+ impl From&lt;rmps::encode::Error&gt; for Error {
+     fn from(err: rmps::encode::Error) -&gt; Self {
+<a href="#h1-2-10" id="h1-2-10" class="d">-        Error::IO(err.to_string())
+</a><a href="#h1-2-11" id="h1-2-11" class="i">+        Error::Internal(err.to_string())
+</a>     }
+ }
+ 
+<a href="#h1-3" id="h1-3" class="h">@@ -93,13 +89,13 @@ impl From&lt;rustyline::error::ReadlineError&gt; for Error {
+</a> 
+ impl From&lt;std::io::Error&gt; for Error {
+     fn from(err: std::io::Error) -&gt; Self {
+<a href="#h1-3-3" id="h1-3-3" class="d">-        Error::IO(err.to_string())
+</a><a href="#h1-3-4" id="h1-3-4" class="i">+        Error::Internal(err.to_string())
+</a>     }
+ }
+ 
+ impl From&lt;std::net::AddrParseError&gt; for Error {
+     fn from(err: std::net::AddrParseError) -&gt; Self {
+<a href="#h1-3-10" id="h1-3-10" class="d">-        Error::Network(err.to_string())
+</a><a href="#h1-3-11" id="h1-3-11" class="i">+        Error::Internal(err.to_string())
+</a>     }
+ }
+ 
+<b>diff --git a/<a id="h2" href="../file/src/raft/mod.rs.html">src/raft/mod.rs</a> b/<a href="../file/src/raft/mod.rs.html">src/raft/mod.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -108,7 +108,7 @@ impl Raft {
+</a>         let (response_tx, response_rx) = crossbeam_channel::unbounded();
+         self.call_tx.send((event, response_tx))?;
+         match response_rx.recv()? {
+<a href="#h2-0-3" id="h2-0-3" class="d">-            Event::RespondError { error, .. } =&gt; Err(Error::Network(error)),
+</a><a href="#h2-0-4" id="h2-0-4" class="i">+            Event::RespondError { error, .. } =&gt; Err(Error::Internal(error)),
+</a>             e =&gt; Ok(e),
+         }
+     }
+<b>diff --git a/<a id="h3" href="../file/src/raft/node/leader.rs.html">src/raft/node/leader.rs</a> b/<a href="../file/src/raft/node/leader.rs.html">src/raft/node/leader.rs</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -115,7 +115,7 @@ impl&lt;L: kv::storage::Storage, S: State&gt; RoleNode&lt;Leader, L, S&gt; {
+</a>                     call.from.as_deref(),
+                     Event::RespondState { call_id: call.id, response: self.state.query(command)? },
+                 )?,
+<a href="#h3-0-3" id="h3-0-3" class="d">-                _ =&gt; return Err(Error::Network(format!(&quot;Unsupported call {:?}&quot;, call))),
+</a><a href="#h3-0-4" id="h3-0-4" class="i">+                _ =&gt; return Err(Error::Internal(format!(&quot;Unsupported call {:?}&quot;, call))),
+</a>             }
+         }
+         Ok(())
+<b>diff --git a/<a id="h4" href="../file/src/raft/transport.rs.html">src/raft/transport.rs</a> b/<a href="../file/src/raft/transport.rs.html">src/raft/transport.rs</a></b>
+<a href="#h4-0" id="h4-0" class="h">@@ -39,21 +39,24 @@ impl Message {
+</a>     pub fn validate(&amp;self, node_id: &amp;str, term: u64) -&gt; Result&lt;(), Error&gt; {
+         // Don&#39;t allow local messages without call ID
+         if self.from.is_none() &amp;&amp; self.event.call_id().is_none() {
+<a href="#h4-0-3" id="h4-0-3" class="d">-            return Err(Error::Network(format!(&quot;Received local non-call event: {:?}&quot;, self.event)));
+</a><a href="#h4-0-4" id="h4-0-4" class="i">+            return Err(Error::Internal(format!(
+</a><a href="#h4-0-5" id="h4-0-5" class="i">+                &quot;Received local non-call event: {:?}&quot;,
+</a><a href="#h4-0-6" id="h4-0-6" class="i">+                self.event
+</a><a href="#h4-0-7" id="h4-0-7" class="i">+            )));
+</a>         }
+ 
+         // Ignore messages from past term
+         if self.term &lt; term {
+<a href="#h4-0-12" id="h4-0-12" class="d">-            return Err(Error::Network(format!(&quot;Ignoring message from stale term {}&quot;, self.term)));
+</a><a href="#h4-0-13" id="h4-0-13" class="i">+            return Err(Error::Internal(format!(&quot;Ignoring message from stale term {}&quot;, self.term)));
+</a>         }
+ 
+         // Ignore messages addressed to peers or local client
+         if let Some(to) = &amp;self.to {
+             if to != node_id {
+<a href="#h4-0-19" id="h4-0-19" class="d">-                return Err(Error::Network(format!(&quot;Ignoring message for other node {}&quot;, to)));
+</a><a href="#h4-0-20" id="h4-0-20" class="i">+                return Err(Error::Internal(format!(&quot;Ignoring message for other node {}&quot;, to)));
+</a>             }
+         } else {
+<a href="#h4-0-23" id="h4-0-23" class="d">-            return Err(Error::Network(&quot;Ignoring message for local client&quot;.into()));
+</a><a href="#h4-0-24" id="h4-0-24" class="i">+            return Err(Error::Internal(&quot;Ignoring message for local client&quot;.into()));
+</a>         }
+         Ok(())
+     }
+<b>diff --git a/<a id="h5" href="../file/src/server/raft.rs.html">src/server/raft.rs</a> b/<a href="../file/src/server/raft.rs.html">src/server/raft.rs</a></b>
+<a href="#h5-0" id="h5-0" class="h">@@ -28,10 +28,10 @@ impl Transport for GRPC {
+</a>                 client.step(grpc::RequestOptions::new(), message_to_protobuf(msg));
+                 Ok(())
+             } else {
+<a href="#h5-0-3" id="h5-0-3" class="d">-                Err(Error::Network(format!(&quot;Unknown Raft peer {}&quot;, to)))
+</a><a href="#h5-0-4" id="h5-0-4" class="i">+                Err(Error::Internal(format!(&quot;Unknown Raft peer {}&quot;, to)))
+</a>             }
+         } else {
+<a href="#h5-0-7" id="h5-0-7" class="d">-            Err(Error::Network(&quot;No receiver&quot;.into()))
+</a><a href="#h5-0-8" id="h5-0-8" class="i">+            Err(Error::Internal(&quot;No receiver&quot;.into()))
+</a>         }
+     }
+ }
+<a href="#h5-1" id="h5-1" class="h">@@ -125,7 +125,7 @@ fn message_from_protobuf(pb: service::Message) -&gt; Result&lt;Message, Error&gt; {
+</a>                 Event::AcceptEntries { last_index: e.last_index }
+             }
+             Some(service::Message_oneof_event::reject_entries(_)) =&gt; Event::RejectEntries,
+<a href="#h5-1-3" id="h5-1-3" class="d">-            None =&gt; return Err(Error::Network(&quot;No event found in protobuf message&quot;.into())),
+</a><a href="#h5-1-4" id="h5-1-4" class="i">+            None =&gt; return Err(Error::Internal(&quot;No event found in protobuf message&quot;.into())),
+</a>         },
+     })
+ }
+<b>diff --git a/<a id="h6" href="../file/src/utility/serialize.rs.html">src/utility/serialize.rs</a> b/<a href="../file/src/utility/serialize.rs.html">src/utility/serialize.rs</a></b>
+<a href="#h6-0" id="h6-0" class="h">@@ -1,13 +1,13 @@
+</a> use crate::Error;
+ 
+ /// Deserializes a value from a byte buffer, using MessagePack.
+<a href="#h6-0-3" id="h6-0-3" class="d">-/// Returns `Error::IO` on error.
+</a><a href="#h6-0-4" id="h6-0-4" class="i">+/// Returns `Error::Internal` on error.
+</a> pub fn deserialize&lt;&#39;de, V: serde::Deserialize&lt;&#39;de&gt;&gt;(bytes: &amp;[u8]) -&gt; Result&lt;V, Error&gt; {
+     Ok(serde::Deserialize::deserialize(&amp;mut rmps::Deserializer::new(bytes))?)
+ }
+ 
+ /// Serializes a value into a byte buffer, using MessagePack.
+<a href="#h6-0-10" id="h6-0-10" class="d">-/// Returns `Error::IO` on error.
+</a><a href="#h6-0-11" id="h6-0-11" class="i">+/// Returns `Error::Internal` on error.
+</a> pub fn serialize&lt;V: serde::Serialize&gt;(value: &amp;V) -&gt; Result&lt;Vec&lt;u8&gt;, Error&gt; {
+     let mut bytes = Vec::new();
+     value.serialize(&amp;mut rmps::Serializer::new(&amp;mut bytes))?;
+<a href="#h6-1" id="h6-1" class="h">@@ -26,7 +26,7 @@ mod tests {
+</a> 
+     #[test]
+     fn test_deserialize_error() -&gt; Result&lt;(), Error&gt; {
+<a href="#h6-1-3" id="h6-1-3" class="d">-        assert_matches!(deserialize::&lt;u64&gt;(&amp;[]), Err(Error::IO(_)));
+</a><a href="#h6-1-4" id="h6-1-4" class="i">+        assert_matches!(deserialize::&lt;u64&gt;(&amp;[]), Err(Error::Internal(_)));
+</a>         Ok(())
+     }
+ 
+</pre>
+</div>
+</body>
+</html>

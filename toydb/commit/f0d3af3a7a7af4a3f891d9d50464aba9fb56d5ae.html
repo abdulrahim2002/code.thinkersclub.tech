@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Rename MVCC records to versions. - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/f0d3af3a7a7af4a3f891d9d50464aba9fb56d5ae.html">f0d3af3a7a7af4a3f891d9d50464aba9fb56d5ae</a>
+<b>parent</b> <a href="../commit/fdece94c1557f6b10477eb148ed25c1b5c9bf149.html">fdece94c1557f6b10477eb148ed25c1b5c9bf149</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Mon,  4 Sep 2023 19:03:37 +0200
+
+Rename MVCC records to versions.
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/storage/mvcc.rs</a></td><td> | </td><td class="num">33</td><td><span class="i">++++++++++++++++++</span><span class="d">---------------</span></td></tr>
+</table></pre><pre>1 file changed, 18 insertions(+), 15 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/storage/mvcc.rs.html">src/storage/mvcc.rs</a> b/<a href="../file/src/storage/mvcc.rs.html">src/storage/mvcc.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -26,8 +26,8 @@ enum Key&lt;&#39;a&gt; {
+</a>         #[serde(borrow)]
+         Cow&lt;&#39;a, [u8]&gt;,
+     ),
+<a href="#h0-0-3" id="h0-0-3" class="d">-    /// A record for a key/version pair.
+</a><a href="#h0-0-4" id="h0-0-4" class="d">-    Record(
+</a><a href="#h0-0-5" id="h0-0-5" class="i">+    /// A versioned key/value pair.
+</a><a href="#h0-0-6" id="h0-0-6" class="i">+    Version(
+</a>         #[serde(with = &quot;serde_bytes&quot;)]
+         #[serde(borrow)]
+         Cow&lt;&#39;a, [u8]&gt;,
+<a href="#h0-1" id="h0-1" class="h">@@ -226,11 +226,14 @@ impl&lt;E: Engine&gt; Transaction&lt;E&gt; {
+</a>     pub fn get(&amp;self, key: &amp;[u8]) -&gt; Result&lt;Option&lt;Vec&lt;u8&gt;&gt;&gt; {
+         let mut session = self.engine.lock()?;
+         let mut scan = session
+<a href="#h0-1-3" id="h0-1-3" class="d">-            .scan(Key::Record(key.into(), 0).encode()?..=Key::Record(key.into(), self.id).encode()?)
+</a><a href="#h0-1-4" id="h0-1-4" class="i">+            .scan(
+</a><a href="#h0-1-5" id="h0-1-5" class="i">+                Key::Version(key.into(), 0).encode()?
+</a><a href="#h0-1-6" id="h0-1-6" class="i">+                    ..=Key::Version(key.into(), self.id).encode()?,
+</a><a href="#h0-1-7" id="h0-1-7" class="i">+            )
+</a>             .rev();
+         while let Some((k, v)) = scan.next().transpose()? {
+             match Key::decode(&amp;k)? {
+<a href="#h0-1-11" id="h0-1-11" class="d">-                Key::Record(_, version) =&gt; {
+</a><a href="#h0-1-12" id="h0-1-12" class="i">+                Key::Version(_, version) =&gt; {
+</a>                     if self.snapshot.is_visible(version) {
+                         return Ok(bincode::deserialize(&amp;v)?);
+                     }
+<a href="#h0-2" id="h0-2" class="h">@@ -244,13 +247,13 @@ impl&lt;E: Engine&gt; Transaction&lt;E&gt; {
+</a>     /// Scans a key range.
+     pub fn scan(&amp;self, range: impl RangeBounds&lt;Vec&lt;u8&gt;&gt;) -&gt; Result&lt;ScanIterator&gt; {
+         let start = match range.start_bound() {
+<a href="#h0-2-3" id="h0-2-3" class="d">-            Bound::Excluded(k) =&gt; Bound::Excluded(Key::Record(k.into(), std::u64::MAX).encode()?),
+</a><a href="#h0-2-4" id="h0-2-4" class="d">-            Bound::Included(k) =&gt; Bound::Included(Key::Record(k.into(), 0).encode()?),
+</a><a href="#h0-2-5" id="h0-2-5" class="d">-            Bound::Unbounded =&gt; Bound::Included(Key::Record(vec![].into(), 0).encode()?),
+</a><a href="#h0-2-6" id="h0-2-6" class="i">+            Bound::Excluded(k) =&gt; Bound::Excluded(Key::Version(k.into(), std::u64::MAX).encode()?),
+</a><a href="#h0-2-7" id="h0-2-7" class="i">+            Bound::Included(k) =&gt; Bound::Included(Key::Version(k.into(), 0).encode()?),
+</a><a href="#h0-2-8" id="h0-2-8" class="i">+            Bound::Unbounded =&gt; Bound::Included(Key::Version(vec![].into(), 0).encode()?),
+</a>         };
+         let end = match range.end_bound() {
+<a href="#h0-2-11" id="h0-2-11" class="d">-            Bound::Excluded(k) =&gt; Bound::Excluded(Key::Record(k.into(), 0).encode()?),
+</a><a href="#h0-2-12" id="h0-2-12" class="d">-            Bound::Included(k) =&gt; Bound::Included(Key::Record(k.into(), std::u64::MAX).encode()?),
+</a><a href="#h0-2-13" id="h0-2-13" class="i">+            Bound::Excluded(k) =&gt; Bound::Excluded(Key::Version(k.into(), 0).encode()?),
+</a><a href="#h0-2-14" id="h0-2-14" class="i">+            Bound::Included(k) =&gt; Bound::Included(Key::Version(k.into(), std::u64::MAX).encode()?),
+</a>             Bound::Unbounded =&gt; Bound::Unbounded,
+         };
+         // TODO: For now, collect results from the engine to not have to deal with lifetimes.
+<a href="#h0-3" id="h0-3" class="h">@@ -299,13 +302,13 @@ impl&lt;E: Engine&gt; Transaction&lt;E&gt; {
+</a>         let min = self.snapshot.invisible.iter().min().cloned().unwrap_or(self.id + 1);
+         let mut scan = session
+             .scan(
+<a href="#h0-3-3" id="h0-3-3" class="d">-                Key::Record(key.into(), min).encode()?
+</a><a href="#h0-3-4" id="h0-3-4" class="d">-                    ..=Key::Record(key.into(), std::u64::MAX).encode()?,
+</a><a href="#h0-3-5" id="h0-3-5" class="i">+                Key::Version(key.into(), min).encode()?
+</a><a href="#h0-3-6" id="h0-3-6" class="i">+                    ..=Key::Version(key.into(), std::u64::MAX).encode()?,
+</a>             )
+             .rev();
+         while let Some((k, _)) = scan.next().transpose()? {
+             match Key::decode(&amp;k)? {
+<a href="#h0-3-11" id="h0-3-11" class="d">-                Key::Record(_, version) =&gt; {
+</a><a href="#h0-3-12" id="h0-3-12" class="i">+                Key::Version(_, version) =&gt; {
+</a>                     if !self.snapshot.is_visible(version) {
+                         return Err(Error::Serialization);
+                     }
+<a href="#h0-4" id="h0-4" class="h">@@ -316,7 +319,7 @@ impl&lt;E: Engine&gt; Transaction&lt;E&gt; {
+</a>         std::mem::drop(scan);
+ 
+         // Write the key and its update record.
+<a href="#h0-4-3" id="h0-4-3" class="d">-        let key = Key::Record(key.into(), self.id).encode()?;
+</a><a href="#h0-4-4" id="h0-4-4" class="i">+        let key = Key::Version(key.into(), self.id).encode()?;
+</a>         let update = Key::TxnUpdate(self.id, (&amp;key).into()).encode()?;
+         session.set(&amp;update, vec![])?;
+         session.set(&amp;key, bincode::serialize(&amp;value)?)
+<a href="#h0-5" id="h0-5" class="h">@@ -422,8 +425,8 @@ impl&lt;&#39;a&gt; Scan&lt;&#39;a&gt; {
+</a>         // to decode the last version.
+         scan = Box::new(scan.filter_map(move |r| {
+             r.and_then(|(k, v)| match Key::decode(&amp;k)? {
+<a href="#h0-5-3" id="h0-5-3" class="d">-                Key::Record(_, version) if !snapshot.is_visible(version) =&gt; Ok(None),
+</a><a href="#h0-5-4" id="h0-5-4" class="d">-                Key::Record(key, _) =&gt; Ok(Some((key.into_owned(), v))),
+</a><a href="#h0-5-5" id="h0-5-5" class="i">+                Key::Version(_, version) if !snapshot.is_visible(version) =&gt; Ok(None),
+</a><a href="#h0-5-6" id="h0-5-6" class="i">+                Key::Version(key, _) =&gt; Ok(Some((key.into_owned(), v))),
+</a>                 k =&gt; Err(Error::Internal(format!(&quot;Expected Record, got {:?}&quot;, k))),
+             })
+             .transpose()
+</pre>
+</div>
+</body>
+</html>

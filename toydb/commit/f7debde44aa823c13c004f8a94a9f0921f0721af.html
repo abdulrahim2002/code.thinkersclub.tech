@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>sql: track hidden columns in `Scope` - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/f7debde44aa823c13c004f8a94a9f0921f0721af.html">f7debde44aa823c13c004f8a94a9f0921f0721af</a>
+<b>parent</b> <a href="../commit/df5fe8bb3d177afa26faf7201bb6385568b35c30.html">df5fe8bb3d177afa26faf7201bb6385568b35c30</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Mon, 15 Jul 2024 17:01:26 +0200
+
+sql: track hidden columns in `Scope`
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/sql/planner/planner.rs</a></td><td> | </td><td class="num">63</td><td><span class="i">+++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d">----------------</span></td></tr>
+</table></pre><pre>1 file changed, 47 insertions(+), 16 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/sql/planner/planner.rs.html">src/sql/planner/planner.rs</a> b/<a href="../file/src/sql/planner/planner.rs.html">src/sql/planner/planner.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -196,7 +196,6 @@ impl&lt;&#39;a, C: Catalog&gt; Planner&lt;&#39;a, C&gt; {
+</a>         }
+ 
+         // Build SELECT clause.
+<a href="#h0-0-3" id="h0-0-3" class="d">-        let mut hidden = 0;
+</a>         if !select.is_empty() {
+             let labels = select.iter().map(|(_, l)| Label::maybe_name(l.clone())).collect_vec();
+             let mut expressions: Vec&lt;_&gt; = select
+<a href="#h0-1" id="h0-1" class="h">@@ -208,12 +207,9 @@ impl&lt;&#39;a, C: Catalog&gt; Planner&lt;&#39;a, C&gt; {
+</a>             scope = parent_scope.project(&amp;expressions, &amp;labels)?;
+ 
+             // Add hidden columns for HAVING and ORDER BY fields not in SELECT.
+<a href="#h0-1-3" id="h0-1-3" class="d">-            // TODO: track hidden fields in Scope.
+</a><a href="#h0-1-4" id="h0-1-4" class="d">-            let size = expressions.len();
+</a>             for expr in having.iter().chain(order_by.iter().map(|(e, _)| e)) {
+                 self.build_hidden(&amp;mut scope, &amp;parent_scope, &amp;mut expressions, expr);
+             }
+<a href="#h0-1-8" id="h0-1-8" class="d">-            hidden += expressions.len() - size;
+</a> 
+             // If the parent scope is an aggregate scope, then every projected
+             // column must also be an aggregate column by definition. Record them
+<a href="#h0-2" id="h0-2" class="h">@@ -269,11 +265,11 @@ impl&lt;&#39;a, C: Catalog&gt; Planner&lt;&#39;a, C&gt; {
+</a>         //
+         // TODO: add a separate plan node kind for this, and also use it for
+         // RIGHT JOIN projections.
+<a href="#h0-2-3" id="h0-2-3" class="d">-        if hidden &gt; 0 {
+</a><a href="#h0-2-4" id="h0-2-4" class="d">-            let columns = node.size() - hidden;
+</a><a href="#h0-2-5" id="h0-2-5" class="d">-            let labels = vec![Label::None; columns];
+</a><a href="#h0-2-6" id="h0-2-6" class="d">-            let expressions = (0..columns).map(|i| Expression::Field(i, Label::None)).collect_vec();
+</a><a href="#h0-2-7" id="h0-2-7" class="d">-            scope = scope.project(&amp;expressions, &amp;labels)?;
+</a><a href="#h0-2-8" id="h0-2-8" class="i">+        let hidden = scope.remove_hidden();
+</a><a href="#h0-2-9" id="h0-2-9" class="i">+        if !hidden.is_empty() {
+</a><a href="#h0-2-10" id="h0-2-10" class="i">+            let size = node.size() - hidden.len();
+</a><a href="#h0-2-11" id="h0-2-11" class="i">+            let labels = vec![Label::None; size];
+</a><a href="#h0-2-12" id="h0-2-12" class="i">+            let expressions = (0..size).map(|i| Expression::Field(i, Label::None)).collect_vec();
+</a>             node = Node::Projection { source: Box::new(node), labels, expressions }
+         }
+ 
+<a href="#h0-3" id="h0-3" class="h">@@ -490,11 +486,12 @@ impl&lt;&#39;a, C: Catalog&gt; Planner&lt;&#39;a, C&gt; {
+</a>         expr.walk(&amp;mut |expr| {
+             // If this is an aggregate function or GROUP BY expression that
+             // isn&#39;t already available in the child scope, pass it through.
+<a href="#h0-3-3" id="h0-3-3" class="d">-            if let Some(index) = parent_scope.lookup_aggregate(expr) {
+</a><a href="#h0-3-4" id="h0-3-4" class="i">+            if let Some(parent_index) = parent_scope.lookup_aggregate(expr) {
+</a>                 if scope.lookup_aggregate(expr).is_none() {
+<a href="#h0-3-6" id="h0-3-6" class="d">-                    let label = parent_scope.get_label(index);
+</a><a href="#h0-3-7" id="h0-3-7" class="d">-                    scope.add_aggregate(expr.clone(), label);
+</a><a href="#h0-3-8" id="h0-3-8" class="d">-                    projection.push(Expression::Field(index, Label::None));
+</a><a href="#h0-3-9" id="h0-3-9" class="i">+                    let label = parent_scope.get_label(parent_index);
+</a><a href="#h0-3-10" id="h0-3-10" class="i">+                    let index = scope.add_aggregate(expr.clone(), label);
+</a><a href="#h0-3-11" id="h0-3-11" class="i">+                    scope.hide(index);
+</a><a href="#h0-3-12" id="h0-3-12" class="i">+                    projection.push(Expression::Field(parent_index, Label::None));
+</a>                     return true;
+                 }
+             }
+<a href="#h0-4" id="h0-4" class="h">@@ -510,14 +507,15 @@ impl&lt;&#39;a, C: Catalog&gt; Planner&lt;&#39;a, C&gt; {
+</a>             // If the field doesn&#39;t exist in the parent scope either, we simply
+             // don&#39;t build a hidden column for it. The field evaluation will
+             // error when building the downstream node (e.g. ORDER BY).
+<a href="#h0-4-3" id="h0-4-3" class="d">-            let Ok(index) = parent_scope.lookup_column(table.as_deref(), name) else {
+</a><a href="#h0-4-4" id="h0-4-4" class="i">+            let Ok(parent_index) = parent_scope.lookup_column(table.as_deref(), name) else {
+</a>                 return true;
+             };
+             // Add a hidden column to the projection. Use the given label for
+             // the projection, but the qualified label for the scope.
+<a href="#h0-4-9" id="h0-4-9" class="d">-            scope.add_column(parent_scope.get_label(index));
+</a><a href="#h0-4-10" id="h0-4-10" class="i">+            let index = scope.add_column(parent_scope.get_label(parent_index));
+</a><a href="#h0-4-11" id="h0-4-11" class="i">+            scope.hide(index);
+</a>             projection.push(Expression::Field(
+<a href="#h0-4-13" id="h0-4-13" class="d">-                index,
+</a><a href="#h0-4-14" id="h0-4-14" class="i">+                parent_index,
+</a>                 Label::maybe_qualified(table.clone(), name.clone()),
+             ));
+             true
+<a href="#h0-5" id="h0-5" class="h">@@ -634,6 +632,10 @@ pub struct Scope {
+</a>     /// using the same expression in other nodes, e.g.  GROUP BY a * b / 2 ORDER
+     /// BY a * b / 2.
+     aggregates: HashMap&lt;ast::Expression, usize&gt;,
+<a href="#h0-5-3" id="h0-5-3" class="i">+    /// Hidden columns. These are used to pass e.g. ORDER BY and HAVING
+</a><a href="#h0-5-4" id="h0-5-4" class="i">+    /// expressions through SELECT projection nodes if the expressions aren&#39;t
+</a><a href="#h0-5-5" id="h0-5-5" class="i">+    /// already projected. They should be removed before emitting results.
+</a><a href="#h0-5-6" id="h0-5-6" class="i">+    hidden: HashSet&lt;usize&gt;,
+</a> }
+ 
+ impl Scope {
+<a href="#h0-6" id="h0-6" class="h">@@ -645,6 +647,7 @@ impl Scope {
+</a>             qualified: HashMap::new(),
+             unqualified: HashMap::new(),
+             aggregates: HashMap::new(),
+<a href="#h0-6-3" id="h0-6-3" class="i">+            hidden: HashSet::new(),
+</a>         }
+     }
+ 
+<a href="#h0-7" id="h0-7" class="h">@@ -739,6 +742,34 @@ impl Scope {
+</a>         self.aggregates.get(expr).copied()
+     }
+ 
+<a href="#h0-7-3" id="h0-7-3" class="i">+    /// Marks the given column as hidden.
+</a><a href="#h0-7-4" id="h0-7-4" class="i">+    fn hide(&amp;mut self, index: usize) {
+</a><a href="#h0-7-5" id="h0-7-5" class="i">+        if index &lt; self.columns.len() {
+</a><a href="#h0-7-6" id="h0-7-6" class="i">+            self.hidden.insert(index);
+</a><a href="#h0-7-7" id="h0-7-7" class="i">+        }
+</a><a href="#h0-7-8" id="h0-7-8" class="i">+    }
+</a><a href="#h0-7-9" id="h0-7-9" class="i">+
+</a><a href="#h0-7-10" id="h0-7-10" class="i">+    /// Removes hidden columns from the scope, returning their indexes.
+</a><a href="#h0-7-11" id="h0-7-11" class="i">+    fn remove_hidden(&amp;mut self) -&gt; HashSet&lt;usize&gt; {
+</a><a href="#h0-7-12" id="h0-7-12" class="i">+        if self.hidden.is_empty() {
+</a><a href="#h0-7-13" id="h0-7-13" class="i">+            return HashSet::new();
+</a><a href="#h0-7-14" id="h0-7-14" class="i">+        }
+</a><a href="#h0-7-15" id="h0-7-15" class="i">+        let hidden = std::mem::take(&amp;mut self.hidden);
+</a><a href="#h0-7-16" id="h0-7-16" class="i">+
+</a><a href="#h0-7-17" id="h0-7-17" class="i">+        let mut index = 0;
+</a><a href="#h0-7-18" id="h0-7-18" class="i">+        self.columns.retain(|_| {
+</a><a href="#h0-7-19" id="h0-7-19" class="i">+            let is_hidden = hidden.contains(&amp;index);
+</a><a href="#h0-7-20" id="h0-7-20" class="i">+            index += 1;
+</a><a href="#h0-7-21" id="h0-7-21" class="i">+            !is_hidden
+</a><a href="#h0-7-22" id="h0-7-22" class="i">+        });
+</a><a href="#h0-7-23" id="h0-7-23" class="i">+
+</a><a href="#h0-7-24" id="h0-7-24" class="i">+        self.qualified.retain(|_, index| !hidden.contains(index));
+</a><a href="#h0-7-25" id="h0-7-25" class="i">+        self.unqualified.iter_mut().for_each(|(_, vec)| vec.retain(|i| !hidden.contains(i)));
+</a><a href="#h0-7-26" id="h0-7-26" class="i">+        self.unqualified.retain(|_, vec| !vec.is_empty());
+</a><a href="#h0-7-27" id="h0-7-27" class="i">+        self.aggregates.retain(|_, index| !hidden.contains(index));
+</a><a href="#h0-7-28" id="h0-7-28" class="i">+        hidden
+</a><a href="#h0-7-29" id="h0-7-29" class="i">+    }
+</a><a href="#h0-7-30" id="h0-7-30" class="i">+
+</a>     /// Merges two scopes, by appending the given scope to self.
+     fn merge(&amp;mut self, scope: Scope) -&gt; Result&lt;()&gt; {
+         for table in scope.tables {
+</pre>
+</div>
+</body>
+</html>

@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>sql: add `sqrt()` function - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/bfecbbeb8b213d3513bfbab35dc0c32a116eae77.html">bfecbbeb8b213d3513bfbab35dc0c32a116eae77</a>
+<b>parent</b> <a href="../commit/92c471f9f92655cd8beb9f64576ab5197fcfb4f8.html">92c471f9f92655cd8beb9f64576ab5197fcfb4f8</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Wed, 17 Jul 2024 16:51:32 +0200
+
+sql: add `sqrt()` function
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">docs/sql.md</a></td><td> | </td><td class="num">4</td><td><span class="i">++++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/sql/planner/planner.rs</a></td><td> | </td><td class="num">8</td><td><span class="i">+++++</span><span class="d">---</span></td></tr>
+<tr><td class="A">A</td><td><a href="#h2">src/sql/testscripts/expressions/func</a></td><td> | </td><td class="num">36</td><td><span class="i">++++++++++++++++++++++++++++++++++++</span><span class="d"></span></td></tr>
+<tr><td class="A">A</td><td><a href="#h3">src/sql/testscripts/expressions/func_sqrt</a></td><td> | </td><td class="num">52</td><td><span class="i">++++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d"></span></td></tr>
+<tr><td class="D">D</td><td><a href="#h4">src/sql/testscripts/expressions/function</a></td><td> | </td><td class="num">21</td><td><span class="i"></span><span class="d">---------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h5">src/sql/testscripts/queries/group_by</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h6">src/sql/types/expression.rs</a></td><td> | </td><td class="num">13</td><td><span class="i">++++++++++++</span><span class="d">-</span></td></tr>
+</table></pre><pre>7 files changed, 110 insertions(+), 26 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/docs/sql.md.html">docs/sql.md</a> b/<a href="../file/docs/sql.md.html">docs/sql.md</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -157,6 +157,10 @@ The operator precedence (order of operations) is as follows:
+</a> 
+ Precedence can be overridden by wrapping an expression in parentheses, e.g. `(1 + 2) * 3`.
+ 
+<a href="#h0-0-3" id="h0-0-3" class="i">+### Functions
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+
+</a><a href="#h0-0-5" id="h0-0-5" class="i">+* `sqrt(expr)`: returns the square root of a numerical argument.
+</a><a href="#h0-0-6" id="h0-0-6" class="i">+
+</a> ### Aggregate functions
+ 
+ Aggregate function aggregate an expression across all rows, optionally grouped into buckets given by `GROUP BY`, and results can be filtered via `HAVING`.
+<b>diff --git a/<a id="h1" href="../file/src/sql/planner/planner.rs.html">src/sql/planner/planner.rs</a> b/<a href="../file/src/sql/planner/planner.rs.html">src/sql/planner/planner.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -492,9 +492,11 @@ impl&lt;&#39;a, C: Catalog&gt; Planner&lt;&#39;a, C&gt; {
+</a>             ast::Expression::Column(table, name) =&gt; {
+                 Column(scope.lookup_column(table.as_deref(), &amp;name)?)
+             }
+<a href="#h1-0-3" id="h1-0-3" class="d">-            // Currently, all functions are aggregates, and processed above.
+</a><a href="#h1-0-4" id="h1-0-4" class="d">-            // TODO: consider adding some basic functions for fun.
+</a><a href="#h1-0-5" id="h1-0-5" class="d">-            ast::Expression::Function(name, _) =&gt; return errinput!(&quot;unknown function {name}&quot;),
+</a><a href="#h1-0-6" id="h1-0-6" class="i">+            ast::Expression::Function(name, mut args) =&gt; match (name.as_str(), args.len()) {
+</a><a href="#h1-0-7" id="h1-0-7" class="i">+                // NB: aggregate functions are processed above.
+</a><a href="#h1-0-8" id="h1-0-8" class="i">+                (&quot;sqrt&quot;, 1) =&gt; SquareRoot(build(Box::new(args.remove(0)))?),
+</a><a href="#h1-0-9" id="h1-0-9" class="i">+                (name, n) =&gt; return errinput!(&quot;unknown function {name} with {n} arguments&quot;),
+</a><a href="#h1-0-10" id="h1-0-10" class="i">+            },
+</a>             ast::Expression::Operator(op) =&gt; match op {
+                 ast::Operator::And(lhs, rhs) =&gt; And(build(lhs)?, build(rhs)?),
+                 ast::Operator::Not(expr) =&gt; Not(build(expr)?),
+<b>diff --git a/<a id="h2" href="../file/src/sql/testscripts/expressions/func.html">src/sql/testscripts/expressions/func</a> b/<a href="../file/src/sql/testscripts/expressions/func.html">src/sql/testscripts/expressions/func</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -0,0 +1,36 @@
+</a><a href="#h2-0-0" id="h2-0-0" class="i">+# Tests function calls.
+</a><a href="#h2-0-1" id="h2-0-1" class="i">+
+</a><a href="#h2-0-2" id="h2-0-2" class="i">+# Function names are case-insensitive.
+</a><a href="#h2-0-3" id="h2-0-3" class="i">+&gt; sqrt(1)
+</a><a href="#h2-0-4" id="h2-0-4" class="i">+&gt; SQRT(1)
+</a><a href="#h2-0-5" id="h2-0-5" class="i">+---
+</a><a href="#h2-0-6" id="h2-0-6" class="i">+Float(1.0)
+</a><a href="#h2-0-7" id="h2-0-7" class="i">+Float(1.0)
+</a><a href="#h2-0-8" id="h2-0-8" class="i">+
+</a><a href="#h2-0-9" id="h2-0-9" class="i">+# A space is allowed around the arguments.
+</a><a href="#h2-0-10" id="h2-0-10" class="i">+&gt; sqrt ( 1 )
+</a><a href="#h2-0-11" id="h2-0-11" class="i">+---
+</a><a href="#h2-0-12" id="h2-0-12" class="i">+Float(1.0)
+</a><a href="#h2-0-13" id="h2-0-13" class="i">+
+</a><a href="#h2-0-14" id="h2-0-14" class="i">+# Wrong number of arguments errors.
+</a><a href="#h2-0-15" id="h2-0-15" class="i">+!&gt; sqrt()
+</a><a href="#h2-0-16" id="h2-0-16" class="i">+!&gt; sqrt(1, 2)
+</a><a href="#h2-0-17" id="h2-0-17" class="i">+---
+</a><a href="#h2-0-18" id="h2-0-18" class="i">+Error: invalid input: unknown function sqrt with 0 arguments
+</a><a href="#h2-0-19" id="h2-0-19" class="i">+Error: invalid input: unknown function sqrt with 2 arguments
+</a><a href="#h2-0-20" id="h2-0-20" class="i">+
+</a><a href="#h2-0-21" id="h2-0-21" class="i">+# Unknown functions error.
+</a><a href="#h2-0-22" id="h2-0-22" class="i">+!&gt; unknown()
+</a><a href="#h2-0-23" id="h2-0-23" class="i">+!&gt; unknown(1, 2, 3)
+</a><a href="#h2-0-24" id="h2-0-24" class="i">+---
+</a><a href="#h2-0-25" id="h2-0-25" class="i">+Error: invalid input: unknown function unknown with 0 arguments
+</a><a href="#h2-0-26" id="h2-0-26" class="i">+Error: invalid input: unknown function unknown with 3 arguments
+</a><a href="#h2-0-27" id="h2-0-27" class="i">+
+</a><a href="#h2-0-28" id="h2-0-28" class="i">+# Parse errors.
+</a><a href="#h2-0-29" id="h2-0-29" class="i">+!&gt; unknown(1, 2, 3
+</a><a href="#h2-0-30" id="h2-0-30" class="i">+!&gt; unknown(1, 2, 3,)
+</a><a href="#h2-0-31" id="h2-0-31" class="i">+!&gt; unknown(1, 2 3)
+</a><a href="#h2-0-32" id="h2-0-32" class="i">+---
+</a><a href="#h2-0-33" id="h2-0-33" class="i">+Error: invalid input: unexpected end of input
+</a><a href="#h2-0-34" id="h2-0-34" class="i">+Error: invalid input: expected expression atom, found )
+</a><a href="#h2-0-35" id="h2-0-35" class="i">+Error: invalid input: expected token ,, found 3
+</a><b>diff --git a/<a id="h3" href="../file/src/sql/testscripts/expressions/func_sqrt.html">src/sql/testscripts/expressions/func_sqrt</a> b/<a href="../file/src/sql/testscripts/expressions/func_sqrt.html">src/sql/testscripts/expressions/func_sqrt</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -0,0 +1,52 @@
+</a><a href="#h3-0-0" id="h3-0-0" class="i">+# Tests sqrt().
+</a><a href="#h3-0-1" id="h3-0-1" class="i">+
+</a><a href="#h3-0-2" id="h3-0-2" class="i">+# Integers work, and return floats.
+</a><a href="#h3-0-3" id="h3-0-3" class="i">+[expr]&gt; sqrt(2)
+</a><a href="#h3-0-4" id="h3-0-4" class="i">+[expr]&gt; sqrt(100)
+</a><a href="#h3-0-5" id="h3-0-5" class="i">+---
+</a><a href="#h3-0-6" id="h3-0-6" class="i">+Float(1.4142135623730951) ← SquareRoot(Constant(Integer(2)))
+</a><a href="#h3-0-7" id="h3-0-7" class="i">+Float(10.0) ← SquareRoot(Constant(Integer(100)))
+</a><a href="#h3-0-8" id="h3-0-8" class="i">+
+</a><a href="#h3-0-9" id="h3-0-9" class="i">+# Negative integers error, but 0 is valid.
+</a><a href="#h3-0-10" id="h3-0-10" class="i">+!&gt; sqrt(-1)
+</a><a href="#h3-0-11" id="h3-0-11" class="i">+&gt; sqrt(0)
+</a><a href="#h3-0-12" id="h3-0-12" class="i">+---
+</a><a href="#h3-0-13" id="h3-0-13" class="i">+Error: invalid input: can&#39;t take square root of -1
+</a><a href="#h3-0-14" id="h3-0-14" class="i">+Float(0.0)
+</a><a href="#h3-0-15" id="h3-0-15" class="i">+
+</a><a href="#h3-0-16" id="h3-0-16" class="i">+# Floats work.
+</a><a href="#h3-0-17" id="h3-0-17" class="i">+&gt; sqrt(3.14)
+</a><a href="#h3-0-18" id="h3-0-18" class="i">+&gt; sqrt(100.0)
+</a><a href="#h3-0-19" id="h3-0-19" class="i">+---
+</a><a href="#h3-0-20" id="h3-0-20" class="i">+Float(1.772004514666935)
+</a><a href="#h3-0-21" id="h3-0-21" class="i">+Float(10.0)
+</a><a href="#h3-0-22" id="h3-0-22" class="i">+
+</a><a href="#h3-0-23" id="h3-0-23" class="i">+# Negative floats work, but return NAN.
+</a><a href="#h3-0-24" id="h3-0-24" class="i">+&gt; sqrt(-1.0)
+</a><a href="#h3-0-25" id="h3-0-25" class="i">+---
+</a><a href="#h3-0-26" id="h3-0-26" class="i">+Float(NaN)
+</a><a href="#h3-0-27" id="h3-0-27" class="i">+
+</a><a href="#h3-0-28" id="h3-0-28" class="i">+# Test various special float values.
+</a><a href="#h3-0-29" id="h3-0-29" class="i">+&gt; sqrt(-0.0)
+</a><a href="#h3-0-30" id="h3-0-30" class="i">+&gt; sqrt(0.0)
+</a><a href="#h3-0-31" id="h3-0-31" class="i">+&gt; sqrt(NAN)
+</a><a href="#h3-0-32" id="h3-0-32" class="i">+&gt; sqrt(INFINITY)
+</a><a href="#h3-0-33" id="h3-0-33" class="i">+&gt; sqrt(-INFINITY)
+</a><a href="#h3-0-34" id="h3-0-34" class="i">+---
+</a><a href="#h3-0-35" id="h3-0-35" class="i">+Float(-0.0)
+</a><a href="#h3-0-36" id="h3-0-36" class="i">+Float(0.0)
+</a><a href="#h3-0-37" id="h3-0-37" class="i">+Float(NaN)
+</a><a href="#h3-0-38" id="h3-0-38" class="i">+Float(inf)
+</a><a href="#h3-0-39" id="h3-0-39" class="i">+Float(NaN)
+</a><a href="#h3-0-40" id="h3-0-40" class="i">+
+</a><a href="#h3-0-41" id="h3-0-41" class="i">+# NULL is passed through.
+</a><a href="#h3-0-42" id="h3-0-42" class="i">+&gt; sqrt(NULL)
+</a><a href="#h3-0-43" id="h3-0-43" class="i">+---
+</a><a href="#h3-0-44" id="h3-0-44" class="i">+Null
+</a><a href="#h3-0-45" id="h3-0-45" class="i">+
+</a><a href="#h3-0-46" id="h3-0-46" class="i">+# Strings and booleans error.
+</a><a href="#h3-0-47" id="h3-0-47" class="i">+!&gt; sqrt(TRUE)
+</a><a href="#h3-0-48" id="h3-0-48" class="i">+!&gt; sqrt(&#39;foo&#39;)
+</a><a href="#h3-0-49" id="h3-0-49" class="i">+---
+</a><a href="#h3-0-50" id="h3-0-50" class="i">+Error: invalid input: can&#39;t take square root of TRUE
+</a><a href="#h3-0-51" id="h3-0-51" class="i">+Error: invalid input: can&#39;t take square root of foo
+</a><b>diff --git a/<a id="h4" href="../file/src/sql/testscripts/expressions/function.html">src/sql/testscripts/expressions/function</a> b/<a href="../file/src/sql/testscripts/expressions/function.html">src/sql/testscripts/expressions/function</a></b>
+<a href="#h4-0" id="h4-0" class="h">@@ -1,21 +0,0 @@
+</a><a href="#h4-0-0" id="h4-0-0" class="d">-# Tests function calls. Only aggregate functions are currently implemented, so
+</a><a href="#h4-0-1" id="h4-0-1" class="d">-# test unknown functions.
+</a><a href="#h4-0-2" id="h4-0-2" class="d">-
+</a><a href="#h4-0-3" id="h4-0-3" class="d">-!&gt; unknown()
+</a><a href="#h4-0-4" id="h4-0-4" class="d">-!&gt; UnKnown ( )
+</a><a href="#h4-0-5" id="h4-0-5" class="d">----
+</a><a href="#h4-0-6" id="h4-0-6" class="d">-Error: invalid input: unknown function unknown
+</a><a href="#h4-0-7" id="h4-0-7" class="d">-Error: invalid input: unknown function unknown
+</a><a href="#h4-0-8" id="h4-0-8" class="d">-
+</a><a href="#h4-0-9" id="h4-0-9" class="d">-!&gt; unknown(1, 2, 3)
+</a><a href="#h4-0-10" id="h4-0-10" class="d">----
+</a><a href="#h4-0-11" id="h4-0-11" class="d">-Error: invalid input: unknown function unknown
+</a><a href="#h4-0-12" id="h4-0-12" class="d">-
+</a><a href="#h4-0-13" id="h4-0-13" class="d">-# Parse errors.
+</a><a href="#h4-0-14" id="h4-0-14" class="d">-!&gt; unknown(1, 2, 3
+</a><a href="#h4-0-15" id="h4-0-15" class="d">-!&gt; unknown(1, 2, 3,)
+</a><a href="#h4-0-16" id="h4-0-16" class="d">-!&gt; unknown(1, 2 3)
+</a><a href="#h4-0-17" id="h4-0-17" class="d">----
+</a><a href="#h4-0-18" id="h4-0-18" class="d">-Error: invalid input: unexpected end of input
+</a><a href="#h4-0-19" id="h4-0-19" class="d">-Error: invalid input: expected expression atom, found )
+</a><a href="#h4-0-20" id="h4-0-20" class="d">-Error: invalid input: expected token ,, found 3
+</a><b>diff --git a/<a id="h5" href="../file/src/sql/testscripts/queries/group_by.html">src/sql/testscripts/queries/group_by</a> b/<a href="../file/src/sql/testscripts/queries/group_by.html">src/sql/testscripts/queries/group_by</a></b>
+<a href="#h5-0" id="h5-0" class="h">@@ -183,7 +183,7 @@ Error: invalid input: unknown column mod
+</a> # GROUP BY can&#39;t use aggregate functions.
+ !&gt; SELECT COUNT(*) FROM test GROUP BY MIN(id)
+ ---
+<a href="#h5-0-3" id="h5-0-3" class="d">-Error: invalid input: unknown function min
+</a><a href="#h5-0-4" id="h5-0-4" class="i">+Error: invalid input: unknown function min with 1 arguments
+</a> 
+ # GROUP BY works with multiple groups.
+ [plan]&gt; SELECT &quot;group&quot;, &quot;bool&quot;, COUNT(*) FROM test GROUP BY &quot;group&quot;, &quot;bool&quot;
+<b>diff --git a/<a id="h6" href="../file/src/sql/types/expression.rs.html">src/sql/types/expression.rs</a> b/<a href="../file/src/sql/types/expression.rs.html">src/sql/types/expression.rs</a></b>
+<a href="#h6-0" id="h6-0" class="h">@@ -52,6 +52,8 @@ pub enum Expression {
+</a>     Multiply(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+     /// Negates the given number: -a.
+     Negate(Box&lt;Expression&gt;),
+<a href="#h6-0-3" id="h6-0-3" class="i">+    /// Takes the square root of a number: √a.
+</a><a href="#h6-0-4" id="h6-0-4" class="i">+    SquareRoot(Box&lt;Expression&gt;),
+</a>     /// Subtracts two numbers: a - b.
+     Subtract(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+ 
+<a href="#h6-1" id="h6-1" class="h">@@ -88,6 +90,7 @@ impl Expression {
+</a>             Self::Modulo(lhs, rhs) =&gt; format!(&quot;{} % {}&quot;, format(lhs), format(rhs)),
+             Self::Multiply(lhs, rhs) =&gt; format!(&quot;{} * {}&quot;, format(lhs), format(rhs)),
+             Self::Negate(expr) =&gt; format!(&quot;-{}&quot;, format(expr)),
+<a href="#h6-1-3" id="h6-1-3" class="i">+            Self::SquareRoot(expr) =&gt; format!(&quot;sqrt({})&quot;, format(expr)),
+</a>             Self::Subtract(lhs, rhs) =&gt; format!(&quot;{} - {}&quot;, format(lhs), format(rhs)),
+ 
+             Self::Like(lhs, rhs) =&gt; format!(&quot;{} LIKE {}&quot;, format(lhs), format(rhs)),
+<a href="#h6-2" id="h6-2" class="h">@@ -202,6 +205,12 @@ impl Expression {
+</a>                 Null =&gt; Null,
+                 value =&gt; return errinput!(&quot;can&#39;t negate {value}&quot;),
+             },
+<a href="#h6-2-3" id="h6-2-3" class="i">+            Self::SquareRoot(expr) =&gt; match expr.evaluate(row)? {
+</a><a href="#h6-2-4" id="h6-2-4" class="i">+                Integer(i) if i &gt;= 0 =&gt; Float((i as f64).sqrt()),
+</a><a href="#h6-2-5" id="h6-2-5" class="i">+                Float(f) =&gt; Float(f.sqrt()),
+</a><a href="#h6-2-6" id="h6-2-6" class="i">+                Null =&gt; Null,
+</a><a href="#h6-2-7" id="h6-2-7" class="i">+                value =&gt; return errinput!(&quot;can&#39;t take square root of {value}&quot;),
+</a><a href="#h6-2-8" id="h6-2-8" class="i">+            },
+</a>             Self::Subtract(lhs, rhs) =&gt; lhs.evaluate(row)?.checked_sub(&amp;rhs.evaluate(row)?)?,
+ 
+             // LIKE pattern matching, using _ and % as single- and
+<a href="#h6-3" id="h6-3" class="h">@@ -242,7 +251,8 @@ impl Expression {
+</a>                 | Self::IsNaN(expr)
+                 | Self::IsNull(expr)
+                 | Self::Negate(expr)
+<a href="#h6-3-3" id="h6-3-3" class="d">-                | Self::Not(expr) =&gt; expr.walk(visitor),
+</a><a href="#h6-3-4" id="h6-3-4" class="i">+                | Self::Not(expr)
+</a><a href="#h6-3-5" id="h6-3-5" class="i">+                | Self::SquareRoot(expr) =&gt; expr.walk(visitor),
+</a> 
+                 Self::Constant(_) | Self::Column(_) =&gt; true,
+             }
+<a href="#h6-4" id="h6-4" class="h">@@ -281,6 +291,7 @@ impl Expression {
+</a>             Self::Modulo(lhs, rhs) =&gt; Self::Modulo(transform(lhs)?, transform(rhs)?),
+             Self::Multiply(lhs, rhs) =&gt; Self::Multiply(transform(lhs)?, transform(rhs)?),
+             Self::Or(lhs, rhs) =&gt; Self::Or(transform(lhs)?, transform(rhs)?),
+<a href="#h6-4-3" id="h6-4-3" class="i">+            Self::SquareRoot(expr) =&gt; Self::SquareRoot(transform(expr)?),
+</a>             Self::Subtract(lhs, rhs) =&gt; Self::Subtract(transform(lhs)?, transform(rhs)?),
+ 
+             Self::Factorial(expr) =&gt; Self::Factorial(transform(expr)?),
+</pre>
+</div>
+</body>
+</html>

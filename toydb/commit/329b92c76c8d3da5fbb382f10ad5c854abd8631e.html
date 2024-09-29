@@ -1,0 +1,664 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>sql: clean up parser module - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/329b92c76c8d3da5fbb382f10ad5c854abd8631e.html">329b92c76c8d3da5fbb382f10ad5c854abd8631e</a>
+<b>parent</b> <a href="../commit/012e1d50114fc3fc9c86c2e35891273a4eb757ca.html">012e1d50114fc3fc9c86c2e35891273a4eb757ca</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Sat, 20 Jul 2024 21:27:47 +0200
+
+sql: clean up parser module
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/sql/parser/ast.rs</a></td><td> | </td><td class="num">105</td><td><span class="i">++++++++++++++++++++++++++++++++++++++++</span><span class="d">---------------------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/sql/parser/lexer.rs</a></td><td> | </td><td class="num">31</td><td><span class="i">++++++++++++++</span><span class="d">-----------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/sql/parser/mod.rs</a></td><td> | </td><td class="num">2</td><td><span class="i">++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">src/sql/parser/parser.rs</a></td><td> | </td><td class="num">186</td><td><span class="i">++++++++++++++++++++++++++++++++++++++</span><span class="d">-----------------------------------------</span></td></tr>
+</table></pre><pre>4 files changed, 159 insertions(+), 165 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/sql/parser/ast.rs.html">src/sql/parser/ast.rs</a> b/<a href="../file/src/sql/parser/ast.rs.html">src/sql/parser/ast.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -2,42 +2,41 @@ use crate::sql::types::DataType;
+</a> 
+ use std::collections::BTreeMap;
+ 
+<a href="#h0-0-3" id="h0-0-3" class="d">-/// The statement AST is the root node of the AST tree, which describes the
+</a><a href="#h0-0-4" id="h0-0-4" class="d">-/// syntactic structure of a SQL query. It is passed to the planner, which
+</a><a href="#h0-0-5" id="h0-0-5" class="d">-/// validates its contents and converts it into an execution plan.
+</a><a href="#h0-0-6" id="h0-0-6" class="i">+/// The statement is the root node of the Abstract Syntax Tree, and describes
+</a><a href="#h0-0-7" id="h0-0-7" class="i">+/// the syntactic structure of a SQL query. It is built from a raw SQL string by
+</a><a href="#h0-0-8" id="h0-0-8" class="i">+/// the parser, and passed on to the planner which validates it and builds an
+</a><a href="#h0-0-9" id="h0-0-9" class="i">+/// execution plan from it.
+</a> #[derive(Debug)]
+ pub enum Statement {
+<a href="#h0-0-12" id="h0-0-12" class="d">-    Begin {
+</a><a href="#h0-0-13" id="h0-0-13" class="d">-        read_only: bool,
+</a><a href="#h0-0-14" id="h0-0-14" class="d">-        as_of: Option&lt;u64&gt;,
+</a><a href="#h0-0-15" id="h0-0-15" class="d">-    },
+</a><a href="#h0-0-16" id="h0-0-16" class="i">+    /// Begin a new transaction.
+</a><a href="#h0-0-17" id="h0-0-17" class="i">+    Begin { read_only: bool, as_of: Option&lt;u64&gt; },
+</a><a href="#h0-0-18" id="h0-0-18" class="i">+    /// Commit a transaction.
+</a>     Commit,
+<a href="#h0-0-20" id="h0-0-20" class="i">+    /// Roll back a transaction.
+</a>     Rollback,
+<a href="#h0-0-22" id="h0-0-22" class="i">+    /// Explain a statement.
+</a>     Explain(Box&lt;Statement&gt;),
+<a href="#h0-0-24" id="h0-0-24" class="d">-    CreateTable {
+</a><a href="#h0-0-25" id="h0-0-25" class="d">-        name: String,
+</a><a href="#h0-0-26" id="h0-0-26" class="d">-        columns: Vec&lt;Column&gt;,
+</a><a href="#h0-0-27" id="h0-0-27" class="d">-    },
+</a><a href="#h0-0-28" id="h0-0-28" class="d">-    DropTable {
+</a><a href="#h0-0-29" id="h0-0-29" class="d">-        name: String,
+</a><a href="#h0-0-30" id="h0-0-30" class="d">-        if_exists: bool,
+</a><a href="#h0-0-31" id="h0-0-31" class="d">-    },
+</a><a href="#h0-0-32" id="h0-0-32" class="d">-    Delete {
+</a><a href="#h0-0-33" id="h0-0-33" class="d">-        table: String,
+</a><a href="#h0-0-34" id="h0-0-34" class="d">-        r#where: Option&lt;Expression&gt;,
+</a><a href="#h0-0-35" id="h0-0-35" class="d">-    },
+</a><a href="#h0-0-36" id="h0-0-36" class="i">+    /// Create a new table.
+</a><a href="#h0-0-37" id="h0-0-37" class="i">+    CreateTable { name: String, columns: Vec&lt;Column&gt; },
+</a><a href="#h0-0-38" id="h0-0-38" class="i">+    /// Drop a table.
+</a><a href="#h0-0-39" id="h0-0-39" class="i">+    DropTable { name: String, if_exists: bool },
+</a><a href="#h0-0-40" id="h0-0-40" class="i">+    /// Delete matching rows.
+</a><a href="#h0-0-41" id="h0-0-41" class="i">+    Delete { table: String, r#where: Option&lt;Expression&gt; },
+</a><a href="#h0-0-42" id="h0-0-42" class="i">+    /// Insert new rows into a table.
+</a>     Insert {
+         table: String,
+<a href="#h0-0-45" id="h0-0-45" class="d">-        columns: Option&lt;Vec&lt;String&gt;&gt;,
+</a><a href="#h0-0-46" id="h0-0-46" class="d">-        values: Vec&lt;Vec&lt;Expression&gt;&gt;,
+</a><a href="#h0-0-47" id="h0-0-47" class="i">+        columns: Option&lt;Vec&lt;String&gt;&gt;, // columns given in values, using default for rest
+</a><a href="#h0-0-48" id="h0-0-48" class="i">+        values: Vec&lt;Vec&lt;Expression&gt;&gt;, // rows to insert
+</a>     },
+<a href="#h0-0-50" id="h0-0-50" class="i">+    /// Update rows in a table.
+</a>     Update {
+         table: String,
+<a href="#h0-0-53" id="h0-0-53" class="d">-        set: BTreeMap&lt;String, Option&lt;Expression&gt;&gt;, // None for DEFAULT value
+</a><a href="#h0-0-54" id="h0-0-54" class="i">+        set: BTreeMap&lt;String, Option&lt;Expression&gt;&gt;, // column → value, None for default value
+</a>         r#where: Option&lt;Expression&gt;,
+     },
+<a href="#h0-0-57" id="h0-0-57" class="i">+    /// Select matching rows.
+</a>     Select {
+<a href="#h0-0-59" id="h0-0-59" class="d">-        select: Vec&lt;(Expression, Option&lt;String&gt;)&gt;,
+</a><a href="#h0-0-60" id="h0-0-60" class="i">+        select: Vec&lt;(Expression, Option&lt;String&gt;)&gt;, // optional column aliases
+</a>         from: Vec&lt;From&gt;,
+         r#where: Option&lt;Expression&gt;,
+         group_by: Vec&lt;Expression&gt;,
+<a href="#h0-1" id="h0-1" class="h">@@ -48,10 +47,12 @@ pub enum Statement {
+</a>     },
+ }
+ 
+<a href="#h0-1-3" id="h0-1-3" class="d">-/// A FROM item: a table or join.
+</a><a href="#h0-1-4" id="h0-1-4" class="i">+/// A FROM item.
+</a> #[derive(Debug)]
+ pub enum From {
+<a href="#h0-1-7" id="h0-1-7" class="i">+    /// A table.
+</a>     Table { name: String, alias: Option&lt;String&gt; },
+<a href="#h0-1-9" id="h0-1-9" class="i">+    /// A join of two or more tables (may be nested).
+</a>     Join { left: Box&lt;From&gt;, right: Box&lt;From&gt;, r#type: JoinType, predicate: Option&lt;Expression&gt; },
+ }
+ 
+<a href="#h0-2" id="h0-2" class="h">@@ -78,8 +79,8 @@ pub enum JoinType {
+</a> }
+ 
+ impl JoinType {
+<a href="#h0-2-3" id="h0-2-3" class="d">-    // If true, the join is an outer join -- rows with no join match are emitted
+</a><a href="#h0-2-4" id="h0-2-4" class="d">-    // with a NULL match.
+</a><a href="#h0-2-5" id="h0-2-5" class="i">+    // If true, the join is an outer join, where rows with no join matches are
+</a><a href="#h0-2-6" id="h0-2-6" class="i">+    // emitted with a NULL match.
+</a>     pub fn is_outer(&amp;self) -&gt; bool {
+         match self {
+             Self::Left | Self::Right =&gt; true,
+<a href="#h0-3" id="h0-3" class="h">@@ -88,7 +89,7 @@ impl JoinType {
+</a>     }
+ }
+ 
+<a href="#h0-3-3" id="h0-3-3" class="d">-/// Sort orders.
+</a><a href="#h0-3-4" id="h0-3-4" class="i">+/// ORDER BY direction.
+</a> #[derive(Debug)]
+ pub enum Order {
+     Ascending,
+<a href="#h0-4" id="h0-4" class="h">@@ -110,7 +111,7 @@ pub enum Expression {
+</a>     Operator(Operator),
+ }
+ 
+<a href="#h0-4-3" id="h0-4-3" class="d">-/// Expression literals.
+</a><a href="#h0-4-4" id="h0-4-4" class="i">+/// Expression literal values.
+</a> #[derive(Clone, Debug)]
+ pub enum Literal {
+     Null,
+<a href="#h0-5" id="h0-5" class="h">@@ -120,19 +121,19 @@ pub enum Literal {
+</a>     String(String),
+ }
+ 
+<a href="#h0-5-3" id="h0-5-3" class="d">-/// To allow Expressions and Literals in e.g. hashmap lookups, implement simple
+</a><a href="#h0-5-4" id="h0-5-4" class="i">+/// To allow using Expressions and Literals in e.g. hashmaps, implement simple
+</a> /// equality and hash for all types, including Null and f64::NAN. This is not
+ /// used for expression evaluation (handled by sql::types::Expression), where
+<a href="#h0-5-7" id="h0-5-7" class="d">-/// these values should not be considered equal, only in lookups.
+</a><a href="#h0-5-8" id="h0-5-8" class="i">+/// these values should not be considered equal to themselves, only in lookups.
+</a> impl std::cmp::PartialEq for Literal {
+     fn eq(&amp;self, other: &amp;Self) -&gt; bool {
+         match (self, other) {
+             (Self::Boolean(l), Self::Boolean(r)) =&gt; l == r,
+             (Self::Integer(l), Self::Integer(r)) =&gt; l == r,
+<a href="#h0-5-14" id="h0-5-14" class="d">-            // Consider e.g. NaN equal to NaN for comparison purposes.
+</a><a href="#h0-5-15" id="h0-5-15" class="i">+            // Implies NaN == NaN but -NaN != NaN. Similarly with +/-0.0.
+</a>             (Self::Float(l), Self::Float(r)) =&gt; l.to_bits() == r.to_bits(),
+             (Self::String(l), Self::String(r)) =&gt; l == r,
+<a href="#h0-5-18" id="h0-5-18" class="d">-            _ =&gt; core::mem::discriminant(self) == core::mem::discriminant(other),
+</a><a href="#h0-5-19" id="h0-5-19" class="i">+            (l, r) =&gt; core::mem::discriminant(l) == core::mem::discriminant(r),
+</a>         }
+     }
+ }
+<a href="#h0-6" id="h0-6" class="h">@@ -159,29 +160,29 @@ impl std::hash::Hash for Literal {
+</a> /// around this, but we keep it simple.
+ #[derive(Clone, Debug, Eq, Hash, PartialEq)]
+ pub enum Operator {
+<a href="#h0-6-3" id="h0-6-3" class="d">-    And(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+</a><a href="#h0-6-4" id="h0-6-4" class="d">-    Not(Box&lt;Expression&gt;),
+</a><a href="#h0-6-5" id="h0-6-5" class="d">-    Or(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+</a><a href="#h0-6-6" id="h0-6-6" class="i">+    And(Box&lt;Expression&gt;, Box&lt;Expression&gt;), // a AND b
+</a><a href="#h0-6-7" id="h0-6-7" class="i">+    Not(Box&lt;Expression&gt;),                  // NOT a
+</a><a href="#h0-6-8" id="h0-6-8" class="i">+    Or(Box&lt;Expression&gt;, Box&lt;Expression&gt;),  // a OR b
+</a> 
+<a href="#h0-6-10" id="h0-6-10" class="d">-    Equal(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+</a><a href="#h0-6-11" id="h0-6-11" class="d">-    GreaterThan(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+</a><a href="#h0-6-12" id="h0-6-12" class="d">-    GreaterThanOrEqual(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+</a><a href="#h0-6-13" id="h0-6-13" class="d">-    Is(Box&lt;Expression&gt;, Literal), // NULL or f64 NAN
+</a><a href="#h0-6-14" id="h0-6-14" class="d">-    LessThan(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+</a><a href="#h0-6-15" id="h0-6-15" class="d">-    LessThanOrEqual(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+</a><a href="#h0-6-16" id="h0-6-16" class="d">-    NotEqual(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+</a><a href="#h0-6-17" id="h0-6-17" class="i">+    Equal(Box&lt;Expression&gt;, Box&lt;Expression&gt;),       // a = b
+</a><a href="#h0-6-18" id="h0-6-18" class="i">+    GreaterThan(Box&lt;Expression&gt;, Box&lt;Expression&gt;), // a &gt; b
+</a><a href="#h0-6-19" id="h0-6-19" class="i">+    GreaterThanOrEqual(Box&lt;Expression&gt;, Box&lt;Expression&gt;), // a != b
+</a><a href="#h0-6-20" id="h0-6-20" class="i">+    Is(Box&lt;Expression&gt;, Literal),                  // IS NULL or IS NAN
+</a><a href="#h0-6-21" id="h0-6-21" class="i">+    LessThan(Box&lt;Expression&gt;, Box&lt;Expression&gt;),    // a &lt; b
+</a><a href="#h0-6-22" id="h0-6-22" class="i">+    LessThanOrEqual(Box&lt;Expression&gt;, Box&lt;Expression&gt;), // a &lt;= b
+</a><a href="#h0-6-23" id="h0-6-23" class="i">+    NotEqual(Box&lt;Expression&gt;, Box&lt;Expression&gt;),    // a != b
+</a> 
+<a href="#h0-6-25" id="h0-6-25" class="d">-    Add(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+</a><a href="#h0-6-26" id="h0-6-26" class="d">-    Divide(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+</a><a href="#h0-6-27" id="h0-6-27" class="d">-    Exponentiate(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+</a><a href="#h0-6-28" id="h0-6-28" class="d">-    Factorial(Box&lt;Expression&gt;),
+</a><a href="#h0-6-29" id="h0-6-29" class="d">-    Identity(Box&lt;Expression&gt;),
+</a><a href="#h0-6-30" id="h0-6-30" class="d">-    Multiply(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+</a><a href="#h0-6-31" id="h0-6-31" class="d">-    Negate(Box&lt;Expression&gt;),
+</a><a href="#h0-6-32" id="h0-6-32" class="d">-    Remainder(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+</a><a href="#h0-6-33" id="h0-6-33" class="d">-    Subtract(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+</a><a href="#h0-6-34" id="h0-6-34" class="i">+    Add(Box&lt;Expression&gt;, Box&lt;Expression&gt;),          // a + b
+</a><a href="#h0-6-35" id="h0-6-35" class="i">+    Divide(Box&lt;Expression&gt;, Box&lt;Expression&gt;),       // a / b
+</a><a href="#h0-6-36" id="h0-6-36" class="i">+    Exponentiate(Box&lt;Expression&gt;, Box&lt;Expression&gt;), // a ^ b
+</a><a href="#h0-6-37" id="h0-6-37" class="i">+    Factorial(Box&lt;Expression&gt;),                     // a!
+</a><a href="#h0-6-38" id="h0-6-38" class="i">+    Identity(Box&lt;Expression&gt;),                      // +a
+</a><a href="#h0-6-39" id="h0-6-39" class="i">+    Multiply(Box&lt;Expression&gt;, Box&lt;Expression&gt;),     // a * b
+</a><a href="#h0-6-40" id="h0-6-40" class="i">+    Negate(Box&lt;Expression&gt;),                        // -a
+</a><a href="#h0-6-41" id="h0-6-41" class="i">+    Remainder(Box&lt;Expression&gt;, Box&lt;Expression&gt;),    // a % b
+</a><a href="#h0-6-42" id="h0-6-42" class="i">+    Subtract(Box&lt;Expression&gt;, Box&lt;Expression&gt;),     // a - b
+</a> 
+<a href="#h0-6-44" id="h0-6-44" class="d">-    Like(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+</a><a href="#h0-6-45" id="h0-6-45" class="i">+    Like(Box&lt;Expression&gt;, Box&lt;Expression&gt;), // a LIKE b
+</a> }
+ 
+ impl Expression {
+<b>diff --git a/<a id="h1" href="../file/src/sql/parser/lexer.rs.html">src/sql/parser/lexer.rs</a> b/<a href="../file/src/sql/parser/lexer.rs.html">src/sql/parser/lexer.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -2,9 +2,9 @@ use crate::errinput;
+</a> use crate::error::Result;
+ 
+ /// The lexer (lexical analyzer) preprocesses raw SQL strings into a sequence of
+<a href="#h1-0-3" id="h1-0-3" class="d">-/// lexical tokens (e.g. keyword, number, string, etc) that are passed onto the
+</a><a href="#h1-0-4" id="h1-0-4" class="d">-/// SQL parser. In doing so, it strips away basic syntactic noise such as
+</a><a href="#h1-0-5" id="h1-0-5" class="d">-/// whitespace, case, and quotes, and performs initial validation of symbols.
+</a><a href="#h1-0-6" id="h1-0-6" class="i">+/// lexical tokens (e.g. keyword, number, string, etc), which are passed on to
+</a><a href="#h1-0-7" id="h1-0-7" class="i">+/// the SQL parser. In doing so, it strips away basic syntactic noise such as
+</a><a href="#h1-0-8" id="h1-0-8" class="i">+/// whitespace, case, and quotes, and performs initial symbol validation.
+</a> pub struct Lexer&lt;&#39;a&gt; {
+     chars: std::iter::Peekable&lt;std::str::Chars&lt;&#39;a&gt;&gt;,
+ }
+<a href="#h1-1" id="h1-1" class="h">@@ -16,8 +16,8 @@ pub struct Lexer&lt;&#39;a&gt; {
+</a> /// fine for our purposes here.
+ #[derive(Clone, Debug, PartialEq)]
+ pub enum Token {
+<a href="#h1-1-3" id="h1-1-3" class="d">-    /// A number, with digits, decimal points, and/or exponents. Leading signs
+</a><a href="#h1-1-4" id="h1-1-4" class="d">-    /// (e.g. -) are separate tokens.
+</a><a href="#h1-1-5" id="h1-1-5" class="i">+    /// A numeric string, with digits, decimal points, and/or exponents. Leading
+</a><a href="#h1-1-6" id="h1-1-6" class="i">+    /// signs (e.g. -) are separate tokens.
+</a>     Number(String),
+     /// A Unicode string, with quotes stripped and escape sequences resolved.
+     String(String),
+<a href="#h1-2" id="h1-2" class="h">@@ -156,7 +156,7 @@ pub enum Keyword {
+</a> }
+ 
+ impl TryFrom&lt;&amp;str&gt; for Keyword {
+<a href="#h1-2-3" id="h1-2-3" class="d">-    // The error just indicates this isn&#39;t a keyword, so use a cheap string.
+</a><a href="#h1-2-4" id="h1-2-4" class="i">+    // Use a cheap static string, since this just indicates it&#39;s not a keyword.
+</a>     type Error = &amp;&#39;static str;
+ 
+     fn try_from(value: &amp;str) -&gt; std::result::Result&lt;Self, Self::Error&gt; {
+<a href="#h1-3" id="h1-3" class="h">@@ -351,8 +351,9 @@ impl&lt;&#39;a&gt; Lexer&lt;&#39;a&gt; {
+</a> 
+     /// Scans the next token, if any.
+     fn scan(&amp;mut self) -&gt; Result&lt;Option&lt;Token&gt;&gt; {
+<a href="#h1-3-3" id="h1-3-3" class="d">-        // Ignore whitespace. The first character tells us the token type.
+</a><a href="#h1-3-4" id="h1-3-4" class="i">+        // Ignore whitespace.
+</a>         self.skip_whitespace();
+<a href="#h1-3-6" id="h1-3-6" class="i">+        // The first character tells us the token type.
+</a>         match self.chars.peek() {
+             Some(&#39;\&#39;&#39;) =&gt; self.scan_string(),
+             Some(&#39;&quot;&#39;) =&gt; self.scan_ident_quoted(),
+<a href="#h1-4" id="h1-4" class="h">@@ -378,8 +379,7 @@ impl&lt;&#39;a&gt; Lexer&lt;&#39;a&gt; {
+</a>         }
+     }
+ 
+<a href="#h1-4-3" id="h1-4-3" class="d">-    /// Scans the next quoted identifier, if any. Case is preserved, keywords
+</a><a href="#h1-4-4" id="h1-4-4" class="d">-    /// are ignored.
+</a><a href="#h1-4-5" id="h1-4-5" class="i">+    /// Scans the next quoted identifier, if any. Case is preserved.
+</a>     fn scan_ident_quoted(&amp;mut self) -&gt; Result&lt;Option&lt;Token&gt;&gt; {
+         if !self.next_is(&#39;&quot;&#39;) {
+             return Ok(None);
+<a href="#h1-5" id="h1-5" class="h">@@ -405,8 +405,8 @@ impl&lt;&#39;a&gt; Lexer&lt;&#39;a&gt; {
+</a>             number.push(c)
+         }
+         // Scan the fractional part, if any.
+<a href="#h1-5-3" id="h1-5-3" class="d">-        if let Some(sep) = self.next_if(|c| c == &#39;.&#39;) {
+</a><a href="#h1-5-4" id="h1-5-4" class="d">-            number.push(sep);
+</a><a href="#h1-5-5" id="h1-5-5" class="i">+        if self.next_is(&#39;.&#39;) {
+</a><a href="#h1-5-6" id="h1-5-6" class="i">+            number.push(&#39;.&#39;);
+</a>             while let Some(dec) = self.next_if(|c| c.is_ascii_digit()) {
+                 number.push(dec)
+             }
+<a href="#h1-6" id="h1-6" class="h">@@ -424,7 +424,7 @@ impl&lt;&#39;a&gt; Lexer&lt;&#39;a&gt; {
+</a>         Some(Token::Number(number))
+     }
+ 
+<a href="#h1-6-3" id="h1-6-3" class="d">-    /// Scans the next string literal, if any.
+</a><a href="#h1-6-4" id="h1-6-4" class="i">+    /// Scans the next quoted string literal, if any.
+</a>     fn scan_string(&amp;mut self) -&gt; Result&lt;Option&lt;Token&gt;&gt; {
+         if !self.next_is(&#39;\&#39;&#39;) {
+             return Ok(None);
+<a href="#h1-7" id="h1-7" class="h">@@ -485,9 +485,6 @@ impl&lt;&#39;a&gt; Lexer&lt;&#39;a&gt; {
+</a> /// Returns true if the entire given string is a single valid identifier.
+ pub fn is_ident(ident: &amp;str) -&gt; bool {
+     let mut lexer = Lexer::new(ident);
+<a href="#h1-7-3" id="h1-7-3" class="d">-    let token = lexer.next();
+</a><a href="#h1-7-4" id="h1-7-4" class="d">-    if lexer.next().is_some() {
+</a><a href="#h1-7-5" id="h1-7-5" class="d">-        return false; // multiple tokens, so not an identifier
+</a><a href="#h1-7-6" id="h1-7-6" class="d">-    }
+</a><a href="#h1-7-7" id="h1-7-7" class="d">-    matches!(token, Some(Ok(Token::Ident(_))))
+</a><a href="#h1-7-8" id="h1-7-8" class="i">+    let Some(Ok(Token::Ident(_))) = lexer.next() else { return false };
+</a><a href="#h1-7-9" id="h1-7-9" class="i">+    lexer.next().is_none() // if further tokens, it&#39;s not a lone identifier
+</a> }
+<b>diff --git a/<a id="h2" href="../file/src/sql/parser/mod.rs.html">src/sql/parser/mod.rs</a> b/<a href="../file/src/sql/parser/mod.rs.html">src/sql/parser/mod.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -1,3 +1,5 @@
+</a><a href="#h2-0-0" id="h2-0-0" class="i">+//! Parses raw SQL strings into a structured Abstract Syntax Tree.
+</a><a href="#h2-0-1" id="h2-0-1" class="i">+
+</a> pub mod ast;
+ mod lexer;
+ mod parser;
+<b>diff --git a/<a id="h3" href="../file/src/sql/parser/parser.rs.html">src/sql/parser/parser.rs</a> b/<a href="../file/src/sql/parser/parser.rs.html">src/sql/parser/parser.rs</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -1,29 +1,28 @@
+</a> #![allow(clippy::module_inception)]
+ 
+<a href="#h3-0-2" id="h3-0-2" class="d">-use super::ast;
+</a><a href="#h3-0-3" id="h3-0-3" class="d">-use super::{Keyword, Lexer, Token};
+</a><a href="#h3-0-4" id="h3-0-4" class="i">+use super::{ast, Keyword, Lexer, Token};
+</a> use crate::errinput;
+ use crate::error::Result;
+ use crate::sql::types::DataType;
+ 
+ /// The SQL parser takes tokens from the lexer and parses the SQL syntax into an
+<a href="#h3-0-10" id="h3-0-10" class="d">-/// AST (Abstract Syntax Tree). This nested structure represents the semantic
+</a><a href="#h3-0-11" id="h3-0-11" class="d">-/// components of a SQL query (e.g. the SELECT and FROM clauses, values,
+</a><a href="#h3-0-12" id="h3-0-12" class="d">-/// arithmetic expressions, etc.), but only makes sure it is well-formed. It
+</a><a href="#h3-0-13" id="h3-0-13" class="d">-/// does not know e.g. whether a given table or column exists, or which kind of
+</a><a href="#h3-0-14" id="h3-0-14" class="d">-/// join to use -- that is the job of the planner.
+</a><a href="#h3-0-15" id="h3-0-15" class="i">+/// Abstract Syntax Tree (AST). This nested structure represents the syntactic
+</a><a href="#h3-0-16" id="h3-0-16" class="i">+/// structure of a SQL query (e.g. the SELECT and FROM clauses, values,
+</a><a href="#h3-0-17" id="h3-0-17" class="i">+/// arithmetic expressions, etc.). However, it only ensures the syntax is
+</a><a href="#h3-0-18" id="h3-0-18" class="i">+/// well-formed, and does not know whether e.g. a given table or column exists
+</a><a href="#h3-0-19" id="h3-0-19" class="i">+/// or which kind of join to use -- that is the job of the planner.
+</a> pub struct Parser&lt;&#39;a&gt; {
+     pub lexer: std::iter::Peekable&lt;Lexer&lt;&#39;a&gt;&gt;,
+ }
+ 
+ impl&lt;&#39;a&gt; Parser&lt;&#39;a&gt; {
+<a href="#h3-0-25" id="h3-0-25" class="d">-    /// Creates a new parser for the given SQL string.
+</a><a href="#h3-0-26" id="h3-0-26" class="i">+    /// Creates a new parser for the given raw SQL string.
+</a>     pub fn new(statement: &amp;str) -&gt; Parser {
+         Parser { lexer: Lexer::new(statement).peekable() }
+     }
+ 
+<a href="#h3-0-31" id="h3-0-31" class="d">-    /// Parses the input string into an AST statement. We expect to parse the
+</a><a href="#h3-0-32" id="h3-0-32" class="d">-    /// whole string as a single statement, ending with an optional semicolon.
+</a><a href="#h3-0-33" id="h3-0-33" class="i">+    /// Parses the input string into an AST statement. The whole string must be
+</a><a href="#h3-0-34" id="h3-0-34" class="i">+    /// parsed as a single statement, ending with an optional semicolon.
+</a>     pub fn parse(&amp;mut self) -&gt; Result&lt;ast::Statement&gt; {
+         let statement = self.parse_statement()?;
+         self.next_is(Token::Semicolon);
+<a href="#h3-1" id="h3-1" class="h">@@ -33,7 +32,7 @@ impl&lt;&#39;a&gt; Parser&lt;&#39;a&gt; {
+</a>         Ok(statement)
+     }
+ 
+<a href="#h3-1-3" id="h3-1-3" class="d">-    /// Fetches the next lexer token, or throws an error if none is found.
+</a><a href="#h3-1-4" id="h3-1-4" class="i">+    /// Fetches the next lexer token, or errors if none is found.
+</a>     fn next(&amp;mut self) -&gt; Result&lt;Token&gt; {
+         self.lexer.next().transpose()?.ok_or_else(|| errinput!(&quot;unexpected end of input&quot;))
+     }
+<a href="#h3-2" id="h3-2" class="h">@@ -54,20 +53,20 @@ impl&lt;&#39;a&gt; Parser&lt;&#39;a&gt; {
+</a> 
+     /// Passes the next lexer token through the closure, consuming it if the
+     /// closure returns Some.
+<a href="#h3-2-3" id="h3-2-3" class="d">-    fn next_if_map&lt;T&gt;(&amp;mut self, f: impl Fn(&amp;Token) -&gt; Option&lt;T&gt;) -&gt; Result&lt;Option&lt;T&gt;&gt; {
+</a><a href="#h3-2-4" id="h3-2-4" class="d">-        let out = self.peek()?.and_then(f);
+</a><a href="#h3-2-5" id="h3-2-5" class="i">+    fn next_if_map&lt;T&gt;(&amp;mut self, f: impl Fn(&amp;Token) -&gt; Option&lt;T&gt;) -&gt; Option&lt;T&gt; {
+</a><a href="#h3-2-6" id="h3-2-6" class="i">+        let out = self.peek().unwrap_or(None).map(f)?;
+</a>         if out.is_some() {
+<a href="#h3-2-8" id="h3-2-8" class="d">-            self.next()?;
+</a><a href="#h3-2-9" id="h3-2-9" class="i">+            self.next().ok();
+</a>         }
+<a href="#h3-2-11" id="h3-2-11" class="d">-        Ok(out)
+</a><a href="#h3-2-12" id="h3-2-12" class="i">+        out
+</a>     }
+ 
+     /// Grabs the next keyword if there is one.
+     fn next_if_keyword(&amp;mut self) -&gt; Option&lt;Keyword&gt; {
+<a href="#h3-2-17" id="h3-2-17" class="d">-        match self.next_if(|t| matches!(t, Token::Keyword(_))) {
+</a><a href="#h3-2-18" id="h3-2-18" class="d">-            Some(Token::Keyword(keyword)) =&gt; Some(keyword),
+</a><a href="#h3-2-19" id="h3-2-19" class="d">-            Some(_) | None =&gt; None,
+</a><a href="#h3-2-20" id="h3-2-20" class="d">-        }
+</a><a href="#h3-2-21" id="h3-2-21" class="i">+        self.next_if_map(|token| match token {
+</a><a href="#h3-2-22" id="h3-2-22" class="i">+            Token::Keyword(keyword) =&gt; Some(*keyword),
+</a><a href="#h3-2-23" id="h3-2-23" class="i">+            _ =&gt; None,
+</a><a href="#h3-2-24" id="h3-2-24" class="i">+        })
+</a>     }
+ 
+     /// Consumes the next lexer token if it is the given token, returning true.
+<a href="#h3-3" id="h3-3" class="h">@@ -97,22 +96,24 @@ impl&lt;&#39;a&gt; Parser&lt;&#39;a&gt; {
+</a> 
+     /// Parses a SQL statement.
+     fn parse_statement(&amp;mut self) -&gt; Result&lt;ast::Statement&gt; {
+<a href="#h3-3-3" id="h3-3-3" class="d">-        match self.peek()? {
+</a><a href="#h3-3-4" id="h3-3-4" class="d">-            Some(Token::Keyword(Keyword::Begin)) =&gt; self.parse_begin(),
+</a><a href="#h3-3-5" id="h3-3-5" class="d">-            Some(Token::Keyword(Keyword::Commit)) =&gt; self.parse_commit(),
+</a><a href="#h3-3-6" id="h3-3-6" class="d">-            Some(Token::Keyword(Keyword::Rollback)) =&gt; self.parse_rollback(),
+</a><a href="#h3-3-7" id="h3-3-7" class="d">-            Some(Token::Keyword(Keyword::Explain)) =&gt; self.parse_explain(),
+</a><a href="#h3-3-8" id="h3-3-8" class="i">+        let Some(token) = self.peek()? else {
+</a><a href="#h3-3-9" id="h3-3-9" class="i">+            return errinput!(&quot;unexpected end of input&quot;);
+</a><a href="#h3-3-10" id="h3-3-10" class="i">+        };
+</a><a href="#h3-3-11" id="h3-3-11" class="i">+        match token {
+</a><a href="#h3-3-12" id="h3-3-12" class="i">+            Token::Keyword(Keyword::Begin) =&gt; self.parse_begin(),
+</a><a href="#h3-3-13" id="h3-3-13" class="i">+            Token::Keyword(Keyword::Commit) =&gt; self.parse_commit(),
+</a><a href="#h3-3-14" id="h3-3-14" class="i">+            Token::Keyword(Keyword::Rollback) =&gt; self.parse_rollback(),
+</a><a href="#h3-3-15" id="h3-3-15" class="i">+            Token::Keyword(Keyword::Explain) =&gt; self.parse_explain(),
+</a> 
+<a href="#h3-3-17" id="h3-3-17" class="d">-            Some(Token::Keyword(Keyword::Create)) =&gt; self.parse_create_table(),
+</a><a href="#h3-3-18" id="h3-3-18" class="d">-            Some(Token::Keyword(Keyword::Drop)) =&gt; self.parse_drop_table(),
+</a><a href="#h3-3-19" id="h3-3-19" class="i">+            Token::Keyword(Keyword::Create) =&gt; self.parse_create_table(),
+</a><a href="#h3-3-20" id="h3-3-20" class="i">+            Token::Keyword(Keyword::Drop) =&gt; self.parse_drop_table(),
+</a> 
+<a href="#h3-3-22" id="h3-3-22" class="d">-            Some(Token::Keyword(Keyword::Delete)) =&gt; self.parse_delete(),
+</a><a href="#h3-3-23" id="h3-3-23" class="d">-            Some(Token::Keyword(Keyword::Insert)) =&gt; self.parse_insert(),
+</a><a href="#h3-3-24" id="h3-3-24" class="d">-            Some(Token::Keyword(Keyword::Select)) =&gt; self.parse_select(),
+</a><a href="#h3-3-25" id="h3-3-25" class="d">-            Some(Token::Keyword(Keyword::Update)) =&gt; self.parse_update(),
+</a><a href="#h3-3-26" id="h3-3-26" class="i">+            Token::Keyword(Keyword::Delete) =&gt; self.parse_delete(),
+</a><a href="#h3-3-27" id="h3-3-27" class="i">+            Token::Keyword(Keyword::Insert) =&gt; self.parse_insert(),
+</a><a href="#h3-3-28" id="h3-3-28" class="i">+            Token::Keyword(Keyword::Select) =&gt; self.parse_select(),
+</a><a href="#h3-3-29" id="h3-3-29" class="i">+            Token::Keyword(Keyword::Update) =&gt; self.parse_update(),
+</a> 
+<a href="#h3-3-31" id="h3-3-31" class="d">-            Some(token) =&gt; errinput!(&quot;unexpected token {token}&quot;),
+</a><a href="#h3-3-32" id="h3-3-32" class="d">-            None =&gt; errinput!(&quot;unexpected end of input&quot;),
+</a><a href="#h3-3-33" id="h3-3-33" class="i">+            token =&gt; errinput!(&quot;unexpected token {token}&quot;),
+</a>         }
+     }
+ 
+<a href="#h3-4" id="h3-4" class="h">@@ -296,17 +297,13 @@ impl&lt;&#39;a&gt; Parser&lt;&#39;a&gt; {
+</a>         self.expect(Keyword::Update.into())?;
+         let table = self.next_ident()?;
+         self.expect(Keyword::Set.into())?;
+<a href="#h3-4-3" id="h3-4-3" class="d">-
+</a>         let mut set = std::collections::BTreeMap::new();
+         loop {
+             let column = self.next_ident()?;
+             self.expect(Token::Equal)?;
+<a href="#h3-4-8" id="h3-4-8" class="d">-            let expr = if self.next_is(Keyword::Default.into()) {
+</a><a href="#h3-4-9" id="h3-4-9" class="d">-                None
+</a><a href="#h3-4-10" id="h3-4-10" class="d">-            } else {
+</a><a href="#h3-4-11" id="h3-4-11" class="d">-                Some(self.parse_expression()?)
+</a><a href="#h3-4-12" id="h3-4-12" class="d">-            };
+</a><a href="#h3-4-13" id="h3-4-13" class="d">-
+</a><a href="#h3-4-14" id="h3-4-14" class="i">+            let expr = (!self.next_is(Keyword::Default.into()))
+</a><a href="#h3-4-15" id="h3-4-15" class="i">+                .then(|| self.parse_expression())
+</a><a href="#h3-4-16" id="h3-4-16" class="i">+                .transpose()?;
+</a>             if set.contains_key(&amp;column) {
+                 return errinput!(&quot;column {column} set multiple times&quot;);
+             }
+<a href="#h3-5" id="h3-5" class="h">@@ -315,7 +312,6 @@ impl&lt;&#39;a&gt; Parser&lt;&#39;a&gt; {
+</a>                 break;
+             }
+         }
+<a href="#h3-5-3" id="h3-5-3" class="d">-
+</a>         Ok(ast::Statement::Update { table, set, r#where: self.parse_where_clause()? })
+     }
+ 
+<a href="#h3-6" id="h3-6" class="h">@@ -400,25 +396,28 @@ impl&lt;&#39;a&gt; Parser&lt;&#39;a&gt; {
+</a> 
+     // Parses a FROM JOIN type, if present.
+     fn parse_from_join(&amp;mut self) -&gt; Result&lt;Option&lt;ast::JoinType&gt;&gt; {
+<a href="#h3-6-3" id="h3-6-3" class="i">+        if self.next_is(Keyword::Join.into()) {
+</a><a href="#h3-6-4" id="h3-6-4" class="i">+            return Ok(Some(ast::JoinType::Inner));
+</a><a href="#h3-6-5" id="h3-6-5" class="i">+        }
+</a>         if self.next_is(Keyword::Cross.into()) {
+             self.expect(Keyword::Join.into())?;
+<a href="#h3-6-8" id="h3-6-8" class="d">-            Ok(Some(ast::JoinType::Cross))
+</a><a href="#h3-6-9" id="h3-6-9" class="d">-        } else if self.next_is(Keyword::Inner.into()) {
+</a><a href="#h3-6-10" id="h3-6-10" class="i">+            return Ok(Some(ast::JoinType::Cross));
+</a><a href="#h3-6-11" id="h3-6-11" class="i">+        }
+</a><a href="#h3-6-12" id="h3-6-12" class="i">+        if self.next_is(Keyword::Inner.into()) {
+</a>             self.expect(Keyword::Join.into())?;
+<a href="#h3-6-14" id="h3-6-14" class="d">-            Ok(Some(ast::JoinType::Inner))
+</a><a href="#h3-6-15" id="h3-6-15" class="d">-        } else if self.next_is(Keyword::Join.into()) {
+</a><a href="#h3-6-16" id="h3-6-16" class="d">-            Ok(Some(ast::JoinType::Inner))
+</a><a href="#h3-6-17" id="h3-6-17" class="d">-        } else if self.next_is(Keyword::Left.into()) {
+</a><a href="#h3-6-18" id="h3-6-18" class="i">+            return Ok(Some(ast::JoinType::Inner));
+</a><a href="#h3-6-19" id="h3-6-19" class="i">+        }
+</a><a href="#h3-6-20" id="h3-6-20" class="i">+        if self.next_is(Keyword::Left.into()) {
+</a>             self.skip(Keyword::Outer.into());
+             self.expect(Keyword::Join.into())?;
+<a href="#h3-6-23" id="h3-6-23" class="d">-            Ok(Some(ast::JoinType::Left))
+</a><a href="#h3-6-24" id="h3-6-24" class="d">-        } else if self.next_is(Keyword::Right.into()) {
+</a><a href="#h3-6-25" id="h3-6-25" class="i">+            return Ok(Some(ast::JoinType::Left));
+</a><a href="#h3-6-26" id="h3-6-26" class="i">+        }
+</a><a href="#h3-6-27" id="h3-6-27" class="i">+        if self.next_is(Keyword::Right.into()) {
+</a>             self.skip(Keyword::Outer.into());
+             self.expect(Keyword::Join.into())?;
+<a href="#h3-6-30" id="h3-6-30" class="d">-            Ok(Some(ast::JoinType::Right))
+</a><a href="#h3-6-31" id="h3-6-31" class="d">-        } else {
+</a><a href="#h3-6-32" id="h3-6-32" class="d">-            Ok(None)
+</a><a href="#h3-6-33" id="h3-6-33" class="i">+            return Ok(Some(ast::JoinType::Right));
+</a>         }
+<a href="#h3-6-35" id="h3-6-35" class="i">+        Ok(None)
+</a>     }
+ 
+     /// Parses a WHERE clause, if present.
+<a href="#h3-7" id="h3-7" class="h">@@ -462,13 +461,13 @@ impl&lt;&#39;a&gt; Parser&lt;&#39;a&gt; {
+</a>         self.expect(Keyword::By.into())?;
+         loop {
+             let expr = self.parse_expression()?;
+<a href="#h3-7-3" id="h3-7-3" class="d">-            let order = if self.next_is(Keyword::Asc.into()) {
+</a><a href="#h3-7-4" id="h3-7-4" class="d">-                ast::Order::Ascending
+</a><a href="#h3-7-5" id="h3-7-5" class="d">-            } else if self.next_is(Keyword::Desc.into()) {
+</a><a href="#h3-7-6" id="h3-7-6" class="d">-                ast::Order::Descending
+</a><a href="#h3-7-7" id="h3-7-7" class="d">-            } else {
+</a><a href="#h3-7-8" id="h3-7-8" class="d">-                ast::Order::Ascending
+</a><a href="#h3-7-9" id="h3-7-9" class="d">-            };
+</a><a href="#h3-7-10" id="h3-7-10" class="i">+            let order = self
+</a><a href="#h3-7-11" id="h3-7-11" class="i">+                .next_if_map(|token| match token {
+</a><a href="#h3-7-12" id="h3-7-12" class="i">+                    Token::Keyword(Keyword::Asc) =&gt; Some(ast::Order::Ascending),
+</a><a href="#h3-7-13" id="h3-7-13" class="i">+                    Token::Keyword(Keyword::Desc) =&gt; Some(ast::Order::Descending),
+</a><a href="#h3-7-14" id="h3-7-14" class="i">+                    _ =&gt; None,
+</a><a href="#h3-7-15" id="h3-7-15" class="i">+                })
+</a><a href="#h3-7-16" id="h3-7-16" class="i">+                .unwrap_or(ast::Order::Ascending);
+</a>             order_by.push((expr, order));
+             if !self.next_is(Token::Comma) {
+                 break;
+<a href="#h3-8" id="h3-8" class="h">@@ -479,6 +478,7 @@ impl&lt;&#39;a&gt; Parser&lt;&#39;a&gt; {
+</a> 
+     /// Parses an expression consisting of at least one atom operated on by any
+     /// number of operators, using the precedence climbing algorithm.
+<a href="#h3-8-3" id="h3-8-3" class="i">+    ///
+</a>     /// TODO: write a description of the algorithm.
+     pub fn parse_expression(&amp;mut self) -&gt; Result&lt;ast::Expression&gt; {
+         self.parse_expression_at(0)
+<a href="#h3-9" id="h3-9" class="h">@@ -488,7 +488,7 @@ impl&lt;&#39;a&gt; Parser&lt;&#39;a&gt; {
+</a>     fn parse_expression_at(&amp;mut self, min_precedence: Precedence) -&gt; Result&lt;ast::Expression&gt; {
+         // If there is a prefix operator, parse it and its right-hand operand.
+         // Otherwise, parse the left-hand atom.
+<a href="#h3-9-3" id="h3-9-3" class="d">-        let mut lhs = if let Some(prefix) = self.parse_prefix_operator(min_precedence)? {
+</a><a href="#h3-9-4" id="h3-9-4" class="i">+        let mut lhs = if let Some(prefix) = self.parse_prefix_operator(min_precedence) {
+</a>             let at_precedence = prefix.precedence() + prefix.associativity();
+             prefix.build(self.parse_expression_at(at_precedence)?)
+         } else {
+<a href="#h3-10" id="h3-10" class="h">@@ -499,7 +499,7 @@ impl&lt;&#39;a&gt; Parser&lt;&#39;a&gt; {
+</a>             lhs = postfix.build(lhs)
+         }
+         // Apply any binary infix operators, parsing the right-hand operand.
+<a href="#h3-10-3" id="h3-10-3" class="d">-        while let Some(infix) = self.parse_infix_operator(min_precedence)? {
+</a><a href="#h3-10-4" id="h3-10-4" class="i">+        while let Some(infix) = self.parse_infix_operator(min_precedence) {
+</a>             let at_precedence = infix.precedence() + infix.associativity();
+             let rhs = self.parse_expression_at(at_precedence)?;
+             lhs = infix.build(lhs, rhs);
+<a href="#h3-11" id="h3-11" class="h">@@ -564,12 +564,9 @@ impl&lt;&#39;a&gt; Parser&lt;&#39;a&gt; {
+</a>         })
+     }
+ 
+<a href="#h3-11-3" id="h3-11-3" class="d">-    /// Parses a prefix operator, if there is one and it&#39;s precedence is at
+</a><a href="#h3-11-4" id="h3-11-4" class="d">-    /// least min_precedence.
+</a><a href="#h3-11-5" id="h3-11-5" class="d">-    fn parse_prefix_operator(
+</a><a href="#h3-11-6" id="h3-11-6" class="d">-        &amp;mut self,
+</a><a href="#h3-11-7" id="h3-11-7" class="d">-        min_precedence: Precedence,
+</a><a href="#h3-11-8" id="h3-11-8" class="d">-    ) -&gt; Result&lt;Option&lt;PrefixOperator&gt;&gt; {
+</a><a href="#h3-11-9" id="h3-11-9" class="i">+    /// Parses a prefix operator, if there is one and its precedence is at least
+</a><a href="#h3-11-10" id="h3-11-10" class="i">+    /// min_precedence.
+</a><a href="#h3-11-11" id="h3-11-11" class="i">+    fn parse_prefix_operator(&amp;mut self, min_precedence: Precedence) -&gt; Option&lt;PrefixOperator&gt; {
+</a>         self.next_if_map(|token| {
+             let operator = match token {
+                 Token::Keyword(Keyword::Not) =&gt; PrefixOperator::Not,
+<a href="#h3-12" id="h3-12" class="h">@@ -581,12 +578,9 @@ impl&lt;&#39;a&gt; Parser&lt;&#39;a&gt; {
+</a>         })
+     }
+ 
+<a href="#h3-12-3" id="h3-12-3" class="d">-    /// Parses an infix operator, if there is one and it&#39;s precedence is at
+</a><a href="#h3-12-4" id="h3-12-4" class="d">-    /// least min_precedence.
+</a><a href="#h3-12-5" id="h3-12-5" class="d">-    fn parse_infix_operator(
+</a><a href="#h3-12-6" id="h3-12-6" class="d">-        &amp;mut self,
+</a><a href="#h3-12-7" id="h3-12-7" class="d">-        min_precedence: Precedence,
+</a><a href="#h3-12-8" id="h3-12-8" class="d">-    ) -&gt; Result&lt;Option&lt;InfixOperator&gt;&gt; {
+</a><a href="#h3-12-9" id="h3-12-9" class="i">+    /// Parses an infix operator, if there is one and its precedence is at least
+</a><a href="#h3-12-10" id="h3-12-10" class="i">+    /// min_precedence.
+</a><a href="#h3-12-11" id="h3-12-11" class="i">+    fn parse_infix_operator(&amp;mut self, min_precedence: Precedence) -&gt; Option&lt;InfixOperator&gt; {
+</a>         self.next_if_map(|token| {
+             let operator = match token {
+                 Token::Asterisk =&gt; InfixOperator::Multiply,
+<a href="#h3-13" id="h3-13" class="h">@@ -611,7 +605,7 @@ impl&lt;&#39;a&gt; Parser&lt;&#39;a&gt; {
+</a>         })
+     }
+ 
+<a href="#h3-13-3" id="h3-13-3" class="d">-    /// Parses a postfix operator, if there is one and it&#39;s precedence is at
+</a><a href="#h3-13-4" id="h3-13-4" class="i">+    /// Parses a postfix operator, if there is one and its precedence is at
+</a>     /// least min_precedence.
+     fn parse_postfix_operator(
+         &amp;mut self,
+<a href="#h3-14" id="h3-14" class="h">@@ -638,13 +632,13 @@ impl&lt;&#39;a&gt; Parser&lt;&#39;a&gt; {
+</a>             return Ok(Some(operator));
+         }
+ 
+<a href="#h3-14-3" id="h3-14-3" class="d">-        self.next_if_map(|token| {
+</a><a href="#h3-14-4" id="h3-14-4" class="i">+        Ok(self.next_if_map(|token| {
+</a>             let operator = match token {
+                 Token::Exclamation =&gt; PostfixOperator::Factorial,
+                 _ =&gt; return None,
+             };
+             Some(operator).filter(|op| op.precedence() &gt;= min_precedence)
+<a href="#h3-14-10" id="h3-14-10" class="d">-        })
+</a><a href="#h3-14-11" id="h3-14-11" class="i">+        }))
+</a>     }
+ }
+ 
+<a href="#h3-15" id="h3-15" class="h">@@ -656,9 +650,9 @@ const RIGHT_ASSOCIATIVE: Precedence = 0;
+</a> 
+ /// Prefix operators.
+ enum PrefixOperator {
+<a href="#h3-15-3" id="h3-15-3" class="d">-    Minus,
+</a><a href="#h3-15-4" id="h3-15-4" class="d">-    Not,
+</a><a href="#h3-15-5" id="h3-15-5" class="d">-    Plus,
+</a><a href="#h3-15-6" id="h3-15-6" class="i">+    Minus, // -a
+</a><a href="#h3-15-7" id="h3-15-7" class="i">+    Not,   // NOT a
+</a><a href="#h3-15-8" id="h3-15-8" class="i">+    Plus,  // +a
+</a> }
+ 
+ impl PrefixOperator {
+<a href="#h3-16" id="h3-16" class="h">@@ -689,21 +683,21 @@ impl PrefixOperator {
+</a> 
+ /// Infix operators.
+ enum InfixOperator {
+<a href="#h3-16-3" id="h3-16-3" class="d">-    Add,
+</a><a href="#h3-16-4" id="h3-16-4" class="d">-    And,
+</a><a href="#h3-16-5" id="h3-16-5" class="d">-    Divide,
+</a><a href="#h3-16-6" id="h3-16-6" class="d">-    Equal,
+</a><a href="#h3-16-7" id="h3-16-7" class="d">-    Exponentiate,
+</a><a href="#h3-16-8" id="h3-16-8" class="d">-    GreaterThan,
+</a><a href="#h3-16-9" id="h3-16-9" class="d">-    GreaterThanOrEqual,
+</a><a href="#h3-16-10" id="h3-16-10" class="d">-    LessThan,
+</a><a href="#h3-16-11" id="h3-16-11" class="d">-    LessThanOrEqual,
+</a><a href="#h3-16-12" id="h3-16-12" class="d">-    Like,
+</a><a href="#h3-16-13" id="h3-16-13" class="d">-    Multiply,
+</a><a href="#h3-16-14" id="h3-16-14" class="d">-    NotEqual,
+</a><a href="#h3-16-15" id="h3-16-15" class="d">-    Or,
+</a><a href="#h3-16-16" id="h3-16-16" class="d">-    Remainder,
+</a><a href="#h3-16-17" id="h3-16-17" class="d">-    Subtract,
+</a><a href="#h3-16-18" id="h3-16-18" class="i">+    Add,                // a + b
+</a><a href="#h3-16-19" id="h3-16-19" class="i">+    And,                // a AND b
+</a><a href="#h3-16-20" id="h3-16-20" class="i">+    Divide,             // a / b
+</a><a href="#h3-16-21" id="h3-16-21" class="i">+    Equal,              // a = b
+</a><a href="#h3-16-22" id="h3-16-22" class="i">+    Exponentiate,       // a ^ b
+</a><a href="#h3-16-23" id="h3-16-23" class="i">+    GreaterThan,        // a &gt; b
+</a><a href="#h3-16-24" id="h3-16-24" class="i">+    GreaterThanOrEqual, // a &gt;= b
+</a><a href="#h3-16-25" id="h3-16-25" class="i">+    LessThan,           // a &lt; b
+</a><a href="#h3-16-26" id="h3-16-26" class="i">+    LessThanOrEqual,    // a &lt;= b
+</a><a href="#h3-16-27" id="h3-16-27" class="i">+    Like,               // a LIKE b
+</a><a href="#h3-16-28" id="h3-16-28" class="i">+    Multiply,           // a * b
+</a><a href="#h3-16-29" id="h3-16-29" class="i">+    NotEqual,           // a != b
+</a><a href="#h3-16-30" id="h3-16-30" class="i">+    Or,                 // a OR b
+</a><a href="#h3-16-31" id="h3-16-31" class="i">+    Remainder,          // a % b
+</a><a href="#h3-16-32" id="h3-16-32" class="i">+    Subtract,           // a - b
+</a> }
+ 
+ impl InfixOperator {
+<a href="#h3-17" id="h3-17" class="h">@@ -760,9 +754,9 @@ impl InfixOperator {
+</a> 
+ /// Postfix operators.
+ enum PostfixOperator {
+<a href="#h3-17-3" id="h3-17-3" class="d">-    Factorial,
+</a><a href="#h3-17-4" id="h3-17-4" class="d">-    Is(ast::Literal),
+</a><a href="#h3-17-5" id="h3-17-5" class="d">-    IsNot(ast::Literal),
+</a><a href="#h3-17-6" id="h3-17-6" class="i">+    Factorial,           // a!
+</a><a href="#h3-17-7" id="h3-17-7" class="i">+    Is(ast::Literal),    // a IS NULL | NAN
+</a><a href="#h3-17-8" id="h3-17-8" class="i">+    IsNot(ast::Literal), // a IS NOT NULL | NAN
+</a> }
+ 
+ impl PostfixOperator {
+</pre>
+</div>
+</body>
+</html>

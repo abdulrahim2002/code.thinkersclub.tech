@@ -1,0 +1,639 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>sql: clean up lexer - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/1b43ddf90f5c90da04f4d9921de04a133b1830fd.html">1b43ddf90f5c90da04f4d9921de04a133b1830fd</a>
+<b>parent</b> <a href="../commit/f8609d5021e563e5e0c34e938d634b0f29d8aae2.html">f8609d5021e563e5e0c34e938d634b0f29d8aae2</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Fri, 14 Jun 2024 22:49:39 +0200
+
+sql: clean up lexer
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/sql/parser/lexer.rs</a></td><td> | </td><td class="num">480</td><td><span class="i">++++++++++++++++++++++++++++++++++++++++</span><span class="d">---------------------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/sql/parser/mod.rs</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+</table></pre><pre>2 files changed, 245 insertions(+), 237 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/sql/parser/lexer.rs.html">src/sql/parser/lexer.rs</a> b/<a href="../file/src/sql/parser/lexer.rs.html">src/sql/parser/lexer.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -1,65 +1,79 @@
+</a> use crate::errinput;
+ use crate::error::Result;
+ 
+<a href="#h0-0-3" id="h0-0-3" class="d">-use std::iter::Peekable;
+</a><a href="#h0-0-4" id="h0-0-4" class="d">-use std::str::Chars;
+</a><a href="#h0-0-5" id="h0-0-5" class="i">+/// The lexer (lexical analyzer) preprocesses raw SQL strings into a sequence of
+</a><a href="#h0-0-6" id="h0-0-6" class="i">+/// lexical tokens (e.g. keyword, number, string, etc) that are passed onto the
+</a><a href="#h0-0-7" id="h0-0-7" class="i">+/// SQL parser. In doing so, it strips away basic syntactic noise such as
+</a><a href="#h0-0-8" id="h0-0-8" class="i">+/// whitespace, case, and quotes, and performs initial validation of symbols.
+</a><a href="#h0-0-9" id="h0-0-9" class="i">+pub struct Lexer&lt;&#39;a&gt; {
+</a><a href="#h0-0-10" id="h0-0-10" class="i">+    chars: std::iter::Peekable&lt;std::str::Chars&lt;&#39;a&gt;&gt;,
+</a><a href="#h0-0-11" id="h0-0-11" class="i">+}
+</a> 
+<a href="#h0-0-13" id="h0-0-13" class="d">-// A lexer token
+</a><a href="#h0-0-14" id="h0-0-14" class="i">+/// A lexical token.
+</a><a href="#h0-0-15" id="h0-0-15" class="i">+///
+</a><a href="#h0-0-16" id="h0-0-16" class="i">+/// For simplicity, these carry owned String copies rather than &amp;str references
+</a><a href="#h0-0-17" id="h0-0-17" class="i">+/// into the original input string. This causes frequent allocations, but that&#39;s
+</a><a href="#h0-0-18" id="h0-0-18" class="i">+/// fine for our purposes here.
+</a> #[derive(Clone, Debug, PartialEq)]
+ pub enum Token {
+<a href="#h0-0-21" id="h0-0-21" class="i">+    /// A number, with digits, decimal points, and/or exponents. Leading signs
+</a><a href="#h0-0-22" id="h0-0-22" class="i">+    /// (e.g. -) are separate tokens.
+</a>     Number(String),
+<a href="#h0-0-24" id="h0-0-24" class="i">+    /// A Unicode string, with quotes stripped and escape sequences resolved.
+</a>     String(String),
+<a href="#h0-0-26" id="h0-0-26" class="i">+    /// An identifier, with any quotes stripped.
+</a>     Ident(String),
+<a href="#h0-0-28" id="h0-0-28" class="i">+    /// A SQL keyword.
+</a>     Keyword(Keyword),
+<a href="#h0-0-30" id="h0-0-30" class="d">-    Period,
+</a><a href="#h0-0-31" id="h0-0-31" class="d">-    Equal,
+</a><a href="#h0-0-32" id="h0-0-32" class="d">-    GreaterThan,
+</a><a href="#h0-0-33" id="h0-0-33" class="d">-    GreaterThanOrEqual,
+</a><a href="#h0-0-34" id="h0-0-34" class="d">-    LessThan,
+</a><a href="#h0-0-35" id="h0-0-35" class="d">-    LessThanOrEqual,
+</a><a href="#h0-0-36" id="h0-0-36" class="d">-    LessOrGreaterThan,
+</a><a href="#h0-0-37" id="h0-0-37" class="d">-    Plus,
+</a><a href="#h0-0-38" id="h0-0-38" class="d">-    Minus,
+</a><a href="#h0-0-39" id="h0-0-39" class="d">-    Asterisk,
+</a><a href="#h0-0-40" id="h0-0-40" class="d">-    Slash,
+</a><a href="#h0-0-41" id="h0-0-41" class="d">-    Caret,
+</a><a href="#h0-0-42" id="h0-0-42" class="d">-    Percent,
+</a><a href="#h0-0-43" id="h0-0-43" class="d">-    Exclamation,
+</a><a href="#h0-0-44" id="h0-0-44" class="d">-    NotEqual,
+</a><a href="#h0-0-45" id="h0-0-45" class="d">-    Question,
+</a><a href="#h0-0-46" id="h0-0-46" class="d">-    OpenParen,
+</a><a href="#h0-0-47" id="h0-0-47" class="d">-    CloseParen,
+</a><a href="#h0-0-48" id="h0-0-48" class="d">-    Comma,
+</a><a href="#h0-0-49" id="h0-0-49" class="d">-    Semicolon,
+</a><a href="#h0-0-50" id="h0-0-50" class="i">+    Period,             // .
+</a><a href="#h0-0-51" id="h0-0-51" class="i">+    Equal,              // =
+</a><a href="#h0-0-52" id="h0-0-52" class="i">+    NotEqual,           // !=
+</a><a href="#h0-0-53" id="h0-0-53" class="i">+    GreaterThan,        // &gt;
+</a><a href="#h0-0-54" id="h0-0-54" class="i">+    GreaterThanOrEqual, // &gt;=
+</a><a href="#h0-0-55" id="h0-0-55" class="i">+    LessThan,           // &lt;
+</a><a href="#h0-0-56" id="h0-0-56" class="i">+    LessThanOrEqual,    // &lt;=
+</a><a href="#h0-0-57" id="h0-0-57" class="i">+    LessOrGreaterThan,  // &lt;&gt;
+</a><a href="#h0-0-58" id="h0-0-58" class="i">+    Plus,               // +
+</a><a href="#h0-0-59" id="h0-0-59" class="i">+    Minus,              // -
+</a><a href="#h0-0-60" id="h0-0-60" class="i">+    Asterisk,           // *
+</a><a href="#h0-0-61" id="h0-0-61" class="i">+    Slash,              // /
+</a><a href="#h0-0-62" id="h0-0-62" class="i">+    Caret,              // ^
+</a><a href="#h0-0-63" id="h0-0-63" class="i">+    Percent,            // %
+</a><a href="#h0-0-64" id="h0-0-64" class="i">+    Exclamation,        // !
+</a><a href="#h0-0-65" id="h0-0-65" class="i">+    Question,           // ?
+</a><a href="#h0-0-66" id="h0-0-66" class="i">+    Comma,              // ,
+</a><a href="#h0-0-67" id="h0-0-67" class="i">+    Semicolon,          // ;
+</a><a href="#h0-0-68" id="h0-0-68" class="i">+    OpenParen,          // (
+</a><a href="#h0-0-69" id="h0-0-69" class="i">+    CloseParen,         // )
+</a> }
+ 
+ impl std::fmt::Display for Token {
+     fn fmt(&amp;self, f: &amp;mut std::fmt::Formatter) -&gt; std::fmt::Result {
+         f.write_str(match self {
+<a href="#h0-0-75" id="h0-0-75" class="d">-            Token::Number(n) =&gt; n,
+</a><a href="#h0-0-76" id="h0-0-76" class="d">-            Token::String(s) =&gt; s,
+</a><a href="#h0-0-77" id="h0-0-77" class="d">-            Token::Ident(s) =&gt; s,
+</a><a href="#h0-0-78" id="h0-0-78" class="d">-            Token::Keyword(k) =&gt; k.to_str(),
+</a><a href="#h0-0-79" id="h0-0-79" class="d">-            Token::Period =&gt; &quot;.&quot;,
+</a><a href="#h0-0-80" id="h0-0-80" class="d">-            Token::Equal =&gt; &quot;=&quot;,
+</a><a href="#h0-0-81" id="h0-0-81" class="d">-            Token::GreaterThan =&gt; &quot;&gt;&quot;,
+</a><a href="#h0-0-82" id="h0-0-82" class="d">-            Token::GreaterThanOrEqual =&gt; &quot;&gt;=&quot;,
+</a><a href="#h0-0-83" id="h0-0-83" class="d">-            Token::LessThan =&gt; &quot;&lt;&quot;,
+</a><a href="#h0-0-84" id="h0-0-84" class="d">-            Token::LessThanOrEqual =&gt; &quot;&lt;=&quot;,
+</a><a href="#h0-0-85" id="h0-0-85" class="d">-            Token::LessOrGreaterThan =&gt; &quot;&lt;&gt;&quot;,
+</a><a href="#h0-0-86" id="h0-0-86" class="d">-            Token::Plus =&gt; &quot;+&quot;,
+</a><a href="#h0-0-87" id="h0-0-87" class="d">-            Token::Minus =&gt; &quot;-&quot;,
+</a><a href="#h0-0-88" id="h0-0-88" class="d">-            Token::Asterisk =&gt; &quot;*&quot;,
+</a><a href="#h0-0-89" id="h0-0-89" class="d">-            Token::Slash =&gt; &quot;/&quot;,
+</a><a href="#h0-0-90" id="h0-0-90" class="d">-            Token::Caret =&gt; &quot;^&quot;,
+</a><a href="#h0-0-91" id="h0-0-91" class="d">-            Token::Percent =&gt; &quot;%&quot;,
+</a><a href="#h0-0-92" id="h0-0-92" class="d">-            Token::Exclamation =&gt; &quot;!&quot;,
+</a><a href="#h0-0-93" id="h0-0-93" class="d">-            Token::NotEqual =&gt; &quot;!=&quot;,
+</a><a href="#h0-0-94" id="h0-0-94" class="d">-            Token::Question =&gt; &quot;?&quot;,
+</a><a href="#h0-0-95" id="h0-0-95" class="d">-            Token::OpenParen =&gt; &quot;(&quot;,
+</a><a href="#h0-0-96" id="h0-0-96" class="d">-            Token::CloseParen =&gt; &quot;)&quot;,
+</a><a href="#h0-0-97" id="h0-0-97" class="d">-            Token::Comma =&gt; &quot;,&quot;,
+</a><a href="#h0-0-98" id="h0-0-98" class="d">-            Token::Semicolon =&gt; &quot;;&quot;,
+</a><a href="#h0-0-99" id="h0-0-99" class="i">+            Self::Number(n) =&gt; n,
+</a><a href="#h0-0-100" id="h0-0-100" class="i">+            Self::String(s) =&gt; s,
+</a><a href="#h0-0-101" id="h0-0-101" class="i">+            Self::Ident(s) =&gt; s,
+</a><a href="#h0-0-102" id="h0-0-102" class="i">+            Self::Keyword(k) =&gt; return k.fmt(f),
+</a><a href="#h0-0-103" id="h0-0-103" class="i">+            Self::Period =&gt; &quot;.&quot;,
+</a><a href="#h0-0-104" id="h0-0-104" class="i">+            Self::Equal =&gt; &quot;=&quot;,
+</a><a href="#h0-0-105" id="h0-0-105" class="i">+            Self::NotEqual =&gt; &quot;!=&quot;,
+</a><a href="#h0-0-106" id="h0-0-106" class="i">+            Self::GreaterThan =&gt; &quot;&gt;&quot;,
+</a><a href="#h0-0-107" id="h0-0-107" class="i">+            Self::GreaterThanOrEqual =&gt; &quot;&gt;=&quot;,
+</a><a href="#h0-0-108" id="h0-0-108" class="i">+            Self::LessThan =&gt; &quot;&lt;&quot;,
+</a><a href="#h0-0-109" id="h0-0-109" class="i">+            Self::LessThanOrEqual =&gt; &quot;&lt;=&quot;,
+</a><a href="#h0-0-110" id="h0-0-110" class="i">+            Self::LessOrGreaterThan =&gt; &quot;&lt;&gt;&quot;,
+</a><a href="#h0-0-111" id="h0-0-111" class="i">+            Self::Plus =&gt; &quot;+&quot;,
+</a><a href="#h0-0-112" id="h0-0-112" class="i">+            Self::Minus =&gt; &quot;-&quot;,
+</a><a href="#h0-0-113" id="h0-0-113" class="i">+            Self::Asterisk =&gt; &quot;*&quot;,
+</a><a href="#h0-0-114" id="h0-0-114" class="i">+            Self::Slash =&gt; &quot;/&quot;,
+</a><a href="#h0-0-115" id="h0-0-115" class="i">+            Self::Caret =&gt; &quot;^&quot;,
+</a><a href="#h0-0-116" id="h0-0-116" class="i">+            Self::Percent =&gt; &quot;%&quot;,
+</a><a href="#h0-0-117" id="h0-0-117" class="i">+            Self::Exclamation =&gt; &quot;!&quot;,
+</a><a href="#h0-0-118" id="h0-0-118" class="i">+            Self::Question =&gt; &quot;?&quot;,
+</a><a href="#h0-0-119" id="h0-0-119" class="i">+            Self::Comma =&gt; &quot;,&quot;,
+</a><a href="#h0-0-120" id="h0-0-120" class="i">+            Self::Semicolon =&gt; &quot;;&quot;,
+</a><a href="#h0-0-121" id="h0-0-121" class="i">+            Self::OpenParen =&gt; &quot;(&quot;,
+</a><a href="#h0-0-122" id="h0-0-122" class="i">+            Self::CloseParen =&gt; &quot;)&quot;,
+</a>         })
+     }
+ }
+<a href="#h0-1" id="h0-1" class="h">@@ -70,7 +84,7 @@ impl From&lt;Keyword&gt; for Token {
+</a>     }
+ }
+ 
+<a href="#h0-1-3" id="h0-1-3" class="d">-/// Lexer keywords
+</a><a href="#h0-1-4" id="h0-1-4" class="i">+/// Reserved SQL keywords.
+</a> #[derive(Clone, Debug, PartialEq)]
+ pub enum Keyword {
+     And,
+<a href="#h0-2" id="h0-2" class="h">@@ -142,83 +156,91 @@ pub enum Keyword {
+</a>     Write,
+ }
+ 
+<a href="#h0-2-3" id="h0-2-3" class="d">-impl Keyword {
+</a><a href="#h0-2-4" id="h0-2-4" class="d">-    #[allow(clippy::should_implement_trait)]
+</a><a href="#h0-2-5" id="h0-2-5" class="d">-    pub fn from_str(ident: &amp;str) -&gt; Option&lt;Self&gt; {
+</a><a href="#h0-2-6" id="h0-2-6" class="d">-        Some(match ident.to_uppercase().as_ref() {
+</a><a href="#h0-2-7" id="h0-2-7" class="d">-            &quot;AS&quot; =&gt; Self::As,
+</a><a href="#h0-2-8" id="h0-2-8" class="d">-            &quot;ASC&quot; =&gt; Self::Asc,
+</a><a href="#h0-2-9" id="h0-2-9" class="d">-            &quot;AND&quot; =&gt; Self::And,
+</a><a href="#h0-2-10" id="h0-2-10" class="d">-            &quot;BEGIN&quot; =&gt; Self::Begin,
+</a><a href="#h0-2-11" id="h0-2-11" class="d">-            &quot;BOOL&quot; =&gt; Self::Bool,
+</a><a href="#h0-2-12" id="h0-2-12" class="d">-            &quot;BOOLEAN&quot; =&gt; Self::Boolean,
+</a><a href="#h0-2-13" id="h0-2-13" class="d">-            &quot;BY&quot; =&gt; Self::By,
+</a><a href="#h0-2-14" id="h0-2-14" class="d">-            &quot;CHAR&quot; =&gt; Self::Char,
+</a><a href="#h0-2-15" id="h0-2-15" class="d">-            &quot;COMMIT&quot; =&gt; Self::Commit,
+</a><a href="#h0-2-16" id="h0-2-16" class="d">-            &quot;CREATE&quot; =&gt; Self::Create,
+</a><a href="#h0-2-17" id="h0-2-17" class="d">-            &quot;CROSS&quot; =&gt; Self::Cross,
+</a><a href="#h0-2-18" id="h0-2-18" class="d">-            &quot;DEFAULT&quot; =&gt; Self::Default,
+</a><a href="#h0-2-19" id="h0-2-19" class="d">-            &quot;DELETE&quot; =&gt; Self::Delete,
+</a><a href="#h0-2-20" id="h0-2-20" class="d">-            &quot;DESC&quot; =&gt; Self::Desc,
+</a><a href="#h0-2-21" id="h0-2-21" class="d">-            &quot;DOUBLE&quot; =&gt; Self::Double,
+</a><a href="#h0-2-22" id="h0-2-22" class="d">-            &quot;DROP&quot; =&gt; Self::Drop,
+</a><a href="#h0-2-23" id="h0-2-23" class="d">-            &quot;EXISTS&quot; =&gt; Self::Exists,
+</a><a href="#h0-2-24" id="h0-2-24" class="d">-            &quot;EXPLAIN&quot; =&gt; Self::Explain,
+</a><a href="#h0-2-25" id="h0-2-25" class="d">-            &quot;FALSE&quot; =&gt; Self::False,
+</a><a href="#h0-2-26" id="h0-2-26" class="d">-            &quot;FLOAT&quot; =&gt; Self::Float,
+</a><a href="#h0-2-27" id="h0-2-27" class="d">-            &quot;FROM&quot; =&gt; Self::From,
+</a><a href="#h0-2-28" id="h0-2-28" class="d">-            &quot;GROUP&quot; =&gt; Self::Group,
+</a><a href="#h0-2-29" id="h0-2-29" class="d">-            &quot;HAVING&quot; =&gt; Self::Having,
+</a><a href="#h0-2-30" id="h0-2-30" class="d">-            &quot;IF&quot; =&gt; Self::If,
+</a><a href="#h0-2-31" id="h0-2-31" class="d">-            &quot;INDEX&quot; =&gt; Self::Index,
+</a><a href="#h0-2-32" id="h0-2-32" class="d">-            &quot;INFINITY&quot; =&gt; Self::Infinity,
+</a><a href="#h0-2-33" id="h0-2-33" class="d">-            &quot;INNER&quot; =&gt; Self::Inner,
+</a><a href="#h0-2-34" id="h0-2-34" class="d">-            &quot;INSERT&quot; =&gt; Self::Insert,
+</a><a href="#h0-2-35" id="h0-2-35" class="d">-            &quot;INT&quot; =&gt; Self::Int,
+</a><a href="#h0-2-36" id="h0-2-36" class="d">-            &quot;INTEGER&quot; =&gt; Self::Integer,
+</a><a href="#h0-2-37" id="h0-2-37" class="d">-            &quot;INTO&quot; =&gt; Self::Into,
+</a><a href="#h0-2-38" id="h0-2-38" class="d">-            &quot;IS&quot; =&gt; Self::Is,
+</a><a href="#h0-2-39" id="h0-2-39" class="d">-            &quot;JOIN&quot; =&gt; Self::Join,
+</a><a href="#h0-2-40" id="h0-2-40" class="d">-            &quot;KEY&quot; =&gt; Self::Key,
+</a><a href="#h0-2-41" id="h0-2-41" class="d">-            &quot;LEFT&quot; =&gt; Self::Left,
+</a><a href="#h0-2-42" id="h0-2-42" class="d">-            &quot;LIKE&quot; =&gt; Self::Like,
+</a><a href="#h0-2-43" id="h0-2-43" class="d">-            &quot;LIMIT&quot; =&gt; Self::Limit,
+</a><a href="#h0-2-44" id="h0-2-44" class="d">-            &quot;NAN&quot; =&gt; Self::NaN,
+</a><a href="#h0-2-45" id="h0-2-45" class="d">-            &quot;NOT&quot; =&gt; Self::Not,
+</a><a href="#h0-2-46" id="h0-2-46" class="d">-            &quot;NULL&quot; =&gt; Self::Null,
+</a><a href="#h0-2-47" id="h0-2-47" class="d">-            &quot;OF&quot; =&gt; Self::Of,
+</a><a href="#h0-2-48" id="h0-2-48" class="d">-            &quot;OFFSET&quot; =&gt; Self::Offset,
+</a><a href="#h0-2-49" id="h0-2-49" class="d">-            &quot;ON&quot; =&gt; Self::On,
+</a><a href="#h0-2-50" id="h0-2-50" class="d">-            &quot;ONLY&quot; =&gt; Self::Only,
+</a><a href="#h0-2-51" id="h0-2-51" class="d">-            &quot;OR&quot; =&gt; Self::Or,
+</a><a href="#h0-2-52" id="h0-2-52" class="d">-            &quot;ORDER&quot; =&gt; Self::Order,
+</a><a href="#h0-2-53" id="h0-2-53" class="d">-            &quot;OUTER&quot; =&gt; Self::Outer,
+</a><a href="#h0-2-54" id="h0-2-54" class="d">-            &quot;PRIMARY&quot; =&gt; Self::Primary,
+</a><a href="#h0-2-55" id="h0-2-55" class="d">-            &quot;READ&quot; =&gt; Self::Read,
+</a><a href="#h0-2-56" id="h0-2-56" class="d">-            &quot;REFERENCES&quot; =&gt; Self::References,
+</a><a href="#h0-2-57" id="h0-2-57" class="d">-            &quot;RIGHT&quot; =&gt; Self::Right,
+</a><a href="#h0-2-58" id="h0-2-58" class="d">-            &quot;ROLLBACK&quot; =&gt; Self::Rollback,
+</a><a href="#h0-2-59" id="h0-2-59" class="d">-            &quot;SELECT&quot; =&gt; Self::Select,
+</a><a href="#h0-2-60" id="h0-2-60" class="d">-            &quot;SET&quot; =&gt; Self::Set,
+</a><a href="#h0-2-61" id="h0-2-61" class="d">-            &quot;STRING&quot; =&gt; Self::String,
+</a><a href="#h0-2-62" id="h0-2-62" class="d">-            &quot;SYSTEM&quot; =&gt; Self::System,
+</a><a href="#h0-2-63" id="h0-2-63" class="d">-            &quot;TABLE&quot; =&gt; Self::Table,
+</a><a href="#h0-2-64" id="h0-2-64" class="d">-            &quot;TEXT&quot; =&gt; Self::Text,
+</a><a href="#h0-2-65" id="h0-2-65" class="d">-            &quot;TIME&quot; =&gt; Self::Time,
+</a><a href="#h0-2-66" id="h0-2-66" class="d">-            &quot;TRANSACTION&quot; =&gt; Self::Transaction,
+</a><a href="#h0-2-67" id="h0-2-67" class="d">-            &quot;TRUE&quot; =&gt; Self::True,
+</a><a href="#h0-2-68" id="h0-2-68" class="d">-            &quot;UNIQUE&quot; =&gt; Self::Unique,
+</a><a href="#h0-2-69" id="h0-2-69" class="d">-            &quot;UPDATE&quot; =&gt; Self::Update,
+</a><a href="#h0-2-70" id="h0-2-70" class="d">-            &quot;VALUES&quot; =&gt; Self::Values,
+</a><a href="#h0-2-71" id="h0-2-71" class="d">-            &quot;VARCHAR&quot; =&gt; Self::Varchar,
+</a><a href="#h0-2-72" id="h0-2-72" class="d">-            &quot;WHERE&quot; =&gt; Self::Where,
+</a><a href="#h0-2-73" id="h0-2-73" class="d">-            &quot;WRITE&quot; =&gt; Self::Write,
+</a><a href="#h0-2-74" id="h0-2-74" class="d">-            _ =&gt; return None,
+</a><a href="#h0-2-75" id="h0-2-75" class="i">+impl TryFrom&lt;&amp;str&gt; for Keyword {
+</a><a href="#h0-2-76" id="h0-2-76" class="i">+    // The error just indicates this isn&#39;t a keyword, so use a cheap string.
+</a><a href="#h0-2-77" id="h0-2-77" class="i">+    type Error = &amp;&#39;static str;
+</a><a href="#h0-2-78" id="h0-2-78" class="i">+
+</a><a href="#h0-2-79" id="h0-2-79" class="i">+    fn try_from(value: &amp;str) -&gt; std::result::Result&lt;Self, Self::Error&gt; {
+</a><a href="#h0-2-80" id="h0-2-80" class="i">+        // Only compare lowercase, which is enforced by the lexer. This avoids
+</a><a href="#h0-2-81" id="h0-2-81" class="i">+        // allocating a string to change the case. Assert this.
+</a><a href="#h0-2-82" id="h0-2-82" class="i">+        debug_assert!(value.chars().all(|c| !c.is_uppercase()), &quot;keyword must be lowercase&quot;);
+</a><a href="#h0-2-83" id="h0-2-83" class="i">+        Ok(match value {
+</a><a href="#h0-2-84" id="h0-2-84" class="i">+            &quot;as&quot; =&gt; Self::As,
+</a><a href="#h0-2-85" id="h0-2-85" class="i">+            &quot;asc&quot; =&gt; Self::Asc,
+</a><a href="#h0-2-86" id="h0-2-86" class="i">+            &quot;and&quot; =&gt; Self::And,
+</a><a href="#h0-2-87" id="h0-2-87" class="i">+            &quot;begin&quot; =&gt; Self::Begin,
+</a><a href="#h0-2-88" id="h0-2-88" class="i">+            &quot;bool&quot; =&gt; Self::Bool,
+</a><a href="#h0-2-89" id="h0-2-89" class="i">+            &quot;boolean&quot; =&gt; Self::Boolean,
+</a><a href="#h0-2-90" id="h0-2-90" class="i">+            &quot;by&quot; =&gt; Self::By,
+</a><a href="#h0-2-91" id="h0-2-91" class="i">+            &quot;char&quot; =&gt; Self::Char,
+</a><a href="#h0-2-92" id="h0-2-92" class="i">+            &quot;commit&quot; =&gt; Self::Commit,
+</a><a href="#h0-2-93" id="h0-2-93" class="i">+            &quot;create&quot; =&gt; Self::Create,
+</a><a href="#h0-2-94" id="h0-2-94" class="i">+            &quot;cross&quot; =&gt; Self::Cross,
+</a><a href="#h0-2-95" id="h0-2-95" class="i">+            &quot;default&quot; =&gt; Self::Default,
+</a><a href="#h0-2-96" id="h0-2-96" class="i">+            &quot;delete&quot; =&gt; Self::Delete,
+</a><a href="#h0-2-97" id="h0-2-97" class="i">+            &quot;desc&quot; =&gt; Self::Desc,
+</a><a href="#h0-2-98" id="h0-2-98" class="i">+            &quot;double&quot; =&gt; Self::Double,
+</a><a href="#h0-2-99" id="h0-2-99" class="i">+            &quot;drop&quot; =&gt; Self::Drop,
+</a><a href="#h0-2-100" id="h0-2-100" class="i">+            &quot;exists&quot; =&gt; Self::Exists,
+</a><a href="#h0-2-101" id="h0-2-101" class="i">+            &quot;explain&quot; =&gt; Self::Explain,
+</a><a href="#h0-2-102" id="h0-2-102" class="i">+            &quot;false&quot; =&gt; Self::False,
+</a><a href="#h0-2-103" id="h0-2-103" class="i">+            &quot;float&quot; =&gt; Self::Float,
+</a><a href="#h0-2-104" id="h0-2-104" class="i">+            &quot;from&quot; =&gt; Self::From,
+</a><a href="#h0-2-105" id="h0-2-105" class="i">+            &quot;group&quot; =&gt; Self::Group,
+</a><a href="#h0-2-106" id="h0-2-106" class="i">+            &quot;having&quot; =&gt; Self::Having,
+</a><a href="#h0-2-107" id="h0-2-107" class="i">+            &quot;if&quot; =&gt; Self::If,
+</a><a href="#h0-2-108" id="h0-2-108" class="i">+            &quot;index&quot; =&gt; Self::Index,
+</a><a href="#h0-2-109" id="h0-2-109" class="i">+            &quot;infinity&quot; =&gt; Self::Infinity,
+</a><a href="#h0-2-110" id="h0-2-110" class="i">+            &quot;inner&quot; =&gt; Self::Inner,
+</a><a href="#h0-2-111" id="h0-2-111" class="i">+            &quot;insert&quot; =&gt; Self::Insert,
+</a><a href="#h0-2-112" id="h0-2-112" class="i">+            &quot;int&quot; =&gt; Self::Int,
+</a><a href="#h0-2-113" id="h0-2-113" class="i">+            &quot;integer&quot; =&gt; Self::Integer,
+</a><a href="#h0-2-114" id="h0-2-114" class="i">+            &quot;into&quot; =&gt; Self::Into,
+</a><a href="#h0-2-115" id="h0-2-115" class="i">+            &quot;is&quot; =&gt; Self::Is,
+</a><a href="#h0-2-116" id="h0-2-116" class="i">+            &quot;join&quot; =&gt; Self::Join,
+</a><a href="#h0-2-117" id="h0-2-117" class="i">+            &quot;key&quot; =&gt; Self::Key,
+</a><a href="#h0-2-118" id="h0-2-118" class="i">+            &quot;left&quot; =&gt; Self::Left,
+</a><a href="#h0-2-119" id="h0-2-119" class="i">+            &quot;like&quot; =&gt; Self::Like,
+</a><a href="#h0-2-120" id="h0-2-120" class="i">+            &quot;limit&quot; =&gt; Self::Limit,
+</a><a href="#h0-2-121" id="h0-2-121" class="i">+            &quot;nan&quot; =&gt; Self::NaN,
+</a><a href="#h0-2-122" id="h0-2-122" class="i">+            &quot;not&quot; =&gt; Self::Not,
+</a><a href="#h0-2-123" id="h0-2-123" class="i">+            &quot;null&quot; =&gt; Self::Null,
+</a><a href="#h0-2-124" id="h0-2-124" class="i">+            &quot;of&quot; =&gt; Self::Of,
+</a><a href="#h0-2-125" id="h0-2-125" class="i">+            &quot;offset&quot; =&gt; Self::Offset,
+</a><a href="#h0-2-126" id="h0-2-126" class="i">+            &quot;on&quot; =&gt; Self::On,
+</a><a href="#h0-2-127" id="h0-2-127" class="i">+            &quot;only&quot; =&gt; Self::Only,
+</a><a href="#h0-2-128" id="h0-2-128" class="i">+            &quot;or&quot; =&gt; Self::Or,
+</a><a href="#h0-2-129" id="h0-2-129" class="i">+            &quot;order&quot; =&gt; Self::Order,
+</a><a href="#h0-2-130" id="h0-2-130" class="i">+            &quot;outer&quot; =&gt; Self::Outer,
+</a><a href="#h0-2-131" id="h0-2-131" class="i">+            &quot;primary&quot; =&gt; Self::Primary,
+</a><a href="#h0-2-132" id="h0-2-132" class="i">+            &quot;read&quot; =&gt; Self::Read,
+</a><a href="#h0-2-133" id="h0-2-133" class="i">+            &quot;references&quot; =&gt; Self::References,
+</a><a href="#h0-2-134" id="h0-2-134" class="i">+            &quot;right&quot; =&gt; Self::Right,
+</a><a href="#h0-2-135" id="h0-2-135" class="i">+            &quot;rollback&quot; =&gt; Self::Rollback,
+</a><a href="#h0-2-136" id="h0-2-136" class="i">+            &quot;select&quot; =&gt; Self::Select,
+</a><a href="#h0-2-137" id="h0-2-137" class="i">+            &quot;set&quot; =&gt; Self::Set,
+</a><a href="#h0-2-138" id="h0-2-138" class="i">+            &quot;string&quot; =&gt; Self::String,
+</a><a href="#h0-2-139" id="h0-2-139" class="i">+            &quot;system&quot; =&gt; Self::System,
+</a><a href="#h0-2-140" id="h0-2-140" class="i">+            &quot;table&quot; =&gt; Self::Table,
+</a><a href="#h0-2-141" id="h0-2-141" class="i">+            &quot;text&quot; =&gt; Self::Text,
+</a><a href="#h0-2-142" id="h0-2-142" class="i">+            &quot;time&quot; =&gt; Self::Time,
+</a><a href="#h0-2-143" id="h0-2-143" class="i">+            &quot;transaction&quot; =&gt; Self::Transaction,
+</a><a href="#h0-2-144" id="h0-2-144" class="i">+            &quot;true&quot; =&gt; Self::True,
+</a><a href="#h0-2-145" id="h0-2-145" class="i">+            &quot;unique&quot; =&gt; Self::Unique,
+</a><a href="#h0-2-146" id="h0-2-146" class="i">+            &quot;update&quot; =&gt; Self::Update,
+</a><a href="#h0-2-147" id="h0-2-147" class="i">+            &quot;values&quot; =&gt; Self::Values,
+</a><a href="#h0-2-148" id="h0-2-148" class="i">+            &quot;varchar&quot; =&gt; Self::Varchar,
+</a><a href="#h0-2-149" id="h0-2-149" class="i">+            &quot;where&quot; =&gt; Self::Where,
+</a><a href="#h0-2-150" id="h0-2-150" class="i">+            &quot;write&quot; =&gt; Self::Write,
+</a><a href="#h0-2-151" id="h0-2-151" class="i">+            _ =&gt; return Err(&quot;not a keyword&quot;),
+</a>         })
+     }
+<a href="#h0-2-154" id="h0-2-154" class="i">+}
+</a> 
+<a href="#h0-2-156" id="h0-2-156" class="d">-    pub fn to_str(&amp;self) -&gt; &amp;str {
+</a><a href="#h0-2-157" id="h0-2-157" class="d">-        match self {
+</a><a href="#h0-2-158" id="h0-2-158" class="i">+impl std::fmt::Display for Keyword {
+</a><a href="#h0-2-159" id="h0-2-159" class="i">+    fn fmt(&amp;self, f: &amp;mut std::fmt::Formatter) -&gt; std::fmt::Result {
+</a><a href="#h0-2-160" id="h0-2-160" class="i">+        // Display keywords as uppercase.
+</a><a href="#h0-2-161" id="h0-2-161" class="i">+        f.write_str(match self {
+</a>             Self::As =&gt; &quot;AS&quot;,
+             Self::Asc =&gt; &quot;ASC&quot;,
+             Self::And =&gt; &quot;AND&quot;,
+<a href="#h0-3" id="h0-3" class="h">@@ -286,100 +308,90 @@ impl Keyword {
+</a>             Self::Varchar =&gt; &quot;VARCHAR&quot;,
+             Self::Where =&gt; &quot;WHERE&quot;,
+             Self::Write =&gt; &quot;WRITE&quot;,
+<a href="#h0-3-3" id="h0-3-3" class="d">-        }
+</a><a href="#h0-3-4" id="h0-3-4" class="d">-    }
+</a><a href="#h0-3-5" id="h0-3-5" class="d">-}
+</a><a href="#h0-3-6" id="h0-3-6" class="d">-
+</a><a href="#h0-3-7" id="h0-3-7" class="d">-impl std::fmt::Display for Keyword {
+</a><a href="#h0-3-8" id="h0-3-8" class="d">-    fn fmt(&amp;self, f: &amp;mut std::fmt::Formatter) -&gt; std::fmt::Result {
+</a><a href="#h0-3-9" id="h0-3-9" class="d">-        f.write_str(self.to_str())
+</a><a href="#h0-3-10" id="h0-3-10" class="i">+        })
+</a>     }
+ }
+ 
+<a href="#h0-3-14" id="h0-3-14" class="d">-/// A lexer tokenizes an input string as an iterator
+</a><a href="#h0-3-15" id="h0-3-15" class="d">-pub struct Lexer&lt;&#39;a&gt; {
+</a><a href="#h0-3-16" id="h0-3-16" class="d">-    iter: Peekable&lt;Chars&lt;&#39;a&gt;&gt;,
+</a><a href="#h0-3-17" id="h0-3-17" class="d">-}
+</a><a href="#h0-3-18" id="h0-3-18" class="d">-
+</a><a href="#h0-3-19" id="h0-3-19" class="i">+/// The lexer is used as a token iterator.
+</a> impl&lt;&#39;a&gt; Iterator for Lexer&lt;&#39;a&gt; {
+     type Item = Result&lt;Token&gt;;
+ 
+     fn next(&amp;mut self) -&gt; Option&lt;Result&lt;Token&gt;&gt; {
+         match self.scan() {
+             Ok(Some(token)) =&gt; Some(Ok(token)),
+<a href="#h0-3-26" id="h0-3-26" class="d">-            Ok(None) =&gt; self.iter.peek().map(|c| errinput!(&quot;unexpected character {c}&quot;)),
+</a><a href="#h0-3-27" id="h0-3-27" class="i">+            // If there&#39;s any remaining chars, the lexer didn&#39;t recognize them.
+</a><a href="#h0-3-28" id="h0-3-28" class="i">+            // Otherwise, we&#39;re done lexing.
+</a><a href="#h0-3-29" id="h0-3-29" class="i">+            Ok(None) =&gt; self.chars.peek().map(|c| errinput!(&quot;unexpected character {c}&quot;)),
+</a>             Err(err) =&gt; Some(Err(err)),
+         }
+     }
+ }
+ 
+ impl&lt;&#39;a&gt; Lexer&lt;&#39;a&gt; {
+<a href="#h0-3-36" id="h0-3-36" class="d">-    /// Creates a new lexer for the given input string
+</a><a href="#h0-3-37" id="h0-3-37" class="d">-    #[allow(dead_code)]
+</a><a href="#h0-3-38" id="h0-3-38" class="i">+    /// Creates a new lexer for the given string.
+</a>     pub fn new(input: &amp;&#39;a str) -&gt; Lexer&lt;&#39;a&gt; {
+<a href="#h0-3-40" id="h0-3-40" class="d">-        Lexer { iter: input.chars().peekable() }
+</a><a href="#h0-3-41" id="h0-3-41" class="d">-    }
+</a><a href="#h0-3-42" id="h0-3-42" class="d">-
+</a><a href="#h0-3-43" id="h0-3-43" class="d">-    /// Consumes any whitespace characters
+</a><a href="#h0-3-44" id="h0-3-44" class="d">-    fn consume_whitespace(&amp;mut self) {
+</a><a href="#h0-3-45" id="h0-3-45" class="d">-        self.next_while(|c| c.is_whitespace());
+</a><a href="#h0-3-46" id="h0-3-46" class="i">+        Lexer { chars: input.chars().peekable() }
+</a>     }
+ 
+<a href="#h0-3-49" id="h0-3-49" class="d">-    /// Grabs the next character if it matches the predicate function
+</a><a href="#h0-3-50" id="h0-3-50" class="d">-    fn next_if&lt;F: Fn(char) -&gt; bool&gt;(&amp;mut self, predicate: F) -&gt; Option&lt;char&gt; {
+</a><a href="#h0-3-51" id="h0-3-51" class="d">-        self.iter.peek().filter(|&amp;c| predicate(*c))?;
+</a><a href="#h0-3-52" id="h0-3-52" class="d">-        self.iter.next()
+</a><a href="#h0-3-53" id="h0-3-53" class="i">+    /// Returns the next character if it satisfies the predicate.
+</a><a href="#h0-3-54" id="h0-3-54" class="i">+    fn next_if(&amp;mut self, predicate: impl Fn(char) -&gt; bool) -&gt; Option&lt;char&gt; {
+</a><a href="#h0-3-55" id="h0-3-55" class="i">+        self.chars.peek().filter(|&amp;&amp;c| predicate(c))?;
+</a><a href="#h0-3-56" id="h0-3-56" class="i">+        self.chars.next()
+</a>     }
+ 
+<a href="#h0-3-59" id="h0-3-59" class="d">-    /// Grabs the next single-character token if the tokenizer function returns one
+</a><a href="#h0-3-60" id="h0-3-60" class="d">-    fn next_if_token&lt;F: Fn(char) -&gt; Option&lt;Token&gt;&gt;(&amp;mut self, tokenizer: F) -&gt; Option&lt;Token&gt; {
+</a><a href="#h0-3-61" id="h0-3-61" class="d">-        let token = self.iter.peek().and_then(|&amp;c| tokenizer(c))?;
+</a><a href="#h0-3-62" id="h0-3-62" class="d">-        self.iter.next();
+</a><a href="#h0-3-63" id="h0-3-63" class="d">-        Some(token)
+</a><a href="#h0-3-64" id="h0-3-64" class="i">+    /// Applies a function to the next character, returning its result and
+</a><a href="#h0-3-65" id="h0-3-65" class="i">+    /// consuming the next character if it&#39;s Some.
+</a><a href="#h0-3-66" id="h0-3-66" class="i">+    fn next_if_map&lt;T&gt;(&amp;mut self, map: impl Fn(char) -&gt; Option&lt;T&gt;) -&gt; Option&lt;T&gt; {
+</a><a href="#h0-3-67" id="h0-3-67" class="i">+        let value = self.chars.peek().and_then(|&amp;c| map(c))?;
+</a><a href="#h0-3-68" id="h0-3-68" class="i">+        self.chars.next();
+</a><a href="#h0-3-69" id="h0-3-69" class="i">+        Some(value)
+</a>     }
+ 
+<a href="#h0-3-72" id="h0-3-72" class="d">-    /// Grabs the next characters that match the predicate, as a string
+</a><a href="#h0-3-73" id="h0-3-73" class="d">-    fn next_while&lt;F: Fn(char) -&gt; bool&gt;(&amp;mut self, predicate: F) -&gt; Option&lt;String&gt; {
+</a><a href="#h0-3-74" id="h0-3-74" class="d">-        let mut value = String::new();
+</a><a href="#h0-3-75" id="h0-3-75" class="d">-        while let Some(c) = self.next_if(&amp;predicate) {
+</a><a href="#h0-3-76" id="h0-3-76" class="d">-            value.push(c)
+</a><a href="#h0-3-77" id="h0-3-77" class="d">-        }
+</a><a href="#h0-3-78" id="h0-3-78" class="d">-        Some(value).filter(|v| !v.is_empty())
+</a><a href="#h0-3-79" id="h0-3-79" class="i">+    /// Returns true if the next character is the given character, consuming it.
+</a><a href="#h0-3-80" id="h0-3-80" class="i">+    fn next_is(&amp;mut self, c: char) -&gt; bool {
+</a><a href="#h0-3-81" id="h0-3-81" class="i">+        self.next_if(|n| n == c).is_some()
+</a>     }
+ 
+<a href="#h0-3-84" id="h0-3-84" class="d">-    /// Scans the input for the next token if any, ignoring leading whitespace
+</a><a href="#h0-3-85" id="h0-3-85" class="i">+    /// Scans the next token, if any.
+</a>     fn scan(&amp;mut self) -&gt; Result&lt;Option&lt;Token&gt;&gt; {
+<a href="#h0-3-87" id="h0-3-87" class="d">-        self.consume_whitespace();
+</a><a href="#h0-3-88" id="h0-3-88" class="d">-        match self.iter.peek() {
+</a><a href="#h0-3-89" id="h0-3-89" class="i">+        // Ignore whitespace. The first character tells us the token type.
+</a><a href="#h0-3-90" id="h0-3-90" class="i">+        self.skip_whitespace();
+</a><a href="#h0-3-91" id="h0-3-91" class="i">+        match self.chars.peek() {
+</a>             Some(&#39;\&#39;&#39;) =&gt; self.scan_string(),
+             Some(&#39;&quot;&#39;) =&gt; self.scan_ident_quoted(),
+             Some(c) if c.is_ascii_digit() =&gt; Ok(self.scan_number()),
+<a href="#h0-3-95" id="h0-3-95" class="d">-            Some(c) if c.is_alphabetic() =&gt; Ok(self.scan_ident()),
+</a><a href="#h0-3-96" id="h0-3-96" class="i">+            Some(c) if c.is_alphabetic() =&gt; Ok(self.scan_ident_or_keyword()),
+</a>             Some(_) =&gt; Ok(self.scan_symbol()),
+             None =&gt; Ok(None),
+         }
+     }
+ 
+<a href="#h0-3-102" id="h0-3-102" class="d">-    /// Scans the input for the next ident or keyword token, if any
+</a><a href="#h0-3-103" id="h0-3-103" class="d">-    fn scan_ident(&amp;mut self) -&gt; Option&lt;Token&gt; {
+</a><a href="#h0-3-104" id="h0-3-104" class="d">-        let mut name = self.next_if(|c| c.is_alphabetic())?.to_string();
+</a><a href="#h0-3-105" id="h0-3-105" class="i">+    /// Scans the next identifier or keyword, if any. It&#39;s converted to
+</a><a href="#h0-3-106" id="h0-3-106" class="i">+    /// lowercase, by SQL convention.
+</a><a href="#h0-3-107" id="h0-3-107" class="i">+    fn scan_ident_or_keyword(&amp;mut self) -&gt; Option&lt;Token&gt; {
+</a><a href="#h0-3-108" id="h0-3-108" class="i">+        // The first character must be alphabetic. The rest can be numeric.
+</a><a href="#h0-3-109" id="h0-3-109" class="i">+        let mut name = self.next_if(|c| c.is_alphabetic())?.to_lowercase().to_string();
+</a>         while let Some(c) = self.next_if(|c| c.is_alphanumeric() || c == &#39;_&#39;) {
+<a href="#h0-3-111" id="h0-3-111" class="d">-            name.push(c)
+</a><a href="#h0-3-112" id="h0-3-112" class="i">+            name.extend(c.to_lowercase())
+</a><a href="#h0-3-113" id="h0-3-113" class="i">+        }
+</a><a href="#h0-3-114" id="h0-3-114" class="i">+        // Check if the identifier matches a keyword.
+</a><a href="#h0-3-115" id="h0-3-115" class="i">+        match Keyword::try_from(name.as_str()).ok() {
+</a><a href="#h0-3-116" id="h0-3-116" class="i">+            Some(keyword) =&gt; Some(Token::Keyword(keyword)),
+</a><a href="#h0-3-117" id="h0-3-117" class="i">+            None =&gt; Some(Token::Ident(name)),
+</a>         }
+<a href="#h0-3-119" id="h0-3-119" class="d">-        Keyword::from_str(&amp;name)
+</a><a href="#h0-3-120" id="h0-3-120" class="d">-            .map(Token::Keyword)
+</a><a href="#h0-3-121" id="h0-3-121" class="d">-            .or_else(|| Some(Token::Ident(name.to_lowercase())))
+</a>     }
+ 
+<a href="#h0-3-124" id="h0-3-124" class="d">-    /// Scans the input for the next quoted ident, if any
+</a><a href="#h0-3-125" id="h0-3-125" class="i">+    /// Scans the next quoted identifier, if any. Case is preserved, keywords
+</a><a href="#h0-3-126" id="h0-3-126" class="i">+    /// are ignored.
+</a>     fn scan_ident_quoted(&amp;mut self) -&gt; Result&lt;Option&lt;Token&gt;&gt; {
+<a href="#h0-3-128" id="h0-3-128" class="d">-        if self.next_if(|c| c == &#39;&quot;&#39;).is_none() {
+</a><a href="#h0-3-129" id="h0-3-129" class="i">+        if !self.next_is(&#39;&quot;&#39;) {
+</a>             return Ok(None);
+         }
+         let mut ident = String::new();
+         loop {
+<a href="#h0-3-134" id="h0-3-134" class="d">-            match self.iter.next() {
+</a><a href="#h0-3-135" id="h0-3-135" class="d">-                Some(&#39;&quot;&#39;) if self.next_if(|c| c == &#39;&quot;&#39;).is_some() =&gt; ident.push(&#39;&quot;&#39;),
+</a><a href="#h0-3-136" id="h0-3-136" class="i">+            match self.chars.next() {
+</a><a href="#h0-3-137" id="h0-3-137" class="i">+                // &quot;&quot; is the escape sequence for &quot;.
+</a><a href="#h0-3-138" id="h0-3-138" class="i">+                Some(&#39;&quot;&#39;) if self.next_is(&#39;&quot;&#39;) =&gt; ident.push(&#39;&quot;&#39;),
+</a>                 Some(&#39;&quot;&#39;) =&gt; break,
+                 Some(c) =&gt; ident.push(c),
+                 None =&gt; return errinput!(&quot;unexpected end of quoted identifier&quot;),
+<a href="#h0-4" id="h0-4" class="h">@@ -388,91 +400,87 @@ impl&lt;&#39;a&gt; Lexer&lt;&#39;a&gt; {
+</a>         Ok(Some(Token::Ident(ident)))
+     }
+ 
+<a href="#h0-4-3" id="h0-4-3" class="d">-    /// Scans the input for the next number token, if any
+</a><a href="#h0-4-4" id="h0-4-4" class="i">+    /// Scans the next number, if any.
+</a>     fn scan_number(&amp;mut self) -&gt; Option&lt;Token&gt; {
+<a href="#h0-4-6" id="h0-4-6" class="d">-        let mut num = self.next_while(|c| c.is_ascii_digit())?;
+</a><a href="#h0-4-7" id="h0-4-7" class="i">+        // Scan the integer part. There must be one digit.
+</a><a href="#h0-4-8" id="h0-4-8" class="i">+        let mut number = self.next_if(|c| c.is_ascii_digit())?.to_string();
+</a><a href="#h0-4-9" id="h0-4-9" class="i">+        while let Some(c) = self.next_if(|c| c.is_ascii_digit()) {
+</a><a href="#h0-4-10" id="h0-4-10" class="i">+            number.push(c)
+</a><a href="#h0-4-11" id="h0-4-11" class="i">+        }
+</a><a href="#h0-4-12" id="h0-4-12" class="i">+        // Scan the fractional part, if any.
+</a>         if let Some(sep) = self.next_if(|c| c == &#39;.&#39;) {
+<a href="#h0-4-14" id="h0-4-14" class="d">-            num.push(sep);
+</a><a href="#h0-4-15" id="h0-4-15" class="i">+            number.push(sep);
+</a>             while let Some(dec) = self.next_if(|c| c.is_ascii_digit()) {
+<a href="#h0-4-17" id="h0-4-17" class="d">-                num.push(dec)
+</a><a href="#h0-4-18" id="h0-4-18" class="i">+                number.push(dec)
+</a>             }
+         }
+<a href="#h0-4-21" id="h0-4-21" class="i">+        // Scan the exponent, if any.
+</a>         if let Some(exp) = self.next_if(|c| c == &#39;e&#39; || c == &#39;E&#39;) {
+<a href="#h0-4-23" id="h0-4-23" class="d">-            num.push(exp);
+</a><a href="#h0-4-24" id="h0-4-24" class="i">+            number.push(exp);
+</a>             if let Some(sign) = self.next_if(|c| c == &#39;+&#39; || c == &#39;-&#39;) {
+<a href="#h0-4-26" id="h0-4-26" class="d">-                num.push(sign)
+</a><a href="#h0-4-27" id="h0-4-27" class="i">+                number.push(sign)
+</a>             }
+             while let Some(c) = self.next_if(|c| c.is_ascii_digit()) {
+<a href="#h0-4-30" id="h0-4-30" class="d">-                num.push(c)
+</a><a href="#h0-4-31" id="h0-4-31" class="i">+                number.push(c)
+</a>             }
+         }
+<a href="#h0-4-34" id="h0-4-34" class="d">-        Some(Token::Number(num))
+</a><a href="#h0-4-35" id="h0-4-35" class="i">+        Some(Token::Number(number))
+</a>     }
+ 
+<a href="#h0-4-38" id="h0-4-38" class="d">-    /// Scans the input for the next string literal, if any
+</a><a href="#h0-4-39" id="h0-4-39" class="i">+    /// Scans the next string literal, if any.
+</a>     fn scan_string(&amp;mut self) -&gt; Result&lt;Option&lt;Token&gt;&gt; {
+<a href="#h0-4-41" id="h0-4-41" class="d">-        if self.next_if(|c| c == &#39;\&#39;&#39;).is_none() {
+</a><a href="#h0-4-42" id="h0-4-42" class="i">+        if !self.next_is(&#39;\&#39;&#39;) {
+</a>             return Ok(None);
+         }
+<a href="#h0-4-45" id="h0-4-45" class="d">-        let mut s = String::new();
+</a><a href="#h0-4-46" id="h0-4-46" class="i">+        let mut string = String::new();
+</a>         loop {
+<a href="#h0-4-48" id="h0-4-48" class="d">-            match self.iter.next() {
+</a><a href="#h0-4-49" id="h0-4-49" class="d">-                Some(&#39;\&#39;&#39;) if self.next_if(|c| c == &#39;\&#39;&#39;).is_some() =&gt; s.push(&#39;\&#39;&#39;),
+</a><a href="#h0-4-50" id="h0-4-50" class="i">+            match self.chars.next() {
+</a><a href="#h0-4-51" id="h0-4-51" class="i">+                // &#39;&#39; is the escape sequence for &#39;.
+</a><a href="#h0-4-52" id="h0-4-52" class="i">+                Some(&#39;\&#39;&#39;) if self.next_is(&#39;\&#39;&#39;) =&gt; string.push(&#39;\&#39;&#39;),
+</a>                 Some(&#39;\&#39;&#39;) =&gt; break,
+<a href="#h0-4-54" id="h0-4-54" class="d">-                Some(c) =&gt; s.push(c),
+</a><a href="#h0-4-55" id="h0-4-55" class="i">+                Some(c) =&gt; string.push(c),
+</a>                 None =&gt; return errinput!(&quot;unexpected end of string literal&quot;),
+             }
+         }
+<a href="#h0-4-59" id="h0-4-59" class="d">-        Ok(Some(Token::String(s)))
+</a><a href="#h0-4-60" id="h0-4-60" class="i">+        Ok(Some(Token::String(string)))
+</a>     }
+ 
+<a href="#h0-4-63" id="h0-4-63" class="d">-    /// Scans the input for the next symbol token, if any, and
+</a><a href="#h0-4-64" id="h0-4-64" class="d">-    /// handle any multi-symbol tokens
+</a><a href="#h0-4-65" id="h0-4-65" class="i">+    /// Scans the next symbol token, if any.
+</a>     fn scan_symbol(&amp;mut self) -&gt; Option&lt;Token&gt; {
+<a href="#h0-4-67" id="h0-4-67" class="d">-        self.next_if_token(|c| match c {
+</a><a href="#h0-4-68" id="h0-4-68" class="d">-            &#39;.&#39; =&gt; Some(Token::Period),
+</a><a href="#h0-4-69" id="h0-4-69" class="d">-            &#39;=&#39; =&gt; Some(Token::Equal),
+</a><a href="#h0-4-70" id="h0-4-70" class="d">-            &#39;&gt;&#39; =&gt; Some(Token::GreaterThan),
+</a><a href="#h0-4-71" id="h0-4-71" class="d">-            &#39;&lt;&#39; =&gt; Some(Token::LessThan),
+</a><a href="#h0-4-72" id="h0-4-72" class="d">-            &#39;+&#39; =&gt; Some(Token::Plus),
+</a><a href="#h0-4-73" id="h0-4-73" class="d">-            &#39;-&#39; =&gt; Some(Token::Minus),
+</a><a href="#h0-4-74" id="h0-4-74" class="d">-            &#39;*&#39; =&gt; Some(Token::Asterisk),
+</a><a href="#h0-4-75" id="h0-4-75" class="d">-            &#39;/&#39; =&gt; Some(Token::Slash),
+</a><a href="#h0-4-76" id="h0-4-76" class="d">-            &#39;^&#39; =&gt; Some(Token::Caret),
+</a><a href="#h0-4-77" id="h0-4-77" class="d">-            &#39;%&#39; =&gt; Some(Token::Percent),
+</a><a href="#h0-4-78" id="h0-4-78" class="d">-            &#39;!&#39; =&gt; Some(Token::Exclamation),
+</a><a href="#h0-4-79" id="h0-4-79" class="d">-            &#39;?&#39; =&gt; Some(Token::Question),
+</a><a href="#h0-4-80" id="h0-4-80" class="d">-            &#39;(&#39; =&gt; Some(Token::OpenParen),
+</a><a href="#h0-4-81" id="h0-4-81" class="d">-            &#39;)&#39; =&gt; Some(Token::CloseParen),
+</a><a href="#h0-4-82" id="h0-4-82" class="d">-            &#39;,&#39; =&gt; Some(Token::Comma),
+</a><a href="#h0-4-83" id="h0-4-83" class="d">-            &#39;;&#39; =&gt; Some(Token::Semicolon),
+</a><a href="#h0-4-84" id="h0-4-84" class="d">-            _ =&gt; None,
+</a><a href="#h0-4-85" id="h0-4-85" class="d">-        })
+</a><a href="#h0-4-86" id="h0-4-86" class="d">-        .map(|token| match token {
+</a><a href="#h0-4-87" id="h0-4-87" class="d">-            Token::Exclamation =&gt; {
+</a><a href="#h0-4-88" id="h0-4-88" class="d">-                if self.next_if(|c| c == &#39;=&#39;).is_some() {
+</a><a href="#h0-4-89" id="h0-4-89" class="d">-                    Token::NotEqual
+</a><a href="#h0-4-90" id="h0-4-90" class="d">-                } else {
+</a><a href="#h0-4-91" id="h0-4-91" class="d">-                    token
+</a><a href="#h0-4-92" id="h0-4-92" class="d">-                }
+</a><a href="#h0-4-93" id="h0-4-93" class="d">-            }
+</a><a href="#h0-4-94" id="h0-4-94" class="d">-            Token::LessThan =&gt; {
+</a><a href="#h0-4-95" id="h0-4-95" class="d">-                if self.next_if(|c| c == &#39;&gt;&#39;).is_some() {
+</a><a href="#h0-4-96" id="h0-4-96" class="d">-                    Token::LessOrGreaterThan
+</a><a href="#h0-4-97" id="h0-4-97" class="d">-                } else if self.next_if(|c| c == &#39;=&#39;).is_some() {
+</a><a href="#h0-4-98" id="h0-4-98" class="d">-                    Token::LessThanOrEqual
+</a><a href="#h0-4-99" id="h0-4-99" class="d">-                } else {
+</a><a href="#h0-4-100" id="h0-4-100" class="d">-                    token
+</a><a href="#h0-4-101" id="h0-4-101" class="d">-                }
+</a><a href="#h0-4-102" id="h0-4-102" class="d">-            }
+</a><a href="#h0-4-103" id="h0-4-103" class="d">-            Token::GreaterThan =&gt; {
+</a><a href="#h0-4-104" id="h0-4-104" class="d">-                if self.next_if(|c| c == &#39;=&#39;).is_some() {
+</a><a href="#h0-4-105" id="h0-4-105" class="d">-                    Token::GreaterThanOrEqual
+</a><a href="#h0-4-106" id="h0-4-106" class="d">-                } else {
+</a><a href="#h0-4-107" id="h0-4-107" class="d">-                    token
+</a><a href="#h0-4-108" id="h0-4-108" class="d">-                }
+</a><a href="#h0-4-109" id="h0-4-109" class="d">-            }
+</a><a href="#h0-4-110" id="h0-4-110" class="d">-            _ =&gt; token,
+</a><a href="#h0-4-111" id="h0-4-111" class="d">-        })
+</a><a href="#h0-4-112" id="h0-4-112" class="i">+        let mut token = self.next_if_map(|c| {
+</a><a href="#h0-4-113" id="h0-4-113" class="i">+            Some(match c {
+</a><a href="#h0-4-114" id="h0-4-114" class="i">+                &#39;.&#39; =&gt; Token::Period,
+</a><a href="#h0-4-115" id="h0-4-115" class="i">+                &#39;=&#39; =&gt; Token::Equal,
+</a><a href="#h0-4-116" id="h0-4-116" class="i">+                &#39;&gt;&#39; =&gt; Token::GreaterThan,
+</a><a href="#h0-4-117" id="h0-4-117" class="i">+                &#39;&lt;&#39; =&gt; Token::LessThan,
+</a><a href="#h0-4-118" id="h0-4-118" class="i">+                &#39;+&#39; =&gt; Token::Plus,
+</a><a href="#h0-4-119" id="h0-4-119" class="i">+                &#39;-&#39; =&gt; Token::Minus,
+</a><a href="#h0-4-120" id="h0-4-120" class="i">+                &#39;*&#39; =&gt; Token::Asterisk,
+</a><a href="#h0-4-121" id="h0-4-121" class="i">+                &#39;/&#39; =&gt; Token::Slash,
+</a><a href="#h0-4-122" id="h0-4-122" class="i">+                &#39;^&#39; =&gt; Token::Caret,
+</a><a href="#h0-4-123" id="h0-4-123" class="i">+                &#39;%&#39; =&gt; Token::Percent,
+</a><a href="#h0-4-124" id="h0-4-124" class="i">+                &#39;!&#39; =&gt; Token::Exclamation,
+</a><a href="#h0-4-125" id="h0-4-125" class="i">+                &#39;?&#39; =&gt; Token::Question,
+</a><a href="#h0-4-126" id="h0-4-126" class="i">+                &#39;,&#39; =&gt; Token::Comma,
+</a><a href="#h0-4-127" id="h0-4-127" class="i">+                &#39;;&#39; =&gt; Token::Semicolon,
+</a><a href="#h0-4-128" id="h0-4-128" class="i">+                &#39;(&#39; =&gt; Token::OpenParen,
+</a><a href="#h0-4-129" id="h0-4-129" class="i">+                &#39;)&#39; =&gt; Token::CloseParen,
+</a><a href="#h0-4-130" id="h0-4-130" class="i">+                _ =&gt; return None,
+</a><a href="#h0-4-131" id="h0-4-131" class="i">+            })
+</a><a href="#h0-4-132" id="h0-4-132" class="i">+        })?;
+</a><a href="#h0-4-133" id="h0-4-133" class="i">+        // Handle two-character tokens, e.g. !=.
+</a><a href="#h0-4-134" id="h0-4-134" class="i">+        token = match token {
+</a><a href="#h0-4-135" id="h0-4-135" class="i">+            Token::Exclamation if self.next_is(&#39;=&#39;) =&gt; Token::NotEqual,
+</a><a href="#h0-4-136" id="h0-4-136" class="i">+            Token::GreaterThan if self.next_is(&#39;=&#39;) =&gt; Token::GreaterThanOrEqual,
+</a><a href="#h0-4-137" id="h0-4-137" class="i">+            Token::LessThan if self.next_is(&#39;&gt;&#39;) =&gt; Token::LessOrGreaterThan,
+</a><a href="#h0-4-138" id="h0-4-138" class="i">+            Token::LessThan if self.next_is(&#39;=&#39;) =&gt; Token::LessThanOrEqual,
+</a><a href="#h0-4-139" id="h0-4-139" class="i">+            token =&gt; token,
+</a><a href="#h0-4-140" id="h0-4-140" class="i">+        };
+</a><a href="#h0-4-141" id="h0-4-141" class="i">+        Some(token)
+</a><a href="#h0-4-142" id="h0-4-142" class="i">+    }
+</a><a href="#h0-4-143" id="h0-4-143" class="i">+
+</a><a href="#h0-4-144" id="h0-4-144" class="i">+    /// Skips any whitespace.
+</a><a href="#h0-4-145" id="h0-4-145" class="i">+    fn skip_whitespace(&amp;mut self) {
+</a><a href="#h0-4-146" id="h0-4-146" class="i">+        while self.next_if(|c| c.is_whitespace()).is_some() {}
+</a>     }
+ }
+<b>diff --git a/<a id="h1" href="../file/src/sql/parser/mod.rs.html">src/sql/parser/mod.rs</a> b/<a href="../file/src/sql/parser/mod.rs.html">src/sql/parser/mod.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -786,7 +786,7 @@ pub(super) fn format_ident(ident: &amp;str) -&gt; String {
+</a>     static RE_IDENT: std::sync::OnceLock&lt;Regex&gt; = std::sync::OnceLock::new();
+     let re_ident = RE_IDENT.get_or_init(|| Regex::new(r#&quot;^\w[\w_]*$&quot;#).unwrap());
+ 
+<a href="#h1-0-3" id="h1-0-3" class="d">-    if re_ident.is_match(ident) &amp;&amp; Keyword::from_str(ident).is_none() {
+</a><a href="#h1-0-4" id="h1-0-4" class="i">+    if re_ident.is_match(ident) &amp;&amp; Keyword::try_from(ident.to_lowercase().as_str()).is_err() {
+</a>         ident.to_string()
+     } else {
+         format!(&quot;\&quot;{}\&quot;&quot;, ident.replace(&#39;\&quot;&#39;, &quot;\&quot;\&quot;&quot;))
+</pre>
+</div>
+</body>
+</html>

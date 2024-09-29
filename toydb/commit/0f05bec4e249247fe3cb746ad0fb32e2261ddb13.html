@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>storage: simplify `mvcc::VersionIterator` - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/0f05bec4e249247fe3cb746ad0fb32e2261ddb13.html">0f05bec4e249247fe3cb746ad0fb32e2261ddb13</a>
+<b>parent</b> <a href="../commit/73c9d6156bfa454af3a0deb3c612624b6ae8f58a.html">73c9d6156bfa454af3a0deb3c612624b6ae8f58a</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Fri, 19 Jul 2024 14:13:39 +0200
+
+storage: simplify `mvcc::VersionIterator`
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/storage/mvcc.rs</a></td><td> | </td><td class="num">38</td><td><span class="i">++++++++++++++</span><span class="d">------------------------</span></td></tr>
+</table></pre><pre>1 file changed, 14 insertions(+), 24 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/storage/mvcc.rs.html">src/storage/mvcc.rs</a> b/<a href="../file/src/storage/mvcc.rs.html">src/storage/mvcc.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -139,7 +139,7 @@
+</a> //! forever, both out of laziness and also because it allows unlimited time
+ //! travel queries (it&#39;s a feature, not a bug!).
+ 
+<a href="#h0-0-3" id="h0-0-3" class="d">-use super::engine::Engine;
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+use super::engine::{self, Engine};
+</a> use crate::encoding::{self, bincode, Key as _, Value as _};
+ use crate::error::{Error, Result};
+ use crate::{errdata, errinput};
+<a href="#h0-1" id="h0-1" class="h">@@ -667,7 +667,7 @@ impl&lt;E: Engine&gt; ScanIterator&lt;E&gt; {
+</a>         let range_end = range.1.clone();
+ 
+         let mut engine = self.engine.lock()?;
+<a href="#h0-1-3" id="h0-1-3" class="d">-        let mut iter = VersionIterator::&lt;E&gt;::new(&amp;self.txn, engine.scan(range)).peekable();
+</a><a href="#h0-1-4" id="h0-1-4" class="i">+        let mut iter = VersionIterator::new(&amp;self.txn, engine.scan(range)).peekable();
+</a>         while let Some((key, _, value)) = iter.next().transpose()? {
+             // If the next key equals this one, we&#39;re not at the latest version.
+             match iter.peek() {
+<a href="#h0-2" id="h0-2" class="h">@@ -705,45 +705,35 @@ impl&lt;E: Engine&gt; Iterator for ScanIterator&lt;E&gt; {
+</a> 
+ /// An iterator that decodes raw engine key/value pairs into MVCC key/value
+ /// versions, and skips invisible versions. Helper for ScanIterator.
+<a href="#h0-2-3" id="h0-2-3" class="d">-struct VersionIterator&lt;&#39;a, E: Engine + &#39;a&gt; {
+</a><a href="#h0-2-4" id="h0-2-4" class="i">+struct VersionIterator&lt;&#39;a, I: engine::ScanIterator&gt; {
+</a>     /// The transaction the scan is running in.
+     txn: &amp;&#39;a TransactionState,
+     /// The inner engine scan iterator.
+<a href="#h0-2-8" id="h0-2-8" class="d">-    inner: E::ScanIterator&lt;&#39;a&gt;,
+</a><a href="#h0-2-9" id="h0-2-9" class="i">+    inner: I,
+</a> }
+ 
+<a href="#h0-2-12" id="h0-2-12" class="d">-impl&lt;&#39;a, E: Engine + &#39;a&gt; VersionIterator&lt;&#39;a, E&gt; {
+</a><a href="#h0-2-13" id="h0-2-13" class="i">+impl&lt;&#39;a, I: engine::ScanIterator&gt; VersionIterator&lt;&#39;a, I&gt; {
+</a>     /// Creates a new MVCC version iterator for the given engine iterator.
+<a href="#h0-2-15" id="h0-2-15" class="d">-    fn new(txn: &amp;&#39;a TransactionState, inner: E::ScanIterator&lt;&#39;a&gt;) -&gt; Self {
+</a><a href="#h0-2-16" id="h0-2-16" class="i">+    fn new(txn: &amp;&#39;a TransactionState, inner: I) -&gt; Self {
+</a>         Self { txn, inner }
+     }
+ 
+<a href="#h0-2-20" id="h0-2-20" class="d">-    /// Decodes a raw engine key into an MVCC key and version, returning None if
+</a><a href="#h0-2-21" id="h0-2-21" class="d">-    /// the version is not visible.
+</a><a href="#h0-2-22" id="h0-2-22" class="d">-    fn decode_visible(&amp;self, key: &amp;[u8]) -&gt; Result&lt;Option&lt;(UserKey, Version)&gt;&gt; {
+</a><a href="#h0-2-23" id="h0-2-23" class="d">-        let (key, version) = match Key::decode(key)? {
+</a><a href="#h0-2-24" id="h0-2-24" class="d">-            Key::Version(key, version) =&gt; (key.into_owned(), version),
+</a><a href="#h0-2-25" id="h0-2-25" class="d">-            key =&gt; return errdata!(&quot;expected Key::Version got {key:?}&quot;),
+</a><a href="#h0-2-26" id="h0-2-26" class="d">-        };
+</a><a href="#h0-2-27" id="h0-2-27" class="d">-        if self.txn.is_visible(version) {
+</a><a href="#h0-2-28" id="h0-2-28" class="d">-            Ok(Some((key, version)))
+</a><a href="#h0-2-29" id="h0-2-29" class="d">-        } else {
+</a><a href="#h0-2-30" id="h0-2-30" class="d">-            Ok(None)
+</a><a href="#h0-2-31" id="h0-2-31" class="d">-        }
+</a><a href="#h0-2-32" id="h0-2-32" class="d">-    }
+</a><a href="#h0-2-33" id="h0-2-33" class="d">-
+</a><a href="#h0-2-34" id="h0-2-34" class="d">-    // Fallible next(), emitting the next item, or None if exhausted.
+</a><a href="#h0-2-35" id="h0-2-35" class="i">+    // Fallible next(). Returns the next visible key/version/value tuple.
+</a>     fn try_next(&amp;mut self) -&gt; Result&lt;Option&lt;(UserKey, Version, UserValue)&gt;&gt; {
+         while let Some((key, value)) = self.inner.next().transpose()? {
+<a href="#h0-2-38" id="h0-2-38" class="d">-            if let Some((key, version)) = self.decode_visible(&amp;key)? {
+</a><a href="#h0-2-39" id="h0-2-39" class="d">-                return Ok(Some((key, version, value)));
+</a><a href="#h0-2-40" id="h0-2-40" class="i">+            let Key::Version(key, version) = Key::decode(&amp;key)? else {
+</a><a href="#h0-2-41" id="h0-2-41" class="i">+                return errdata!(&quot;expected Key::Version got {key:?}&quot;);
+</a><a href="#h0-2-42" id="h0-2-42" class="i">+            };
+</a><a href="#h0-2-43" id="h0-2-43" class="i">+            if !self.txn.is_visible(version) {
+</a><a href="#h0-2-44" id="h0-2-44" class="i">+                continue;
+</a>             }
+<a href="#h0-2-46" id="h0-2-46" class="i">+            return Ok(Some((key.into_owned(), version, value)));
+</a>         }
+         Ok(None)
+     }
+ }
+ 
+<a href="#h0-2-52" id="h0-2-52" class="d">-impl&lt;&#39;a, E: Engine&gt; Iterator for VersionIterator&lt;&#39;a, E&gt; {
+</a><a href="#h0-2-53" id="h0-2-53" class="i">+impl&lt;&#39;a, I: engine::ScanIterator&gt; Iterator for VersionIterator&lt;&#39;a, I&gt; {
+</a>     type Item = Result&lt;(UserKey, Version, UserValue)&gt;;
+     fn next(&amp;mut self) -&gt; Option&lt;Self::Item&gt; {
+         self.try_next().transpose()
+</pre>
+</div>
+</body>
+</html>

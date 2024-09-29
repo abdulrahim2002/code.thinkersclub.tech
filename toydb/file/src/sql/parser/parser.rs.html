@@ -1,0 +1,803 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>parser.rs - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../../../../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../../../../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../../../../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../../../../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../../../../"><img src="../../../../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../../../../log.html">Log</a> | <a href="../../../../files.html">Files</a> | <a href="../../../../refs.html">Refs</a> | <a href="../../../../file/README.md.html">README</a> | <a href="../../../../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<p> parser.rs (29588B)</p><hr/><pre id="blob">
+<a href="#l1" class="line" id="l1">      1</a><code class="language-auto"> #![allow(clippy::module_inception)]</code>
+<a href="#l2" class="line" id="l2">      2</a><code class="language-auto"> </code>
+<a href="#l3" class="line" id="l3">      3</a><code class="language-auto"> use super::{ast, Keyword, Lexer, Token};</code>
+<a href="#l4" class="line" id="l4">      4</a><code class="language-auto"> use crate::errinput;</code>
+<a href="#l5" class="line" id="l5">      5</a><code class="language-auto"> use crate::error::Result;</code>
+<a href="#l6" class="line" id="l6">      6</a><code class="language-auto"> use crate::sql::types::DataType;</code>
+<a href="#l7" class="line" id="l7">      7</a><code class="language-auto"> </code>
+<a href="#l8" class="line" id="l8">      8</a><code class="language-auto"> /// The SQL parser takes tokens from the lexer and parses the SQL syntax into an</code>
+<a href="#l9" class="line" id="l9">      9</a><code class="language-auto"> /// Abstract Syntax Tree (AST). This nested structure represents the syntactic</code>
+<a href="#l10" class="line" id="l10">     10</a><code class="language-auto"> /// structure of a SQL query (e.g. the SELECT and FROM clauses, values,</code>
+<a href="#l11" class="line" id="l11">     11</a><code class="language-auto"> /// arithmetic expressions, etc.). However, it only ensures the syntax is</code>
+<a href="#l12" class="line" id="l12">     12</a><code class="language-auto"> /// well-formed, and does not know whether e.g. a given table or column exists</code>
+<a href="#l13" class="line" id="l13">     13</a><code class="language-auto"> /// or which kind of join to use -- that is the job of the planner.</code>
+<a href="#l14" class="line" id="l14">     14</a><code class="language-auto"> pub struct Parser&lt;&#39;a&gt; {</code>
+<a href="#l15" class="line" id="l15">     15</a><code class="language-auto">     pub lexer: std::iter::Peekable&lt;Lexer&lt;&#39;a&gt;&gt;,</code>
+<a href="#l16" class="line" id="l16">     16</a><code class="language-auto"> }</code>
+<a href="#l17" class="line" id="l17">     17</a><code class="language-auto"> </code>
+<a href="#l18" class="line" id="l18">     18</a><code class="language-auto"> impl&lt;&#39;a&gt; Parser&lt;&#39;a&gt; {</code>
+<a href="#l19" class="line" id="l19">     19</a><code class="language-auto">     /// Creates a new parser for the given raw SQL string.</code>
+<a href="#l20" class="line" id="l20">     20</a><code class="language-auto">     pub fn new(statement: &amp;str) -&gt; Parser {</code>
+<a href="#l21" class="line" id="l21">     21</a><code class="language-auto">         Parser { lexer: Lexer::new(statement).peekable() }</code>
+<a href="#l22" class="line" id="l22">     22</a><code class="language-auto">     }</code>
+<a href="#l23" class="line" id="l23">     23</a><code class="language-auto"> </code>
+<a href="#l24" class="line" id="l24">     24</a><code class="language-auto">     /// Parses the input string into an AST statement. The whole string must be</code>
+<a href="#l25" class="line" id="l25">     25</a><code class="language-auto">     /// parsed as a single statement, ending with an optional semicolon.</code>
+<a href="#l26" class="line" id="l26">     26</a><code class="language-auto">     pub fn parse(&amp;mut self) -&gt; Result&lt;ast::Statement&gt; {</code>
+<a href="#l27" class="line" id="l27">     27</a><code class="language-auto">         let statement = self.parse_statement()?;</code>
+<a href="#l28" class="line" id="l28">     28</a><code class="language-auto">         self.next_is(Token::Semicolon);</code>
+<a href="#l29" class="line" id="l29">     29</a><code class="language-auto">         if let Some(token) = self.lexer.next().transpose()? {</code>
+<a href="#l30" class="line" id="l30">     30</a><code class="language-auto">             return errinput!(&quot;unexpected token {token}&quot;);</code>
+<a href="#l31" class="line" id="l31">     31</a><code class="language-auto">         }</code>
+<a href="#l32" class="line" id="l32">     32</a><code class="language-auto">         Ok(statement)</code>
+<a href="#l33" class="line" id="l33">     33</a><code class="language-auto">     }</code>
+<a href="#l34" class="line" id="l34">     34</a><code class="language-auto"> </code>
+<a href="#l35" class="line" id="l35">     35</a><code class="language-auto">     /// Fetches the next lexer token, or errors if none is found.</code>
+<a href="#l36" class="line" id="l36">     36</a><code class="language-auto">     fn next(&amp;mut self) -&gt; Result&lt;Token&gt; {</code>
+<a href="#l37" class="line" id="l37">     37</a><code class="language-auto">         self.lexer.next().transpose()?.ok_or_else(|| errinput!(&quot;unexpected end of input&quot;))</code>
+<a href="#l38" class="line" id="l38">     38</a><code class="language-auto">     }</code>
+<a href="#l39" class="line" id="l39">     39</a><code class="language-auto"> </code>
+<a href="#l40" class="line" id="l40">     40</a><code class="language-auto">     /// Returns the next identifier, or errors if not found.</code>
+<a href="#l41" class="line" id="l41">     41</a><code class="language-auto">     fn next_ident(&amp;mut self) -&gt; Result&lt;String&gt; {</code>
+<a href="#l42" class="line" id="l42">     42</a><code class="language-auto">         match self.next()? {</code>
+<a href="#l43" class="line" id="l43">     43</a><code class="language-auto">             Token::Ident(ident) =&gt; Ok(ident),</code>
+<a href="#l44" class="line" id="l44">     44</a><code class="language-auto">             token =&gt; errinput!(&quot;expected identifier, got {token}&quot;),</code>
+<a href="#l45" class="line" id="l45">     45</a><code class="language-auto">         }</code>
+<a href="#l46" class="line" id="l46">     46</a><code class="language-auto">     }</code>
+<a href="#l47" class="line" id="l47">     47</a><code class="language-auto"> </code>
+<a href="#l48" class="line" id="l48">     48</a><code class="language-auto">     /// Returns the next lexer token if it satisfies the predicate.</code>
+<a href="#l49" class="line" id="l49">     49</a><code class="language-auto">     fn next_if(&amp;mut self, predicate: impl Fn(&amp;Token) -&gt; bool) -&gt; Option&lt;Token&gt; {</code>
+<a href="#l50" class="line" id="l50">     50</a><code class="language-auto">         self.peek().unwrap_or(None).filter(|t| predicate(t))?;</code>
+<a href="#l51" class="line" id="l51">     51</a><code class="language-auto">         self.next().ok()</code>
+<a href="#l52" class="line" id="l52">     52</a><code class="language-auto">     }</code>
+<a href="#l53" class="line" id="l53">     53</a><code class="language-auto"> </code>
+<a href="#l54" class="line" id="l54">     54</a><code class="language-auto">     /// Passes the next lexer token through the closure, consuming it if the</code>
+<a href="#l55" class="line" id="l55">     55</a><code class="language-auto">     /// closure returns Some.</code>
+<a href="#l56" class="line" id="l56">     56</a><code class="language-auto">     fn next_if_map&lt;T&gt;(&amp;mut self, f: impl Fn(&amp;Token) -&gt; Option&lt;T&gt;) -&gt; Option&lt;T&gt; {</code>
+<a href="#l57" class="line" id="l57">     57</a><code class="language-auto">         let out = self.peek().unwrap_or(None).map(f)?;</code>
+<a href="#l58" class="line" id="l58">     58</a><code class="language-auto">         if out.is_some() {</code>
+<a href="#l59" class="line" id="l59">     59</a><code class="language-auto">             self.next().ok();</code>
+<a href="#l60" class="line" id="l60">     60</a><code class="language-auto">         }</code>
+<a href="#l61" class="line" id="l61">     61</a><code class="language-auto">         out</code>
+<a href="#l62" class="line" id="l62">     62</a><code class="language-auto">     }</code>
+<a href="#l63" class="line" id="l63">     63</a><code class="language-auto"> </code>
+<a href="#l64" class="line" id="l64">     64</a><code class="language-auto">     /// Grabs the next keyword if there is one.</code>
+<a href="#l65" class="line" id="l65">     65</a><code class="language-auto">     fn next_if_keyword(&amp;mut self) -&gt; Option&lt;Keyword&gt; {</code>
+<a href="#l66" class="line" id="l66">     66</a><code class="language-auto">         self.next_if_map(|token| match token {</code>
+<a href="#l67" class="line" id="l67">     67</a><code class="language-auto">             Token::Keyword(keyword) =&gt; Some(*keyword),</code>
+<a href="#l68" class="line" id="l68">     68</a><code class="language-auto">             _ =&gt; None,</code>
+<a href="#l69" class="line" id="l69">     69</a><code class="language-auto">         })</code>
+<a href="#l70" class="line" id="l70">     70</a><code class="language-auto">     }</code>
+<a href="#l71" class="line" id="l71">     71</a><code class="language-auto"> </code>
+<a href="#l72" class="line" id="l72">     72</a><code class="language-auto">     /// Consumes the next lexer token if it is the given token, returning true.</code>
+<a href="#l73" class="line" id="l73">     73</a><code class="language-auto">     fn next_is(&amp;mut self, token: Token) -&gt; bool {</code>
+<a href="#l74" class="line" id="l74">     74</a><code class="language-auto">         self.next_if(|t| t == &amp;token).is_some()</code>
+<a href="#l75" class="line" id="l75">     75</a><code class="language-auto">     }</code>
+<a href="#l76" class="line" id="l76">     76</a><code class="language-auto"> </code>
+<a href="#l77" class="line" id="l77">     77</a><code class="language-auto">     /// Consumes the next lexer token if it&#39;s the expected token, or errors.</code>
+<a href="#l78" class="line" id="l78">     78</a><code class="language-auto">     fn expect(&amp;mut self, expect: Token) -&gt; Result&lt;()&gt; {</code>
+<a href="#l79" class="line" id="l79">     79</a><code class="language-auto">         let token = self.next()?;</code>
+<a href="#l80" class="line" id="l80">     80</a><code class="language-auto">         if token != expect {</code>
+<a href="#l81" class="line" id="l81">     81</a><code class="language-auto">             return errinput!(&quot;expected token {expect}, found {token}&quot;);</code>
+<a href="#l82" class="line" id="l82">     82</a><code class="language-auto">         }</code>
+<a href="#l83" class="line" id="l83">     83</a><code class="language-auto">         Ok(())</code>
+<a href="#l84" class="line" id="l84">     84</a><code class="language-auto">     }</code>
+<a href="#l85" class="line" id="l85">     85</a><code class="language-auto"> </code>
+<a href="#l86" class="line" id="l86">     86</a><code class="language-auto">     /// Consumes the next lexer token if it is the given token. Mostly</code>
+<a href="#l87" class="line" id="l87">     87</a><code class="language-auto">     /// equivalent to next_is(), but expresses intent better.</code>
+<a href="#l88" class="line" id="l88">     88</a><code class="language-auto">     fn skip(&amp;mut self, token: Token) {</code>
+<a href="#l89" class="line" id="l89">     89</a><code class="language-auto">         self.next_is(token);</code>
+<a href="#l90" class="line" id="l90">     90</a><code class="language-auto">     }</code>
+<a href="#l91" class="line" id="l91">     91</a><code class="language-auto"> </code>
+<a href="#l92" class="line" id="l92">     92</a><code class="language-auto">     /// Peeks the next lexer token if any, but transposes it for convenience.</code>
+<a href="#l93" class="line" id="l93">     93</a><code class="language-auto">     fn peek(&amp;mut self) -&gt; Result&lt;Option&lt;&amp;Token&gt;&gt; {</code>
+<a href="#l94" class="line" id="l94">     94</a><code class="language-auto">         self.lexer.peek().map(|r| r.as_ref().map_err(|err| err.clone())).transpose()</code>
+<a href="#l95" class="line" id="l95">     95</a><code class="language-auto">     }</code>
+<a href="#l96" class="line" id="l96">     96</a><code class="language-auto"> </code>
+<a href="#l97" class="line" id="l97">     97</a><code class="language-auto">     /// Parses a SQL statement.</code>
+<a href="#l98" class="line" id="l98">     98</a><code class="language-auto">     fn parse_statement(&amp;mut self) -&gt; Result&lt;ast::Statement&gt; {</code>
+<a href="#l99" class="line" id="l99">     99</a><code class="language-auto">         let Some(token) = self.peek()? else {</code>
+<a href="#l100" class="line" id="l100">    100</a><code class="language-auto">             return errinput!(&quot;unexpected end of input&quot;);</code>
+<a href="#l101" class="line" id="l101">    101</a><code class="language-auto">         };</code>
+<a href="#l102" class="line" id="l102">    102</a><code class="language-auto">         match token {</code>
+<a href="#l103" class="line" id="l103">    103</a><code class="language-auto">             Token::Keyword(Keyword::Begin) =&gt; self.parse_begin(),</code>
+<a href="#l104" class="line" id="l104">    104</a><code class="language-auto">             Token::Keyword(Keyword::Commit) =&gt; self.parse_commit(),</code>
+<a href="#l105" class="line" id="l105">    105</a><code class="language-auto">             Token::Keyword(Keyword::Rollback) =&gt; self.parse_rollback(),</code>
+<a href="#l106" class="line" id="l106">    106</a><code class="language-auto">             Token::Keyword(Keyword::Explain) =&gt; self.parse_explain(),</code>
+<a href="#l107" class="line" id="l107">    107</a><code class="language-auto"> </code>
+<a href="#l108" class="line" id="l108">    108</a><code class="language-auto">             Token::Keyword(Keyword::Create) =&gt; self.parse_create_table(),</code>
+<a href="#l109" class="line" id="l109">    109</a><code class="language-auto">             Token::Keyword(Keyword::Drop) =&gt; self.parse_drop_table(),</code>
+<a href="#l110" class="line" id="l110">    110</a><code class="language-auto"> </code>
+<a href="#l111" class="line" id="l111">    111</a><code class="language-auto">             Token::Keyword(Keyword::Delete) =&gt; self.parse_delete(),</code>
+<a href="#l112" class="line" id="l112">    112</a><code class="language-auto">             Token::Keyword(Keyword::Insert) =&gt; self.parse_insert(),</code>
+<a href="#l113" class="line" id="l113">    113</a><code class="language-auto">             Token::Keyword(Keyword::Select) =&gt; self.parse_select(),</code>
+<a href="#l114" class="line" id="l114">    114</a><code class="language-auto">             Token::Keyword(Keyword::Update) =&gt; self.parse_update(),</code>
+<a href="#l115" class="line" id="l115">    115</a><code class="language-auto"> </code>
+<a href="#l116" class="line" id="l116">    116</a><code class="language-auto">             token =&gt; errinput!(&quot;unexpected token {token}&quot;),</code>
+<a href="#l117" class="line" id="l117">    117</a><code class="language-auto">         }</code>
+<a href="#l118" class="line" id="l118">    118</a><code class="language-auto">     }</code>
+<a href="#l119" class="line" id="l119">    119</a><code class="language-auto"> </code>
+<a href="#l120" class="line" id="l120">    120</a><code class="language-auto">     /// Parses a BEGIN statement.</code>
+<a href="#l121" class="line" id="l121">    121</a><code class="language-auto">     fn parse_begin(&amp;mut self) -&gt; Result&lt;ast::Statement&gt; {</code>
+<a href="#l122" class="line" id="l122">    122</a><code class="language-auto">         self.expect(Keyword::Begin.into())?;</code>
+<a href="#l123" class="line" id="l123">    123</a><code class="language-auto">         self.skip(Keyword::Transaction.into());</code>
+<a href="#l124" class="line" id="l124">    124</a><code class="language-auto"> </code>
+<a href="#l125" class="line" id="l125">    125</a><code class="language-auto">         let mut read_only = false;</code>
+<a href="#l126" class="line" id="l126">    126</a><code class="language-auto">         if self.next_is(Keyword::Read.into()) {</code>
+<a href="#l127" class="line" id="l127">    127</a><code class="language-auto">             match self.next()? {</code>
+<a href="#l128" class="line" id="l128">    128</a><code class="language-auto">                 Token::Keyword(Keyword::Only) =&gt; read_only = true,</code>
+<a href="#l129" class="line" id="l129">    129</a><code class="language-auto">                 Token::Keyword(Keyword::Write) =&gt; {}</code>
+<a href="#l130" class="line" id="l130">    130</a><code class="language-auto">                 token =&gt; return errinput!(&quot;unexpected token {token}&quot;),</code>
+<a href="#l131" class="line" id="l131">    131</a><code class="language-auto">             }</code>
+<a href="#l132" class="line" id="l132">    132</a><code class="language-auto">         }</code>
+<a href="#l133" class="line" id="l133">    133</a><code class="language-auto"> </code>
+<a href="#l134" class="line" id="l134">    134</a><code class="language-auto">         let mut as_of = None;</code>
+<a href="#l135" class="line" id="l135">    135</a><code class="language-auto">         if self.next_is(Keyword::As.into()) {</code>
+<a href="#l136" class="line" id="l136">    136</a><code class="language-auto">             self.expect(Keyword::Of.into())?;</code>
+<a href="#l137" class="line" id="l137">    137</a><code class="language-auto">             self.expect(Keyword::System.into())?;</code>
+<a href="#l138" class="line" id="l138">    138</a><code class="language-auto">             self.expect(Keyword::Time.into())?;</code>
+<a href="#l139" class="line" id="l139">    139</a><code class="language-auto">             match self.next()? {</code>
+<a href="#l140" class="line" id="l140">    140</a><code class="language-auto">                 Token::Number(n) =&gt; as_of = Some(n.parse()?),</code>
+<a href="#l141" class="line" id="l141">    141</a><code class="language-auto">                 token =&gt; return errinput!(&quot;unexpected token {token}, wanted number&quot;),</code>
+<a href="#l142" class="line" id="l142">    142</a><code class="language-auto">             }</code>
+<a href="#l143" class="line" id="l143">    143</a><code class="language-auto">         }</code>
+<a href="#l144" class="line" id="l144">    144</a><code class="language-auto">         Ok(ast::Statement::Begin { read_only, as_of })</code>
+<a href="#l145" class="line" id="l145">    145</a><code class="language-auto">     }</code>
+<a href="#l146" class="line" id="l146">    146</a><code class="language-auto"> </code>
+<a href="#l147" class="line" id="l147">    147</a><code class="language-auto">     /// Parses a COMMIT statement.</code>
+<a href="#l148" class="line" id="l148">    148</a><code class="language-auto">     fn parse_commit(&amp;mut self) -&gt; Result&lt;ast::Statement&gt; {</code>
+<a href="#l149" class="line" id="l149">    149</a><code class="language-auto">         self.expect(Keyword::Commit.into())?;</code>
+<a href="#l150" class="line" id="l150">    150</a><code class="language-auto">         Ok(ast::Statement::Commit)</code>
+<a href="#l151" class="line" id="l151">    151</a><code class="language-auto">     }</code>
+<a href="#l152" class="line" id="l152">    152</a><code class="language-auto"> </code>
+<a href="#l153" class="line" id="l153">    153</a><code class="language-auto">     /// Parses a ROLLBACK statement.</code>
+<a href="#l154" class="line" id="l154">    154</a><code class="language-auto">     fn parse_rollback(&amp;mut self) -&gt; Result&lt;ast::Statement&gt; {</code>
+<a href="#l155" class="line" id="l155">    155</a><code class="language-auto">         self.expect(Keyword::Rollback.into())?;</code>
+<a href="#l156" class="line" id="l156">    156</a><code class="language-auto">         Ok(ast::Statement::Rollback)</code>
+<a href="#l157" class="line" id="l157">    157</a><code class="language-auto">     }</code>
+<a href="#l158" class="line" id="l158">    158</a><code class="language-auto"> </code>
+<a href="#l159" class="line" id="l159">    159</a><code class="language-auto">     /// Parses an EXPLAIN statement.</code>
+<a href="#l160" class="line" id="l160">    160</a><code class="language-auto">     fn parse_explain(&amp;mut self) -&gt; Result&lt;ast::Statement&gt; {</code>
+<a href="#l161" class="line" id="l161">    161</a><code class="language-auto">         self.expect(Keyword::Explain.into())?;</code>
+<a href="#l162" class="line" id="l162">    162</a><code class="language-auto">         if self.next_is(Keyword::Explain.into()) {</code>
+<a href="#l163" class="line" id="l163">    163</a><code class="language-auto">             return errinput!(&quot;cannot nest EXPLAIN statements&quot;);</code>
+<a href="#l164" class="line" id="l164">    164</a><code class="language-auto">         }</code>
+<a href="#l165" class="line" id="l165">    165</a><code class="language-auto">         Ok(ast::Statement::Explain(Box::new(self.parse_statement()?)))</code>
+<a href="#l166" class="line" id="l166">    166</a><code class="language-auto">     }</code>
+<a href="#l167" class="line" id="l167">    167</a><code class="language-auto"> </code>
+<a href="#l168" class="line" id="l168">    168</a><code class="language-auto">     /// Parses a CREATE TABLE statement.</code>
+<a href="#l169" class="line" id="l169">    169</a><code class="language-auto">     fn parse_create_table(&amp;mut self) -&gt; Result&lt;ast::Statement&gt; {</code>
+<a href="#l170" class="line" id="l170">    170</a><code class="language-auto">         self.expect(Keyword::Create.into())?;</code>
+<a href="#l171" class="line" id="l171">    171</a><code class="language-auto">         self.expect(Keyword::Table.into())?;</code>
+<a href="#l172" class="line" id="l172">    172</a><code class="language-auto">         let name = self.next_ident()?;</code>
+<a href="#l173" class="line" id="l173">    173</a><code class="language-auto">         self.expect(Token::OpenParen)?;</code>
+<a href="#l174" class="line" id="l174">    174</a><code class="language-auto">         let mut columns = Vec::new();</code>
+<a href="#l175" class="line" id="l175">    175</a><code class="language-auto">         loop {</code>
+<a href="#l176" class="line" id="l176">    176</a><code class="language-auto">             columns.push(self.parse_create_table_column()?);</code>
+<a href="#l177" class="line" id="l177">    177</a><code class="language-auto">             if !self.next_is(Token::Comma) {</code>
+<a href="#l178" class="line" id="l178">    178</a><code class="language-auto">                 break;</code>
+<a href="#l179" class="line" id="l179">    179</a><code class="language-auto">             }</code>
+<a href="#l180" class="line" id="l180">    180</a><code class="language-auto">         }</code>
+<a href="#l181" class="line" id="l181">    181</a><code class="language-auto">         self.expect(Token::CloseParen)?;</code>
+<a href="#l182" class="line" id="l182">    182</a><code class="language-auto">         Ok(ast::Statement::CreateTable { name, columns })</code>
+<a href="#l183" class="line" id="l183">    183</a><code class="language-auto">     }</code>
+<a href="#l184" class="line" id="l184">    184</a><code class="language-auto"> </code>
+<a href="#l185" class="line" id="l185">    185</a><code class="language-auto">     /// Parses a CREATE TABLE column definition.</code>
+<a href="#l186" class="line" id="l186">    186</a><code class="language-auto">     fn parse_create_table_column(&amp;mut self) -&gt; Result&lt;ast::Column&gt; {</code>
+<a href="#l187" class="line" id="l187">    187</a><code class="language-auto">         let name = self.next_ident()?;</code>
+<a href="#l188" class="line" id="l188">    188</a><code class="language-auto">         let datatype = match self.next()? {</code>
+<a href="#l189" class="line" id="l189">    189</a><code class="language-auto">             Token::Keyword(Keyword::Bool | Keyword::Boolean) =&gt; DataType::Boolean,</code>
+<a href="#l190" class="line" id="l190">    190</a><code class="language-auto">             Token::Keyword(Keyword::Float | Keyword::Double) =&gt; DataType::Float,</code>
+<a href="#l191" class="line" id="l191">    191</a><code class="language-auto">             Token::Keyword(Keyword::Int | Keyword::Integer) =&gt; DataType::Integer,</code>
+<a href="#l192" class="line" id="l192">    192</a><code class="language-auto">             Token::Keyword(Keyword::String | Keyword::Text | Keyword::Varchar) =&gt; DataType::String,</code>
+<a href="#l193" class="line" id="l193">    193</a><code class="language-auto">             token =&gt; return errinput!(&quot;unexpected token {token}&quot;),</code>
+<a href="#l194" class="line" id="l194">    194</a><code class="language-auto">         };</code>
+<a href="#l195" class="line" id="l195">    195</a><code class="language-auto">         let mut column = ast::Column {</code>
+<a href="#l196" class="line" id="l196">    196</a><code class="language-auto">             name,</code>
+<a href="#l197" class="line" id="l197">    197</a><code class="language-auto">             datatype,</code>
+<a href="#l198" class="line" id="l198">    198</a><code class="language-auto">             primary_key: false,</code>
+<a href="#l199" class="line" id="l199">    199</a><code class="language-auto">             nullable: None,</code>
+<a href="#l200" class="line" id="l200">    200</a><code class="language-auto">             default: None,</code>
+<a href="#l201" class="line" id="l201">    201</a><code class="language-auto">             unique: false,</code>
+<a href="#l202" class="line" id="l202">    202</a><code class="language-auto">             index: false,</code>
+<a href="#l203" class="line" id="l203">    203</a><code class="language-auto">             references: None,</code>
+<a href="#l204" class="line" id="l204">    204</a><code class="language-auto">         };</code>
+<a href="#l205" class="line" id="l205">    205</a><code class="language-auto">         while let Some(keyword) = self.next_if_keyword() {</code>
+<a href="#l206" class="line" id="l206">    206</a><code class="language-auto">             match keyword {</code>
+<a href="#l207" class="line" id="l207">    207</a><code class="language-auto">                 Keyword::Primary =&gt; {</code>
+<a href="#l208" class="line" id="l208">    208</a><code class="language-auto">                     self.expect(Keyword::Key.into())?;</code>
+<a href="#l209" class="line" id="l209">    209</a><code class="language-auto">                     column.primary_key = true;</code>
+<a href="#l210" class="line" id="l210">    210</a><code class="language-auto">                 }</code>
+<a href="#l211" class="line" id="l211">    211</a><code class="language-auto">                 Keyword::Null =&gt; {</code>
+<a href="#l212" class="line" id="l212">    212</a><code class="language-auto">                     if column.nullable.is_some() {</code>
+<a href="#l213" class="line" id="l213">    213</a><code class="language-auto">                         return errinput!(&quot;nullability already set for column {}&quot;, column.name);</code>
+<a href="#l214" class="line" id="l214">    214</a><code class="language-auto">                     }</code>
+<a href="#l215" class="line" id="l215">    215</a><code class="language-auto">                     column.nullable = Some(true)</code>
+<a href="#l216" class="line" id="l216">    216</a><code class="language-auto">                 }</code>
+<a href="#l217" class="line" id="l217">    217</a><code class="language-auto">                 Keyword::Not =&gt; {</code>
+<a href="#l218" class="line" id="l218">    218</a><code class="language-auto">                     self.expect(Keyword::Null.into())?;</code>
+<a href="#l219" class="line" id="l219">    219</a><code class="language-auto">                     if column.nullable.is_some() {</code>
+<a href="#l220" class="line" id="l220">    220</a><code class="language-auto">                         return errinput!(&quot;nullability already set for column {}&quot;, column.name);</code>
+<a href="#l221" class="line" id="l221">    221</a><code class="language-auto">                     }</code>
+<a href="#l222" class="line" id="l222">    222</a><code class="language-auto">                     column.nullable = Some(false)</code>
+<a href="#l223" class="line" id="l223">    223</a><code class="language-auto">                 }</code>
+<a href="#l224" class="line" id="l224">    224</a><code class="language-auto">                 Keyword::Default =&gt; column.default = Some(self.parse_expression()?),</code>
+<a href="#l225" class="line" id="l225">    225</a><code class="language-auto">                 Keyword::Unique =&gt; column.unique = true,</code>
+<a href="#l226" class="line" id="l226">    226</a><code class="language-auto">                 Keyword::Index =&gt; column.index = true,</code>
+<a href="#l227" class="line" id="l227">    227</a><code class="language-auto">                 Keyword::References =&gt; column.references = Some(self.next_ident()?),</code>
+<a href="#l228" class="line" id="l228">    228</a><code class="language-auto">                 keyword =&gt; return errinput!(&quot;unexpected keyword {keyword}&quot;),</code>
+<a href="#l229" class="line" id="l229">    229</a><code class="language-auto">             }</code>
+<a href="#l230" class="line" id="l230">    230</a><code class="language-auto">         }</code>
+<a href="#l231" class="line" id="l231">    231</a><code class="language-auto">         Ok(column)</code>
+<a href="#l232" class="line" id="l232">    232</a><code class="language-auto">     }</code>
+<a href="#l233" class="line" id="l233">    233</a><code class="language-auto"> </code>
+<a href="#l234" class="line" id="l234">    234</a><code class="language-auto">     /// Parses a DROP TABLE statement.</code>
+<a href="#l235" class="line" id="l235">    235</a><code class="language-auto">     fn parse_drop_table(&amp;mut self) -&gt; Result&lt;ast::Statement&gt; {</code>
+<a href="#l236" class="line" id="l236">    236</a><code class="language-auto">         self.expect(Token::Keyword(Keyword::Drop))?;</code>
+<a href="#l237" class="line" id="l237">    237</a><code class="language-auto">         self.expect(Token::Keyword(Keyword::Table))?;</code>
+<a href="#l238" class="line" id="l238">    238</a><code class="language-auto">         let mut if_exists = false;</code>
+<a href="#l239" class="line" id="l239">    239</a><code class="language-auto">         if self.next_is(Keyword::If.into()) {</code>
+<a href="#l240" class="line" id="l240">    240</a><code class="language-auto">             self.expect(Token::Keyword(Keyword::Exists))?;</code>
+<a href="#l241" class="line" id="l241">    241</a><code class="language-auto">             if_exists = true;</code>
+<a href="#l242" class="line" id="l242">    242</a><code class="language-auto">         }</code>
+<a href="#l243" class="line" id="l243">    243</a><code class="language-auto">         let name = self.next_ident()?;</code>
+<a href="#l244" class="line" id="l244">    244</a><code class="language-auto">         Ok(ast::Statement::DropTable { name, if_exists })</code>
+<a href="#l245" class="line" id="l245">    245</a><code class="language-auto">     }</code>
+<a href="#l246" class="line" id="l246">    246</a><code class="language-auto"> </code>
+<a href="#l247" class="line" id="l247">    247</a><code class="language-auto">     /// Parses a DELETE statement.</code>
+<a href="#l248" class="line" id="l248">    248</a><code class="language-auto">     fn parse_delete(&amp;mut self) -&gt; Result&lt;ast::Statement&gt; {</code>
+<a href="#l249" class="line" id="l249">    249</a><code class="language-auto">         self.expect(Keyword::Delete.into())?;</code>
+<a href="#l250" class="line" id="l250">    250</a><code class="language-auto">         self.expect(Keyword::From.into())?;</code>
+<a href="#l251" class="line" id="l251">    251</a><code class="language-auto">         let table = self.next_ident()?;</code>
+<a href="#l252" class="line" id="l252">    252</a><code class="language-auto">         Ok(ast::Statement::Delete { table, r#where: self.parse_where_clause()? })</code>
+<a href="#l253" class="line" id="l253">    253</a><code class="language-auto">     }</code>
+<a href="#l254" class="line" id="l254">    254</a><code class="language-auto"> </code>
+<a href="#l255" class="line" id="l255">    255</a><code class="language-auto">     /// Parses an INSERT statement.</code>
+<a href="#l256" class="line" id="l256">    256</a><code class="language-auto">     fn parse_insert(&amp;mut self) -&gt; Result&lt;ast::Statement&gt; {</code>
+<a href="#l257" class="line" id="l257">    257</a><code class="language-auto">         self.expect(Keyword::Insert.into())?;</code>
+<a href="#l258" class="line" id="l258">    258</a><code class="language-auto">         self.expect(Keyword::Into.into())?;</code>
+<a href="#l259" class="line" id="l259">    259</a><code class="language-auto">         let table = self.next_ident()?;</code>
+<a href="#l260" class="line" id="l260">    260</a><code class="language-auto"> </code>
+<a href="#l261" class="line" id="l261">    261</a><code class="language-auto">         let mut columns = None;</code>
+<a href="#l262" class="line" id="l262">    262</a><code class="language-auto">         if self.next_is(Token::OpenParen) {</code>
+<a href="#l263" class="line" id="l263">    263</a><code class="language-auto">             let columns = columns.insert(Vec::new());</code>
+<a href="#l264" class="line" id="l264">    264</a><code class="language-auto">             loop {</code>
+<a href="#l265" class="line" id="l265">    265</a><code class="language-auto">                 columns.push(self.next_ident()?);</code>
+<a href="#l266" class="line" id="l266">    266</a><code class="language-auto">                 if !self.next_is(Token::Comma) {</code>
+<a href="#l267" class="line" id="l267">    267</a><code class="language-auto">                     break;</code>
+<a href="#l268" class="line" id="l268">    268</a><code class="language-auto">                 }</code>
+<a href="#l269" class="line" id="l269">    269</a><code class="language-auto">             }</code>
+<a href="#l270" class="line" id="l270">    270</a><code class="language-auto">             self.expect(Token::CloseParen)?;</code>
+<a href="#l271" class="line" id="l271">    271</a><code class="language-auto">         }</code>
+<a href="#l272" class="line" id="l272">    272</a><code class="language-auto"> </code>
+<a href="#l273" class="line" id="l273">    273</a><code class="language-auto">         self.expect(Keyword::Values.into())?;</code>
+<a href="#l274" class="line" id="l274">    274</a><code class="language-auto"> </code>
+<a href="#l275" class="line" id="l275">    275</a><code class="language-auto">         let mut values = Vec::new();</code>
+<a href="#l276" class="line" id="l276">    276</a><code class="language-auto">         loop {</code>
+<a href="#l277" class="line" id="l277">    277</a><code class="language-auto">             let mut row = Vec::new();</code>
+<a href="#l278" class="line" id="l278">    278</a><code class="language-auto">             self.expect(Token::OpenParen)?;</code>
+<a href="#l279" class="line" id="l279">    279</a><code class="language-auto">             loop {</code>
+<a href="#l280" class="line" id="l280">    280</a><code class="language-auto">                 row.push(self.parse_expression()?);</code>
+<a href="#l281" class="line" id="l281">    281</a><code class="language-auto">                 if !self.next_is(Token::Comma) {</code>
+<a href="#l282" class="line" id="l282">    282</a><code class="language-auto">                     break;</code>
+<a href="#l283" class="line" id="l283">    283</a><code class="language-auto">                 }</code>
+<a href="#l284" class="line" id="l284">    284</a><code class="language-auto">             }</code>
+<a href="#l285" class="line" id="l285">    285</a><code class="language-auto">             self.expect(Token::CloseParen)?;</code>
+<a href="#l286" class="line" id="l286">    286</a><code class="language-auto">             values.push(row);</code>
+<a href="#l287" class="line" id="l287">    287</a><code class="language-auto">             if !self.next_is(Token::Comma) {</code>
+<a href="#l288" class="line" id="l288">    288</a><code class="language-auto">                 break;</code>
+<a href="#l289" class="line" id="l289">    289</a><code class="language-auto">             }</code>
+<a href="#l290" class="line" id="l290">    290</a><code class="language-auto">         }</code>
+<a href="#l291" class="line" id="l291">    291</a><code class="language-auto"> </code>
+<a href="#l292" class="line" id="l292">    292</a><code class="language-auto">         Ok(ast::Statement::Insert { table, columns, values })</code>
+<a href="#l293" class="line" id="l293">    293</a><code class="language-auto">     }</code>
+<a href="#l294" class="line" id="l294">    294</a><code class="language-auto"> </code>
+<a href="#l295" class="line" id="l295">    295</a><code class="language-auto">     /// Parses an UPDATE statement.</code>
+<a href="#l296" class="line" id="l296">    296</a><code class="language-auto">     fn parse_update(&amp;mut self) -&gt; Result&lt;ast::Statement&gt; {</code>
+<a href="#l297" class="line" id="l297">    297</a><code class="language-auto">         self.expect(Keyword::Update.into())?;</code>
+<a href="#l298" class="line" id="l298">    298</a><code class="language-auto">         let table = self.next_ident()?;</code>
+<a href="#l299" class="line" id="l299">    299</a><code class="language-auto">         self.expect(Keyword::Set.into())?;</code>
+<a href="#l300" class="line" id="l300">    300</a><code class="language-auto">         let mut set = std::collections::BTreeMap::new();</code>
+<a href="#l301" class="line" id="l301">    301</a><code class="language-auto">         loop {</code>
+<a href="#l302" class="line" id="l302">    302</a><code class="language-auto">             let column = self.next_ident()?;</code>
+<a href="#l303" class="line" id="l303">    303</a><code class="language-auto">             self.expect(Token::Equal)?;</code>
+<a href="#l304" class="line" id="l304">    304</a><code class="language-auto">             let expr = (!self.next_is(Keyword::Default.into()))</code>
+<a href="#l305" class="line" id="l305">    305</a><code class="language-auto">                 .then(|| self.parse_expression())</code>
+<a href="#l306" class="line" id="l306">    306</a><code class="language-auto">                 .transpose()?;</code>
+<a href="#l307" class="line" id="l307">    307</a><code class="language-auto">             if set.contains_key(&amp;column) {</code>
+<a href="#l308" class="line" id="l308">    308</a><code class="language-auto">                 return errinput!(&quot;column {column} set multiple times&quot;);</code>
+<a href="#l309" class="line" id="l309">    309</a><code class="language-auto">             }</code>
+<a href="#l310" class="line" id="l310">    310</a><code class="language-auto">             set.insert(column, expr);</code>
+<a href="#l311" class="line" id="l311">    311</a><code class="language-auto">             if !self.next_is(Token::Comma) {</code>
+<a href="#l312" class="line" id="l312">    312</a><code class="language-auto">                 break;</code>
+<a href="#l313" class="line" id="l313">    313</a><code class="language-auto">             }</code>
+<a href="#l314" class="line" id="l314">    314</a><code class="language-auto">         }</code>
+<a href="#l315" class="line" id="l315">    315</a><code class="language-auto">         Ok(ast::Statement::Update { table, set, r#where: self.parse_where_clause()? })</code>
+<a href="#l316" class="line" id="l316">    316</a><code class="language-auto">     }</code>
+<a href="#l317" class="line" id="l317">    317</a><code class="language-auto"> </code>
+<a href="#l318" class="line" id="l318">    318</a><code class="language-auto">     /// Parses a SELECT statement.</code>
+<a href="#l319" class="line" id="l319">    319</a><code class="language-auto">     fn parse_select(&amp;mut self) -&gt; Result&lt;ast::Statement&gt; {</code>
+<a href="#l320" class="line" id="l320">    320</a><code class="language-auto">         Ok(ast::Statement::Select {</code>
+<a href="#l321" class="line" id="l321">    321</a><code class="language-auto">             select: self.parse_select_clause()?,</code>
+<a href="#l322" class="line" id="l322">    322</a><code class="language-auto">             from: self.parse_from_clause()?,</code>
+<a href="#l323" class="line" id="l323">    323</a><code class="language-auto">             r#where: self.parse_where_clause()?,</code>
+<a href="#l324" class="line" id="l324">    324</a><code class="language-auto">             group_by: self.parse_group_by_clause()?,</code>
+<a href="#l325" class="line" id="l325">    325</a><code class="language-auto">             having: self.parse_having_clause()?,</code>
+<a href="#l326" class="line" id="l326">    326</a><code class="language-auto">             order_by: self.parse_order_by_clause()?,</code>
+<a href="#l327" class="line" id="l327">    327</a><code class="language-auto">             limit: self</code>
+<a href="#l328" class="line" id="l328">    328</a><code class="language-auto">                 .next_is(Keyword::Limit.into())</code>
+<a href="#l329" class="line" id="l329">    329</a><code class="language-auto">                 .then(|| self.parse_expression())</code>
+<a href="#l330" class="line" id="l330">    330</a><code class="language-auto">                 .transpose()?,</code>
+<a href="#l331" class="line" id="l331">    331</a><code class="language-auto">             offset: self</code>
+<a href="#l332" class="line" id="l332">    332</a><code class="language-auto">                 .next_is(Keyword::Offset.into())</code>
+<a href="#l333" class="line" id="l333">    333</a><code class="language-auto">                 .then(|| self.parse_expression())</code>
+<a href="#l334" class="line" id="l334">    334</a><code class="language-auto">                 .transpose()?,</code>
+<a href="#l335" class="line" id="l335">    335</a><code class="language-auto">         })</code>
+<a href="#l336" class="line" id="l336">    336</a><code class="language-auto">     }</code>
+<a href="#l337" class="line" id="l337">    337</a><code class="language-auto"> </code>
+<a href="#l338" class="line" id="l338">    338</a><code class="language-auto">     /// Parses a SELECT clause, if present.</code>
+<a href="#l339" class="line" id="l339">    339</a><code class="language-auto">     fn parse_select_clause(&amp;mut self) -&gt; Result&lt;Vec&lt;(ast::Expression, Option&lt;String&gt;)&gt;&gt; {</code>
+<a href="#l340" class="line" id="l340">    340</a><code class="language-auto">         if !self.next_is(Keyword::Select.into()) {</code>
+<a href="#l341" class="line" id="l341">    341</a><code class="language-auto">             return Ok(Vec::new());</code>
+<a href="#l342" class="line" id="l342">    342</a><code class="language-auto">         }</code>
+<a href="#l343" class="line" id="l343">    343</a><code class="language-auto">         let mut select = Vec::new();</code>
+<a href="#l344" class="line" id="l344">    344</a><code class="language-auto">         loop {</code>
+<a href="#l345" class="line" id="l345">    345</a><code class="language-auto">             let expr = self.parse_expression()?;</code>
+<a href="#l346" class="line" id="l346">    346</a><code class="language-auto">             let mut label = None;</code>
+<a href="#l347" class="line" id="l347">    347</a><code class="language-auto">             if self.next_is(Keyword::As.into()) || matches!(self.peek()?, Some(Token::Ident(_))) {</code>
+<a href="#l348" class="line" id="l348">    348</a><code class="language-auto">                 if expr == ast::Expression::All {</code>
+<a href="#l349" class="line" id="l349">    349</a><code class="language-auto">                     return errinput!(&quot;can&#39;t alias *&quot;);</code>
+<a href="#l350" class="line" id="l350">    350</a><code class="language-auto">                 }</code>
+<a href="#l351" class="line" id="l351">    351</a><code class="language-auto">                 label = Some(self.next_ident()?);</code>
+<a href="#l352" class="line" id="l352">    352</a><code class="language-auto">             }</code>
+<a href="#l353" class="line" id="l353">    353</a><code class="language-auto">             select.push((expr, label));</code>
+<a href="#l354" class="line" id="l354">    354</a><code class="language-auto">             if !self.next_is(Token::Comma) {</code>
+<a href="#l355" class="line" id="l355">    355</a><code class="language-auto">                 break;</code>
+<a href="#l356" class="line" id="l356">    356</a><code class="language-auto">             }</code>
+<a href="#l357" class="line" id="l357">    357</a><code class="language-auto">         }</code>
+<a href="#l358" class="line" id="l358">    358</a><code class="language-auto">         Ok(select)</code>
+<a href="#l359" class="line" id="l359">    359</a><code class="language-auto">     }</code>
+<a href="#l360" class="line" id="l360">    360</a><code class="language-auto"> </code>
+<a href="#l361" class="line" id="l361">    361</a><code class="language-auto">     /// Parses a FROM clause, if present.</code>
+<a href="#l362" class="line" id="l362">    362</a><code class="language-auto">     fn parse_from_clause(&amp;mut self) -&gt; Result&lt;Vec&lt;ast::From&gt;&gt; {</code>
+<a href="#l363" class="line" id="l363">    363</a><code class="language-auto">         if !self.next_is(Keyword::From.into()) {</code>
+<a href="#l364" class="line" id="l364">    364</a><code class="language-auto">             return Ok(Vec::new());</code>
+<a href="#l365" class="line" id="l365">    365</a><code class="language-auto">         }</code>
+<a href="#l366" class="line" id="l366">    366</a><code class="language-auto">         let mut from = Vec::new();</code>
+<a href="#l367" class="line" id="l367">    367</a><code class="language-auto">         loop {</code>
+<a href="#l368" class="line" id="l368">    368</a><code class="language-auto">             let mut item = self.parse_from_table()?;</code>
+<a href="#l369" class="line" id="l369">    369</a><code class="language-auto">             while let Some(r#type) = self.parse_from_join()? {</code>
+<a href="#l370" class="line" id="l370">    370</a><code class="language-auto">                 let left = Box::new(item);</code>
+<a href="#l371" class="line" id="l371">    371</a><code class="language-auto">                 let right = Box::new(self.parse_from_table()?);</code>
+<a href="#l372" class="line" id="l372">    372</a><code class="language-auto">                 let mut predicate = None;</code>
+<a href="#l373" class="line" id="l373">    373</a><code class="language-auto">                 if r#type != ast::JoinType::Cross {</code>
+<a href="#l374" class="line" id="l374">    374</a><code class="language-auto">                     self.expect(Keyword::On.into())?;</code>
+<a href="#l375" class="line" id="l375">    375</a><code class="language-auto">                     predicate = Some(self.parse_expression()?)</code>
+<a href="#l376" class="line" id="l376">    376</a><code class="language-auto">                 }</code>
+<a href="#l377" class="line" id="l377">    377</a><code class="language-auto">                 item = ast::From::Join { left, right, r#type, predicate };</code>
+<a href="#l378" class="line" id="l378">    378</a><code class="language-auto">             }</code>
+<a href="#l379" class="line" id="l379">    379</a><code class="language-auto">             from.push(item);</code>
+<a href="#l380" class="line" id="l380">    380</a><code class="language-auto">             if !self.next_is(Token::Comma) {</code>
+<a href="#l381" class="line" id="l381">    381</a><code class="language-auto">                 break;</code>
+<a href="#l382" class="line" id="l382">    382</a><code class="language-auto">             }</code>
+<a href="#l383" class="line" id="l383">    383</a><code class="language-auto">         }</code>
+<a href="#l384" class="line" id="l384">    384</a><code class="language-auto">         Ok(from)</code>
+<a href="#l385" class="line" id="l385">    385</a><code class="language-auto">     }</code>
+<a href="#l386" class="line" id="l386">    386</a><code class="language-auto"> </code>
+<a href="#l387" class="line" id="l387">    387</a><code class="language-auto">     // Parses a FROM table.</code>
+<a href="#l388" class="line" id="l388">    388</a><code class="language-auto">     fn parse_from_table(&amp;mut self) -&gt; Result&lt;ast::From&gt; {</code>
+<a href="#l389" class="line" id="l389">    389</a><code class="language-auto">         let name = self.next_ident()?;</code>
+<a href="#l390" class="line" id="l390">    390</a><code class="language-auto">         let mut alias = None;</code>
+<a href="#l391" class="line" id="l391">    391</a><code class="language-auto">         if self.next_is(Keyword::As.into()) || matches!(self.peek()?, Some(Token::Ident(_))) {</code>
+<a href="#l392" class="line" id="l392">    392</a><code class="language-auto">             alias = Some(self.next_ident()?)</code>
+<a href="#l393" class="line" id="l393">    393</a><code class="language-auto">         };</code>
+<a href="#l394" class="line" id="l394">    394</a><code class="language-auto">         Ok(ast::From::Table { name, alias })</code>
+<a href="#l395" class="line" id="l395">    395</a><code class="language-auto">     }</code>
+<a href="#l396" class="line" id="l396">    396</a><code class="language-auto"> </code>
+<a href="#l397" class="line" id="l397">    397</a><code class="language-auto">     // Parses a FROM JOIN type, if present.</code>
+<a href="#l398" class="line" id="l398">    398</a><code class="language-auto">     fn parse_from_join(&amp;mut self) -&gt; Result&lt;Option&lt;ast::JoinType&gt;&gt; {</code>
+<a href="#l399" class="line" id="l399">    399</a><code class="language-auto">         if self.next_is(Keyword::Join.into()) {</code>
+<a href="#l400" class="line" id="l400">    400</a><code class="language-auto">             return Ok(Some(ast::JoinType::Inner));</code>
+<a href="#l401" class="line" id="l401">    401</a><code class="language-auto">         }</code>
+<a href="#l402" class="line" id="l402">    402</a><code class="language-auto">         if self.next_is(Keyword::Cross.into()) {</code>
+<a href="#l403" class="line" id="l403">    403</a><code class="language-auto">             self.expect(Keyword::Join.into())?;</code>
+<a href="#l404" class="line" id="l404">    404</a><code class="language-auto">             return Ok(Some(ast::JoinType::Cross));</code>
+<a href="#l405" class="line" id="l405">    405</a><code class="language-auto">         }</code>
+<a href="#l406" class="line" id="l406">    406</a><code class="language-auto">         if self.next_is(Keyword::Inner.into()) {</code>
+<a href="#l407" class="line" id="l407">    407</a><code class="language-auto">             self.expect(Keyword::Join.into())?;</code>
+<a href="#l408" class="line" id="l408">    408</a><code class="language-auto">             return Ok(Some(ast::JoinType::Inner));</code>
+<a href="#l409" class="line" id="l409">    409</a><code class="language-auto">         }</code>
+<a href="#l410" class="line" id="l410">    410</a><code class="language-auto">         if self.next_is(Keyword::Left.into()) {</code>
+<a href="#l411" class="line" id="l411">    411</a><code class="language-auto">             self.skip(Keyword::Outer.into());</code>
+<a href="#l412" class="line" id="l412">    412</a><code class="language-auto">             self.expect(Keyword::Join.into())?;</code>
+<a href="#l413" class="line" id="l413">    413</a><code class="language-auto">             return Ok(Some(ast::JoinType::Left));</code>
+<a href="#l414" class="line" id="l414">    414</a><code class="language-auto">         }</code>
+<a href="#l415" class="line" id="l415">    415</a><code class="language-auto">         if self.next_is(Keyword::Right.into()) {</code>
+<a href="#l416" class="line" id="l416">    416</a><code class="language-auto">             self.skip(Keyword::Outer.into());</code>
+<a href="#l417" class="line" id="l417">    417</a><code class="language-auto">             self.expect(Keyword::Join.into())?;</code>
+<a href="#l418" class="line" id="l418">    418</a><code class="language-auto">             return Ok(Some(ast::JoinType::Right));</code>
+<a href="#l419" class="line" id="l419">    419</a><code class="language-auto">         }</code>
+<a href="#l420" class="line" id="l420">    420</a><code class="language-auto">         Ok(None)</code>
+<a href="#l421" class="line" id="l421">    421</a><code class="language-auto">     }</code>
+<a href="#l422" class="line" id="l422">    422</a><code class="language-auto"> </code>
+<a href="#l423" class="line" id="l423">    423</a><code class="language-auto">     /// Parses a WHERE clause, if present.</code>
+<a href="#l424" class="line" id="l424">    424</a><code class="language-auto">     fn parse_where_clause(&amp;mut self) -&gt; Result&lt;Option&lt;ast::Expression&gt;&gt; {</code>
+<a href="#l425" class="line" id="l425">    425</a><code class="language-auto">         if !self.next_is(Keyword::Where.into()) {</code>
+<a href="#l426" class="line" id="l426">    426</a><code class="language-auto">             return Ok(None);</code>
+<a href="#l427" class="line" id="l427">    427</a><code class="language-auto">         }</code>
+<a href="#l428" class="line" id="l428">    428</a><code class="language-auto">         Ok(Some(self.parse_expression()?))</code>
+<a href="#l429" class="line" id="l429">    429</a><code class="language-auto">     }</code>
+<a href="#l430" class="line" id="l430">    430</a><code class="language-auto"> </code>
+<a href="#l431" class="line" id="l431">    431</a><code class="language-auto">     /// Parses a GROUP BY clause, if present.</code>
+<a href="#l432" class="line" id="l432">    432</a><code class="language-auto">     fn parse_group_by_clause(&amp;mut self) -&gt; Result&lt;Vec&lt;ast::Expression&gt;&gt; {</code>
+<a href="#l433" class="line" id="l433">    433</a><code class="language-auto">         if !self.next_is(Keyword::Group.into()) {</code>
+<a href="#l434" class="line" id="l434">    434</a><code class="language-auto">             return Ok(Vec::new());</code>
+<a href="#l435" class="line" id="l435">    435</a><code class="language-auto">         }</code>
+<a href="#l436" class="line" id="l436">    436</a><code class="language-auto">         let mut group_by = Vec::new();</code>
+<a href="#l437" class="line" id="l437">    437</a><code class="language-auto">         self.expect(Keyword::By.into())?;</code>
+<a href="#l438" class="line" id="l438">    438</a><code class="language-auto">         loop {</code>
+<a href="#l439" class="line" id="l439">    439</a><code class="language-auto">             group_by.push(self.parse_expression()?);</code>
+<a href="#l440" class="line" id="l440">    440</a><code class="language-auto">             if !self.next_is(Token::Comma) {</code>
+<a href="#l441" class="line" id="l441">    441</a><code class="language-auto">                 break;</code>
+<a href="#l442" class="line" id="l442">    442</a><code class="language-auto">             }</code>
+<a href="#l443" class="line" id="l443">    443</a><code class="language-auto">         }</code>
+<a href="#l444" class="line" id="l444">    444</a><code class="language-auto">         Ok(group_by)</code>
+<a href="#l445" class="line" id="l445">    445</a><code class="language-auto">     }</code>
+<a href="#l446" class="line" id="l446">    446</a><code class="language-auto"> </code>
+<a href="#l447" class="line" id="l447">    447</a><code class="language-auto">     /// Parses a HAVING clause, if present.</code>
+<a href="#l448" class="line" id="l448">    448</a><code class="language-auto">     fn parse_having_clause(&amp;mut self) -&gt; Result&lt;Option&lt;ast::Expression&gt;&gt; {</code>
+<a href="#l449" class="line" id="l449">    449</a><code class="language-auto">         if !self.next_is(Keyword::Having.into()) {</code>
+<a href="#l450" class="line" id="l450">    450</a><code class="language-auto">             return Ok(None);</code>
+<a href="#l451" class="line" id="l451">    451</a><code class="language-auto">         }</code>
+<a href="#l452" class="line" id="l452">    452</a><code class="language-auto">         Ok(Some(self.parse_expression()?))</code>
+<a href="#l453" class="line" id="l453">    453</a><code class="language-auto">     }</code>
+<a href="#l454" class="line" id="l454">    454</a><code class="language-auto"> </code>
+<a href="#l455" class="line" id="l455">    455</a><code class="language-auto">     /// Parses an ORDER BY clause, if present.</code>
+<a href="#l456" class="line" id="l456">    456</a><code class="language-auto">     fn parse_order_by_clause(&amp;mut self) -&gt; Result&lt;Vec&lt;(ast::Expression, ast::Direction)&gt;&gt; {</code>
+<a href="#l457" class="line" id="l457">    457</a><code class="language-auto">         if !self.next_is(Keyword::Order.into()) {</code>
+<a href="#l458" class="line" id="l458">    458</a><code class="language-auto">             return Ok(Vec::new());</code>
+<a href="#l459" class="line" id="l459">    459</a><code class="language-auto">         }</code>
+<a href="#l460" class="line" id="l460">    460</a><code class="language-auto">         let mut order_by = Vec::new();</code>
+<a href="#l461" class="line" id="l461">    461</a><code class="language-auto">         self.expect(Keyword::By.into())?;</code>
+<a href="#l462" class="line" id="l462">    462</a><code class="language-auto">         loop {</code>
+<a href="#l463" class="line" id="l463">    463</a><code class="language-auto">             let expr = self.parse_expression()?;</code>
+<a href="#l464" class="line" id="l464">    464</a><code class="language-auto">             let order = self</code>
+<a href="#l465" class="line" id="l465">    465</a><code class="language-auto">                 .next_if_map(|token| match token {</code>
+<a href="#l466" class="line" id="l466">    466</a><code class="language-auto">                     Token::Keyword(Keyword::Asc) =&gt; Some(ast::Direction::Ascending),</code>
+<a href="#l467" class="line" id="l467">    467</a><code class="language-auto">                     Token::Keyword(Keyword::Desc) =&gt; Some(ast::Direction::Descending),</code>
+<a href="#l468" class="line" id="l468">    468</a><code class="language-auto">                     _ =&gt; None,</code>
+<a href="#l469" class="line" id="l469">    469</a><code class="language-auto">                 })</code>
+<a href="#l470" class="line" id="l470">    470</a><code class="language-auto">                 .unwrap_or(ast::Direction::Ascending);</code>
+<a href="#l471" class="line" id="l471">    471</a><code class="language-auto">             order_by.push((expr, order));</code>
+<a href="#l472" class="line" id="l472">    472</a><code class="language-auto">             if !self.next_is(Token::Comma) {</code>
+<a href="#l473" class="line" id="l473">    473</a><code class="language-auto">                 break;</code>
+<a href="#l474" class="line" id="l474">    474</a><code class="language-auto">             }</code>
+<a href="#l475" class="line" id="l475">    475</a><code class="language-auto">         }</code>
+<a href="#l476" class="line" id="l476">    476</a><code class="language-auto">         Ok(order_by)</code>
+<a href="#l477" class="line" id="l477">    477</a><code class="language-auto">     }</code>
+<a href="#l478" class="line" id="l478">    478</a><code class="language-auto"> </code>
+<a href="#l479" class="line" id="l479">    479</a><code class="language-auto">     /// Parses an expression consisting of at least one atom operated on by any</code>
+<a href="#l480" class="line" id="l480">    480</a><code class="language-auto">     /// number of operators, using the precedence climbing algorithm.</code>
+<a href="#l481" class="line" id="l481">    481</a><code class="language-auto">     ///</code>
+<a href="#l482" class="line" id="l482">    482</a><code class="language-auto">     /// TODO: write a description of the algorithm.</code>
+<a href="#l483" class="line" id="l483">    483</a><code class="language-auto">     pub fn parse_expression(&amp;mut self) -&gt; Result&lt;ast::Expression&gt; {</code>
+<a href="#l484" class="line" id="l484">    484</a><code class="language-auto">         self.parse_expression_at(0)</code>
+<a href="#l485" class="line" id="l485">    485</a><code class="language-auto">     }</code>
+<a href="#l486" class="line" id="l486">    486</a><code class="language-auto"> </code>
+<a href="#l487" class="line" id="l487">    487</a><code class="language-auto">     /// Parses an expression at the given minimum precedence.</code>
+<a href="#l488" class="line" id="l488">    488</a><code class="language-auto">     fn parse_expression_at(&amp;mut self, min_precedence: Precedence) -&gt; Result&lt;ast::Expression&gt; {</code>
+<a href="#l489" class="line" id="l489">    489</a><code class="language-auto">         // If there is a prefix operator, parse it and its right-hand operand.</code>
+<a href="#l490" class="line" id="l490">    490</a><code class="language-auto">         // Otherwise, parse the left-hand atom.</code>
+<a href="#l491" class="line" id="l491">    491</a><code class="language-auto">         let mut lhs = if let Some(prefix) = self.parse_prefix_operator(min_precedence) {</code>
+<a href="#l492" class="line" id="l492">    492</a><code class="language-auto">             let at_precedence = prefix.precedence() + prefix.associativity();</code>
+<a href="#l493" class="line" id="l493">    493</a><code class="language-auto">             prefix.build(self.parse_expression_at(at_precedence)?)</code>
+<a href="#l494" class="line" id="l494">    494</a><code class="language-auto">         } else {</code>
+<a href="#l495" class="line" id="l495">    495</a><code class="language-auto">             self.parse_expression_atom()?</code>
+<a href="#l496" class="line" id="l496">    496</a><code class="language-auto">         };</code>
+<a href="#l497" class="line" id="l497">    497</a><code class="language-auto">         // Apply any postfix operators for the left-hand atom.</code>
+<a href="#l498" class="line" id="l498">    498</a><code class="language-auto">         while let Some(postfix) = self.parse_postfix_operator(min_precedence)? {</code>
+<a href="#l499" class="line" id="l499">    499</a><code class="language-auto">             lhs = postfix.build(lhs)</code>
+<a href="#l500" class="line" id="l500">    500</a><code class="language-auto">         }</code>
+<a href="#l501" class="line" id="l501">    501</a><code class="language-auto">         // Apply any binary infix operators, parsing the right-hand operand.</code>
+<a href="#l502" class="line" id="l502">    502</a><code class="language-auto">         while let Some(infix) = self.parse_infix_operator(min_precedence) {</code>
+<a href="#l503" class="line" id="l503">    503</a><code class="language-auto">             let at_precedence = infix.precedence() + infix.associativity();</code>
+<a href="#l504" class="line" id="l504">    504</a><code class="language-auto">             let rhs = self.parse_expression_at(at_precedence)?;</code>
+<a href="#l505" class="line" id="l505">    505</a><code class="language-auto">             lhs = infix.build(lhs, rhs);</code>
+<a href="#l506" class="line" id="l506">    506</a><code class="language-auto">         }</code>
+<a href="#l507" class="line" id="l507">    507</a><code class="language-auto">         // Apply any postfix operators after the binary operator. Consider e.g.</code>
+<a href="#l508" class="line" id="l508">    508</a><code class="language-auto">         // 1 + NULL IS NULL.</code>
+<a href="#l509" class="line" id="l509">    509</a><code class="language-auto">         while let Some(postfix) = self.parse_postfix_operator(min_precedence)? {</code>
+<a href="#l510" class="line" id="l510">    510</a><code class="language-auto">             lhs = postfix.build(lhs)</code>
+<a href="#l511" class="line" id="l511">    511</a><code class="language-auto">         }</code>
+<a href="#l512" class="line" id="l512">    512</a><code class="language-auto">         Ok(lhs)</code>
+<a href="#l513" class="line" id="l513">    513</a><code class="language-auto">     }</code>
+<a href="#l514" class="line" id="l514">    514</a><code class="language-auto"> </code>
+<a href="#l515" class="line" id="l515">    515</a><code class="language-auto">     /// Parses an expression atom. This is either:</code>
+<a href="#l516" class="line" id="l516">    516</a><code class="language-auto">     ///</code>
+<a href="#l517" class="line" id="l517">    517</a><code class="language-auto">     /// * A literal value.</code>
+<a href="#l518" class="line" id="l518">    518</a><code class="language-auto">     /// * A column name.</code>
+<a href="#l519" class="line" id="l519">    519</a><code class="language-auto">     /// * A function call.</code>
+<a href="#l520" class="line" id="l520">    520</a><code class="language-auto">     /// * A parenthesized expression.</code>
+<a href="#l521" class="line" id="l521">    521</a><code class="language-auto">     fn parse_expression_atom(&amp;mut self) -&gt; Result&lt;ast::Expression&gt; {</code>
+<a href="#l522" class="line" id="l522">    522</a><code class="language-auto">         Ok(match self.next()? {</code>
+<a href="#l523" class="line" id="l523">    523</a><code class="language-auto">             // All columns.</code>
+<a href="#l524" class="line" id="l524">    524</a><code class="language-auto">             Token::Asterisk =&gt; ast::Expression::All,</code>
+<a href="#l525" class="line" id="l525">    525</a><code class="language-auto"> </code>
+<a href="#l526" class="line" id="l526">    526</a><code class="language-auto">             // Literal value.</code>
+<a href="#l527" class="line" id="l527">    527</a><code class="language-auto">             Token::Number(n) if n.chars().all(|c| c.is_ascii_digit()) =&gt; {</code>
+<a href="#l528" class="line" id="l528">    528</a><code class="language-auto">                 ast::Literal::Integer(n.parse()?).into()</code>
+<a href="#l529" class="line" id="l529">    529</a><code class="language-auto">             }</code>
+<a href="#l530" class="line" id="l530">    530</a><code class="language-auto">             Token::Number(n) =&gt; ast::Literal::Float(n.parse()?).into(),</code>
+<a href="#l531" class="line" id="l531">    531</a><code class="language-auto">             Token::String(s) =&gt; ast::Literal::String(s).into(),</code>
+<a href="#l532" class="line" id="l532">    532</a><code class="language-auto">             Token::Keyword(Keyword::True) =&gt; ast::Literal::Boolean(true).into(),</code>
+<a href="#l533" class="line" id="l533">    533</a><code class="language-auto">             Token::Keyword(Keyword::False) =&gt; ast::Literal::Boolean(false).into(),</code>
+<a href="#l534" class="line" id="l534">    534</a><code class="language-auto">             Token::Keyword(Keyword::Infinity) =&gt; ast::Literal::Float(std::f64::INFINITY).into(),</code>
+<a href="#l535" class="line" id="l535">    535</a><code class="language-auto">             Token::Keyword(Keyword::NaN) =&gt; ast::Literal::Float(std::f64::NAN).into(),</code>
+<a href="#l536" class="line" id="l536">    536</a><code class="language-auto">             Token::Keyword(Keyword::Null) =&gt; ast::Literal::Null.into(),</code>
+<a href="#l537" class="line" id="l537">    537</a><code class="language-auto"> </code>
+<a href="#l538" class="line" id="l538">    538</a><code class="language-auto">             // Function call.</code>
+<a href="#l539" class="line" id="l539">    539</a><code class="language-auto">             Token::Ident(name) if self.next_is(Token::OpenParen) =&gt; {</code>
+<a href="#l540" class="line" id="l540">    540</a><code class="language-auto">                 let mut args = Vec::new();</code>
+<a href="#l541" class="line" id="l541">    541</a><code class="language-auto">                 while !self.next_is(Token::CloseParen) {</code>
+<a href="#l542" class="line" id="l542">    542</a><code class="language-auto">                     if !args.is_empty() {</code>
+<a href="#l543" class="line" id="l543">    543</a><code class="language-auto">                         self.expect(Token::Comma)?;</code>
+<a href="#l544" class="line" id="l544">    544</a><code class="language-auto">                     }</code>
+<a href="#l545" class="line" id="l545">    545</a><code class="language-auto">                     args.push(self.parse_expression()?);</code>
+<a href="#l546" class="line" id="l546">    546</a><code class="language-auto">                 }</code>
+<a href="#l547" class="line" id="l547">    547</a><code class="language-auto">                 ast::Expression::Function(name, args)</code>
+<a href="#l548" class="line" id="l548">    548</a><code class="language-auto">             }</code>
+<a href="#l549" class="line" id="l549">    549</a><code class="language-auto"> </code>
+<a href="#l550" class="line" id="l550">    550</a><code class="language-auto">             // Column name, either qualified as table.column or unqualified.</code>
+<a href="#l551" class="line" id="l551">    551</a><code class="language-auto">             Token::Ident(table) if self.next_is(Token::Period) =&gt; {</code>
+<a href="#l552" class="line" id="l552">    552</a><code class="language-auto">                 ast::Expression::Column(Some(table), self.next_ident()?)</code>
+<a href="#l553" class="line" id="l553">    553</a><code class="language-auto">             }</code>
+<a href="#l554" class="line" id="l554">    554</a><code class="language-auto">             Token::Ident(column) =&gt; ast::Expression::Column(None, column),</code>
+<a href="#l555" class="line" id="l555">    555</a><code class="language-auto"> </code>
+<a href="#l556" class="line" id="l556">    556</a><code class="language-auto">             // Parenthesized expression.</code>
+<a href="#l557" class="line" id="l557">    557</a><code class="language-auto">             Token::OpenParen =&gt; {</code>
+<a href="#l558" class="line" id="l558">    558</a><code class="language-auto">                 let expr = self.parse_expression()?;</code>
+<a href="#l559" class="line" id="l559">    559</a><code class="language-auto">                 self.expect(Token::CloseParen)?;</code>
+<a href="#l560" class="line" id="l560">    560</a><code class="language-auto">                 expr</code>
+<a href="#l561" class="line" id="l561">    561</a><code class="language-auto">             }</code>
+<a href="#l562" class="line" id="l562">    562</a><code class="language-auto"> </code>
+<a href="#l563" class="line" id="l563">    563</a><code class="language-auto">             token =&gt; return errinput!(&quot;expected expression atom, found {token}&quot;),</code>
+<a href="#l564" class="line" id="l564">    564</a><code class="language-auto">         })</code>
+<a href="#l565" class="line" id="l565">    565</a><code class="language-auto">     }</code>
+<a href="#l566" class="line" id="l566">    566</a><code class="language-auto"> </code>
+<a href="#l567" class="line" id="l567">    567</a><code class="language-auto">     /// Parses a prefix operator, if there is one and its precedence is at least</code>
+<a href="#l568" class="line" id="l568">    568</a><code class="language-auto">     /// min_precedence.</code>
+<a href="#l569" class="line" id="l569">    569</a><code class="language-auto">     fn parse_prefix_operator(&amp;mut self, min_precedence: Precedence) -&gt; Option&lt;PrefixOperator&gt; {</code>
+<a href="#l570" class="line" id="l570">    570</a><code class="language-auto">         self.next_if_map(|token| {</code>
+<a href="#l571" class="line" id="l571">    571</a><code class="language-auto">             let operator = match token {</code>
+<a href="#l572" class="line" id="l572">    572</a><code class="language-auto">                 Token::Keyword(Keyword::Not) =&gt; PrefixOperator::Not,</code>
+<a href="#l573" class="line" id="l573">    573</a><code class="language-auto">                 Token::Minus =&gt; PrefixOperator::Minus,</code>
+<a href="#l574" class="line" id="l574">    574</a><code class="language-auto">                 Token::Plus =&gt; PrefixOperator::Plus,</code>
+<a href="#l575" class="line" id="l575">    575</a><code class="language-auto">                 _ =&gt; return None,</code>
+<a href="#l576" class="line" id="l576">    576</a><code class="language-auto">             };</code>
+<a href="#l577" class="line" id="l577">    577</a><code class="language-auto">             Some(operator).filter(|op| op.precedence() &gt;= min_precedence)</code>
+<a href="#l578" class="line" id="l578">    578</a><code class="language-auto">         })</code>
+<a href="#l579" class="line" id="l579">    579</a><code class="language-auto">     }</code>
+<a href="#l580" class="line" id="l580">    580</a><code class="language-auto"> </code>
+<a href="#l581" class="line" id="l581">    581</a><code class="language-auto">     /// Parses an infix operator, if there is one and its precedence is at least</code>
+<a href="#l582" class="line" id="l582">    582</a><code class="language-auto">     /// min_precedence.</code>
+<a href="#l583" class="line" id="l583">    583</a><code class="language-auto">     fn parse_infix_operator(&amp;mut self, min_precedence: Precedence) -&gt; Option&lt;InfixOperator&gt; {</code>
+<a href="#l584" class="line" id="l584">    584</a><code class="language-auto">         self.next_if_map(|token| {</code>
+<a href="#l585" class="line" id="l585">    585</a><code class="language-auto">             let operator = match token {</code>
+<a href="#l586" class="line" id="l586">    586</a><code class="language-auto">                 Token::Asterisk =&gt; InfixOperator::Multiply,</code>
+<a href="#l587" class="line" id="l587">    587</a><code class="language-auto">                 Token::Caret =&gt; InfixOperator::Exponentiate,</code>
+<a href="#l588" class="line" id="l588">    588</a><code class="language-auto">                 Token::Equal =&gt; InfixOperator::Equal,</code>
+<a href="#l589" class="line" id="l589">    589</a><code class="language-auto">                 Token::GreaterThan =&gt; InfixOperator::GreaterThan,</code>
+<a href="#l590" class="line" id="l590">    590</a><code class="language-auto">                 Token::GreaterThanOrEqual =&gt; InfixOperator::GreaterThanOrEqual,</code>
+<a href="#l591" class="line" id="l591">    591</a><code class="language-auto">                 Token::Keyword(Keyword::And) =&gt; InfixOperator::And,</code>
+<a href="#l592" class="line" id="l592">    592</a><code class="language-auto">                 Token::Keyword(Keyword::Like) =&gt; InfixOperator::Like,</code>
+<a href="#l593" class="line" id="l593">    593</a><code class="language-auto">                 Token::Keyword(Keyword::Or) =&gt; InfixOperator::Or,</code>
+<a href="#l594" class="line" id="l594">    594</a><code class="language-auto">                 Token::LessOrGreaterThan =&gt; InfixOperator::NotEqual,</code>
+<a href="#l595" class="line" id="l595">    595</a><code class="language-auto">                 Token::LessThan =&gt; InfixOperator::LessThan,</code>
+<a href="#l596" class="line" id="l596">    596</a><code class="language-auto">                 Token::LessThanOrEqual =&gt; InfixOperator::LessThanOrEqual,</code>
+<a href="#l597" class="line" id="l597">    597</a><code class="language-auto">                 Token::Minus =&gt; InfixOperator::Subtract,</code>
+<a href="#l598" class="line" id="l598">    598</a><code class="language-auto">                 Token::NotEqual =&gt; InfixOperator::NotEqual,</code>
+<a href="#l599" class="line" id="l599">    599</a><code class="language-auto">                 Token::Percent =&gt; InfixOperator::Remainder,</code>
+<a href="#l600" class="line" id="l600">    600</a><code class="language-auto">                 Token::Plus =&gt; InfixOperator::Add,</code>
+<a href="#l601" class="line" id="l601">    601</a><code class="language-auto">                 Token::Slash =&gt; InfixOperator::Divide,</code>
+<a href="#l602" class="line" id="l602">    602</a><code class="language-auto">                 _ =&gt; return None,</code>
+<a href="#l603" class="line" id="l603">    603</a><code class="language-auto">             };</code>
+<a href="#l604" class="line" id="l604">    604</a><code class="language-auto">             Some(operator).filter(|op| op.precedence() &gt;= min_precedence)</code>
+<a href="#l605" class="line" id="l605">    605</a><code class="language-auto">         })</code>
+<a href="#l606" class="line" id="l606">    606</a><code class="language-auto">     }</code>
+<a href="#l607" class="line" id="l607">    607</a><code class="language-auto"> </code>
+<a href="#l608" class="line" id="l608">    608</a><code class="language-auto">     /// Parses a postfix operator, if there is one and its precedence is at</code>
+<a href="#l609" class="line" id="l609">    609</a><code class="language-auto">     /// least min_precedence.</code>
+<a href="#l610" class="line" id="l610">    610</a><code class="language-auto">     fn parse_postfix_operator(</code>
+<a href="#l611" class="line" id="l611">    611</a><code class="language-auto">         &amp;mut self,</code>
+<a href="#l612" class="line" id="l612">    612</a><code class="language-auto">         min_precedence: Precedence,</code>
+<a href="#l613" class="line" id="l613">    613</a><code class="language-auto">     ) -&gt; Result&lt;Option&lt;PostfixOperator&gt;&gt; {</code>
+<a href="#l614" class="line" id="l614">    614</a><code class="language-auto">         // Handle IS (NOT) NULL/NAN separately, since it&#39;s multiple tokens.</code>
+<a href="#l615" class="line" id="l615">    615</a><code class="language-auto">         if let Some(Token::Keyword(Keyword::Is)) = self.peek()? {</code>
+<a href="#l616" class="line" id="l616">    616</a><code class="language-auto">             // We can&#39;t consume tokens unless the precedence is satisfied, so we</code>
+<a href="#l617" class="line" id="l617">    617</a><code class="language-auto">             // assume IS NULL (they all have the same precedence).</code>
+<a href="#l618" class="line" id="l618">    618</a><code class="language-auto">             if PostfixOperator::Is(ast::Literal::Null).precedence() &lt; min_precedence {</code>
+<a href="#l619" class="line" id="l619">    619</a><code class="language-auto">                 return Ok(None);</code>
+<a href="#l620" class="line" id="l620">    620</a><code class="language-auto">             }</code>
+<a href="#l621" class="line" id="l621">    621</a><code class="language-auto">             self.expect(Keyword::Is.into())?;</code>
+<a href="#l622" class="line" id="l622">    622</a><code class="language-auto">             let not = self.next_is(Keyword::Not.into());</code>
+<a href="#l623" class="line" id="l623">    623</a><code class="language-auto">             let value = match self.next()? {</code>
+<a href="#l624" class="line" id="l624">    624</a><code class="language-auto">                 Token::Keyword(Keyword::NaN) =&gt; ast::Literal::Float(f64::NAN),</code>
+<a href="#l625" class="line" id="l625">    625</a><code class="language-auto">                 Token::Keyword(Keyword::Null) =&gt; ast::Literal::Null,</code>
+<a href="#l626" class="line" id="l626">    626</a><code class="language-auto">                 token =&gt; return errinput!(&quot;unexpected token {token}&quot;),</code>
+<a href="#l627" class="line" id="l627">    627</a><code class="language-auto">             };</code>
+<a href="#l628" class="line" id="l628">    628</a><code class="language-auto">             let operator = match not {</code>
+<a href="#l629" class="line" id="l629">    629</a><code class="language-auto">                 false =&gt; PostfixOperator::Is(value),</code>
+<a href="#l630" class="line" id="l630">    630</a><code class="language-auto">                 true =&gt; PostfixOperator::IsNot(value),</code>
+<a href="#l631" class="line" id="l631">    631</a><code class="language-auto">             };</code>
+<a href="#l632" class="line" id="l632">    632</a><code class="language-auto">             return Ok(Some(operator));</code>
+<a href="#l633" class="line" id="l633">    633</a><code class="language-auto">         }</code>
+<a href="#l634" class="line" id="l634">    634</a><code class="language-auto"> </code>
+<a href="#l635" class="line" id="l635">    635</a><code class="language-auto">         Ok(self.next_if_map(|token| {</code>
+<a href="#l636" class="line" id="l636">    636</a><code class="language-auto">             let operator = match token {</code>
+<a href="#l637" class="line" id="l637">    637</a><code class="language-auto">                 Token::Exclamation =&gt; PostfixOperator::Factorial,</code>
+<a href="#l638" class="line" id="l638">    638</a><code class="language-auto">                 _ =&gt; return None,</code>
+<a href="#l639" class="line" id="l639">    639</a><code class="language-auto">             };</code>
+<a href="#l640" class="line" id="l640">    640</a><code class="language-auto">             Some(operator).filter(|op| op.precedence() &gt;= min_precedence)</code>
+<a href="#l641" class="line" id="l641">    641</a><code class="language-auto">         }))</code>
+<a href="#l642" class="line" id="l642">    642</a><code class="language-auto">     }</code>
+<a href="#l643" class="line" id="l643">    643</a><code class="language-auto"> }</code>
+<a href="#l644" class="line" id="l644">    644</a><code class="language-auto"> </code>
+<a href="#l645" class="line" id="l645">    645</a><code class="language-auto"> /// Operator precedence.</code>
+<a href="#l646" class="line" id="l646">    646</a><code class="language-auto"> type Precedence = u8;</code>
+<a href="#l647" class="line" id="l647">    647</a><code class="language-auto"> </code>
+<a href="#l648" class="line" id="l648">    648</a><code class="language-auto"> const LEFT_ASSOCIATIVE: Precedence = 1;</code>
+<a href="#l649" class="line" id="l649">    649</a><code class="language-auto"> const RIGHT_ASSOCIATIVE: Precedence = 0;</code>
+<a href="#l650" class="line" id="l650">    650</a><code class="language-auto"> </code>
+<a href="#l651" class="line" id="l651">    651</a><code class="language-auto"> /// Prefix operators.</code>
+<a href="#l652" class="line" id="l652">    652</a><code class="language-auto"> enum PrefixOperator {</code>
+<a href="#l653" class="line" id="l653">    653</a><code class="language-auto">     Minus, // -a</code>
+<a href="#l654" class="line" id="l654">    654</a><code class="language-auto">     Not,   // NOT a</code>
+<a href="#l655" class="line" id="l655">    655</a><code class="language-auto">     Plus,  // +a</code>
+<a href="#l656" class="line" id="l656">    656</a><code class="language-auto"> }</code>
+<a href="#l657" class="line" id="l657">    657</a><code class="language-auto"> </code>
+<a href="#l658" class="line" id="l658">    658</a><code class="language-auto"> impl PrefixOperator {</code>
+<a href="#l659" class="line" id="l659">    659</a><code class="language-auto">     /// The operator precedence.</code>
+<a href="#l660" class="line" id="l660">    660</a><code class="language-auto">     fn precedence(&amp;self) -&gt; Precedence {</code>
+<a href="#l661" class="line" id="l661">    661</a><code class="language-auto">         match self {</code>
+<a href="#l662" class="line" id="l662">    662</a><code class="language-auto">             Self::Not =&gt; 3,</code>
+<a href="#l663" class="line" id="l663">    663</a><code class="language-auto">             Self::Minus | Self::Plus =&gt; 10,</code>
+<a href="#l664" class="line" id="l664">    664</a><code class="language-auto">         }</code>
+<a href="#l665" class="line" id="l665">    665</a><code class="language-auto">     }</code>
+<a href="#l666" class="line" id="l666">    666</a><code class="language-auto"> </code>
+<a href="#l667" class="line" id="l667">    667</a><code class="language-auto">     // The operator associativity. Prefix operators are right-associative by</code>
+<a href="#l668" class="line" id="l668">    668</a><code class="language-auto">     // definition.</code>
+<a href="#l669" class="line" id="l669">    669</a><code class="language-auto">     fn associativity(&amp;self) -&gt; Precedence {</code>
+<a href="#l670" class="line" id="l670">    670</a><code class="language-auto">         RIGHT_ASSOCIATIVE</code>
+<a href="#l671" class="line" id="l671">    671</a><code class="language-auto">     }</code>
+<a href="#l672" class="line" id="l672">    672</a><code class="language-auto"> </code>
+<a href="#l673" class="line" id="l673">    673</a><code class="language-auto">     /// Builds an AST expression for the operator.</code>
+<a href="#l674" class="line" id="l674">    674</a><code class="language-auto">     fn build(self, rhs: ast::Expression) -&gt; ast::Expression {</code>
+<a href="#l675" class="line" id="l675">    675</a><code class="language-auto">         let rhs = Box::new(rhs);</code>
+<a href="#l676" class="line" id="l676">    676</a><code class="language-auto">         match self {</code>
+<a href="#l677" class="line" id="l677">    677</a><code class="language-auto">             Self::Plus =&gt; ast::Operator::Identity(rhs).into(),</code>
+<a href="#l678" class="line" id="l678">    678</a><code class="language-auto">             Self::Minus =&gt; ast::Operator::Negate(rhs).into(),</code>
+<a href="#l679" class="line" id="l679">    679</a><code class="language-auto">             Self::Not =&gt; ast::Operator::Not(rhs).into(),</code>
+<a href="#l680" class="line" id="l680">    680</a><code class="language-auto">         }</code>
+<a href="#l681" class="line" id="l681">    681</a><code class="language-auto">     }</code>
+<a href="#l682" class="line" id="l682">    682</a><code class="language-auto"> }</code>
+<a href="#l683" class="line" id="l683">    683</a><code class="language-auto"> </code>
+<a href="#l684" class="line" id="l684">    684</a><code class="language-auto"> /// Infix operators.</code>
+<a href="#l685" class="line" id="l685">    685</a><code class="language-auto"> enum InfixOperator {</code>
+<a href="#l686" class="line" id="l686">    686</a><code class="language-auto">     Add,                // a + b</code>
+<a href="#l687" class="line" id="l687">    687</a><code class="language-auto">     And,                // a AND b</code>
+<a href="#l688" class="line" id="l688">    688</a><code class="language-auto">     Divide,             // a / b</code>
+<a href="#l689" class="line" id="l689">    689</a><code class="language-auto">     Equal,              // a = b</code>
+<a href="#l690" class="line" id="l690">    690</a><code class="language-auto">     Exponentiate,       // a ^ b</code>
+<a href="#l691" class="line" id="l691">    691</a><code class="language-auto">     GreaterThan,        // a &gt; b</code>
+<a href="#l692" class="line" id="l692">    692</a><code class="language-auto">     GreaterThanOrEqual, // a &gt;= b</code>
+<a href="#l693" class="line" id="l693">    693</a><code class="language-auto">     LessThan,           // a &lt; b</code>
+<a href="#l694" class="line" id="l694">    694</a><code class="language-auto">     LessThanOrEqual,    // a &lt;= b</code>
+<a href="#l695" class="line" id="l695">    695</a><code class="language-auto">     Like,               // a LIKE b</code>
+<a href="#l696" class="line" id="l696">    696</a><code class="language-auto">     Multiply,           // a * b</code>
+<a href="#l697" class="line" id="l697">    697</a><code class="language-auto">     NotEqual,           // a != b</code>
+<a href="#l698" class="line" id="l698">    698</a><code class="language-auto">     Or,                 // a OR b</code>
+<a href="#l699" class="line" id="l699">    699</a><code class="language-auto">     Remainder,          // a % b</code>
+<a href="#l700" class="line" id="l700">    700</a><code class="language-auto">     Subtract,           // a - b</code>
+<a href="#l701" class="line" id="l701">    701</a><code class="language-auto"> }</code>
+<a href="#l702" class="line" id="l702">    702</a><code class="language-auto"> </code>
+<a href="#l703" class="line" id="l703">    703</a><code class="language-auto"> impl InfixOperator {</code>
+<a href="#l704" class="line" id="l704">    704</a><code class="language-auto">     /// The operator precedence.</code>
+<a href="#l705" class="line" id="l705">    705</a><code class="language-auto">     ///</code>
+<a href="#l706" class="line" id="l706">    706</a><code class="language-auto">     /// Mostly follows Postgres, except IS and LIKE having same precedence as =.</code>
+<a href="#l707" class="line" id="l707">    707</a><code class="language-auto">     /// This is similar to SQLite and MySQL.</code>
+<a href="#l708" class="line" id="l708">    708</a><code class="language-auto">     fn precedence(&amp;self) -&gt; Precedence {</code>
+<a href="#l709" class="line" id="l709">    709</a><code class="language-auto">         match self {</code>
+<a href="#l710" class="line" id="l710">    710</a><code class="language-auto">             Self::Or =&gt; 1,</code>
+<a href="#l711" class="line" id="l711">    711</a><code class="language-auto">             Self::And =&gt; 2,</code>
+<a href="#l712" class="line" id="l712">    712</a><code class="language-auto">             // Self::Not =&gt; 3</code>
+<a href="#l713" class="line" id="l713">    713</a><code class="language-auto">             Self::Equal | Self::NotEqual | Self::Like =&gt; 4, // and Self::Is</code>
+<a href="#l714" class="line" id="l714">    714</a><code class="language-auto">             Self::GreaterThan</code>
+<a href="#l715" class="line" id="l715">    715</a><code class="language-auto">             | Self::GreaterThanOrEqual</code>
+<a href="#l716" class="line" id="l716">    716</a><code class="language-auto">             | Self::LessThan</code>
+<a href="#l717" class="line" id="l717">    717</a><code class="language-auto">             | Self::LessThanOrEqual =&gt; 5,</code>
+<a href="#l718" class="line" id="l718">    718</a><code class="language-auto">             Self::Add | Self::Subtract =&gt; 6,</code>
+<a href="#l719" class="line" id="l719">    719</a><code class="language-auto">             Self::Multiply | Self::Divide | Self::Remainder =&gt; 7,</code>
+<a href="#l720" class="line" id="l720">    720</a><code class="language-auto">             Self::Exponentiate =&gt; 8,</code>
+<a href="#l721" class="line" id="l721">    721</a><code class="language-auto">         }</code>
+<a href="#l722" class="line" id="l722">    722</a><code class="language-auto">     }</code>
+<a href="#l723" class="line" id="l723">    723</a><code class="language-auto"> </code>
+<a href="#l724" class="line" id="l724">    724</a><code class="language-auto">     /// The operator associativity.</code>
+<a href="#l725" class="line" id="l725">    725</a><code class="language-auto">     fn associativity(&amp;self) -&gt; Precedence {</code>
+<a href="#l726" class="line" id="l726">    726</a><code class="language-auto">         match self {</code>
+<a href="#l727" class="line" id="l727">    727</a><code class="language-auto">             Self::Exponentiate =&gt; RIGHT_ASSOCIATIVE,</code>
+<a href="#l728" class="line" id="l728">    728</a><code class="language-auto">             _ =&gt; LEFT_ASSOCIATIVE,</code>
+<a href="#l729" class="line" id="l729">    729</a><code class="language-auto">         }</code>
+<a href="#l730" class="line" id="l730">    730</a><code class="language-auto">     }</code>
+<a href="#l731" class="line" id="l731">    731</a><code class="language-auto"> </code>
+<a href="#l732" class="line" id="l732">    732</a><code class="language-auto">     /// Builds an AST expression for the infix operator.</code>
+<a href="#l733" class="line" id="l733">    733</a><code class="language-auto">     fn build(self, lhs: ast::Expression, rhs: ast::Expression) -&gt; ast::Expression {</code>
+<a href="#l734" class="line" id="l734">    734</a><code class="language-auto">         let (lhs, rhs) = (Box::new(lhs), Box::new(rhs));</code>
+<a href="#l735" class="line" id="l735">    735</a><code class="language-auto">         match self {</code>
+<a href="#l736" class="line" id="l736">    736</a><code class="language-auto">             Self::Add =&gt; ast::Operator::Add(lhs, rhs).into(),</code>
+<a href="#l737" class="line" id="l737">    737</a><code class="language-auto">             Self::And =&gt; ast::Operator::And(lhs, rhs).into(),</code>
+<a href="#l738" class="line" id="l738">    738</a><code class="language-auto">             Self::Divide =&gt; ast::Operator::Divide(lhs, rhs).into(),</code>
+<a href="#l739" class="line" id="l739">    739</a><code class="language-auto">             Self::Equal =&gt; ast::Operator::Equal(lhs, rhs).into(),</code>
+<a href="#l740" class="line" id="l740">    740</a><code class="language-auto">             Self::Exponentiate =&gt; ast::Operator::Exponentiate(lhs, rhs).into(),</code>
+<a href="#l741" class="line" id="l741">    741</a><code class="language-auto">             Self::GreaterThan =&gt; ast::Operator::GreaterThan(lhs, rhs).into(),</code>
+<a href="#l742" class="line" id="l742">    742</a><code class="language-auto">             Self::GreaterThanOrEqual =&gt; ast::Operator::GreaterThanOrEqual(lhs, rhs).into(),</code>
+<a href="#l743" class="line" id="l743">    743</a><code class="language-auto">             Self::LessThan =&gt; ast::Operator::LessThan(lhs, rhs).into(),</code>
+<a href="#l744" class="line" id="l744">    744</a><code class="language-auto">             Self::LessThanOrEqual =&gt; ast::Operator::LessThanOrEqual(lhs, rhs).into(),</code>
+<a href="#l745" class="line" id="l745">    745</a><code class="language-auto">             Self::Like =&gt; ast::Operator::Like(lhs, rhs).into(),</code>
+<a href="#l746" class="line" id="l746">    746</a><code class="language-auto">             Self::Multiply =&gt; ast::Operator::Multiply(lhs, rhs).into(),</code>
+<a href="#l747" class="line" id="l747">    747</a><code class="language-auto">             Self::NotEqual =&gt; ast::Operator::NotEqual(lhs, rhs).into(),</code>
+<a href="#l748" class="line" id="l748">    748</a><code class="language-auto">             Self::Or =&gt; ast::Operator::Or(lhs, rhs).into(),</code>
+<a href="#l749" class="line" id="l749">    749</a><code class="language-auto">             Self::Remainder =&gt; ast::Operator::Remainder(lhs, rhs).into(),</code>
+<a href="#l750" class="line" id="l750">    750</a><code class="language-auto">             Self::Subtract =&gt; ast::Operator::Subtract(lhs, rhs).into(),</code>
+<a href="#l751" class="line" id="l751">    751</a><code class="language-auto">         }</code>
+<a href="#l752" class="line" id="l752">    752</a><code class="language-auto">     }</code>
+<a href="#l753" class="line" id="l753">    753</a><code class="language-auto"> }</code>
+<a href="#l754" class="line" id="l754">    754</a><code class="language-auto"> </code>
+<a href="#l755" class="line" id="l755">    755</a><code class="language-auto"> /// Postfix operators.</code>
+<a href="#l756" class="line" id="l756">    756</a><code class="language-auto"> enum PostfixOperator {</code>
+<a href="#l757" class="line" id="l757">    757</a><code class="language-auto">     Factorial,           // a!</code>
+<a href="#l758" class="line" id="l758">    758</a><code class="language-auto">     Is(ast::Literal),    // a IS NULL | NAN</code>
+<a href="#l759" class="line" id="l759">    759</a><code class="language-auto">     IsNot(ast::Literal), // a IS NOT NULL | NAN</code>
+<a href="#l760" class="line" id="l760">    760</a><code class="language-auto"> }</code>
+<a href="#l761" class="line" id="l761">    761</a><code class="language-auto"> </code>
+<a href="#l762" class="line" id="l762">    762</a><code class="language-auto"> impl PostfixOperator {</code>
+<a href="#l763" class="line" id="l763">    763</a><code class="language-auto">     // The operator precedence.</code>
+<a href="#l764" class="line" id="l764">    764</a><code class="language-auto">     fn precedence(&amp;self) -&gt; Precedence {</code>
+<a href="#l765" class="line" id="l765">    765</a><code class="language-auto">         match self {</code>
+<a href="#l766" class="line" id="l766">    766</a><code class="language-auto">             Self::Is(_) | Self::IsNot(_) =&gt; 4,</code>
+<a href="#l767" class="line" id="l767">    767</a><code class="language-auto">             Self::Factorial =&gt; 9,</code>
+<a href="#l768" class="line" id="l768">    768</a><code class="language-auto">         }</code>
+<a href="#l769" class="line" id="l769">    769</a><code class="language-auto">     }</code>
+<a href="#l770" class="line" id="l770">    770</a><code class="language-auto"> </code>
+<a href="#l771" class="line" id="l771">    771</a><code class="language-auto">     /// Builds an AST expression for the operator.</code>
+<a href="#l772" class="line" id="l772">    772</a><code class="language-auto">     fn build(self, lhs: ast::Expression) -&gt; ast::Expression {</code>
+<a href="#l773" class="line" id="l773">    773</a><code class="language-auto">         let lhs = Box::new(lhs);</code>
+<a href="#l774" class="line" id="l774">    774</a><code class="language-auto">         match self {</code>
+<a href="#l775" class="line" id="l775">    775</a><code class="language-auto">             Self::Factorial =&gt; ast::Operator::Factorial(lhs).into(),</code>
+<a href="#l776" class="line" id="l776">    776</a><code class="language-auto">             Self::Is(v) =&gt; ast::Operator::Is(lhs, v).into(),</code>
+<a href="#l777" class="line" id="l777">    777</a><code class="language-auto">             Self::IsNot(v) =&gt; ast::Operator::Not(ast::Operator::Is(lhs, v).into()).into(),</code>
+<a href="#l778" class="line" id="l778">    778</a><code class="language-auto">         }</code>
+<a href="#l779" class="line" id="l779">    779</a><code class="language-auto">     }</code>
+<a href="#l780" class="line" id="l780">    780</a><code class="language-auto"> }</code>
+</pre>
+</div>
+</body>
+</html>

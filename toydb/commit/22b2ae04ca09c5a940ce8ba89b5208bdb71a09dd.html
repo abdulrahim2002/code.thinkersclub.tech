@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Split `raft::Response::State` into `Mutate` and `Query` - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/22b2ae04ca09c5a940ce8ba89b5208bdb71a09dd.html">22b2ae04ca09c5a940ce8ba89b5208bdb71a09dd</a>
+<b>parent</b> <a href="../commit/8aded00835ef0483e630c88e4cd2eba4e580f334.html">8aded00835ef0483e630c88e4cd2eba4e580f334</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Sat, 18 Nov 2023 18:44:28 +0100
+
+Split `raft::Response::State` into `Mutate` and `Query`
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/raft/message.rs</a></td><td> | </td><td class="num">3</td><td><span class="i">++</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/raft/node/follower.rs</a></td><td> | </td><td class="num">4</td><td><span class="i">++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/raft/state.rs</a></td><td> | </td><td class="num">8</td><td><span class="i">++++</span><span class="d">----</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">src/sql/engine/raft.rs</a></td><td> | </td><td class="num">4</td><td><span class="i">++</span><span class="d">--</span></td></tr>
+</table></pre><pre>4 files changed, 10 insertions(+), 9 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/raft/message.rs.html">src/raft/message.rs</a> b/<a href="../file/src/raft/message.rs.html">src/raft/message.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -101,6 +101,7 @@ pub enum Request {
+</a> /// A client response.
+ #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+ pub enum Response {
+<a href="#h0-0-3" id="h0-0-3" class="d">-    State(Vec&lt;u8&gt;),
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+    Query(Vec&lt;u8&gt;),
+</a><a href="#h0-0-5" id="h0-0-5" class="i">+    Mutate(Vec&lt;u8&gt;),
+</a>     Status(Status),
+ }
+<b>diff --git a/<a id="h1" href="../file/src/raft/node/follower.rs.html">src/raft/node/follower.rs</a> b/<a href="../file/src/raft/node/follower.rs.html">src/raft/node/follower.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -810,7 +810,7 @@ pub mod tests {
+</a>             term: 3,
+             event: Event::ClientResponse {
+                 id: vec![0x01],
+<a href="#h1-0-3" id="h1-0-3" class="d">-                response: Ok(Response::State(vec![0xaf])),
+</a><a href="#h1-0-4" id="h1-0-4" class="i">+                response: Ok(Response::Mutate(vec![0xaf])),
+</a>             },
+         })?;
+         assert_node(&amp;mut node).is_follower().term(3).leader(Some(2)).proxied(vec![]).queued(vec![]);
+<a href="#h1-1" id="h1-1" class="h">@@ -822,7 +822,7 @@ pub mod tests {
+</a>                 term: 3,
+                 event: Event::ClientResponse {
+                     id: vec![0x01],
+<a href="#h1-1-3" id="h1-1-3" class="d">-                    response: Ok(Response::State(vec![0xaf])),
+</a><a href="#h1-1-4" id="h1-1-4" class="i">+                    response: Ok(Response::Mutate(vec![0xaf])),
+</a>                 },
+             }],
+         );
+<b>diff --git a/<a id="h2" href="../file/src/raft/state.rs.html">src/raft/state.rs</a> b/<a href="../file/src/raft/state.rs.html">src/raft/state.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -175,7 +175,7 @@ impl Driver {
+</a>     /// Notifies a client about an applied log entry, if any.
+     fn notify_applied(&amp;mut self, index: Index, result: Result&lt;Vec&lt;u8&gt;&gt;) -&gt; Result&lt;()&gt; {
+         if let Some((to, id)) = self.notify.remove(&amp;index) {
+<a href="#h2-0-3" id="h2-0-3" class="d">-            self.send(to, Event::ClientResponse { id, response: result.map(Response::State) })?;
+</a><a href="#h2-0-4" id="h2-0-4" class="i">+            self.send(to, Event::ClientResponse { id, response: result.map(Response::Mutate) })?;
+</a>         }
+         Ok(())
+     }
+<a href="#h2-1" id="h2-1" class="h">@@ -203,7 +203,7 @@ impl Driver {
+</a>             }
+             self.send(
+                 query.address,
+<a href="#h2-1-3" id="h2-1-3" class="d">-                Event::ClientResponse { id: query.id, response: result.map(Response::State) },
+</a><a href="#h2-1-4" id="h2-1-4" class="i">+                Event::ClientResponse { id: query.id, response: result.map(Response::Query) },
+</a>             )?
+         }
+         Ok(())
+<a href="#h2-2" id="h2-2" class="h">@@ -381,7 +381,7 @@ pub mod tests {
+</a>                 term: 0,
+                 event: Event::ClientResponse {
+                     id: vec![0x01],
+<a href="#h2-2-3" id="h2-2-3" class="d">-                    response: Ok(Response::State(vec![0xaf]))
+</a><a href="#h2-2-4" id="h2-2-4" class="i">+                    response: Ok(Response::Mutate(vec![0xaf]))
+</a>                 }
+             }]
+         );
+<a href="#h2-3" id="h2-3" class="h">@@ -419,7 +419,7 @@ pub mod tests {
+</a>                 term: 0,
+                 event: Event::ClientResponse {
+                     id: vec![0x01],
+<a href="#h2-3-3" id="h2-3-3" class="d">-                    response: Ok(Response::State(vec![0xf0]))
+</a><a href="#h2-3-4" id="h2-3-4" class="i">+                    response: Ok(Response::Query(vec![0xf0]))
+</a>                 }
+             }]
+         );
+<b>diff --git a/<a id="h3" href="../file/src/sql/engine/raft.rs.html">src/sql/engine/raft.rs</a> b/<a href="../file/src/sql/engine/raft.rs.html">src/sql/engine/raft.rs</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -89,7 +89,7 @@ impl Client {
+</a>     /// return type.
+     fn mutate&lt;V: DeserializeOwned&gt;(&amp;self, mutation: Mutation) -&gt; Result&lt;V&gt; {
+         match self.execute(raft::Request::Mutate(bincode::serialize(&amp;mutation)?))? {
+<a href="#h3-0-3" id="h3-0-3" class="d">-            raft::Response::State(response) =&gt; Ok(bincode::deserialize(&amp;response)?),
+</a><a href="#h3-0-4" id="h3-0-4" class="i">+            raft::Response::Mutate(response) =&gt; Ok(bincode::deserialize(&amp;response)?),
+</a>             resp =&gt; Err(Error::Internal(format!(&quot;Unexpected Raft mutation response {:?}&quot;, resp))),
+         }
+     }
+<a href="#h3-1" id="h3-1" class="h">@@ -98,7 +98,7 @@ impl Client {
+</a>     /// return type.
+     fn query&lt;V: DeserializeOwned&gt;(&amp;self, query: Query) -&gt; Result&lt;V&gt; {
+         match self.execute(raft::Request::Query(bincode::serialize(&amp;query)?))? {
+<a href="#h3-1-3" id="h3-1-3" class="d">-            raft::Response::State(response) =&gt; Ok(bincode::deserialize(&amp;response)?),
+</a><a href="#h3-1-4" id="h3-1-4" class="i">+            raft::Response::Query(response) =&gt; Ok(bincode::deserialize(&amp;response)?),
+</a>             resp =&gt; Err(Error::Internal(format!(&quot;Unexpected Raft query response {:?}&quot;, resp))),
+         }
+     }
+</pre>
+</div>
+</body>
+</html>

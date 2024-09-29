@@ -1,0 +1,1828 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>sql: add hash joins (fixes #34) - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/babe5deabf0ce57494b70edd8084a087b4079ca2.html">babe5deabf0ce57494b70edd8084a087b4079ca2</a>
+<b>parent</b> <a href="../commit/46308de48800ee12f810f39dd041e180b596a33e.html">46308de48800ee12f810f39dd041e180b596a33e</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Fri,  5 Jun 2020 19:54:48 +0200
+
+sql: add hash joins (fixes #34)
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/sql/execution/join.rs</a></td><td> | </td><td class="num">53</td><td><span class="i">+++++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/sql/execution/mod.rs</a></td><td> | </td><td class="num">9</td><td><span class="i">++++++++</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/sql/plan/mod.rs</a></td><td> | </td><td class="num">36</td><td><span class="i">+++++++++++++++++++++++++++++++++++</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">src/sql/plan/optimizer.rs</a></td><td> | </td><td class="num">38</td><td><span class="i">++++++++++++++++++++++++++++++++++++++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h4">tests/sql/query/group_join</a></td><td> | </td><td class="num">43</td><td><span class="i">+++++++++++++++++++</span><span class="d">------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h5">tests/sql/query/join_inner</a></td><td> | </td><td class="num">43</td><td><span class="i">+++++++++++++++++++</span><span class="d">------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h6">tests/sql/query/join_inner_implicit</a></td><td> | </td><td class="num">43</td><td><span class="i">+++++++++++++++++++</span><span class="d">------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h7">tests/sql/query/join_inner_index_transverse</a></td><td> | </td><td class="num">43</td><td><span class="i">+++++++++++++++++++</span><span class="d">------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h8">tests/sql/query/join_inner_index_transverse_where</a></td><td> | </td><td class="num">43</td><td><span class="i">+++++++++++++++++++</span><span class="d">------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h9">tests/sql/query/join_inner_multi</a></td><td> | </td><td class="num">86</td><td><span class="i">+++++++++++++++++++++++++++++++++++</span><span class="d">--------------------------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h10">tests/sql/query/join_inner_multi_index</a></td><td> | </td><td class="num">86</td><td><span class="i">+++++++++++++++++++++++++++++++++++</span><span class="d">--------------------------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h11">tests/sql/query/join_inner_on_aliased</a></td><td> | </td><td class="num">43</td><td><span class="i">+++++++++++++++++++</span><span class="d">------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h12">tests/sql/query/join_inner_on_where</a></td><td> | </td><td class="num">43</td><td><span class="i">+++++++++++++++++++</span><span class="d">------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h13">tests/sql/query/join_left</a></td><td> | </td><td class="num">43</td><td><span class="i">+++++++++++++++++++</span><span class="d">------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h14">tests/sql/query/join_left_all</a></td><td> | </td><td class="num">43</td><td><span class="i">+++++++++++++++++++</span><span class="d">------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h15">tests/sql/query/join_left_outer</a></td><td> | </td><td class="num">43</td><td><span class="i">+++++++++++++++++++</span><span class="d">------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h16">tests/sql/query/join_left_truncate</a></td><td> | </td><td class="num">43</td><td><span class="i">+++++++++++++++++++</span><span class="d">------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h17">tests/sql/query/join_right</a></td><td> | </td><td class="num">43</td><td><span class="i">+++++++++++++++++++</span><span class="d">------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h18">tests/sql/query/join_right_all</a></td><td> | </td><td class="num">43</td><td><span class="i">+++++++++++++++++++</span><span class="d">------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h19">tests/sql/query/join_right_outer</a></td><td> | </td><td class="num">43</td><td><span class="i">+++++++++++++++++++</span><span class="d">------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h20">tests/sql/query/join_right_truncate</a></td><td> | </td><td class="num">43</td><td><span class="i">+++++++++++++++++++</span><span class="d">------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h21">tests/sql/query/order_field_aliased</a></td><td> | </td><td class="num">43</td><td><span class="i">+++++++++++++++++++</span><span class="d">------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h22">tests/sql/query/order_field_qualified</a></td><td> | </td><td class="num">43</td><td><span class="i">+++++++++++++++++++</span><span class="d">------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h23">tests/sql/query/where_join_inner</a></td><td> | </td><td class="num">43</td><td><span class="i">+++++++++++++++++++</span><span class="d">------------------------</span></td></tr>
+</table></pre><pre>24 files changed, 552 insertions(+), 530 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/sql/execution/join.rs.html">src/sql/execution/join.rs</a> b/<a href="../file/src/sql/execution/join.rs.html">src/sql/execution/join.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -3,6 +3,8 @@ use super::super::types::{Expression, Rows};
+</a> use super::{Executor, ResultSet, Row, Value};
+ use crate::error::{Error, Result};
+ 
+<a href="#h0-0-3" id="h0-0-3" class="i">+use std::collections::HashMap;
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+
+</a> /// A nested loop join executor
+ /// FIXME This code is horrible, clean it up at some point
+ pub struct NestedLoopJoin&lt;T: Transaction&gt; {
+<a href="#h0-1" id="h0-1" class="h">@@ -135,3 +137,54 @@ impl Iterator for NestedLoopRows {
+</a>         self.left_cur.clone()
+     }
+ }
+<a href="#h0-1-3" id="h0-1-3" class="i">+
+</a><a href="#h0-1-4" id="h0-1-4" class="i">+/// A hash join executor
+</a><a href="#h0-1-5" id="h0-1-5" class="i">+pub struct HashJoin&lt;T: Transaction&gt; {
+</a><a href="#h0-1-6" id="h0-1-6" class="i">+    left: Box&lt;dyn Executor&lt;T&gt;&gt;,
+</a><a href="#h0-1-7" id="h0-1-7" class="i">+    left_field: usize,
+</a><a href="#h0-1-8" id="h0-1-8" class="i">+    right: Box&lt;dyn Executor&lt;T&gt;&gt;,
+</a><a href="#h0-1-9" id="h0-1-9" class="i">+    right_field: usize,
+</a><a href="#h0-1-10" id="h0-1-10" class="i">+    outer: bool,
+</a><a href="#h0-1-11" id="h0-1-11" class="i">+}
+</a><a href="#h0-1-12" id="h0-1-12" class="i">+
+</a><a href="#h0-1-13" id="h0-1-13" class="i">+impl&lt;T: Transaction&gt; HashJoin&lt;T&gt; {
+</a><a href="#h0-1-14" id="h0-1-14" class="i">+    pub fn new(
+</a><a href="#h0-1-15" id="h0-1-15" class="i">+        left: Box&lt;dyn Executor&lt;T&gt;&gt;,
+</a><a href="#h0-1-16" id="h0-1-16" class="i">+        left_field: usize,
+</a><a href="#h0-1-17" id="h0-1-17" class="i">+        right: Box&lt;dyn Executor&lt;T&gt;&gt;,
+</a><a href="#h0-1-18" id="h0-1-18" class="i">+        right_field: usize,
+</a><a href="#h0-1-19" id="h0-1-19" class="i">+        outer: bool,
+</a><a href="#h0-1-20" id="h0-1-20" class="i">+    ) -&gt; Box&lt;Self&gt; {
+</a><a href="#h0-1-21" id="h0-1-21" class="i">+        Box::new(Self { left, left_field, right, right_field, outer })
+</a><a href="#h0-1-22" id="h0-1-22" class="i">+    }
+</a><a href="#h0-1-23" id="h0-1-23" class="i">+}
+</a><a href="#h0-1-24" id="h0-1-24" class="i">+
+</a><a href="#h0-1-25" id="h0-1-25" class="i">+impl&lt;T: Transaction&gt; Executor&lt;T&gt; for HashJoin&lt;T&gt; {
+</a><a href="#h0-1-26" id="h0-1-26" class="i">+    fn execute(self: Box&lt;Self&gt;, txn: &amp;mut T) -&gt; Result&lt;ResultSet&gt; {
+</a><a href="#h0-1-27" id="h0-1-27" class="i">+        if let ResultSet::Query { mut columns, rows } = self.left.execute(txn)? {
+</a><a href="#h0-1-28" id="h0-1-28" class="i">+            if let ResultSet::Query { columns: rcolumns, rows: rrows } = self.right.execute(txn)? {
+</a><a href="#h0-1-29" id="h0-1-29" class="i">+                let (l, r, outer) = (self.left_field, self.right_field, self.outer);
+</a><a href="#h0-1-30" id="h0-1-30" class="i">+                let right: HashMap&lt;Value, Row&gt; =
+</a><a href="#h0-1-31" id="h0-1-31" class="i">+                    rrows.map(|res| res.map(|row| (row[r].clone(), row))).collect::&lt;Result&lt;_&gt;&gt;()?;
+</a><a href="#h0-1-32" id="h0-1-32" class="i">+                let empty = std::iter::repeat(Value::Null).take(rcolumns.len());
+</a><a href="#h0-1-33" id="h0-1-33" class="i">+                columns.extend(rcolumns);
+</a><a href="#h0-1-34" id="h0-1-34" class="i">+                let rows = Box::new(rows.filter_map(move |res| match res {
+</a><a href="#h0-1-35" id="h0-1-35" class="i">+                    Ok(mut row) =&gt; match right.get(&amp;row[l]) {
+</a><a href="#h0-1-36" id="h0-1-36" class="i">+                        Some(hit) =&gt; {
+</a><a href="#h0-1-37" id="h0-1-37" class="i">+                            row.extend(hit.clone());
+</a><a href="#h0-1-38" id="h0-1-38" class="i">+                            Some(Ok(row))
+</a><a href="#h0-1-39" id="h0-1-39" class="i">+                        }
+</a><a href="#h0-1-40" id="h0-1-40" class="i">+                        None if outer =&gt; {
+</a><a href="#h0-1-41" id="h0-1-41" class="i">+                            row.extend(empty.clone());
+</a><a href="#h0-1-42" id="h0-1-42" class="i">+                            Some(Ok(row))
+</a><a href="#h0-1-43" id="h0-1-43" class="i">+                        }
+</a><a href="#h0-1-44" id="h0-1-44" class="i">+                        None =&gt; None,
+</a><a href="#h0-1-45" id="h0-1-45" class="i">+                    },
+</a><a href="#h0-1-46" id="h0-1-46" class="i">+                    Err(err) =&gt; Some(Err(err)),
+</a><a href="#h0-1-47" id="h0-1-47" class="i">+                }));
+</a><a href="#h0-1-48" id="h0-1-48" class="i">+                return Ok(ResultSet::Query { columns, rows });
+</a><a href="#h0-1-49" id="h0-1-49" class="i">+            }
+</a><a href="#h0-1-50" id="h0-1-50" class="i">+        }
+</a><a href="#h0-1-51" id="h0-1-51" class="i">+        Err(Error::Internal(&quot;Unexpected result set&quot;.into()))
+</a><a href="#h0-1-52" id="h0-1-52" class="i">+    }
+</a><a href="#h0-1-53" id="h0-1-53" class="i">+}
+</a><b>diff --git a/<a id="h1" href="../file/src/sql/execution/mod.rs.html">src/sql/execution/mod.rs</a> b/<a href="../file/src/sql/execution/mod.rs.html">src/sql/execution/mod.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -6,7 +6,7 @@ mod schema;
+</a> mod source;
+ 
+ use aggregation::Aggregation;
+<a href="#h1-0-3" id="h1-0-3" class="d">-use join::NestedLoopJoin;
+</a><a href="#h1-0-4" id="h1-0-4" class="i">+use join::{HashJoin, NestedLoopJoin};
+</a> use mutation::{Delete, Insert, Update};
+ use query::{Filter, Limit, Offset, Order, Projection};
+ use schema::{CreateTable, DropTable};
+<a href="#h1-1" id="h1-1" class="h">@@ -37,6 +37,13 @@ impl&lt;T: Transaction + &#39;static&gt; dyn Executor&lt;T&gt; {
+</a>             Node::Delete { table, source } =&gt; Delete::new(table, Self::build(*source)),
+             Node::DropTable { table } =&gt; DropTable::new(table),
+             Node::Filter { source, predicate } =&gt; Filter::new(Self::build(*source), predicate),
+<a href="#h1-1-3" id="h1-1-3" class="i">+            Node::HashJoin { left, left_field, right, right_field, outer } =&gt; HashJoin::new(
+</a><a href="#h1-1-4" id="h1-1-4" class="i">+                Self::build(*left),
+</a><a href="#h1-1-5" id="h1-1-5" class="i">+                left_field.0,
+</a><a href="#h1-1-6" id="h1-1-6" class="i">+                Self::build(*right),
+</a><a href="#h1-1-7" id="h1-1-7" class="i">+                right_field.0,
+</a><a href="#h1-1-8" id="h1-1-8" class="i">+                outer,
+</a><a href="#h1-1-9" id="h1-1-9" class="i">+            ),
+</a>             Node::IndexLookup { table, alias: _, column, values } =&gt; {
+                 IndexLookup::new(table, column, values)
+             }
+<b>diff --git a/<a id="h2" href="../file/src/sql/plan/mod.rs.html">src/sql/plan/mod.rs</a> b/<a href="../file/src/sql/plan/mod.rs.html">src/sql/plan/mod.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -42,6 +42,7 @@ impl Plan {
+</a>         root = optimizer::FilterPushdown.optimize(root)?;
+         root = optimizer::IndexLookup::new(catalog).optimize(root)?;
+         root = optimizer::NoopCleaner.optimize(root)?;
+<a href="#h2-0-3" id="h2-0-3" class="i">+        root = optimizer::JoinType.optimize(root)?;
+</a>         Ok(Plan(root))
+     }
+ }
+<a href="#h2-1" id="h2-1" class="h">@@ -67,6 +68,13 @@ pub enum Node {
+</a>         source: Box&lt;Node&gt;,
+         predicate: Expression,
+     },
+<a href="#h2-1-3" id="h2-1-3" class="i">+    HashJoin {
+</a><a href="#h2-1-4" id="h2-1-4" class="i">+        left: Box&lt;Node&gt;,
+</a><a href="#h2-1-5" id="h2-1-5" class="i">+        left_field: (usize, Option&lt;(Option&lt;String&gt;, String)&gt;),
+</a><a href="#h2-1-6" id="h2-1-6" class="i">+        right: Box&lt;Node&gt;,
+</a><a href="#h2-1-7" id="h2-1-7" class="i">+        right_field: (usize, Option&lt;(Option&lt;String&gt;, String)&gt;),
+</a><a href="#h2-1-8" id="h2-1-8" class="i">+        outer: bool,
+</a><a href="#h2-1-9" id="h2-1-9" class="i">+    },
+</a>     IndexLookup {
+         table: String,
+         alias: Option&lt;String&gt;,
+<a href="#h2-2" id="h2-2" class="h">@@ -146,6 +154,13 @@ impl Node {
+</a>             Self::Filter { source, predicate } =&gt; {
+                 Self::Filter { source: source.transform(before, after)?.into(), predicate }
+             }
+<a href="#h2-2-3" id="h2-2-3" class="i">+            Self::HashJoin { left, left_field, right, right_field, outer } =&gt; Self::HashJoin {
+</a><a href="#h2-2-4" id="h2-2-4" class="i">+                left: left.transform(before, after)?.into(),
+</a><a href="#h2-2-5" id="h2-2-5" class="i">+                left_field,
+</a><a href="#h2-2-6" id="h2-2-6" class="i">+                right: right.transform(before, after)?.into(),
+</a><a href="#h2-2-7" id="h2-2-7" class="i">+                right_field,
+</a><a href="#h2-2-8" id="h2-2-8" class="i">+                outer,
+</a><a href="#h2-2-9" id="h2-2-9" class="i">+            },
+</a>             Self::Limit { source, limit } =&gt; {
+                 Self::Limit { source: source.transform(before, after)?.into(), limit }
+             }
+<a href="#h2-3" id="h2-3" class="h">@@ -185,10 +200,11 @@ impl Node {
+</a>             | n @ Self::CreateTable { .. }
+             | n @ Self::Delete { .. }
+             | n @ Self::DropTable { .. }
+<a href="#h2-3-3" id="h2-3-3" class="i">+            | n @ Self::HashJoin { .. }
+</a>             | n @ Self::IndexLookup { .. }
+             | n @ Self::KeyLookup { .. }
+             | n @ Self::Limit { .. }
+<a href="#h2-3-7" id="h2-3-7" class="d">-            | n @ Self::NestedLoopJoin { .. }
+</a><a href="#h2-3-8" id="h2-3-8" class="i">+            | n @ Self::NestedLoopJoin { .. } // FIXME Handle predicate
+</a>             | n @ Self::Nothing
+             | n @ Self::Offset { .. }
+             | n @ Self::Scan { filter: None, .. } =&gt; n,
+<a href="#h2-4" id="h2-4" class="h">@@ -264,6 +280,24 @@ impl Node {
+</a>                 s += &amp;format!(&quot;Filter: {}\n&quot;, predicate);
+                 s += &amp;source.format(indent, false, true);
+             }
+<a href="#h2-4-3" id="h2-4-3" class="i">+            Self::HashJoin { left, left_field, right, right_field, outer } =&gt; {
+</a><a href="#h2-4-4" id="h2-4-4" class="i">+                s += &amp;format!(
+</a><a href="#h2-4-5" id="h2-4-5" class="i">+                    &quot;HashJoin: {} on {} = {}\n&quot;,
+</a><a href="#h2-4-6" id="h2-4-6" class="i">+                    if *outer { &quot;outer&quot; } else { &quot;inner&quot; },
+</a><a href="#h2-4-7" id="h2-4-7" class="i">+                    match left_field {
+</a><a href="#h2-4-8" id="h2-4-8" class="i">+                        (_, Some((Some(t), n))) =&gt; format!(&quot;{}.{}&quot;, t, n),
+</a><a href="#h2-4-9" id="h2-4-9" class="i">+                        (_, Some((None, n))) =&gt; n.clone(),
+</a><a href="#h2-4-10" id="h2-4-10" class="i">+                        (i, None) =&gt; format!(&quot;left #{}&quot;, i),
+</a><a href="#h2-4-11" id="h2-4-11" class="i">+                    },
+</a><a href="#h2-4-12" id="h2-4-12" class="i">+                    match right_field {
+</a><a href="#h2-4-13" id="h2-4-13" class="i">+                        (_, Some((Some(t), n))) =&gt; format!(&quot;{}.{}&quot;, t, n),
+</a><a href="#h2-4-14" id="h2-4-14" class="i">+                        (_, Some((None, n))) =&gt; n.clone(),
+</a><a href="#h2-4-15" id="h2-4-15" class="i">+                        (i, None) =&gt; format!(&quot;right #{}&quot;, i),
+</a><a href="#h2-4-16" id="h2-4-16" class="i">+                    },
+</a><a href="#h2-4-17" id="h2-4-17" class="i">+                );
+</a><a href="#h2-4-18" id="h2-4-18" class="i">+                s += &amp;left.format(indent.clone(), false, false);
+</a><a href="#h2-4-19" id="h2-4-19" class="i">+                s += &amp;right.format(indent, false, true);
+</a><a href="#h2-4-20" id="h2-4-20" class="i">+            }
+</a>             Self::IndexLookup { table, column, alias: _, values } =&gt; {
+                 s += &amp;format!(&quot;IndexLookup: {}.{}&quot;, table, column);
+                 if !values.is_empty() &amp;&amp; values.len() &lt; 10 {
+<b>diff --git a/<a id="h3" href="../file/src/sql/plan/optimizer.rs.html">src/sql/plan/optimizer.rs</a> b/<a href="../file/src/sql/plan/optimizer.rs.html">src/sql/plan/optimizer.rs</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -267,3 +267,41 @@ impl Optimizer for NoopCleaner {
+</a>         )
+     }
+ }
+<a href="#h3-0-3" id="h3-0-3" class="i">+
+</a><a href="#h3-0-4" id="h3-0-4" class="i">+// Optimizes join types, currently by swapping nested-loop joins with hash joins where appropriate.
+</a><a href="#h3-0-5" id="h3-0-5" class="i">+pub struct JoinType;
+</a><a href="#h3-0-6" id="h3-0-6" class="i">+
+</a><a href="#h3-0-7" id="h3-0-7" class="i">+impl Optimizer for JoinType {
+</a><a href="#h3-0-8" id="h3-0-8" class="i">+    fn optimize(&amp;self, node: Node) -&gt; Result&lt;Node&gt; {
+</a><a href="#h3-0-9" id="h3-0-9" class="i">+        node.transform(
+</a><a href="#h3-0-10" id="h3-0-10" class="i">+            &amp;|n| match n {
+</a><a href="#h3-0-11" id="h3-0-11" class="i">+                // Replace nested-loop equijoins with hash joins.
+</a><a href="#h3-0-12" id="h3-0-12" class="i">+                Node::NestedLoopJoin {
+</a><a href="#h3-0-13" id="h3-0-13" class="i">+                    left,
+</a><a href="#h3-0-14" id="h3-0-14" class="i">+                    left_size,
+</a><a href="#h3-0-15" id="h3-0-15" class="i">+                    right,
+</a><a href="#h3-0-16" id="h3-0-16" class="i">+                    predicate: Some(Expression::Equal(a, b)),
+</a><a href="#h3-0-17" id="h3-0-17" class="i">+                    outer,
+</a><a href="#h3-0-18" id="h3-0-18" class="i">+                } =&gt; match (*a, *b) {
+</a><a href="#h3-0-19" id="h3-0-19" class="i">+                    (Expression::Field(a, a_label), Expression::Field(b, b_label)) =&gt; {
+</a><a href="#h3-0-20" id="h3-0-20" class="i">+                        let (left_field, right_field) = if a &lt; left_size {
+</a><a href="#h3-0-21" id="h3-0-21" class="i">+                            ((a, a_label), (b - left_size, b_label))
+</a><a href="#h3-0-22" id="h3-0-22" class="i">+                        } else {
+</a><a href="#h3-0-23" id="h3-0-23" class="i">+                            ((b, b_label), (a - left_size, a_label))
+</a><a href="#h3-0-24" id="h3-0-24" class="i">+                        };
+</a><a href="#h3-0-25" id="h3-0-25" class="i">+                        Ok(Node::HashJoin { left, left_field, right, right_field, outer })
+</a><a href="#h3-0-26" id="h3-0-26" class="i">+                    }
+</a><a href="#h3-0-27" id="h3-0-27" class="i">+                    (a, b) =&gt; Ok(Node::NestedLoopJoin {
+</a><a href="#h3-0-28" id="h3-0-28" class="i">+                        left,
+</a><a href="#h3-0-29" id="h3-0-29" class="i">+                        left_size,
+</a><a href="#h3-0-30" id="h3-0-30" class="i">+                        right,
+</a><a href="#h3-0-31" id="h3-0-31" class="i">+                        predicate: Some(Expression::Equal(a.into(), b.into())),
+</a><a href="#h3-0-32" id="h3-0-32" class="i">+                        outer,
+</a><a href="#h3-0-33" id="h3-0-33" class="i">+                    }),
+</a><a href="#h3-0-34" id="h3-0-34" class="i">+                },
+</a><a href="#h3-0-35" id="h3-0-35" class="i">+                n =&gt; Ok(n),
+</a><a href="#h3-0-36" id="h3-0-36" class="i">+            },
+</a><a href="#h3-0-37" id="h3-0-37" class="i">+            &amp;|n| Ok(n),
+</a><a href="#h3-0-38" id="h3-0-38" class="i">+        )
+</a><a href="#h3-0-39" id="h3-0-39" class="i">+    }
+</a><a href="#h3-0-40" id="h3-0-40" class="i">+}
+</a><b>diff --git a/<a id="h4" href="../file/tests/sql/query/group_join.html">tests/sql/query/group_join</a> b/<a href="../file/tests/sql/query/group_join.html">tests/sql/query/group_join</a></b>
+<a href="#h4-0" id="h4-0" class="h">@@ -211,7 +211,7 @@ Optimized plan: Plan(
+</a>         source: Projection {
+             source: Aggregation {
+                 source: Projection {
+<a href="#h4-0-3" id="h4-0-3" class="d">-                    source: NestedLoopJoin {
+</a><a href="#h4-0-4" id="h4-0-4" class="i">+                    source: HashJoin {
+</a>                         left: Scan {
+                             table: &quot;movies&quot;,
+                             alias: Some(
+<a href="#h4-1" id="h4-1" class="h">@@ -219,7 +219,17 @@ Optimized plan: Plan(
+</a>                             ),
+                             filter: None,
+                         },
+<a href="#h4-1-3" id="h4-1-3" class="d">-                        left_size: 7,
+</a><a href="#h4-1-4" id="h4-1-4" class="i">+                        left_field: (
+</a><a href="#h4-1-5" id="h4-1-5" class="i">+                            2,
+</a><a href="#h4-1-6" id="h4-1-6" class="i">+                            Some(
+</a><a href="#h4-1-7" id="h4-1-7" class="i">+                                (
+</a><a href="#h4-1-8" id="h4-1-8" class="i">+                                    Some(
+</a><a href="#h4-1-9" id="h4-1-9" class="i">+                                        &quot;m&quot;,
+</a><a href="#h4-1-10" id="h4-1-10" class="i">+                                    ),
+</a><a href="#h4-1-11" id="h4-1-11" class="i">+                                    &quot;studio_id&quot;,
+</a><a href="#h4-1-12" id="h4-1-12" class="i">+                                ),
+</a><a href="#h4-1-13" id="h4-1-13" class="i">+                            ),
+</a><a href="#h4-1-14" id="h4-1-14" class="i">+                        ),
+</a>                         right: Scan {
+                             table: &quot;studios&quot;,
+                             alias: Some(
+<a href="#h4-2" id="h4-2" class="h">@@ -227,29 +237,14 @@ Optimized plan: Plan(
+</a>                             ),
+                             filter: None,
+                         },
+<a href="#h4-2-3" id="h4-2-3" class="d">-                        predicate: Some(
+</a><a href="#h4-2-4" id="h4-2-4" class="d">-                            Equal(
+</a><a href="#h4-2-5" id="h4-2-5" class="d">-                                Field(
+</a><a href="#h4-2-6" id="h4-2-6" class="d">-                                    2,
+</a><a href="#h4-2-7" id="h4-2-7" class="d">-                                    Some(
+</a><a href="#h4-2-8" id="h4-2-8" class="d">-                                        (
+</a><a href="#h4-2-9" id="h4-2-9" class="d">-                                            Some(
+</a><a href="#h4-2-10" id="h4-2-10" class="d">-                                                &quot;m&quot;,
+</a><a href="#h4-2-11" id="h4-2-11" class="d">-                                            ),
+</a><a href="#h4-2-12" id="h4-2-12" class="d">-                                            &quot;studio_id&quot;,
+</a><a href="#h4-2-13" id="h4-2-13" class="d">-                                        ),
+</a><a href="#h4-2-14" id="h4-2-14" class="d">-                                    ),
+</a><a href="#h4-2-15" id="h4-2-15" class="d">-                                ),
+</a><a href="#h4-2-16" id="h4-2-16" class="d">-                                Field(
+</a><a href="#h4-2-17" id="h4-2-17" class="d">-                                    7,
+</a><a href="#h4-2-18" id="h4-2-18" class="i">+                        right_field: (
+</a><a href="#h4-2-19" id="h4-2-19" class="i">+                            0,
+</a><a href="#h4-2-20" id="h4-2-20" class="i">+                            Some(
+</a><a href="#h4-2-21" id="h4-2-21" class="i">+                                (
+</a>                                     Some(
+<a href="#h4-2-23" id="h4-2-23" class="d">-                                        (
+</a><a href="#h4-2-24" id="h4-2-24" class="d">-                                            Some(
+</a><a href="#h4-2-25" id="h4-2-25" class="d">-                                                &quot;s&quot;,
+</a><a href="#h4-2-26" id="h4-2-26" class="d">-                                            ),
+</a><a href="#h4-2-27" id="h4-2-27" class="d">-                                            &quot;id&quot;,
+</a><a href="#h4-2-28" id="h4-2-28" class="d">-                                        ),
+</a><a href="#h4-2-29" id="h4-2-29" class="i">+                                        &quot;s&quot;,
+</a>                                     ),
+<a href="#h4-2-31" id="h4-2-31" class="i">+                                    &quot;id&quot;,
+</a>                                 ),
+                             ),
+                         ),
+<a href="#h4-3" id="h4-3" class="h">@@ -334,7 +329,7 @@ Order: s.name asc
+</a> └─ Projection: s.name, #0
+    └─ Aggregation: count
+       └─ Projection: TRUE, s.name
+<a href="#h4-3-3" id="h4-3-3" class="d">-         └─ NestedLoopJoin: inner on m.studio_id = s.id
+</a><a href="#h4-3-4" id="h4-3-4" class="i">+         └─ HashJoin: inner on m.studio_id = s.id
+</a>             ├─ Scan: movies
+             └─ Scan: studios
+ 
+<b>diff --git a/<a id="h5" href="../file/tests/sql/query/join_inner.html">tests/sql/query/join_inner</a> b/<a href="../file/tests/sql/query/join_inner.html">tests/sql/query/join_inner</a></b>
+<a href="#h5-0" id="h5-0" class="h">@@ -85,41 +85,36 @@ Plan: Plan(
+</a> )
+ 
+ Optimized plan: Plan(
+<a href="#h5-0-3" id="h5-0-3" class="d">-    NestedLoopJoin {
+</a><a href="#h5-0-4" id="h5-0-4" class="i">+    HashJoin {
+</a>         left: Scan {
+             table: &quot;movies&quot;,
+             alias: None,
+             filter: None,
+         },
+<a href="#h5-0-10" id="h5-0-10" class="d">-        left_size: 7,
+</a><a href="#h5-0-11" id="h5-0-11" class="i">+        left_field: (
+</a><a href="#h5-0-12" id="h5-0-12" class="i">+            3,
+</a><a href="#h5-0-13" id="h5-0-13" class="i">+            Some(
+</a><a href="#h5-0-14" id="h5-0-14" class="i">+                (
+</a><a href="#h5-0-15" id="h5-0-15" class="i">+                    Some(
+</a><a href="#h5-0-16" id="h5-0-16" class="i">+                        &quot;movies&quot;,
+</a><a href="#h5-0-17" id="h5-0-17" class="i">+                    ),
+</a><a href="#h5-0-18" id="h5-0-18" class="i">+                    &quot;genre_id&quot;,
+</a><a href="#h5-0-19" id="h5-0-19" class="i">+                ),
+</a><a href="#h5-0-20" id="h5-0-20" class="i">+            ),
+</a><a href="#h5-0-21" id="h5-0-21" class="i">+        ),
+</a>         right: Scan {
+             table: &quot;genres&quot;,
+             alias: None,
+             filter: None,
+         },
+<a href="#h5-0-27" id="h5-0-27" class="d">-        predicate: Some(
+</a><a href="#h5-0-28" id="h5-0-28" class="d">-            Equal(
+</a><a href="#h5-0-29" id="h5-0-29" class="d">-                Field(
+</a><a href="#h5-0-30" id="h5-0-30" class="d">-                    3,
+</a><a href="#h5-0-31" id="h5-0-31" class="d">-                    Some(
+</a><a href="#h5-0-32" id="h5-0-32" class="d">-                        (
+</a><a href="#h5-0-33" id="h5-0-33" class="d">-                            Some(
+</a><a href="#h5-0-34" id="h5-0-34" class="d">-                                &quot;movies&quot;,
+</a><a href="#h5-0-35" id="h5-0-35" class="d">-                            ),
+</a><a href="#h5-0-36" id="h5-0-36" class="d">-                            &quot;genre_id&quot;,
+</a><a href="#h5-0-37" id="h5-0-37" class="d">-                        ),
+</a><a href="#h5-0-38" id="h5-0-38" class="d">-                    ),
+</a><a href="#h5-0-39" id="h5-0-39" class="d">-                ),
+</a><a href="#h5-0-40" id="h5-0-40" class="d">-                Field(
+</a><a href="#h5-0-41" id="h5-0-41" class="d">-                    7,
+</a><a href="#h5-0-42" id="h5-0-42" class="i">+        right_field: (
+</a><a href="#h5-0-43" id="h5-0-43" class="i">+            0,
+</a><a href="#h5-0-44" id="h5-0-44" class="i">+            Some(
+</a><a href="#h5-0-45" id="h5-0-45" class="i">+                (
+</a>                     Some(
+<a href="#h5-0-47" id="h5-0-47" class="d">-                        (
+</a><a href="#h5-0-48" id="h5-0-48" class="d">-                            Some(
+</a><a href="#h5-0-49" id="h5-0-49" class="d">-                                &quot;genres&quot;,
+</a><a href="#h5-0-50" id="h5-0-50" class="d">-                            ),
+</a><a href="#h5-0-51" id="h5-0-51" class="d">-                            &quot;id&quot;,
+</a><a href="#h5-0-52" id="h5-0-52" class="d">-                        ),
+</a><a href="#h5-0-53" id="h5-0-53" class="i">+                        &quot;genres&quot;,
+</a>                     ),
+<a href="#h5-0-55" id="h5-0-55" class="i">+                    &quot;id&quot;,
+</a>                 ),
+             ),
+         ),
+<a href="#h5-1" id="h5-1" class="h">@@ -130,7 +125,7 @@ Optimized plan: Plan(
+</a> Query: SELECT * FROM movies INNER JOIN genres ON movies.genre_id = genres.id
+ 
+ Explain:
+<a href="#h5-1-3" id="h5-1-3" class="d">-NestedLoopJoin: inner on movies.genre_id = genres.id
+</a><a href="#h5-1-4" id="h5-1-4" class="i">+HashJoin: inner on movies.genre_id = genres.id
+</a> ├─ Scan: movies
+ └─ Scan: genres
+ 
+<b>diff --git a/<a id="h6" href="../file/tests/sql/query/join_inner_implicit.html">tests/sql/query/join_inner_implicit</a> b/<a href="../file/tests/sql/query/join_inner_implicit.html">tests/sql/query/join_inner_implicit</a></b>
+<a href="#h6-0" id="h6-0" class="h">@@ -85,41 +85,36 @@ Plan: Plan(
+</a> )
+ 
+ Optimized plan: Plan(
+<a href="#h6-0-3" id="h6-0-3" class="d">-    NestedLoopJoin {
+</a><a href="#h6-0-4" id="h6-0-4" class="i">+    HashJoin {
+</a>         left: Scan {
+             table: &quot;movies&quot;,
+             alias: None,
+             filter: None,
+         },
+<a href="#h6-0-10" id="h6-0-10" class="d">-        left_size: 7,
+</a><a href="#h6-0-11" id="h6-0-11" class="i">+        left_field: (
+</a><a href="#h6-0-12" id="h6-0-12" class="i">+            3,
+</a><a href="#h6-0-13" id="h6-0-13" class="i">+            Some(
+</a><a href="#h6-0-14" id="h6-0-14" class="i">+                (
+</a><a href="#h6-0-15" id="h6-0-15" class="i">+                    Some(
+</a><a href="#h6-0-16" id="h6-0-16" class="i">+                        &quot;movies&quot;,
+</a><a href="#h6-0-17" id="h6-0-17" class="i">+                    ),
+</a><a href="#h6-0-18" id="h6-0-18" class="i">+                    &quot;genre_id&quot;,
+</a><a href="#h6-0-19" id="h6-0-19" class="i">+                ),
+</a><a href="#h6-0-20" id="h6-0-20" class="i">+            ),
+</a><a href="#h6-0-21" id="h6-0-21" class="i">+        ),
+</a>         right: Scan {
+             table: &quot;genres&quot;,
+             alias: None,
+             filter: None,
+         },
+<a href="#h6-0-27" id="h6-0-27" class="d">-        predicate: Some(
+</a><a href="#h6-0-28" id="h6-0-28" class="d">-            Equal(
+</a><a href="#h6-0-29" id="h6-0-29" class="d">-                Field(
+</a><a href="#h6-0-30" id="h6-0-30" class="d">-                    3,
+</a><a href="#h6-0-31" id="h6-0-31" class="d">-                    Some(
+</a><a href="#h6-0-32" id="h6-0-32" class="d">-                        (
+</a><a href="#h6-0-33" id="h6-0-33" class="d">-                            Some(
+</a><a href="#h6-0-34" id="h6-0-34" class="d">-                                &quot;movies&quot;,
+</a><a href="#h6-0-35" id="h6-0-35" class="d">-                            ),
+</a><a href="#h6-0-36" id="h6-0-36" class="d">-                            &quot;genre_id&quot;,
+</a><a href="#h6-0-37" id="h6-0-37" class="d">-                        ),
+</a><a href="#h6-0-38" id="h6-0-38" class="d">-                    ),
+</a><a href="#h6-0-39" id="h6-0-39" class="d">-                ),
+</a><a href="#h6-0-40" id="h6-0-40" class="d">-                Field(
+</a><a href="#h6-0-41" id="h6-0-41" class="d">-                    7,
+</a><a href="#h6-0-42" id="h6-0-42" class="i">+        right_field: (
+</a><a href="#h6-0-43" id="h6-0-43" class="i">+            0,
+</a><a href="#h6-0-44" id="h6-0-44" class="i">+            Some(
+</a><a href="#h6-0-45" id="h6-0-45" class="i">+                (
+</a>                     Some(
+<a href="#h6-0-47" id="h6-0-47" class="d">-                        (
+</a><a href="#h6-0-48" id="h6-0-48" class="d">-                            Some(
+</a><a href="#h6-0-49" id="h6-0-49" class="d">-                                &quot;genres&quot;,
+</a><a href="#h6-0-50" id="h6-0-50" class="d">-                            ),
+</a><a href="#h6-0-51" id="h6-0-51" class="d">-                            &quot;id&quot;,
+</a><a href="#h6-0-52" id="h6-0-52" class="d">-                        ),
+</a><a href="#h6-0-53" id="h6-0-53" class="i">+                        &quot;genres&quot;,
+</a>                     ),
+<a href="#h6-0-55" id="h6-0-55" class="i">+                    &quot;id&quot;,
+</a>                 ),
+             ),
+         ),
+<a href="#h6-1" id="h6-1" class="h">@@ -130,7 +125,7 @@ Optimized plan: Plan(
+</a> Query: SELECT * FROM movies JOIN genres ON movies.genre_id = genres.id
+ 
+ Explain:
+<a href="#h6-1-3" id="h6-1-3" class="d">-NestedLoopJoin: inner on movies.genre_id = genres.id
+</a><a href="#h6-1-4" id="h6-1-4" class="i">+HashJoin: inner on movies.genre_id = genres.id
+</a> ├─ Scan: movies
+ └─ Scan: genres
+ 
+<b>diff --git a/<a id="h7" href="../file/tests/sql/query/join_inner_index_transverse.html">tests/sql/query/join_inner_index_transverse</a> b/<a href="../file/tests/sql/query/join_inner_index_transverse.html">tests/sql/query/join_inner_index_transverse</a></b>
+<a href="#h7-0" id="h7-0" class="h">@@ -132,7 +132,7 @@ Plan: Plan(
+</a> )
+ 
+ Optimized plan: Plan(
+<a href="#h7-0-3" id="h7-0-3" class="d">-    NestedLoopJoin {
+</a><a href="#h7-0-4" id="h7-0-4" class="i">+    HashJoin {
+</a>         left: IndexLookup {
+             table: &quot;movies&quot;,
+             alias: Some(
+<a href="#h7-1" id="h7-1" class="h">@@ -145,7 +145,17 @@ Optimized plan: Plan(
+</a>                 ),
+             ],
+         },
+<a href="#h7-1-3" id="h7-1-3" class="d">-        left_size: 7,
+</a><a href="#h7-1-4" id="h7-1-4" class="i">+        left_field: (
+</a><a href="#h7-1-5" id="h7-1-5" class="i">+            3,
+</a><a href="#h7-1-6" id="h7-1-6" class="i">+            Some(
+</a><a href="#h7-1-7" id="h7-1-7" class="i">+                (
+</a><a href="#h7-1-8" id="h7-1-8" class="i">+                    Some(
+</a><a href="#h7-1-9" id="h7-1-9" class="i">+                        &quot;m&quot;,
+</a><a href="#h7-1-10" id="h7-1-10" class="i">+                    ),
+</a><a href="#h7-1-11" id="h7-1-11" class="i">+                    &quot;genre_id&quot;,
+</a><a href="#h7-1-12" id="h7-1-12" class="i">+                ),
+</a><a href="#h7-1-13" id="h7-1-13" class="i">+            ),
+</a><a href="#h7-1-14" id="h7-1-14" class="i">+        ),
+</a>         right: KeyLookup {
+             table: &quot;genres&quot;,
+             alias: Some(
+<a href="#h7-2" id="h7-2" class="h">@@ -157,29 +167,14 @@ Optimized plan: Plan(
+</a>                 ),
+             ],
+         },
+<a href="#h7-2-3" id="h7-2-3" class="d">-        predicate: Some(
+</a><a href="#h7-2-4" id="h7-2-4" class="d">-            Equal(
+</a><a href="#h7-2-5" id="h7-2-5" class="d">-                Field(
+</a><a href="#h7-2-6" id="h7-2-6" class="d">-                    3,
+</a><a href="#h7-2-7" id="h7-2-7" class="i">+        right_field: (
+</a><a href="#h7-2-8" id="h7-2-8" class="i">+            0,
+</a><a href="#h7-2-9" id="h7-2-9" class="i">+            Some(
+</a><a href="#h7-2-10" id="h7-2-10" class="i">+                (
+</a>                     Some(
+<a href="#h7-2-12" id="h7-2-12" class="d">-                        (
+</a><a href="#h7-2-13" id="h7-2-13" class="d">-                            Some(
+</a><a href="#h7-2-14" id="h7-2-14" class="d">-                                &quot;m&quot;,
+</a><a href="#h7-2-15" id="h7-2-15" class="d">-                            ),
+</a><a href="#h7-2-16" id="h7-2-16" class="d">-                            &quot;genre_id&quot;,
+</a><a href="#h7-2-17" id="h7-2-17" class="d">-                        ),
+</a><a href="#h7-2-18" id="h7-2-18" class="d">-                    ),
+</a><a href="#h7-2-19" id="h7-2-19" class="d">-                ),
+</a><a href="#h7-2-20" id="h7-2-20" class="d">-                Field(
+</a><a href="#h7-2-21" id="h7-2-21" class="d">-                    7,
+</a><a href="#h7-2-22" id="h7-2-22" class="d">-                    Some(
+</a><a href="#h7-2-23" id="h7-2-23" class="d">-                        (
+</a><a href="#h7-2-24" id="h7-2-24" class="d">-                            Some(
+</a><a href="#h7-2-25" id="h7-2-25" class="d">-                                &quot;g&quot;,
+</a><a href="#h7-2-26" id="h7-2-26" class="d">-                            ),
+</a><a href="#h7-2-27" id="h7-2-27" class="d">-                            &quot;id&quot;,
+</a><a href="#h7-2-28" id="h7-2-28" class="d">-                        ),
+</a><a href="#h7-2-29" id="h7-2-29" class="i">+                        &quot;g&quot;,
+</a>                     ),
+<a href="#h7-2-31" id="h7-2-31" class="i">+                    &quot;id&quot;,
+</a>                 ),
+             ),
+         ),
+<a href="#h7-3" id="h7-3" class="h">@@ -190,7 +185,7 @@ Optimized plan: Plan(
+</a> Query: SELECT * FROM movies m INNER JOIN genres g ON m.genre_id = g.id AND g.id = 4
+ 
+ Explain:
+<a href="#h7-3-3" id="h7-3-3" class="d">-NestedLoopJoin: inner on m.genre_id = g.id
+</a><a href="#h7-3-4" id="h7-3-4" class="i">+HashJoin: inner on m.genre_id = g.id
+</a> ├─ IndexLookup: movies.genre_id (4)
+ └─ KeyLookup: genres (4)
+ 
+<b>diff --git a/<a id="h8" href="../file/tests/sql/query/join_inner_index_transverse_where.html">tests/sql/query/join_inner_index_transverse_where</a> b/<a href="../file/tests/sql/query/join_inner_index_transverse_where.html">tests/sql/query/join_inner_index_transverse_where</a></b>
+<a href="#h8-0" id="h8-0" class="h">@@ -129,7 +129,7 @@ Plan: Plan(
+</a> )
+ 
+ Optimized plan: Plan(
+<a href="#h8-0-3" id="h8-0-3" class="d">-    NestedLoopJoin {
+</a><a href="#h8-0-4" id="h8-0-4" class="i">+    HashJoin {
+</a>         left: IndexLookup {
+             table: &quot;movies&quot;,
+             alias: Some(
+<a href="#h8-1" id="h8-1" class="h">@@ -142,7 +142,17 @@ Optimized plan: Plan(
+</a>                 ),
+             ],
+         },
+<a href="#h8-1-3" id="h8-1-3" class="d">-        left_size: 7,
+</a><a href="#h8-1-4" id="h8-1-4" class="i">+        left_field: (
+</a><a href="#h8-1-5" id="h8-1-5" class="i">+            3,
+</a><a href="#h8-1-6" id="h8-1-6" class="i">+            Some(
+</a><a href="#h8-1-7" id="h8-1-7" class="i">+                (
+</a><a href="#h8-1-8" id="h8-1-8" class="i">+                    Some(
+</a><a href="#h8-1-9" id="h8-1-9" class="i">+                        &quot;m&quot;,
+</a><a href="#h8-1-10" id="h8-1-10" class="i">+                    ),
+</a><a href="#h8-1-11" id="h8-1-11" class="i">+                    &quot;genre_id&quot;,
+</a><a href="#h8-1-12" id="h8-1-12" class="i">+                ),
+</a><a href="#h8-1-13" id="h8-1-13" class="i">+            ),
+</a><a href="#h8-1-14" id="h8-1-14" class="i">+        ),
+</a>         right: KeyLookup {
+             table: &quot;genres&quot;,
+             alias: Some(
+<a href="#h8-2" id="h8-2" class="h">@@ -154,29 +164,14 @@ Optimized plan: Plan(
+</a>                 ),
+             ],
+         },
+<a href="#h8-2-3" id="h8-2-3" class="d">-        predicate: Some(
+</a><a href="#h8-2-4" id="h8-2-4" class="d">-            Equal(
+</a><a href="#h8-2-5" id="h8-2-5" class="d">-                Field(
+</a><a href="#h8-2-6" id="h8-2-6" class="d">-                    3,
+</a><a href="#h8-2-7" id="h8-2-7" class="i">+        right_field: (
+</a><a href="#h8-2-8" id="h8-2-8" class="i">+            0,
+</a><a href="#h8-2-9" id="h8-2-9" class="i">+            Some(
+</a><a href="#h8-2-10" id="h8-2-10" class="i">+                (
+</a>                     Some(
+<a href="#h8-2-12" id="h8-2-12" class="d">-                        (
+</a><a href="#h8-2-13" id="h8-2-13" class="d">-                            Some(
+</a><a href="#h8-2-14" id="h8-2-14" class="d">-                                &quot;m&quot;,
+</a><a href="#h8-2-15" id="h8-2-15" class="d">-                            ),
+</a><a href="#h8-2-16" id="h8-2-16" class="d">-                            &quot;genre_id&quot;,
+</a><a href="#h8-2-17" id="h8-2-17" class="d">-                        ),
+</a><a href="#h8-2-18" id="h8-2-18" class="d">-                    ),
+</a><a href="#h8-2-19" id="h8-2-19" class="d">-                ),
+</a><a href="#h8-2-20" id="h8-2-20" class="d">-                Field(
+</a><a href="#h8-2-21" id="h8-2-21" class="d">-                    7,
+</a><a href="#h8-2-22" id="h8-2-22" class="d">-                    Some(
+</a><a href="#h8-2-23" id="h8-2-23" class="d">-                        (
+</a><a href="#h8-2-24" id="h8-2-24" class="d">-                            Some(
+</a><a href="#h8-2-25" id="h8-2-25" class="d">-                                &quot;g&quot;,
+</a><a href="#h8-2-26" id="h8-2-26" class="d">-                            ),
+</a><a href="#h8-2-27" id="h8-2-27" class="d">-                            &quot;id&quot;,
+</a><a href="#h8-2-28" id="h8-2-28" class="d">-                        ),
+</a><a href="#h8-2-29" id="h8-2-29" class="i">+                        &quot;g&quot;,
+</a>                     ),
+<a href="#h8-2-31" id="h8-2-31" class="i">+                    &quot;id&quot;,
+</a>                 ),
+             ),
+         ),
+<a href="#h8-3" id="h8-3" class="h">@@ -187,7 +182,7 @@ Optimized plan: Plan(
+</a> Query: SELECT * FROM movies m INNER JOIN genres g ON m.genre_id = g.id WHERE g.id = 4
+ 
+ Explain:
+<a href="#h8-3-3" id="h8-3-3" class="d">-NestedLoopJoin: inner on m.genre_id = g.id
+</a><a href="#h8-3-4" id="h8-3-4" class="i">+HashJoin: inner on m.genre_id = g.id
+</a> ├─ IndexLookup: movies.genre_id (4)
+ └─ KeyLookup: genres (4)
+ 
+<b>diff --git a/<a id="h9" href="../file/tests/sql/query/join_inner_multi.html">tests/sql/query/join_inner_multi</a> b/<a href="../file/tests/sql/query/join_inner_multi.html">tests/sql/query/join_inner_multi</a></b>
+<a href="#h9-0" id="h9-0" class="h">@@ -232,76 +232,66 @@ Plan: Plan(
+</a> 
+ Optimized plan: Plan(
+     Projection {
+<a href="#h9-0-3" id="h9-0-3" class="d">-        source: NestedLoopJoin {
+</a><a href="#h9-0-4" id="h9-0-4" class="d">-            left: NestedLoopJoin {
+</a><a href="#h9-0-5" id="h9-0-5" class="i">+        source: HashJoin {
+</a><a href="#h9-0-6" id="h9-0-6" class="i">+            left: HashJoin {
+</a>                 left: Scan {
+                     table: &quot;movies&quot;,
+                     alias: None,
+                     filter: None,
+                 },
+<a href="#h9-0-12" id="h9-0-12" class="d">-                left_size: 7,
+</a><a href="#h9-0-13" id="h9-0-13" class="i">+                left_field: (
+</a><a href="#h9-0-14" id="h9-0-14" class="i">+                    3,
+</a><a href="#h9-0-15" id="h9-0-15" class="i">+                    Some(
+</a><a href="#h9-0-16" id="h9-0-16" class="i">+                        (
+</a><a href="#h9-0-17" id="h9-0-17" class="i">+                            Some(
+</a><a href="#h9-0-18" id="h9-0-18" class="i">+                                &quot;movies&quot;,
+</a><a href="#h9-0-19" id="h9-0-19" class="i">+                            ),
+</a><a href="#h9-0-20" id="h9-0-20" class="i">+                            &quot;genre_id&quot;,
+</a><a href="#h9-0-21" id="h9-0-21" class="i">+                        ),
+</a><a href="#h9-0-22" id="h9-0-22" class="i">+                    ),
+</a><a href="#h9-0-23" id="h9-0-23" class="i">+                ),
+</a>                 right: Scan {
+                     table: &quot;genres&quot;,
+                     alias: None,
+                     filter: None,
+                 },
+<a href="#h9-0-29" id="h9-0-29" class="d">-                predicate: Some(
+</a><a href="#h9-0-30" id="h9-0-30" class="d">-                    Equal(
+</a><a href="#h9-0-31" id="h9-0-31" class="d">-                        Field(
+</a><a href="#h9-0-32" id="h9-0-32" class="d">-                            3,
+</a><a href="#h9-0-33" id="h9-0-33" class="d">-                            Some(
+</a><a href="#h9-0-34" id="h9-0-34" class="d">-                                (
+</a><a href="#h9-0-35" id="h9-0-35" class="d">-                                    Some(
+</a><a href="#h9-0-36" id="h9-0-36" class="d">-                                        &quot;movies&quot;,
+</a><a href="#h9-0-37" id="h9-0-37" class="d">-                                    ),
+</a><a href="#h9-0-38" id="h9-0-38" class="d">-                                    &quot;genre_id&quot;,
+</a><a href="#h9-0-39" id="h9-0-39" class="d">-                                ),
+</a><a href="#h9-0-40" id="h9-0-40" class="d">-                            ),
+</a><a href="#h9-0-41" id="h9-0-41" class="d">-                        ),
+</a><a href="#h9-0-42" id="h9-0-42" class="d">-                        Field(
+</a><a href="#h9-0-43" id="h9-0-43" class="d">-                            7,
+</a><a href="#h9-0-44" id="h9-0-44" class="i">+                right_field: (
+</a><a href="#h9-0-45" id="h9-0-45" class="i">+                    0,
+</a><a href="#h9-0-46" id="h9-0-46" class="i">+                    Some(
+</a><a href="#h9-0-47" id="h9-0-47" class="i">+                        (
+</a>                             Some(
+<a href="#h9-0-49" id="h9-0-49" class="d">-                                (
+</a><a href="#h9-0-50" id="h9-0-50" class="d">-                                    Some(
+</a><a href="#h9-0-51" id="h9-0-51" class="d">-                                        &quot;genres&quot;,
+</a><a href="#h9-0-52" id="h9-0-52" class="d">-                                    ),
+</a><a href="#h9-0-53" id="h9-0-53" class="d">-                                    &quot;id&quot;,
+</a><a href="#h9-0-54" id="h9-0-54" class="d">-                                ),
+</a><a href="#h9-0-55" id="h9-0-55" class="i">+                                &quot;genres&quot;,
+</a>                             ),
+<a href="#h9-0-57" id="h9-0-57" class="i">+                            &quot;id&quot;,
+</a>                         ),
+                     ),
+                 ),
+                 outer: false,
+             },
+<a href="#h9-0-63" id="h9-0-63" class="d">-            left_size: 9,
+</a><a href="#h9-0-64" id="h9-0-64" class="i">+            left_field: (
+</a><a href="#h9-0-65" id="h9-0-65" class="i">+                2,
+</a><a href="#h9-0-66" id="h9-0-66" class="i">+                Some(
+</a><a href="#h9-0-67" id="h9-0-67" class="i">+                    (
+</a><a href="#h9-0-68" id="h9-0-68" class="i">+                        Some(
+</a><a href="#h9-0-69" id="h9-0-69" class="i">+                            &quot;movies&quot;,
+</a><a href="#h9-0-70" id="h9-0-70" class="i">+                        ),
+</a><a href="#h9-0-71" id="h9-0-71" class="i">+                        &quot;studio_id&quot;,
+</a><a href="#h9-0-72" id="h9-0-72" class="i">+                    ),
+</a><a href="#h9-0-73" id="h9-0-73" class="i">+                ),
+</a><a href="#h9-0-74" id="h9-0-74" class="i">+            ),
+</a>             right: Scan {
+                 table: &quot;studios&quot;,
+                 alias: None,
+                 filter: None,
+             },
+<a href="#h9-0-80" id="h9-0-80" class="d">-            predicate: Some(
+</a><a href="#h9-0-81" id="h9-0-81" class="d">-                Equal(
+</a><a href="#h9-0-82" id="h9-0-82" class="d">-                    Field(
+</a><a href="#h9-0-83" id="h9-0-83" class="d">-                        2,
+</a><a href="#h9-0-84" id="h9-0-84" class="d">-                        Some(
+</a><a href="#h9-0-85" id="h9-0-85" class="d">-                            (
+</a><a href="#h9-0-86" id="h9-0-86" class="d">-                                Some(
+</a><a href="#h9-0-87" id="h9-0-87" class="d">-                                    &quot;movies&quot;,
+</a><a href="#h9-0-88" id="h9-0-88" class="d">-                                ),
+</a><a href="#h9-0-89" id="h9-0-89" class="d">-                                &quot;studio_id&quot;,
+</a><a href="#h9-0-90" id="h9-0-90" class="d">-                            ),
+</a><a href="#h9-0-91" id="h9-0-91" class="d">-                        ),
+</a><a href="#h9-0-92" id="h9-0-92" class="d">-                    ),
+</a><a href="#h9-0-93" id="h9-0-93" class="d">-                    Field(
+</a><a href="#h9-0-94" id="h9-0-94" class="d">-                        9,
+</a><a href="#h9-0-95" id="h9-0-95" class="i">+            right_field: (
+</a><a href="#h9-0-96" id="h9-0-96" class="i">+                0,
+</a><a href="#h9-0-97" id="h9-0-97" class="i">+                Some(
+</a><a href="#h9-0-98" id="h9-0-98" class="i">+                    (
+</a>                         Some(
+<a href="#h9-0-100" id="h9-0-100" class="d">-                            (
+</a><a href="#h9-0-101" id="h9-0-101" class="d">-                                Some(
+</a><a href="#h9-0-102" id="h9-0-102" class="d">-                                    &quot;studios&quot;,
+</a><a href="#h9-0-103" id="h9-0-103" class="d">-                                ),
+</a><a href="#h9-0-104" id="h9-0-104" class="d">-                                &quot;id&quot;,
+</a><a href="#h9-0-105" id="h9-0-105" class="d">-                            ),
+</a><a href="#h9-0-106" id="h9-0-106" class="i">+                            &quot;studios&quot;,
+</a>                         ),
+<a href="#h9-0-108" id="h9-0-108" class="i">+                        &quot;id&quot;,
+</a>                     ),
+                 ),
+             ),
+<a href="#h9-1" id="h9-1" class="h">@@ -366,8 +356,8 @@ Query:
+</a> 
+ Explain:
+ Projection: movies.title, genres.name, studios.name
+<a href="#h9-1-3" id="h9-1-3" class="d">-└─ NestedLoopJoin: inner on movies.studio_id = studios.id
+</a><a href="#h9-1-4" id="h9-1-4" class="d">-   ├─ NestedLoopJoin: inner on movies.genre_id = genres.id
+</a><a href="#h9-1-5" id="h9-1-5" class="i">+└─ HashJoin: inner on movies.studio_id = studios.id
+</a><a href="#h9-1-6" id="h9-1-6" class="i">+   ├─ HashJoin: inner on movies.genre_id = genres.id
+</a>    │  ├─ Scan: movies
+    │  └─ Scan: genres
+    └─ Scan: studios
+<b>diff --git a/<a id="h10" href="../file/tests/sql/query/join_inner_multi_index.html">tests/sql/query/join_inner_multi_index</a> b/<a href="../file/tests/sql/query/join_inner_multi_index.html">tests/sql/query/join_inner_multi_index</a></b>
+<a href="#h10-0" id="h10-0" class="h">@@ -352,8 +352,8 @@ Plan: Plan(
+</a> Optimized plan: Plan(
+     Order {
+         source: Projection {
+<a href="#h10-0-3" id="h10-0-3" class="d">-            source: NestedLoopJoin {
+</a><a href="#h10-0-4" id="h10-0-4" class="d">-                left: NestedLoopJoin {
+</a><a href="#h10-0-5" id="h10-0-5" class="i">+            source: HashJoin {
+</a><a href="#h10-0-6" id="h10-0-6" class="i">+                left: HashJoin {
+</a>                     left: Filter {
+                         source: IndexLookup {
+                             table: &quot;movies&quot;,
+<a href="#h10-1" id="h10-1" class="h">@@ -386,7 +386,17 @@ Optimized plan: Plan(
+</a>                             ),
+                         ),
+                     },
+<a href="#h10-1-3" id="h10-1-3" class="d">-                    left_size: 7,
+</a><a href="#h10-1-4" id="h10-1-4" class="i">+                    left_field: (
+</a><a href="#h10-1-5" id="h10-1-5" class="i">+                        3,
+</a><a href="#h10-1-6" id="h10-1-6" class="i">+                        Some(
+</a><a href="#h10-1-7" id="h10-1-7" class="i">+                            (
+</a><a href="#h10-1-8" id="h10-1-8" class="i">+                                Some(
+</a><a href="#h10-1-9" id="h10-1-9" class="i">+                                    &quot;m&quot;,
+</a><a href="#h10-1-10" id="h10-1-10" class="i">+                                ),
+</a><a href="#h10-1-11" id="h10-1-11" class="i">+                                &quot;genre_id&quot;,
+</a><a href="#h10-1-12" id="h10-1-12" class="i">+                            ),
+</a><a href="#h10-1-13" id="h10-1-13" class="i">+                        ),
+</a><a href="#h10-1-14" id="h10-1-14" class="i">+                    ),
+</a>                     right: KeyLookup {
+                         table: &quot;genres&quot;,
+                         alias: Some(
+<a href="#h10-2" id="h10-2" class="h">@@ -398,35 +408,30 @@ Optimized plan: Plan(
+</a>                             ),
+                         ],
+                     },
+<a href="#h10-2-3" id="h10-2-3" class="d">-                    predicate: Some(
+</a><a href="#h10-2-4" id="h10-2-4" class="d">-                        Equal(
+</a><a href="#h10-2-5" id="h10-2-5" class="d">-                            Field(
+</a><a href="#h10-2-6" id="h10-2-6" class="d">-                                3,
+</a><a href="#h10-2-7" id="h10-2-7" class="d">-                                Some(
+</a><a href="#h10-2-8" id="h10-2-8" class="d">-                                    (
+</a><a href="#h10-2-9" id="h10-2-9" class="d">-                                        Some(
+</a><a href="#h10-2-10" id="h10-2-10" class="d">-                                            &quot;m&quot;,
+</a><a href="#h10-2-11" id="h10-2-11" class="d">-                                        ),
+</a><a href="#h10-2-12" id="h10-2-12" class="d">-                                        &quot;genre_id&quot;,
+</a><a href="#h10-2-13" id="h10-2-13" class="d">-                                    ),
+</a><a href="#h10-2-14" id="h10-2-14" class="d">-                                ),
+</a><a href="#h10-2-15" id="h10-2-15" class="d">-                            ),
+</a><a href="#h10-2-16" id="h10-2-16" class="d">-                            Field(
+</a><a href="#h10-2-17" id="h10-2-17" class="d">-                                7,
+</a><a href="#h10-2-18" id="h10-2-18" class="i">+                    right_field: (
+</a><a href="#h10-2-19" id="h10-2-19" class="i">+                        0,
+</a><a href="#h10-2-20" id="h10-2-20" class="i">+                        Some(
+</a><a href="#h10-2-21" id="h10-2-21" class="i">+                            (
+</a>                                 Some(
+<a href="#h10-2-23" id="h10-2-23" class="d">-                                    (
+</a><a href="#h10-2-24" id="h10-2-24" class="d">-                                        Some(
+</a><a href="#h10-2-25" id="h10-2-25" class="d">-                                            &quot;g&quot;,
+</a><a href="#h10-2-26" id="h10-2-26" class="d">-                                        ),
+</a><a href="#h10-2-27" id="h10-2-27" class="d">-                                        &quot;id&quot;,
+</a><a href="#h10-2-28" id="h10-2-28" class="d">-                                    ),
+</a><a href="#h10-2-29" id="h10-2-29" class="i">+                                    &quot;g&quot;,
+</a>                                 ),
+<a href="#h10-2-31" id="h10-2-31" class="i">+                                &quot;id&quot;,
+</a>                             ),
+                         ),
+                     ),
+                     outer: false,
+                 },
+<a href="#h10-2-37" id="h10-2-37" class="d">-                left_size: 9,
+</a><a href="#h10-2-38" id="h10-2-38" class="i">+                left_field: (
+</a><a href="#h10-2-39" id="h10-2-39" class="i">+                    2,
+</a><a href="#h10-2-40" id="h10-2-40" class="i">+                    Some(
+</a><a href="#h10-2-41" id="h10-2-41" class="i">+                        (
+</a><a href="#h10-2-42" id="h10-2-42" class="i">+                            Some(
+</a><a href="#h10-2-43" id="h10-2-43" class="i">+                                &quot;m&quot;,
+</a><a href="#h10-2-44" id="h10-2-44" class="i">+                            ),
+</a><a href="#h10-2-45" id="h10-2-45" class="i">+                            &quot;studio_id&quot;,
+</a><a href="#h10-2-46" id="h10-2-46" class="i">+                        ),
+</a><a href="#h10-2-47" id="h10-2-47" class="i">+                    ),
+</a><a href="#h10-2-48" id="h10-2-48" class="i">+                ),
+</a>                 right: KeyLookup {
+                     table: &quot;studios&quot;,
+                     alias: Some(
+<a href="#h10-3" id="h10-3" class="h">@@ -438,29 +443,14 @@ Optimized plan: Plan(
+</a>                         ),
+                     ],
+                 },
+<a href="#h10-3-3" id="h10-3-3" class="d">-                predicate: Some(
+</a><a href="#h10-3-4" id="h10-3-4" class="d">-                    Equal(
+</a><a href="#h10-3-5" id="h10-3-5" class="d">-                        Field(
+</a><a href="#h10-3-6" id="h10-3-6" class="d">-                            2,
+</a><a href="#h10-3-7" id="h10-3-7" class="d">-                            Some(
+</a><a href="#h10-3-8" id="h10-3-8" class="d">-                                (
+</a><a href="#h10-3-9" id="h10-3-9" class="d">-                                    Some(
+</a><a href="#h10-3-10" id="h10-3-10" class="d">-                                        &quot;m&quot;,
+</a><a href="#h10-3-11" id="h10-3-11" class="d">-                                    ),
+</a><a href="#h10-3-12" id="h10-3-12" class="d">-                                    &quot;studio_id&quot;,
+</a><a href="#h10-3-13" id="h10-3-13" class="d">-                                ),
+</a><a href="#h10-3-14" id="h10-3-14" class="d">-                            ),
+</a><a href="#h10-3-15" id="h10-3-15" class="d">-                        ),
+</a><a href="#h10-3-16" id="h10-3-16" class="d">-                        Field(
+</a><a href="#h10-3-17" id="h10-3-17" class="d">-                            9,
+</a><a href="#h10-3-18" id="h10-3-18" class="i">+                right_field: (
+</a><a href="#h10-3-19" id="h10-3-19" class="i">+                    0,
+</a><a href="#h10-3-20" id="h10-3-20" class="i">+                    Some(
+</a><a href="#h10-3-21" id="h10-3-21" class="i">+                        (
+</a>                             Some(
+<a href="#h10-3-23" id="h10-3-23" class="d">-                                (
+</a><a href="#h10-3-24" id="h10-3-24" class="d">-                                    Some(
+</a><a href="#h10-3-25" id="h10-3-25" class="d">-                                        &quot;s&quot;,
+</a><a href="#h10-3-26" id="h10-3-26" class="d">-                                    ),
+</a><a href="#h10-3-27" id="h10-3-27" class="d">-                                    &quot;id&quot;,
+</a><a href="#h10-3-28" id="h10-3-28" class="d">-                                ),
+</a><a href="#h10-3-29" id="h10-3-29" class="i">+                                &quot;s&quot;,
+</a>                             ),
+<a href="#h10-3-31" id="h10-3-31" class="i">+                            &quot;id&quot;,
+</a>                         ),
+                     ),
+                 ),
+<a href="#h10-4" id="h10-4" class="h">@@ -544,8 +534,8 @@ Query:
+</a> Explain:
+ Order: m.title asc
+ └─ Projection: m.title, g.name, s.name
+<a href="#h10-4-3" id="h10-4-3" class="d">-   └─ NestedLoopJoin: inner on m.studio_id = s.id
+</a><a href="#h10-4-4" id="h10-4-4" class="d">-      ├─ NestedLoopJoin: inner on m.genre_id = g.id
+</a><a href="#h10-4-5" id="h10-4-5" class="i">+   └─ HashJoin: inner on m.studio_id = s.id
+</a><a href="#h10-4-6" id="h10-4-6" class="i">+      ├─ HashJoin: inner on m.genre_id = g.id
+</a>       │  ├─ Filter: m.genre_id = 1
+       │  │  └─ IndexLookup: movies.studio_id (4)
+       │  └─ KeyLookup: genres (1)
+<b>diff --git a/<a id="h11" href="../file/tests/sql/query/join_inner_on_aliased.html">tests/sql/query/join_inner_on_aliased</a> b/<a href="../file/tests/sql/query/join_inner_on_aliased.html">tests/sql/query/join_inner_on_aliased</a></b>
+<a href="#h11-0" id="h11-0" class="h">@@ -93,7 +93,7 @@ Plan: Plan(
+</a> )
+ 
+ Optimized plan: Plan(
+<a href="#h11-0-3" id="h11-0-3" class="d">-    NestedLoopJoin {
+</a><a href="#h11-0-4" id="h11-0-4" class="i">+    HashJoin {
+</a>         left: Scan {
+             table: &quot;movies&quot;,
+             alias: Some(
+<a href="#h11-1" id="h11-1" class="h">@@ -101,7 +101,17 @@ Optimized plan: Plan(
+</a>             ),
+             filter: None,
+         },
+<a href="#h11-1-3" id="h11-1-3" class="d">-        left_size: 7,
+</a><a href="#h11-1-4" id="h11-1-4" class="i">+        left_field: (
+</a><a href="#h11-1-5" id="h11-1-5" class="i">+            3,
+</a><a href="#h11-1-6" id="h11-1-6" class="i">+            Some(
+</a><a href="#h11-1-7" id="h11-1-7" class="i">+                (
+</a><a href="#h11-1-8" id="h11-1-8" class="i">+                    Some(
+</a><a href="#h11-1-9" id="h11-1-9" class="i">+                        &quot;m&quot;,
+</a><a href="#h11-1-10" id="h11-1-10" class="i">+                    ),
+</a><a href="#h11-1-11" id="h11-1-11" class="i">+                    &quot;genre_id&quot;,
+</a><a href="#h11-1-12" id="h11-1-12" class="i">+                ),
+</a><a href="#h11-1-13" id="h11-1-13" class="i">+            ),
+</a><a href="#h11-1-14" id="h11-1-14" class="i">+        ),
+</a>         right: Scan {
+             table: &quot;genres&quot;,
+             alias: Some(
+<a href="#h11-2" id="h11-2" class="h">@@ -109,29 +119,14 @@ Optimized plan: Plan(
+</a>             ),
+             filter: None,
+         },
+<a href="#h11-2-3" id="h11-2-3" class="d">-        predicate: Some(
+</a><a href="#h11-2-4" id="h11-2-4" class="d">-            Equal(
+</a><a href="#h11-2-5" id="h11-2-5" class="d">-                Field(
+</a><a href="#h11-2-6" id="h11-2-6" class="d">-                    3,
+</a><a href="#h11-2-7" id="h11-2-7" class="d">-                    Some(
+</a><a href="#h11-2-8" id="h11-2-8" class="d">-                        (
+</a><a href="#h11-2-9" id="h11-2-9" class="d">-                            Some(
+</a><a href="#h11-2-10" id="h11-2-10" class="d">-                                &quot;m&quot;,
+</a><a href="#h11-2-11" id="h11-2-11" class="d">-                            ),
+</a><a href="#h11-2-12" id="h11-2-12" class="d">-                            &quot;genre_id&quot;,
+</a><a href="#h11-2-13" id="h11-2-13" class="d">-                        ),
+</a><a href="#h11-2-14" id="h11-2-14" class="d">-                    ),
+</a><a href="#h11-2-15" id="h11-2-15" class="d">-                ),
+</a><a href="#h11-2-16" id="h11-2-16" class="d">-                Field(
+</a><a href="#h11-2-17" id="h11-2-17" class="d">-                    7,
+</a><a href="#h11-2-18" id="h11-2-18" class="i">+        right_field: (
+</a><a href="#h11-2-19" id="h11-2-19" class="i">+            0,
+</a><a href="#h11-2-20" id="h11-2-20" class="i">+            Some(
+</a><a href="#h11-2-21" id="h11-2-21" class="i">+                (
+</a>                     Some(
+<a href="#h11-2-23" id="h11-2-23" class="d">-                        (
+</a><a href="#h11-2-24" id="h11-2-24" class="d">-                            Some(
+</a><a href="#h11-2-25" id="h11-2-25" class="d">-                                &quot;g&quot;,
+</a><a href="#h11-2-26" id="h11-2-26" class="d">-                            ),
+</a><a href="#h11-2-27" id="h11-2-27" class="d">-                            &quot;id&quot;,
+</a><a href="#h11-2-28" id="h11-2-28" class="d">-                        ),
+</a><a href="#h11-2-29" id="h11-2-29" class="i">+                        &quot;g&quot;,
+</a>                     ),
+<a href="#h11-2-31" id="h11-2-31" class="i">+                    &quot;id&quot;,
+</a>                 ),
+             ),
+         ),
+<a href="#h11-3" id="h11-3" class="h">@@ -142,7 +137,7 @@ Optimized plan: Plan(
+</a> Query: SELECT * FROM movies m INNER JOIN genres g ON m.genre_id = g.id
+ 
+ Explain:
+<a href="#h11-3-3" id="h11-3-3" class="d">-NestedLoopJoin: inner on m.genre_id = g.id
+</a><a href="#h11-3-4" id="h11-3-4" class="i">+HashJoin: inner on m.genre_id = g.id
+</a> ├─ Scan: movies
+ └─ Scan: genres
+ 
+<b>diff --git a/<a id="h12" href="../file/tests/sql/query/join_inner_on_where.html">tests/sql/query/join_inner_on_where</a> b/<a href="../file/tests/sql/query/join_inner_on_where.html">tests/sql/query/join_inner_on_where</a></b>
+<a href="#h12-0" id="h12-0" class="h">@@ -141,7 +141,7 @@ Plan: Plan(
+</a> )
+ 
+ Optimized plan: Plan(
+<a href="#h12-0-3" id="h12-0-3" class="d">-    NestedLoopJoin {
+</a><a href="#h12-0-4" id="h12-0-4" class="i">+    HashJoin {
+</a>         left: Scan {
+             table: &quot;movies&quot;,
+             alias: None,
+<a href="#h12-1" id="h12-1" class="h">@@ -186,35 +186,30 @@ Optimized plan: Plan(
+</a>                 ),
+             ),
+         },
+<a href="#h12-1-3" id="h12-1-3" class="d">-        left_size: 7,
+</a><a href="#h12-1-4" id="h12-1-4" class="i">+        left_field: (
+</a><a href="#h12-1-5" id="h12-1-5" class="i">+            3,
+</a><a href="#h12-1-6" id="h12-1-6" class="i">+            Some(
+</a><a href="#h12-1-7" id="h12-1-7" class="i">+                (
+</a><a href="#h12-1-8" id="h12-1-8" class="i">+                    Some(
+</a><a href="#h12-1-9" id="h12-1-9" class="i">+                        &quot;movies&quot;,
+</a><a href="#h12-1-10" id="h12-1-10" class="i">+                    ),
+</a><a href="#h12-1-11" id="h12-1-11" class="i">+                    &quot;genre_id&quot;,
+</a><a href="#h12-1-12" id="h12-1-12" class="i">+                ),
+</a><a href="#h12-1-13" id="h12-1-13" class="i">+            ),
+</a><a href="#h12-1-14" id="h12-1-14" class="i">+        ),
+</a>         right: Scan {
+             table: &quot;genres&quot;,
+             alias: None,
+             filter: None,
+         },
+<a href="#h12-1-20" id="h12-1-20" class="d">-        predicate: Some(
+</a><a href="#h12-1-21" id="h12-1-21" class="d">-            Equal(
+</a><a href="#h12-1-22" id="h12-1-22" class="d">-                Field(
+</a><a href="#h12-1-23" id="h12-1-23" class="d">-                    3,
+</a><a href="#h12-1-24" id="h12-1-24" class="i">+        right_field: (
+</a><a href="#h12-1-25" id="h12-1-25" class="i">+            0,
+</a><a href="#h12-1-26" id="h12-1-26" class="i">+            Some(
+</a><a href="#h12-1-27" id="h12-1-27" class="i">+                (
+</a>                     Some(
+<a href="#h12-1-29" id="h12-1-29" class="d">-                        (
+</a><a href="#h12-1-30" id="h12-1-30" class="d">-                            Some(
+</a><a href="#h12-1-31" id="h12-1-31" class="d">-                                &quot;movies&quot;,
+</a><a href="#h12-1-32" id="h12-1-32" class="d">-                            ),
+</a><a href="#h12-1-33" id="h12-1-33" class="d">-                            &quot;genre_id&quot;,
+</a><a href="#h12-1-34" id="h12-1-34" class="d">-                        ),
+</a><a href="#h12-1-35" id="h12-1-35" class="d">-                    ),
+</a><a href="#h12-1-36" id="h12-1-36" class="d">-                ),
+</a><a href="#h12-1-37" id="h12-1-37" class="d">-                Field(
+</a><a href="#h12-1-38" id="h12-1-38" class="d">-                    7,
+</a><a href="#h12-1-39" id="h12-1-39" class="d">-                    Some(
+</a><a href="#h12-1-40" id="h12-1-40" class="d">-                        (
+</a><a href="#h12-1-41" id="h12-1-41" class="d">-                            Some(
+</a><a href="#h12-1-42" id="h12-1-42" class="d">-                                &quot;genres&quot;,
+</a><a href="#h12-1-43" id="h12-1-43" class="d">-                            ),
+</a><a href="#h12-1-44" id="h12-1-44" class="d">-                            &quot;id&quot;,
+</a><a href="#h12-1-45" id="h12-1-45" class="d">-                        ),
+</a><a href="#h12-1-46" id="h12-1-46" class="i">+                        &quot;genres&quot;,
+</a>                     ),
+<a href="#h12-1-48" id="h12-1-48" class="i">+                    &quot;id&quot;,
+</a>                 ),
+             ),
+         ),
+<a href="#h12-2" id="h12-2" class="h">@@ -225,7 +220,7 @@ Optimized plan: Plan(
+</a> Query: SELECT * FROM movies INNER JOIN genres ON movies.genre_id = genres.id WHERE movies.id &gt;= 3
+ 
+ Explain:
+<a href="#h12-2-3" id="h12-2-3" class="d">-NestedLoopJoin: inner on movies.genre_id = genres.id
+</a><a href="#h12-2-4" id="h12-2-4" class="i">+HashJoin: inner on movies.genre_id = genres.id
+</a> ├─ Scan: movies (movies.id &gt; 3 OR movies.id = 3)
+ └─ Scan: genres
+ 
+<b>diff --git a/<a id="h13" href="../file/tests/sql/query/join_left.html">tests/sql/query/join_left</a> b/<a href="../file/tests/sql/query/join_left.html">tests/sql/query/join_left</a></b>
+<a href="#h13-0" id="h13-0" class="h">@@ -153,7 +153,7 @@ Plan: Plan(
+</a> 
+ Optimized plan: Plan(
+     Projection {
+<a href="#h13-0-3" id="h13-0-3" class="d">-        source: NestedLoopJoin {
+</a><a href="#h13-0-4" id="h13-0-4" class="i">+        source: HashJoin {
+</a>             left: Scan {
+                 table: &quot;movies&quot;,
+                 alias: Some(
+<a href="#h13-1" id="h13-1" class="h">@@ -161,7 +161,17 @@ Optimized plan: Plan(
+</a>                 ),
+                 filter: None,
+             },
+<a href="#h13-1-3" id="h13-1-3" class="d">-            left_size: 7,
+</a><a href="#h13-1-4" id="h13-1-4" class="i">+            left_field: (
+</a><a href="#h13-1-5" id="h13-1-5" class="i">+                0,
+</a><a href="#h13-1-6" id="h13-1-6" class="i">+                Some(
+</a><a href="#h13-1-7" id="h13-1-7" class="i">+                    (
+</a><a href="#h13-1-8" id="h13-1-8" class="i">+                        Some(
+</a><a href="#h13-1-9" id="h13-1-9" class="i">+                            &quot;m&quot;,
+</a><a href="#h13-1-10" id="h13-1-10" class="i">+                        ),
+</a><a href="#h13-1-11" id="h13-1-11" class="i">+                        &quot;id&quot;,
+</a><a href="#h13-1-12" id="h13-1-12" class="i">+                    ),
+</a><a href="#h13-1-13" id="h13-1-13" class="i">+                ),
+</a><a href="#h13-1-14" id="h13-1-14" class="i">+            ),
+</a>             right: Scan {
+                 table: &quot;genres&quot;,
+                 alias: Some(
+<a href="#h13-2" id="h13-2" class="h">@@ -169,29 +179,14 @@ Optimized plan: Plan(
+</a>                 ),
+                 filter: None,
+             },
+<a href="#h13-2-3" id="h13-2-3" class="d">-            predicate: Some(
+</a><a href="#h13-2-4" id="h13-2-4" class="d">-                Equal(
+</a><a href="#h13-2-5" id="h13-2-5" class="d">-                    Field(
+</a><a href="#h13-2-6" id="h13-2-6" class="d">-                        0,
+</a><a href="#h13-2-7" id="h13-2-7" class="d">-                        Some(
+</a><a href="#h13-2-8" id="h13-2-8" class="d">-                            (
+</a><a href="#h13-2-9" id="h13-2-9" class="d">-                                Some(
+</a><a href="#h13-2-10" id="h13-2-10" class="d">-                                    &quot;m&quot;,
+</a><a href="#h13-2-11" id="h13-2-11" class="d">-                                ),
+</a><a href="#h13-2-12" id="h13-2-12" class="d">-                                &quot;id&quot;,
+</a><a href="#h13-2-13" id="h13-2-13" class="d">-                            ),
+</a><a href="#h13-2-14" id="h13-2-14" class="d">-                        ),
+</a><a href="#h13-2-15" id="h13-2-15" class="d">-                    ),
+</a><a href="#h13-2-16" id="h13-2-16" class="d">-                    Field(
+</a><a href="#h13-2-17" id="h13-2-17" class="d">-                        7,
+</a><a href="#h13-2-18" id="h13-2-18" class="i">+            right_field: (
+</a><a href="#h13-2-19" id="h13-2-19" class="i">+                0,
+</a><a href="#h13-2-20" id="h13-2-20" class="i">+                Some(
+</a><a href="#h13-2-21" id="h13-2-21" class="i">+                    (
+</a>                         Some(
+<a href="#h13-2-23" id="h13-2-23" class="d">-                            (
+</a><a href="#h13-2-24" id="h13-2-24" class="d">-                                Some(
+</a><a href="#h13-2-25" id="h13-2-25" class="d">-                                    &quot;g&quot;,
+</a><a href="#h13-2-26" id="h13-2-26" class="d">-                                ),
+</a><a href="#h13-2-27" id="h13-2-27" class="d">-                                &quot;id&quot;,
+</a><a href="#h13-2-28" id="h13-2-28" class="d">-                            ),
+</a><a href="#h13-2-29" id="h13-2-29" class="i">+                            &quot;g&quot;,
+</a>                         ),
+<a href="#h13-2-31" id="h13-2-31" class="i">+                        &quot;id&quot;,
+</a>                     ),
+                 ),
+             ),
+<a href="#h13-3" id="h13-3" class="h">@@ -238,7 +233,7 @@ Query: SELECT m.id AS movie_id, g.id AS genre_id FROM movies m LEFT JOIN genres 
+</a> 
+ Explain:
+ Projection: m.id, g.id
+<a href="#h13-3-3" id="h13-3-3" class="d">-└─ NestedLoopJoin: outer on m.id = g.id
+</a><a href="#h13-3-4" id="h13-3-4" class="i">+└─ HashJoin: outer on m.id = g.id
+</a>    ├─ Scan: movies
+    └─ Scan: genres
+ 
+<b>diff --git a/<a id="h14" href="../file/tests/sql/query/join_left_all.html">tests/sql/query/join_left_all</a> b/<a href="../file/tests/sql/query/join_left_all.html">tests/sql/query/join_left_all</a></b>
+<a href="#h14-0" id="h14-0" class="h">@@ -93,7 +93,7 @@ Plan: Plan(
+</a> )
+ 
+ Optimized plan: Plan(
+<a href="#h14-0-3" id="h14-0-3" class="d">-    NestedLoopJoin {
+</a><a href="#h14-0-4" id="h14-0-4" class="i">+    HashJoin {
+</a>         left: Scan {
+             table: &quot;movies&quot;,
+             alias: Some(
+<a href="#h14-1" id="h14-1" class="h">@@ -101,7 +101,17 @@ Optimized plan: Plan(
+</a>             ),
+             filter: None,
+         },
+<a href="#h14-1-3" id="h14-1-3" class="d">-        left_size: 7,
+</a><a href="#h14-1-4" id="h14-1-4" class="i">+        left_field: (
+</a><a href="#h14-1-5" id="h14-1-5" class="i">+            0,
+</a><a href="#h14-1-6" id="h14-1-6" class="i">+            Some(
+</a><a href="#h14-1-7" id="h14-1-7" class="i">+                (
+</a><a href="#h14-1-8" id="h14-1-8" class="i">+                    Some(
+</a><a href="#h14-1-9" id="h14-1-9" class="i">+                        &quot;m&quot;,
+</a><a href="#h14-1-10" id="h14-1-10" class="i">+                    ),
+</a><a href="#h14-1-11" id="h14-1-11" class="i">+                    &quot;id&quot;,
+</a><a href="#h14-1-12" id="h14-1-12" class="i">+                ),
+</a><a href="#h14-1-13" id="h14-1-13" class="i">+            ),
+</a><a href="#h14-1-14" id="h14-1-14" class="i">+        ),
+</a>         right: Scan {
+             table: &quot;genres&quot;,
+             alias: Some(
+<a href="#h14-2" id="h14-2" class="h">@@ -109,29 +119,14 @@ Optimized plan: Plan(
+</a>             ),
+             filter: None,
+         },
+<a href="#h14-2-3" id="h14-2-3" class="d">-        predicate: Some(
+</a><a href="#h14-2-4" id="h14-2-4" class="d">-            Equal(
+</a><a href="#h14-2-5" id="h14-2-5" class="d">-                Field(
+</a><a href="#h14-2-6" id="h14-2-6" class="d">-                    0,
+</a><a href="#h14-2-7" id="h14-2-7" class="d">-                    Some(
+</a><a href="#h14-2-8" id="h14-2-8" class="d">-                        (
+</a><a href="#h14-2-9" id="h14-2-9" class="d">-                            Some(
+</a><a href="#h14-2-10" id="h14-2-10" class="d">-                                &quot;m&quot;,
+</a><a href="#h14-2-11" id="h14-2-11" class="d">-                            ),
+</a><a href="#h14-2-12" id="h14-2-12" class="d">-                            &quot;id&quot;,
+</a><a href="#h14-2-13" id="h14-2-13" class="d">-                        ),
+</a><a href="#h14-2-14" id="h14-2-14" class="d">-                    ),
+</a><a href="#h14-2-15" id="h14-2-15" class="d">-                ),
+</a><a href="#h14-2-16" id="h14-2-16" class="d">-                Field(
+</a><a href="#h14-2-17" id="h14-2-17" class="d">-                    7,
+</a><a href="#h14-2-18" id="h14-2-18" class="i">+        right_field: (
+</a><a href="#h14-2-19" id="h14-2-19" class="i">+            0,
+</a><a href="#h14-2-20" id="h14-2-20" class="i">+            Some(
+</a><a href="#h14-2-21" id="h14-2-21" class="i">+                (
+</a>                     Some(
+<a href="#h14-2-23" id="h14-2-23" class="d">-                        (
+</a><a href="#h14-2-24" id="h14-2-24" class="d">-                            Some(
+</a><a href="#h14-2-25" id="h14-2-25" class="d">-                                &quot;g&quot;,
+</a><a href="#h14-2-26" id="h14-2-26" class="d">-                            ),
+</a><a href="#h14-2-27" id="h14-2-27" class="d">-                            &quot;id&quot;,
+</a><a href="#h14-2-28" id="h14-2-28" class="d">-                        ),
+</a><a href="#h14-2-29" id="h14-2-29" class="i">+                        &quot;g&quot;,
+</a>                     ),
+<a href="#h14-2-31" id="h14-2-31" class="i">+                    &quot;id&quot;,
+</a>                 ),
+             ),
+         ),
+<a href="#h14-3" id="h14-3" class="h">@@ -142,7 +137,7 @@ Optimized plan: Plan(
+</a> Query: SELECT * FROM movies m LEFT JOIN genres g ON m.id = g.id
+ 
+ Explain:
+<a href="#h14-3-3" id="h14-3-3" class="d">-NestedLoopJoin: outer on m.id = g.id
+</a><a href="#h14-3-4" id="h14-3-4" class="i">+HashJoin: outer on m.id = g.id
+</a> ├─ Scan: movies
+ └─ Scan: genres
+ 
+<b>diff --git a/<a id="h15" href="../file/tests/sql/query/join_left_outer.html">tests/sql/query/join_left_outer</a> b/<a href="../file/tests/sql/query/join_left_outer.html">tests/sql/query/join_left_outer</a></b>
+<a href="#h15-0" id="h15-0" class="h">@@ -153,7 +153,7 @@ Plan: Plan(
+</a> 
+ Optimized plan: Plan(
+     Projection {
+<a href="#h15-0-3" id="h15-0-3" class="d">-        source: NestedLoopJoin {
+</a><a href="#h15-0-4" id="h15-0-4" class="i">+        source: HashJoin {
+</a>             left: Scan {
+                 table: &quot;movies&quot;,
+                 alias: Some(
+<a href="#h15-1" id="h15-1" class="h">@@ -161,7 +161,17 @@ Optimized plan: Plan(
+</a>                 ),
+                 filter: None,
+             },
+<a href="#h15-1-3" id="h15-1-3" class="d">-            left_size: 7,
+</a><a href="#h15-1-4" id="h15-1-4" class="i">+            left_field: (
+</a><a href="#h15-1-5" id="h15-1-5" class="i">+                0,
+</a><a href="#h15-1-6" id="h15-1-6" class="i">+                Some(
+</a><a href="#h15-1-7" id="h15-1-7" class="i">+                    (
+</a><a href="#h15-1-8" id="h15-1-8" class="i">+                        Some(
+</a><a href="#h15-1-9" id="h15-1-9" class="i">+                            &quot;m&quot;,
+</a><a href="#h15-1-10" id="h15-1-10" class="i">+                        ),
+</a><a href="#h15-1-11" id="h15-1-11" class="i">+                        &quot;id&quot;,
+</a><a href="#h15-1-12" id="h15-1-12" class="i">+                    ),
+</a><a href="#h15-1-13" id="h15-1-13" class="i">+                ),
+</a><a href="#h15-1-14" id="h15-1-14" class="i">+            ),
+</a>             right: Scan {
+                 table: &quot;genres&quot;,
+                 alias: Some(
+<a href="#h15-2" id="h15-2" class="h">@@ -169,29 +179,14 @@ Optimized plan: Plan(
+</a>                 ),
+                 filter: None,
+             },
+<a href="#h15-2-3" id="h15-2-3" class="d">-            predicate: Some(
+</a><a href="#h15-2-4" id="h15-2-4" class="d">-                Equal(
+</a><a href="#h15-2-5" id="h15-2-5" class="d">-                    Field(
+</a><a href="#h15-2-6" id="h15-2-6" class="d">-                        0,
+</a><a href="#h15-2-7" id="h15-2-7" class="d">-                        Some(
+</a><a href="#h15-2-8" id="h15-2-8" class="d">-                            (
+</a><a href="#h15-2-9" id="h15-2-9" class="d">-                                Some(
+</a><a href="#h15-2-10" id="h15-2-10" class="d">-                                    &quot;m&quot;,
+</a><a href="#h15-2-11" id="h15-2-11" class="d">-                                ),
+</a><a href="#h15-2-12" id="h15-2-12" class="d">-                                &quot;id&quot;,
+</a><a href="#h15-2-13" id="h15-2-13" class="d">-                            ),
+</a><a href="#h15-2-14" id="h15-2-14" class="d">-                        ),
+</a><a href="#h15-2-15" id="h15-2-15" class="d">-                    ),
+</a><a href="#h15-2-16" id="h15-2-16" class="d">-                    Field(
+</a><a href="#h15-2-17" id="h15-2-17" class="d">-                        7,
+</a><a href="#h15-2-18" id="h15-2-18" class="i">+            right_field: (
+</a><a href="#h15-2-19" id="h15-2-19" class="i">+                0,
+</a><a href="#h15-2-20" id="h15-2-20" class="i">+                Some(
+</a><a href="#h15-2-21" id="h15-2-21" class="i">+                    (
+</a>                         Some(
+<a href="#h15-2-23" id="h15-2-23" class="d">-                            (
+</a><a href="#h15-2-24" id="h15-2-24" class="d">-                                Some(
+</a><a href="#h15-2-25" id="h15-2-25" class="d">-                                    &quot;g&quot;,
+</a><a href="#h15-2-26" id="h15-2-26" class="d">-                                ),
+</a><a href="#h15-2-27" id="h15-2-27" class="d">-                                &quot;id&quot;,
+</a><a href="#h15-2-28" id="h15-2-28" class="d">-                            ),
+</a><a href="#h15-2-29" id="h15-2-29" class="i">+                            &quot;g&quot;,
+</a>                         ),
+<a href="#h15-2-31" id="h15-2-31" class="i">+                        &quot;id&quot;,
+</a>                     ),
+                 ),
+             ),
+<a href="#h15-3" id="h15-3" class="h">@@ -238,7 +233,7 @@ Query: SELECT m.id AS movie_id, g.id AS genre_id FROM movies m LEFT OUTER JOIN g
+</a> 
+ Explain:
+ Projection: m.id, g.id
+<a href="#h15-3-3" id="h15-3-3" class="d">-└─ NestedLoopJoin: outer on m.id = g.id
+</a><a href="#h15-3-4" id="h15-3-4" class="i">+└─ HashJoin: outer on m.id = g.id
+</a>    ├─ Scan: movies
+    └─ Scan: genres
+ 
+<b>diff --git a/<a id="h16" href="../file/tests/sql/query/join_left_truncate.html">tests/sql/query/join_left_truncate</a> b/<a href="../file/tests/sql/query/join_left_truncate.html">tests/sql/query/join_left_truncate</a></b>
+<a href="#h16-0" id="h16-0" class="h">@@ -153,7 +153,7 @@ Plan: Plan(
+</a> 
+ Optimized plan: Plan(
+     Projection {
+<a href="#h16-0-3" id="h16-0-3" class="d">-        source: NestedLoopJoin {
+</a><a href="#h16-0-4" id="h16-0-4" class="i">+        source: HashJoin {
+</a>             left: Scan {
+                 table: &quot;genres&quot;,
+                 alias: Some(
+<a href="#h16-1" id="h16-1" class="h">@@ -161,7 +161,17 @@ Optimized plan: Plan(
+</a>                 ),
+                 filter: None,
+             },
+<a href="#h16-1-3" id="h16-1-3" class="d">-            left_size: 2,
+</a><a href="#h16-1-4" id="h16-1-4" class="i">+            left_field: (
+</a><a href="#h16-1-5" id="h16-1-5" class="i">+                0,
+</a><a href="#h16-1-6" id="h16-1-6" class="i">+                Some(
+</a><a href="#h16-1-7" id="h16-1-7" class="i">+                    (
+</a><a href="#h16-1-8" id="h16-1-8" class="i">+                        Some(
+</a><a href="#h16-1-9" id="h16-1-9" class="i">+                            &quot;g&quot;,
+</a><a href="#h16-1-10" id="h16-1-10" class="i">+                        ),
+</a><a href="#h16-1-11" id="h16-1-11" class="i">+                        &quot;id&quot;,
+</a><a href="#h16-1-12" id="h16-1-12" class="i">+                    ),
+</a><a href="#h16-1-13" id="h16-1-13" class="i">+                ),
+</a><a href="#h16-1-14" id="h16-1-14" class="i">+            ),
+</a>             right: Scan {
+                 table: &quot;movies&quot;,
+                 alias: Some(
+<a href="#h16-2" id="h16-2" class="h">@@ -169,29 +179,14 @@ Optimized plan: Plan(
+</a>                 ),
+                 filter: None,
+             },
+<a href="#h16-2-3" id="h16-2-3" class="d">-            predicate: Some(
+</a><a href="#h16-2-4" id="h16-2-4" class="d">-                Equal(
+</a><a href="#h16-2-5" id="h16-2-5" class="d">-                    Field(
+</a><a href="#h16-2-6" id="h16-2-6" class="d">-                        2,
+</a><a href="#h16-2-7" id="h16-2-7" class="d">-                        Some(
+</a><a href="#h16-2-8" id="h16-2-8" class="d">-                            (
+</a><a href="#h16-2-9" id="h16-2-9" class="d">-                                Some(
+</a><a href="#h16-2-10" id="h16-2-10" class="d">-                                    &quot;m&quot;,
+</a><a href="#h16-2-11" id="h16-2-11" class="d">-                                ),
+</a><a href="#h16-2-12" id="h16-2-12" class="d">-                                &quot;id&quot;,
+</a><a href="#h16-2-13" id="h16-2-13" class="d">-                            ),
+</a><a href="#h16-2-14" id="h16-2-14" class="d">-                        ),
+</a><a href="#h16-2-15" id="h16-2-15" class="d">-                    ),
+</a><a href="#h16-2-16" id="h16-2-16" class="d">-                    Field(
+</a><a href="#h16-2-17" id="h16-2-17" class="d">-                        0,
+</a><a href="#h16-2-18" id="h16-2-18" class="i">+            right_field: (
+</a><a href="#h16-2-19" id="h16-2-19" class="i">+                0,
+</a><a href="#h16-2-20" id="h16-2-20" class="i">+                Some(
+</a><a href="#h16-2-21" id="h16-2-21" class="i">+                    (
+</a>                         Some(
+<a href="#h16-2-23" id="h16-2-23" class="d">-                            (
+</a><a href="#h16-2-24" id="h16-2-24" class="d">-                                Some(
+</a><a href="#h16-2-25" id="h16-2-25" class="d">-                                    &quot;g&quot;,
+</a><a href="#h16-2-26" id="h16-2-26" class="d">-                                ),
+</a><a href="#h16-2-27" id="h16-2-27" class="d">-                                &quot;id&quot;,
+</a><a href="#h16-2-28" id="h16-2-28" class="d">-                            ),
+</a><a href="#h16-2-29" id="h16-2-29" class="i">+                            &quot;m&quot;,
+</a>                         ),
+<a href="#h16-2-31" id="h16-2-31" class="i">+                        &quot;id&quot;,
+</a>                     ),
+                 ),
+             ),
+<a href="#h16-3" id="h16-3" class="h">@@ -238,7 +233,7 @@ Query: SELECT g.id AS genre_id, m.id AS movie_id FROM genres g LEFT JOIN movies 
+</a> 
+ Explain:
+ Projection: g.id, m.id
+<a href="#h16-3-3" id="h16-3-3" class="d">-└─ NestedLoopJoin: outer on m.id = g.id
+</a><a href="#h16-3-4" id="h16-3-4" class="i">+└─ HashJoin: outer on g.id = m.id
+</a>    ├─ Scan: genres
+    └─ Scan: movies
+ 
+<b>diff --git a/<a id="h17" href="../file/tests/sql/query/join_right.html">tests/sql/query/join_right</a> b/<a href="../file/tests/sql/query/join_right.html">tests/sql/query/join_right</a></b>
+<a href="#h17-0" id="h17-0" class="h">@@ -284,7 +284,7 @@ Plan: Plan(
+</a> Optimized plan: Plan(
+     Projection {
+         source: Projection {
+<a href="#h17-0-3" id="h17-0-3" class="d">-            source: NestedLoopJoin {
+</a><a href="#h17-0-4" id="h17-0-4" class="i">+            source: HashJoin {
+</a>                 left: Scan {
+                     table: &quot;movies&quot;,
+                     alias: Some(
+<a href="#h17-1" id="h17-1" class="h">@@ -292,7 +292,17 @@ Optimized plan: Plan(
+</a>                     ),
+                     filter: None,
+                 },
+<a href="#h17-1-3" id="h17-1-3" class="d">-                left_size: 7,
+</a><a href="#h17-1-4" id="h17-1-4" class="i">+                left_field: (
+</a><a href="#h17-1-5" id="h17-1-5" class="i">+                    0,
+</a><a href="#h17-1-6" id="h17-1-6" class="i">+                    Some(
+</a><a href="#h17-1-7" id="h17-1-7" class="i">+                        (
+</a><a href="#h17-1-8" id="h17-1-8" class="i">+                            Some(
+</a><a href="#h17-1-9" id="h17-1-9" class="i">+                                &quot;m&quot;,
+</a><a href="#h17-1-10" id="h17-1-10" class="i">+                            ),
+</a><a href="#h17-1-11" id="h17-1-11" class="i">+                            &quot;id&quot;,
+</a><a href="#h17-1-12" id="h17-1-12" class="i">+                        ),
+</a><a href="#h17-1-13" id="h17-1-13" class="i">+                    ),
+</a><a href="#h17-1-14" id="h17-1-14" class="i">+                ),
+</a>                 right: Scan {
+                     table: &quot;genres&quot;,
+                     alias: Some(
+<a href="#h17-2" id="h17-2" class="h">@@ -300,29 +310,14 @@ Optimized plan: Plan(
+</a>                     ),
+                     filter: None,
+                 },
+<a href="#h17-2-3" id="h17-2-3" class="d">-                predicate: Some(
+</a><a href="#h17-2-4" id="h17-2-4" class="d">-                    Equal(
+</a><a href="#h17-2-5" id="h17-2-5" class="d">-                        Field(
+</a><a href="#h17-2-6" id="h17-2-6" class="d">-                            0,
+</a><a href="#h17-2-7" id="h17-2-7" class="d">-                            Some(
+</a><a href="#h17-2-8" id="h17-2-8" class="d">-                                (
+</a><a href="#h17-2-9" id="h17-2-9" class="d">-                                    Some(
+</a><a href="#h17-2-10" id="h17-2-10" class="d">-                                        &quot;m&quot;,
+</a><a href="#h17-2-11" id="h17-2-11" class="d">-                                    ),
+</a><a href="#h17-2-12" id="h17-2-12" class="d">-                                    &quot;id&quot;,
+</a><a href="#h17-2-13" id="h17-2-13" class="d">-                                ),
+</a><a href="#h17-2-14" id="h17-2-14" class="d">-                            ),
+</a><a href="#h17-2-15" id="h17-2-15" class="d">-                        ),
+</a><a href="#h17-2-16" id="h17-2-16" class="d">-                        Field(
+</a><a href="#h17-2-17" id="h17-2-17" class="d">-                            7,
+</a><a href="#h17-2-18" id="h17-2-18" class="i">+                right_field: (
+</a><a href="#h17-2-19" id="h17-2-19" class="i">+                    0,
+</a><a href="#h17-2-20" id="h17-2-20" class="i">+                    Some(
+</a><a href="#h17-2-21" id="h17-2-21" class="i">+                        (
+</a>                             Some(
+<a href="#h17-2-23" id="h17-2-23" class="d">-                                (
+</a><a href="#h17-2-24" id="h17-2-24" class="d">-                                    Some(
+</a><a href="#h17-2-25" id="h17-2-25" class="d">-                                        &quot;g&quot;,
+</a><a href="#h17-2-26" id="h17-2-26" class="d">-                                    ),
+</a><a href="#h17-2-27" id="h17-2-27" class="d">-                                    &quot;id&quot;,
+</a><a href="#h17-2-28" id="h17-2-28" class="d">-                                ),
+</a><a href="#h17-2-29" id="h17-2-29" class="i">+                                &quot;g&quot;,
+</a>                             ),
+<a href="#h17-2-31" id="h17-2-31" class="i">+                            &quot;id&quot;,
+</a>                         ),
+                     ),
+                 ),
+<a href="#h17-3" id="h17-3" class="h">@@ -499,7 +494,7 @@ Query: SELECT g.id AS genre_id, m.id AS movie_id FROM genres g RIGHT JOIN movies
+</a> Explain:
+ Projection: g.id, m.id
+ └─ Projection: g.id, g.name, m.id, m.title, m.studio_id, m.genre_id, m.released, m.rating, m.ultrahd
+<a href="#h17-3-3" id="h17-3-3" class="d">-   └─ NestedLoopJoin: outer on m.id = g.id
+</a><a href="#h17-3-4" id="h17-3-4" class="i">+   └─ HashJoin: outer on m.id = g.id
+</a>       ├─ Scan: movies
+       └─ Scan: genres
+ 
+<b>diff --git a/<a id="h18" href="../file/tests/sql/query/join_right_all.html">tests/sql/query/join_right_all</a> b/<a href="../file/tests/sql/query/join_right_all.html">tests/sql/query/join_right_all</a></b>
+<a href="#h18-0" id="h18-0" class="h">@@ -224,7 +224,7 @@ Plan: Plan(
+</a> 
+ Optimized plan: Plan(
+     Projection {
+<a href="#h18-0-3" id="h18-0-3" class="d">-        source: NestedLoopJoin {
+</a><a href="#h18-0-4" id="h18-0-4" class="i">+        source: HashJoin {
+</a>             left: Scan {
+                 table: &quot;movies&quot;,
+                 alias: Some(
+<a href="#h18-1" id="h18-1" class="h">@@ -232,7 +232,17 @@ Optimized plan: Plan(
+</a>                 ),
+                 filter: None,
+             },
+<a href="#h18-1-3" id="h18-1-3" class="d">-            left_size: 7,
+</a><a href="#h18-1-4" id="h18-1-4" class="i">+            left_field: (
+</a><a href="#h18-1-5" id="h18-1-5" class="i">+                0,
+</a><a href="#h18-1-6" id="h18-1-6" class="i">+                Some(
+</a><a href="#h18-1-7" id="h18-1-7" class="i">+                    (
+</a><a href="#h18-1-8" id="h18-1-8" class="i">+                        Some(
+</a><a href="#h18-1-9" id="h18-1-9" class="i">+                            &quot;m&quot;,
+</a><a href="#h18-1-10" id="h18-1-10" class="i">+                        ),
+</a><a href="#h18-1-11" id="h18-1-11" class="i">+                        &quot;id&quot;,
+</a><a href="#h18-1-12" id="h18-1-12" class="i">+                    ),
+</a><a href="#h18-1-13" id="h18-1-13" class="i">+                ),
+</a><a href="#h18-1-14" id="h18-1-14" class="i">+            ),
+</a>             right: Scan {
+                 table: &quot;genres&quot;,
+                 alias: Some(
+<a href="#h18-2" id="h18-2" class="h">@@ -240,29 +250,14 @@ Optimized plan: Plan(
+</a>                 ),
+                 filter: None,
+             },
+<a href="#h18-2-3" id="h18-2-3" class="d">-            predicate: Some(
+</a><a href="#h18-2-4" id="h18-2-4" class="d">-                Equal(
+</a><a href="#h18-2-5" id="h18-2-5" class="d">-                    Field(
+</a><a href="#h18-2-6" id="h18-2-6" class="d">-                        0,
+</a><a href="#h18-2-7" id="h18-2-7" class="d">-                        Some(
+</a><a href="#h18-2-8" id="h18-2-8" class="d">-                            (
+</a><a href="#h18-2-9" id="h18-2-9" class="d">-                                Some(
+</a><a href="#h18-2-10" id="h18-2-10" class="d">-                                    &quot;m&quot;,
+</a><a href="#h18-2-11" id="h18-2-11" class="d">-                                ),
+</a><a href="#h18-2-12" id="h18-2-12" class="d">-                                &quot;id&quot;,
+</a><a href="#h18-2-13" id="h18-2-13" class="d">-                            ),
+</a><a href="#h18-2-14" id="h18-2-14" class="d">-                        ),
+</a><a href="#h18-2-15" id="h18-2-15" class="d">-                    ),
+</a><a href="#h18-2-16" id="h18-2-16" class="d">-                    Field(
+</a><a href="#h18-2-17" id="h18-2-17" class="d">-                        7,
+</a><a href="#h18-2-18" id="h18-2-18" class="i">+            right_field: (
+</a><a href="#h18-2-19" id="h18-2-19" class="i">+                0,
+</a><a href="#h18-2-20" id="h18-2-20" class="i">+                Some(
+</a><a href="#h18-2-21" id="h18-2-21" class="i">+                    (
+</a>                         Some(
+<a href="#h18-2-23" id="h18-2-23" class="d">-                            (
+</a><a href="#h18-2-24" id="h18-2-24" class="d">-                                Some(
+</a><a href="#h18-2-25" id="h18-2-25" class="d">-                                    &quot;g&quot;,
+</a><a href="#h18-2-26" id="h18-2-26" class="d">-                                ),
+</a><a href="#h18-2-27" id="h18-2-27" class="d">-                                &quot;id&quot;,
+</a><a href="#h18-2-28" id="h18-2-28" class="d">-                            ),
+</a><a href="#h18-2-29" id="h18-2-29" class="i">+                            &quot;g&quot;,
+</a>                         ),
+<a href="#h18-2-31" id="h18-2-31" class="i">+                        &quot;id&quot;,
+</a>                     ),
+                 ),
+             ),
+<a href="#h18-3" id="h18-3" class="h">@@ -403,7 +398,7 @@ Query: SELECT * FROM genres g RIGHT JOIN movies m ON m.id = g.id
+</a> 
+ Explain:
+ Projection: g.id, g.name, m.id, m.title, m.studio_id, m.genre_id, m.released, m.rating, m.ultrahd
+<a href="#h18-3-3" id="h18-3-3" class="d">-└─ NestedLoopJoin: outer on m.id = g.id
+</a><a href="#h18-3-4" id="h18-3-4" class="i">+└─ HashJoin: outer on m.id = g.id
+</a>    ├─ Scan: movies
+    └─ Scan: genres
+ 
+<b>diff --git a/<a id="h19" href="../file/tests/sql/query/join_right_outer.html">tests/sql/query/join_right_outer</a> b/<a href="../file/tests/sql/query/join_right_outer.html">tests/sql/query/join_right_outer</a></b>
+<a href="#h19-0" id="h19-0" class="h">@@ -284,7 +284,7 @@ Plan: Plan(
+</a> Optimized plan: Plan(
+     Projection {
+         source: Projection {
+<a href="#h19-0-3" id="h19-0-3" class="d">-            source: NestedLoopJoin {
+</a><a href="#h19-0-4" id="h19-0-4" class="i">+            source: HashJoin {
+</a>                 left: Scan {
+                     table: &quot;movies&quot;,
+                     alias: Some(
+<a href="#h19-1" id="h19-1" class="h">@@ -292,7 +292,17 @@ Optimized plan: Plan(
+</a>                     ),
+                     filter: None,
+                 },
+<a href="#h19-1-3" id="h19-1-3" class="d">-                left_size: 7,
+</a><a href="#h19-1-4" id="h19-1-4" class="i">+                left_field: (
+</a><a href="#h19-1-5" id="h19-1-5" class="i">+                    0,
+</a><a href="#h19-1-6" id="h19-1-6" class="i">+                    Some(
+</a><a href="#h19-1-7" id="h19-1-7" class="i">+                        (
+</a><a href="#h19-1-8" id="h19-1-8" class="i">+                            Some(
+</a><a href="#h19-1-9" id="h19-1-9" class="i">+                                &quot;m&quot;,
+</a><a href="#h19-1-10" id="h19-1-10" class="i">+                            ),
+</a><a href="#h19-1-11" id="h19-1-11" class="i">+                            &quot;id&quot;,
+</a><a href="#h19-1-12" id="h19-1-12" class="i">+                        ),
+</a><a href="#h19-1-13" id="h19-1-13" class="i">+                    ),
+</a><a href="#h19-1-14" id="h19-1-14" class="i">+                ),
+</a>                 right: Scan {
+                     table: &quot;genres&quot;,
+                     alias: Some(
+<a href="#h19-2" id="h19-2" class="h">@@ -300,29 +310,14 @@ Optimized plan: Plan(
+</a>                     ),
+                     filter: None,
+                 },
+<a href="#h19-2-3" id="h19-2-3" class="d">-                predicate: Some(
+</a><a href="#h19-2-4" id="h19-2-4" class="d">-                    Equal(
+</a><a href="#h19-2-5" id="h19-2-5" class="d">-                        Field(
+</a><a href="#h19-2-6" id="h19-2-6" class="d">-                            0,
+</a><a href="#h19-2-7" id="h19-2-7" class="d">-                            Some(
+</a><a href="#h19-2-8" id="h19-2-8" class="d">-                                (
+</a><a href="#h19-2-9" id="h19-2-9" class="d">-                                    Some(
+</a><a href="#h19-2-10" id="h19-2-10" class="d">-                                        &quot;m&quot;,
+</a><a href="#h19-2-11" id="h19-2-11" class="d">-                                    ),
+</a><a href="#h19-2-12" id="h19-2-12" class="d">-                                    &quot;id&quot;,
+</a><a href="#h19-2-13" id="h19-2-13" class="d">-                                ),
+</a><a href="#h19-2-14" id="h19-2-14" class="d">-                            ),
+</a><a href="#h19-2-15" id="h19-2-15" class="d">-                        ),
+</a><a href="#h19-2-16" id="h19-2-16" class="d">-                        Field(
+</a><a href="#h19-2-17" id="h19-2-17" class="d">-                            7,
+</a><a href="#h19-2-18" id="h19-2-18" class="i">+                right_field: (
+</a><a href="#h19-2-19" id="h19-2-19" class="i">+                    0,
+</a><a href="#h19-2-20" id="h19-2-20" class="i">+                    Some(
+</a><a href="#h19-2-21" id="h19-2-21" class="i">+                        (
+</a>                             Some(
+<a href="#h19-2-23" id="h19-2-23" class="d">-                                (
+</a><a href="#h19-2-24" id="h19-2-24" class="d">-                                    Some(
+</a><a href="#h19-2-25" id="h19-2-25" class="d">-                                        &quot;g&quot;,
+</a><a href="#h19-2-26" id="h19-2-26" class="d">-                                    ),
+</a><a href="#h19-2-27" id="h19-2-27" class="d">-                                    &quot;id&quot;,
+</a><a href="#h19-2-28" id="h19-2-28" class="d">-                                ),
+</a><a href="#h19-2-29" id="h19-2-29" class="i">+                                &quot;g&quot;,
+</a>                             ),
+<a href="#h19-2-31" id="h19-2-31" class="i">+                            &quot;id&quot;,
+</a>                         ),
+                     ),
+                 ),
+<a href="#h19-3" id="h19-3" class="h">@@ -499,7 +494,7 @@ Query: SELECT g.id AS genre_id, m.id AS movie_id FROM genres g RIGHT OUTER JOIN 
+</a> Explain:
+ Projection: g.id, m.id
+ └─ Projection: g.id, g.name, m.id, m.title, m.studio_id, m.genre_id, m.released, m.rating, m.ultrahd
+<a href="#h19-3-3" id="h19-3-3" class="d">-   └─ NestedLoopJoin: outer on m.id = g.id
+</a><a href="#h19-3-4" id="h19-3-4" class="i">+   └─ HashJoin: outer on m.id = g.id
+</a>       ├─ Scan: movies
+       └─ Scan: genres
+ 
+<b>diff --git a/<a id="h20" href="../file/tests/sql/query/join_right_truncate.html">tests/sql/query/join_right_truncate</a> b/<a href="../file/tests/sql/query/join_right_truncate.html">tests/sql/query/join_right_truncate</a></b>
+<a href="#h20-0" id="h20-0" class="h">@@ -284,7 +284,7 @@ Plan: Plan(
+</a> Optimized plan: Plan(
+     Projection {
+         source: Projection {
+<a href="#h20-0-3" id="h20-0-3" class="d">-            source: NestedLoopJoin {
+</a><a href="#h20-0-4" id="h20-0-4" class="i">+            source: HashJoin {
+</a>                 left: Scan {
+                     table: &quot;genres&quot;,
+                     alias: Some(
+<a href="#h20-1" id="h20-1" class="h">@@ -292,7 +292,17 @@ Optimized plan: Plan(
+</a>                     ),
+                     filter: None,
+                 },
+<a href="#h20-1-3" id="h20-1-3" class="d">-                left_size: 2,
+</a><a href="#h20-1-4" id="h20-1-4" class="i">+                left_field: (
+</a><a href="#h20-1-5" id="h20-1-5" class="i">+                    0,
+</a><a href="#h20-1-6" id="h20-1-6" class="i">+                    Some(
+</a><a href="#h20-1-7" id="h20-1-7" class="i">+                        (
+</a><a href="#h20-1-8" id="h20-1-8" class="i">+                            Some(
+</a><a href="#h20-1-9" id="h20-1-9" class="i">+                                &quot;g&quot;,
+</a><a href="#h20-1-10" id="h20-1-10" class="i">+                            ),
+</a><a href="#h20-1-11" id="h20-1-11" class="i">+                            &quot;id&quot;,
+</a><a href="#h20-1-12" id="h20-1-12" class="i">+                        ),
+</a><a href="#h20-1-13" id="h20-1-13" class="i">+                    ),
+</a><a href="#h20-1-14" id="h20-1-14" class="i">+                ),
+</a>                 right: Scan {
+                     table: &quot;movies&quot;,
+                     alias: Some(
+<a href="#h20-2" id="h20-2" class="h">@@ -300,29 +310,14 @@ Optimized plan: Plan(
+</a>                     ),
+                     filter: None,
+                 },
+<a href="#h20-2-3" id="h20-2-3" class="d">-                predicate: Some(
+</a><a href="#h20-2-4" id="h20-2-4" class="d">-                    Equal(
+</a><a href="#h20-2-5" id="h20-2-5" class="d">-                        Field(
+</a><a href="#h20-2-6" id="h20-2-6" class="d">-                            2,
+</a><a href="#h20-2-7" id="h20-2-7" class="d">-                            Some(
+</a><a href="#h20-2-8" id="h20-2-8" class="d">-                                (
+</a><a href="#h20-2-9" id="h20-2-9" class="d">-                                    Some(
+</a><a href="#h20-2-10" id="h20-2-10" class="d">-                                        &quot;m&quot;,
+</a><a href="#h20-2-11" id="h20-2-11" class="d">-                                    ),
+</a><a href="#h20-2-12" id="h20-2-12" class="d">-                                    &quot;id&quot;,
+</a><a href="#h20-2-13" id="h20-2-13" class="d">-                                ),
+</a><a href="#h20-2-14" id="h20-2-14" class="d">-                            ),
+</a><a href="#h20-2-15" id="h20-2-15" class="d">-                        ),
+</a><a href="#h20-2-16" id="h20-2-16" class="d">-                        Field(
+</a><a href="#h20-2-17" id="h20-2-17" class="d">-                            0,
+</a><a href="#h20-2-18" id="h20-2-18" class="i">+                right_field: (
+</a><a href="#h20-2-19" id="h20-2-19" class="i">+                    0,
+</a><a href="#h20-2-20" id="h20-2-20" class="i">+                    Some(
+</a><a href="#h20-2-21" id="h20-2-21" class="i">+                        (
+</a>                             Some(
+<a href="#h20-2-23" id="h20-2-23" class="d">-                                (
+</a><a href="#h20-2-24" id="h20-2-24" class="d">-                                    Some(
+</a><a href="#h20-2-25" id="h20-2-25" class="d">-                                        &quot;g&quot;,
+</a><a href="#h20-2-26" id="h20-2-26" class="d">-                                    ),
+</a><a href="#h20-2-27" id="h20-2-27" class="d">-                                    &quot;id&quot;,
+</a><a href="#h20-2-28" id="h20-2-28" class="d">-                                ),
+</a><a href="#h20-2-29" id="h20-2-29" class="i">+                                &quot;m&quot;,
+</a>                             ),
+<a href="#h20-2-31" id="h20-2-31" class="i">+                            &quot;id&quot;,
+</a>                         ),
+                     ),
+                 ),
+<a href="#h20-3" id="h20-3" class="h">@@ -499,7 +494,7 @@ Query: SELECT m.id AS movie_id, g.id AS genre_id FROM movies m RIGHT JOIN genres
+</a> Explain:
+ Projection: m.id, g.id
+ └─ Projection: m.id, m.title, m.studio_id, m.genre_id, m.released, m.rating, m.ultrahd, g.id, g.name
+<a href="#h20-3-3" id="h20-3-3" class="d">-   └─ NestedLoopJoin: outer on m.id = g.id
+</a><a href="#h20-3-4" id="h20-3-4" class="i">+   └─ HashJoin: outer on g.id = m.id
+</a>       ├─ Scan: genres
+       └─ Scan: movies
+ 
+<b>diff --git a/<a id="h21" href="../file/tests/sql/query/order_field_aliased.html">tests/sql/query/order_field_aliased</a> b/<a href="../file/tests/sql/query/order_field_aliased.html">tests/sql/query/order_field_aliased</a></b>
+<a href="#h21-0" id="h21-0" class="h">@@ -203,41 +203,36 @@ Plan: Plan(
+</a> Optimized plan: Plan(
+     Order {
+         source: Projection {
+<a href="#h21-0-3" id="h21-0-3" class="d">-            source: NestedLoopJoin {
+</a><a href="#h21-0-4" id="h21-0-4" class="i">+            source: HashJoin {
+</a>                 left: Scan {
+                     table: &quot;movies&quot;,
+                     alias: None,
+                     filter: None,
+                 },
+<a href="#h21-0-10" id="h21-0-10" class="d">-                left_size: 7,
+</a><a href="#h21-0-11" id="h21-0-11" class="i">+                left_field: (
+</a><a href="#h21-0-12" id="h21-0-12" class="i">+                    3,
+</a><a href="#h21-0-13" id="h21-0-13" class="i">+                    Some(
+</a><a href="#h21-0-14" id="h21-0-14" class="i">+                        (
+</a><a href="#h21-0-15" id="h21-0-15" class="i">+                            Some(
+</a><a href="#h21-0-16" id="h21-0-16" class="i">+                                &quot;movies&quot;,
+</a><a href="#h21-0-17" id="h21-0-17" class="i">+                            ),
+</a><a href="#h21-0-18" id="h21-0-18" class="i">+                            &quot;genre_id&quot;,
+</a><a href="#h21-0-19" id="h21-0-19" class="i">+                        ),
+</a><a href="#h21-0-20" id="h21-0-20" class="i">+                    ),
+</a><a href="#h21-0-21" id="h21-0-21" class="i">+                ),
+</a>                 right: Scan {
+                     table: &quot;genres&quot;,
+                     alias: None,
+                     filter: None,
+                 },
+<a href="#h21-0-27" id="h21-0-27" class="d">-                predicate: Some(
+</a><a href="#h21-0-28" id="h21-0-28" class="d">-                    Equal(
+</a><a href="#h21-0-29" id="h21-0-29" class="d">-                        Field(
+</a><a href="#h21-0-30" id="h21-0-30" class="d">-                            3,
+</a><a href="#h21-0-31" id="h21-0-31" class="d">-                            Some(
+</a><a href="#h21-0-32" id="h21-0-32" class="d">-                                (
+</a><a href="#h21-0-33" id="h21-0-33" class="d">-                                    Some(
+</a><a href="#h21-0-34" id="h21-0-34" class="d">-                                        &quot;movies&quot;,
+</a><a href="#h21-0-35" id="h21-0-35" class="d">-                                    ),
+</a><a href="#h21-0-36" id="h21-0-36" class="d">-                                    &quot;genre_id&quot;,
+</a><a href="#h21-0-37" id="h21-0-37" class="d">-                                ),
+</a><a href="#h21-0-38" id="h21-0-38" class="d">-                            ),
+</a><a href="#h21-0-39" id="h21-0-39" class="d">-                        ),
+</a><a href="#h21-0-40" id="h21-0-40" class="d">-                        Field(
+</a><a href="#h21-0-41" id="h21-0-41" class="d">-                            7,
+</a><a href="#h21-0-42" id="h21-0-42" class="i">+                right_field: (
+</a><a href="#h21-0-43" id="h21-0-43" class="i">+                    0,
+</a><a href="#h21-0-44" id="h21-0-44" class="i">+                    Some(
+</a><a href="#h21-0-45" id="h21-0-45" class="i">+                        (
+</a>                             Some(
+<a href="#h21-0-47" id="h21-0-47" class="d">-                                (
+</a><a href="#h21-0-48" id="h21-0-48" class="d">-                                    Some(
+</a><a href="#h21-0-49" id="h21-0-49" class="d">-                                        &quot;genres&quot;,
+</a><a href="#h21-0-50" id="h21-0-50" class="d">-                                    ),
+</a><a href="#h21-0-51" id="h21-0-51" class="d">-                                    &quot;id&quot;,
+</a><a href="#h21-0-52" id="h21-0-52" class="d">-                                ),
+</a><a href="#h21-0-53" id="h21-0-53" class="i">+                                &quot;genres&quot;,
+</a>                             ),
+<a href="#h21-0-55" id="h21-0-55" class="i">+                            &quot;id&quot;,
+</a>                         ),
+                     ),
+                 ),
+<a href="#h21-1" id="h21-1" class="h">@@ -324,7 +319,7 @@ Query: SELECT movies.id, title, genres.name AS genre FROM movies, genres WHERE m
+</a> Explain:
+ Order: genre asc, movies.title asc
+ └─ Projection: movies.id, title, genres.name
+<a href="#h21-1-3" id="h21-1-3" class="d">-   └─ NestedLoopJoin: inner on movies.genre_id = genres.id
+</a><a href="#h21-1-4" id="h21-1-4" class="i">+   └─ HashJoin: inner on movies.genre_id = genres.id
+</a>       ├─ Scan: movies
+       └─ Scan: genres
+ 
+<b>diff --git a/<a id="h22" href="../file/tests/sql/query/order_field_qualified.html">tests/sql/query/order_field_qualified</a> b/<a href="../file/tests/sql/query/order_field_qualified.html">tests/sql/query/order_field_qualified</a></b>
+<a href="#h22-0" id="h22-0" class="h">@@ -255,41 +255,36 @@ Optimized plan: Plan(
+</a>     Projection {
+         source: Order {
+             source: Projection {
+<a href="#h22-0-3" id="h22-0-3" class="d">-                source: NestedLoopJoin {
+</a><a href="#h22-0-4" id="h22-0-4" class="i">+                source: HashJoin {
+</a>                     left: Scan {
+                         table: &quot;movies&quot;,
+                         alias: None,
+                         filter: None,
+                     },
+<a href="#h22-0-10" id="h22-0-10" class="d">-                    left_size: 7,
+</a><a href="#h22-0-11" id="h22-0-11" class="i">+                    left_field: (
+</a><a href="#h22-0-12" id="h22-0-12" class="i">+                        3,
+</a><a href="#h22-0-13" id="h22-0-13" class="i">+                        Some(
+</a><a href="#h22-0-14" id="h22-0-14" class="i">+                            (
+</a><a href="#h22-0-15" id="h22-0-15" class="i">+                                Some(
+</a><a href="#h22-0-16" id="h22-0-16" class="i">+                                    &quot;movies&quot;,
+</a><a href="#h22-0-17" id="h22-0-17" class="i">+                                ),
+</a><a href="#h22-0-18" id="h22-0-18" class="i">+                                &quot;genre_id&quot;,
+</a><a href="#h22-0-19" id="h22-0-19" class="i">+                            ),
+</a><a href="#h22-0-20" id="h22-0-20" class="i">+                        ),
+</a><a href="#h22-0-21" id="h22-0-21" class="i">+                    ),
+</a>                     right: Scan {
+                         table: &quot;genres&quot;,
+                         alias: None,
+                         filter: None,
+                     },
+<a href="#h22-0-27" id="h22-0-27" class="d">-                    predicate: Some(
+</a><a href="#h22-0-28" id="h22-0-28" class="d">-                        Equal(
+</a><a href="#h22-0-29" id="h22-0-29" class="d">-                            Field(
+</a><a href="#h22-0-30" id="h22-0-30" class="d">-                                3,
+</a><a href="#h22-0-31" id="h22-0-31" class="d">-                                Some(
+</a><a href="#h22-0-32" id="h22-0-32" class="d">-                                    (
+</a><a href="#h22-0-33" id="h22-0-33" class="d">-                                        Some(
+</a><a href="#h22-0-34" id="h22-0-34" class="d">-                                            &quot;movies&quot;,
+</a><a href="#h22-0-35" id="h22-0-35" class="d">-                                        ),
+</a><a href="#h22-0-36" id="h22-0-36" class="d">-                                        &quot;genre_id&quot;,
+</a><a href="#h22-0-37" id="h22-0-37" class="d">-                                    ),
+</a><a href="#h22-0-38" id="h22-0-38" class="d">-                                ),
+</a><a href="#h22-0-39" id="h22-0-39" class="d">-                            ),
+</a><a href="#h22-0-40" id="h22-0-40" class="d">-                            Field(
+</a><a href="#h22-0-41" id="h22-0-41" class="d">-                                7,
+</a><a href="#h22-0-42" id="h22-0-42" class="i">+                    right_field: (
+</a><a href="#h22-0-43" id="h22-0-43" class="i">+                        0,
+</a><a href="#h22-0-44" id="h22-0-44" class="i">+                        Some(
+</a><a href="#h22-0-45" id="h22-0-45" class="i">+                            (
+</a>                                 Some(
+<a href="#h22-0-47" id="h22-0-47" class="d">-                                    (
+</a><a href="#h22-0-48" id="h22-0-48" class="d">-                                        Some(
+</a><a href="#h22-0-49" id="h22-0-49" class="d">-                                            &quot;genres&quot;,
+</a><a href="#h22-0-50" id="h22-0-50" class="d">-                                        ),
+</a><a href="#h22-0-51" id="h22-0-51" class="d">-                                        &quot;id&quot;,
+</a><a href="#h22-0-52" id="h22-0-52" class="d">-                                    ),
+</a><a href="#h22-0-53" id="h22-0-53" class="i">+                                    &quot;genres&quot;,
+</a>                                 ),
+<a href="#h22-0-55" id="h22-0-55" class="i">+                                &quot;id&quot;,
+</a>                             ),
+                         ),
+                     ),
+<a href="#h22-1" id="h22-1" class="h">@@ -427,7 +422,7 @@ Explain:
+</a> Projection: #0, #1, #2
+ └─ Order: genres.name asc, movies.title asc
+    └─ Projection: movies.id, title, name, genres.name, movies.title
+<a href="#h22-1-3" id="h22-1-3" class="d">-      └─ NestedLoopJoin: inner on movies.genre_id = genres.id
+</a><a href="#h22-1-4" id="h22-1-4" class="i">+      └─ HashJoin: inner on movies.genre_id = genres.id
+</a>          ├─ Scan: movies
+          └─ Scan: genres
+ 
+<b>diff --git a/<a id="h23" href="../file/tests/sql/query/where_join_inner.html">tests/sql/query/where_join_inner</a> b/<a href="../file/tests/sql/query/where_join_inner.html">tests/sql/query/where_join_inner</a></b>
+<a href="#h23-0" id="h23-0" class="h">@@ -82,41 +82,36 @@ Plan: Plan(
+</a> )
+ 
+ Optimized plan: Plan(
+<a href="#h23-0-3" id="h23-0-3" class="d">-    NestedLoopJoin {
+</a><a href="#h23-0-4" id="h23-0-4" class="i">+    HashJoin {
+</a>         left: Scan {
+             table: &quot;movies&quot;,
+             alias: None,
+             filter: None,
+         },
+<a href="#h23-0-10" id="h23-0-10" class="d">-        left_size: 7,
+</a><a href="#h23-0-11" id="h23-0-11" class="i">+        left_field: (
+</a><a href="#h23-0-12" id="h23-0-12" class="i">+            3,
+</a><a href="#h23-0-13" id="h23-0-13" class="i">+            Some(
+</a><a href="#h23-0-14" id="h23-0-14" class="i">+                (
+</a><a href="#h23-0-15" id="h23-0-15" class="i">+                    Some(
+</a><a href="#h23-0-16" id="h23-0-16" class="i">+                        &quot;movies&quot;,
+</a><a href="#h23-0-17" id="h23-0-17" class="i">+                    ),
+</a><a href="#h23-0-18" id="h23-0-18" class="i">+                    &quot;genre_id&quot;,
+</a><a href="#h23-0-19" id="h23-0-19" class="i">+                ),
+</a><a href="#h23-0-20" id="h23-0-20" class="i">+            ),
+</a><a href="#h23-0-21" id="h23-0-21" class="i">+        ),
+</a>         right: Scan {
+             table: &quot;genres&quot;,
+             alias: None,
+             filter: None,
+         },
+<a href="#h23-0-27" id="h23-0-27" class="d">-        predicate: Some(
+</a><a href="#h23-0-28" id="h23-0-28" class="d">-            Equal(
+</a><a href="#h23-0-29" id="h23-0-29" class="d">-                Field(
+</a><a href="#h23-0-30" id="h23-0-30" class="d">-                    3,
+</a><a href="#h23-0-31" id="h23-0-31" class="i">+        right_field: (
+</a><a href="#h23-0-32" id="h23-0-32" class="i">+            0,
+</a><a href="#h23-0-33" id="h23-0-33" class="i">+            Some(
+</a><a href="#h23-0-34" id="h23-0-34" class="i">+                (
+</a>                     Some(
+<a href="#h23-0-36" id="h23-0-36" class="d">-                        (
+</a><a href="#h23-0-37" id="h23-0-37" class="d">-                            Some(
+</a><a href="#h23-0-38" id="h23-0-38" class="d">-                                &quot;movies&quot;,
+</a><a href="#h23-0-39" id="h23-0-39" class="d">-                            ),
+</a><a href="#h23-0-40" id="h23-0-40" class="d">-                            &quot;genre_id&quot;,
+</a><a href="#h23-0-41" id="h23-0-41" class="d">-                        ),
+</a><a href="#h23-0-42" id="h23-0-42" class="d">-                    ),
+</a><a href="#h23-0-43" id="h23-0-43" class="d">-                ),
+</a><a href="#h23-0-44" id="h23-0-44" class="d">-                Field(
+</a><a href="#h23-0-45" id="h23-0-45" class="d">-                    7,
+</a><a href="#h23-0-46" id="h23-0-46" class="d">-                    Some(
+</a><a href="#h23-0-47" id="h23-0-47" class="d">-                        (
+</a><a href="#h23-0-48" id="h23-0-48" class="d">-                            Some(
+</a><a href="#h23-0-49" id="h23-0-49" class="d">-                                &quot;genres&quot;,
+</a><a href="#h23-0-50" id="h23-0-50" class="d">-                            ),
+</a><a href="#h23-0-51" id="h23-0-51" class="d">-                            &quot;id&quot;,
+</a><a href="#h23-0-52" id="h23-0-52" class="d">-                        ),
+</a><a href="#h23-0-53" id="h23-0-53" class="i">+                        &quot;genres&quot;,
+</a>                     ),
+<a href="#h23-0-55" id="h23-0-55" class="i">+                    &quot;id&quot;,
+</a>                 ),
+             ),
+         ),
+<a href="#h23-1" id="h23-1" class="h">@@ -127,7 +122,7 @@ Optimized plan: Plan(
+</a> Query: SELECT * FROM movies, genres WHERE movies.genre_id = genres.id
+ 
+ Explain:
+<a href="#h23-1-3" id="h23-1-3" class="d">-NestedLoopJoin: inner on movies.genre_id = genres.id
+</a><a href="#h23-1-4" id="h23-1-4" class="i">+HashJoin: inner on movies.genre_id = genres.id
+</a> ├─ Scan: movies
+ └─ Scan: genres
+ 
+</pre>
+</div>
+</body>
+</html>

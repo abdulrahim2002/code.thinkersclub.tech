@@ -1,0 +1,806 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>raft: add and use `AppendResponse.reject_index` for rejections - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/3619a3b1860416b00a0b1b84d1b69f4e50f3b650.html">3619a3b1860416b00a0b1b84d1b69f4e50f3b650</a>
+<b>parent</b> <a href="../commit/1bdc337e0361532576a20b7c9f9c6c340b51bcc8.html">1bdc337e0361532576a20b7c9f9c6c340b51bcc8</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Sun,  2 Jun 2024 19:32:38 +0200
+
+raft: add and use `AppendResponse.reject_index` for rejections
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/raft/message.rs</a></td><td> | </td><td class="num">34</td><td><span class="i">++++++++++++++++++++</span><span class="d">--------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/raft/node.rs</a></td><td> | </td><td class="num">83</td><td><span class="i">++++++++++++++++++++++++++++++++++++++++</span><span class="d">---------------------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/raft/testscripts/node/append</a></td><td> | </td><td class="num">8</td><td><span class="i">++++</span><span class="d">----</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">src/raft/testscripts/node/append_base_missing</a></td><td> | </td><td class="num">22</td><td><span class="i">++++</span><span class="d">------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h4">src/raft/testscripts/node/append_commit_quorum</a></td><td> | </td><td class="num">20</td><td><span class="i">++++++++++</span><span class="d">----------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h5">src/raft/testscripts/node/append_conflict_divergent</a></td><td> | </td><td class="num">24</td><td><span class="i">++++++++++++</span><span class="d">------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h6">src/raft/testscripts/node/append_conflict_replace_term</a></td><td> | </td><td class="num">6</td><td><span class="i">+++</span><span class="d">---</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h7">src/raft/testscripts/node/append_initial</a></td><td> | </td><td class="num">6</td><td><span class="i">+++</span><span class="d">---</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h8">src/raft/testscripts/node/append_overlap</a></td><td> | </td><td class="num">12</td><td><span class="i">++++++</span><span class="d">------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h9">src/raft/testscripts/node/append_response_beyond_last_index_panics</a></td><td> | </td><td class="num">4</td><td><span class="i">++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h10">src/raft/testscripts/node/append_response_beyond_last_term_panics</a></td><td> | </td><td class="num">4</td><td><span class="i">++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h11">src/raft/testscripts/node/election</a></td><td> | </td><td class="num">4</td><td><span class="i">++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h12">src/raft/testscripts/node/election_candidate_behind_leader</a></td><td> | </td><td class="num">8</td><td><span class="i">++++</span><span class="d">----</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h13">src/raft/testscripts/node/election_contested</a></td><td> | </td><td class="num">8</td><td><span class="i">++++</span><span class="d">----</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h14">src/raft/testscripts/node/election_tie</a></td><td> | </td><td class="num">4</td><td><span class="i">++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h15">src/raft/testscripts/node/election_tie_even</a></td><td> | </td><td class="num">6</td><td><span class="i">+++</span><span class="d">---</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h16">src/raft/testscripts/node/heartbeat_commits_follower</a></td><td> | </td><td class="num">4</td><td><span class="i">++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h17">src/raft/testscripts/node/heartbeat_converts_candidate</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h18">src/raft/testscripts/node/heartbeat_converts_follower</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h19">src/raft/testscripts/node/heartbeat_converts_follower_leaderless</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h20">src/raft/testscripts/node/heartbeat_converts_leader</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h21">src/raft/testscripts/node/old_campaign_rejected</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h22">src/raft/testscripts/node/old_campaign_response_ignored</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h23">src/raft/testscripts/node/request_follower</a></td><td> | </td><td class="num">4</td><td><span class="i">++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h24">src/raft/testscripts/node/request_leader</a></td><td> | </td><td class="num">4</td><td><span class="i">++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h25">src/raft/testscripts/node/request_leader_change_linearizability</a></td><td> | </td><td class="num">4</td><td><span class="i">++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h26">src/raft/testscripts/node/request_leader_disconnect</a></td><td> | </td><td class="num">4</td><td><span class="i">++</span><span class="d">--</span></td></tr>
+</table></pre><pre>27 files changed, 139 insertions(+), 146 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/raft/message.rs.html">src/raft/message.rs</a> b/<a href="../file/src/raft/message.rs.html">src/raft/message.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -80,24 +80,34 @@ pub enum Message {
+</a>         vote: bool,
+     },
+ 
+<a href="#h0-0-3" id="h0-0-3" class="d">-    /// Leaders replicate log entries to followers by appending to their logs.
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+    /// Leaders replicate log entries to followers by appending to their logs
+</a><a href="#h0-0-5" id="h0-0-5" class="i">+    /// after the given base entry. If the base entry matches the follower&#39;s log
+</a><a href="#h0-0-6" id="h0-0-6" class="i">+    /// then their logs are identical up to it (see section 5.3 in the Raft
+</a><a href="#h0-0-7" id="h0-0-7" class="i">+    /// paper), and the entries can be appended. Otherwise, the append is
+</a><a href="#h0-0-8" id="h0-0-8" class="i">+    /// rejected and the leader must retry an earlier base index until a common
+</a><a href="#h0-0-9" id="h0-0-9" class="i">+    /// base is found.
+</a>     Append {
+<a href="#h0-0-11" id="h0-0-11" class="d">-        /// The index of the log entry immediately preceding the submitted commands.
+</a><a href="#h0-0-12" id="h0-0-12" class="d">-        ///
+</a><a href="#h0-0-13" id="h0-0-13" class="d">-        /// TODO: this isn&#39;t needed -- determine it from the first entry, and
+</a><a href="#h0-0-14" id="h0-0-14" class="d">-        /// require it to be included.
+</a><a href="#h0-0-15" id="h0-0-15" class="i">+        /// The index of the log entry to append after.
+</a>         base_index: Index,
+<a href="#h0-0-17" id="h0-0-17" class="d">-        /// The term of the log entry immediately preceding the submitted commands.
+</a><a href="#h0-0-18" id="h0-0-18" class="i">+        /// The term of the log entry to append after.
+</a>         base_term: Term,
+<a href="#h0-0-20" id="h0-0-20" class="d">-        /// Commands to replicate.
+</a><a href="#h0-0-21" id="h0-0-21" class="i">+        /// Log entries to append.
+</a>         entries: Vec&lt;Entry&gt;,
+     },
+ 
+<a href="#h0-0-25" id="h0-0-25" class="d">-    /// Followers may accept or reject appending entries from the leader.
+</a><a href="#h0-0-26" id="h0-0-26" class="i">+    /// Followers accept or reject appends from the leader depending on whether
+</a><a href="#h0-0-27" id="h0-0-27" class="i">+    /// the base entry matches in both logs.
+</a>     AppendResponse {
+<a href="#h0-0-29" id="h0-0-29" class="d">-        /// If true, the follower rejected the leader&#39;s entries.
+</a><a href="#h0-0-30" id="h0-0-30" class="d">-        reject: bool,
+</a><a href="#h0-0-31" id="h0-0-31" class="i">+        /// If non-zero, the follower rejected an append at this base index
+</a><a href="#h0-0-32" id="h0-0-32" class="i">+        /// because the base index/term did not match its log.
+</a><a href="#h0-0-33" id="h0-0-33" class="i">+        reject_index: Index,
+</a>         /// The index of the follower&#39;s last log entry.
+<a href="#h0-0-35" id="h0-0-35" class="i">+        ///
+</a><a href="#h0-0-36" id="h0-0-36" class="i">+        /// NB: if the entries already existed in the follower&#39;s log, the append
+</a><a href="#h0-0-37" id="h0-0-37" class="i">+        /// is a noop and the last_index may be greater than the latest entry in
+</a><a href="#h0-0-38" id="h0-0-38" class="i">+        /// the append. That&#39;s fine -- if we&#39;re still the leader then our logs
+</a><a href="#h0-0-39" id="h0-0-39" class="i">+        /// must be consistent, otherwise the follower will have stopped
+</a><a href="#h0-0-40" id="h0-0-40" class="i">+        /// accepting our appends anyway.
+</a>         last_index: Index,
+         /// The term of the follower&#39;s last log entry.
+         last_term: Term,
+<a href="#h0-1" id="h0-1" class="h">@@ -146,10 +156,6 @@ pub enum Request {
+</a> impl encoding::Value for Request {}
+ 
+ /// A client response. This will be wrapped in a Result to handle errors.
+<a href="#h0-1-3" id="h0-1-3" class="d">-///
+</a><a href="#h0-1-4" id="h0-1-4" class="d">-/// TODO: consider a separate error kind here, or a wrapped Result, to separate
+</a><a href="#h0-1-5" id="h0-1-5" class="d">-/// fallible state machine operations (returned to the caller) from apply errors
+</a><a href="#h0-1-6" id="h0-1-6" class="d">-/// (fatal).
+</a> #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+ pub enum Response {
+     /// A state machine read result.
+<b>diff --git a/<a id="h1" href="../file/src/raft/node.rs.html">src/raft/node.rs</a> b/<a href="../file/src/raft/node.rs.html">src/raft/node.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -329,7 +329,7 @@ impl RawNode&lt;Candidate&gt; {
+</a> 
+         // If we receive a message for a future term, become a leaderless
+         // follower in it and step the message. If the message is a Heartbeat or
+<a href="#h1-0-3" id="h1-0-3" class="d">-        // AppendEntries from the leader, stepping it will follow the leader.
+</a><a href="#h1-0-4" id="h1-0-4" class="i">+        // Append from the leader, stepping it will follow the leader.
+</a>         if msg.term &gt; self.term {
+             return self.into_follower(msg.term, None)?.step(msg);
+         }
+<a href="#h1-1" id="h1-1" class="h">@@ -529,7 +529,7 @@ impl RawNode&lt;Follower&gt; {
+</a> 
+         // If we receive a message for a future term, become a leaderless
+         // follower in it and step the message. If the message is a Heartbeat or
+<a href="#h1-1-3" id="h1-1-3" class="d">-        // AppendEntries from the leader, stepping it will follow the leader.
+</a><a href="#h1-1-4" id="h1-1-4" class="i">+        // Append from the leader, stepping it will follow the leader.
+</a>         if msg.term &gt; self.term {
+             return self.into_follower(None, msg.term)?.step(msg);
+         }
+<a href="#h1-2" id="h1-2" class="h">@@ -566,23 +566,29 @@ impl RawNode&lt;Follower&gt; {
+</a>                 }
+             }
+ 
+<a href="#h1-2-3" id="h1-2-3" class="d">-            // Replicate entries from the leader. If we don&#39;t have a leader in
+</a><a href="#h1-2-4" id="h1-2-4" class="d">-            // this term yet, follow it.
+</a><a href="#h1-2-5" id="h1-2-5" class="i">+            // Append log entries from the leader to the local log.
+</a>             Message::Append { base_index, base_term, entries } =&gt; {
+<a href="#h1-2-7" id="h1-2-7" class="d">-                // Check that the entries are from our leader.
+</a><a href="#h1-2-8" id="h1-2-8" class="d">-                let from = msg.from;
+</a><a href="#h1-2-9" id="h1-2-9" class="i">+                let Some(first) = entries.first() else { panic!(&quot;empty append message&quot;) };
+</a><a href="#h1-2-10" id="h1-2-10" class="i">+                assert_eq!(base_index, first.index - 1, &quot;base index mismatch&quot;);
+</a><a href="#h1-2-11" id="h1-2-11" class="i">+
+</a><a href="#h1-2-12" id="h1-2-12" class="i">+                // Make sure the message comes from our leader.
+</a>                 match self.role.leader {
+<a href="#h1-2-14" id="h1-2-14" class="d">-                    Some(leader) =&gt; assert_eq!(from, leader, &quot;multiple leaders in term&quot;),
+</a><a href="#h1-2-15" id="h1-2-15" class="d">-                    None =&gt; self = self.into_follower(Some(from), msg.term)?,
+</a><a href="#h1-2-16" id="h1-2-16" class="i">+                    Some(leader) =&gt; assert_eq!(msg.from, leader, &quot;multiple leaders in term&quot;),
+</a><a href="#h1-2-17" id="h1-2-17" class="i">+                    None =&gt; self = self.into_follower(Some(msg.from), msg.term)?,
+</a>                 }
+ 
+<a href="#h1-2-20" id="h1-2-20" class="d">-                // Append the entries, if possible.
+</a><a href="#h1-2-21" id="h1-2-21" class="d">-                let reject = base_index &gt; 0 &amp;&amp; !self.log.has(base_index, base_term)?;
+</a><a href="#h1-2-22" id="h1-2-22" class="d">-                if !reject {
+</a><a href="#h1-2-23" id="h1-2-23" class="i">+                // If the base entry is in our log, append the entries.
+</a><a href="#h1-2-24" id="h1-2-24" class="i">+                let mut reject_index = 0;
+</a><a href="#h1-2-25" id="h1-2-25" class="i">+                if base_index == 0 || self.log.has(base_index, base_term)? {
+</a>                     self.log.splice(entries)?;
+<a href="#h1-2-27" id="h1-2-27" class="i">+                } else {
+</a><a href="#h1-2-28" id="h1-2-28" class="i">+                    reject_index = base_index;
+</a>                 }
+                 let (last_index, last_term) = self.log.get_last_index();
+<a href="#h1-2-31" id="h1-2-31" class="d">-                self.send(msg.from, Message::AppendResponse { reject, last_index, last_term })?;
+</a><a href="#h1-2-32" id="h1-2-32" class="i">+                self.send(
+</a><a href="#h1-2-33" id="h1-2-33" class="i">+                    msg.from,
+</a><a href="#h1-2-34" id="h1-2-34" class="i">+                    Message::AppendResponse { reject_index, last_index, last_term },
+</a><a href="#h1-2-35" id="h1-2-35" class="i">+                )?;
+</a>             }
+ 
+             // A candidate in this term is requesting our vote.
+<a href="#h1-3" id="h1-3" class="h">@@ -814,7 +820,7 @@ impl RawNode&lt;Leader&gt; {
+</a> 
+         // If we receive a message for a future term, become a leaderless
+         // follower in it and step the message. If the message is a Heartbeat or
+<a href="#h1-3-3" id="h1-3-3" class="d">-        // AppendEntries from the leader, stepping it will follow the leader.
+</a><a href="#h1-3-4" id="h1-3-4" class="i">+        // Append from the leader, stepping it will follow the leader.
+</a>         if msg.term &gt; self.term {
+             return self.into_follower(msg.term)?.step(msg);
+         }
+<a href="#h1-4" id="h1-4" class="h">@@ -848,19 +854,13 @@ impl RawNode&lt;Leader&gt; {
+</a>                 }
+             }
+ 
+<a href="#h1-4-3" id="h1-4-3" class="d">-            // A follower appended log entries we sent it. Record its progress
+</a><a href="#h1-4-4" id="h1-4-4" class="d">-            // and attempt to commit new entries.
+</a><a href="#h1-4-5" id="h1-4-5" class="d">-            Message::AppendResponse { reject: false, last_index, last_term } =&gt; {
+</a><a href="#h1-4-6" id="h1-4-6" class="d">-                assert!(
+</a><a href="#h1-4-7" id="h1-4-7" class="d">-                    last_index &lt;= self.log.get_last_index().0,
+</a><a href="#h1-4-8" id="h1-4-8" class="d">-                    &quot;follower accepted entries after last index&quot;
+</a><a href="#h1-4-9" id="h1-4-9" class="d">-                );
+</a><a href="#h1-4-10" id="h1-4-10" class="d">-                assert!(
+</a><a href="#h1-4-11" id="h1-4-11" class="d">-                    last_term &lt;= self.log.get_last_index().1,
+</a><a href="#h1-4-12" id="h1-4-12" class="d">-                    &quot;follower accepted entries after last term&quot;
+</a><a href="#h1-4-13" id="h1-4-13" class="d">-                );
+</a><a href="#h1-4-14" id="h1-4-14" class="i">+            // A follower appended our log entries. Record its progress and
+</a><a href="#h1-4-15" id="h1-4-15" class="i">+            // attempt to commit.
+</a><a href="#h1-4-16" id="h1-4-16" class="i">+            Message::AppendResponse { reject_index: 0, last_index, last_term } =&gt; {
+</a><a href="#h1-4-17" id="h1-4-17" class="i">+                let (li, lt) = self.log.get_last_index();
+</a><a href="#h1-4-18" id="h1-4-18" class="i">+                assert!(last_index &lt;= li &amp;&amp; last_term &lt;= lt, &quot;follower appended future entries&quot;);
+</a> 
+<a href="#h1-4-20" id="h1-4-20" class="d">-                let progress = self.role.progress.get_mut(&amp;msg.from).unwrap();
+</a><a href="#h1-4-21" id="h1-4-21" class="i">+                let progress = self.role.progress.get_mut(&amp;msg.from).expect(&quot;unknown node&quot;);
+</a>                 if last_index &gt; progress.last {
+                     progress.last = last_index;
+                     progress.next = last_index + 1;
+<a href="#h1-5" id="h1-5" class="h">@@ -868,21 +868,22 @@ impl RawNode&lt;Leader&gt; {
+</a>                 }
+             }
+ 
+<a href="#h1-5-3" id="h1-5-3" class="d">-            // A follower rejected log entries we sent it, typically because it
+</a><a href="#h1-5-4" id="h1-5-4" class="d">-            // does not have the base index in its log. Try to replicate from
+</a><a href="#h1-5-5" id="h1-5-5" class="d">-            // the previous entry.
+</a><a href="#h1-5-6" id="h1-5-6" class="i">+            // A follower rejected the log entries because the base entry in
+</a><a href="#h1-5-7" id="h1-5-7" class="i">+            // reject_index did not match its log. Try the previous entry until
+</a><a href="#h1-5-8" id="h1-5-8" class="i">+            // we find a common base.
+</a>             //
+<a href="#h1-5-10" id="h1-5-10" class="d">-            // This linear probing, as described in the Raft paper, can be very
+</a><a href="#h1-5-11" id="h1-5-11" class="d">-            // slow with long divergent logs, but we keep it simple.
+</a><a href="#h1-5-12" id="h1-5-12" class="d">-            //
+</a><a href="#h1-5-13" id="h1-5-13" class="d">-            // TODO: make use of last_index and last_term here.
+</a><a href="#h1-5-14" id="h1-5-14" class="d">-            Message::AppendResponse { reject: true, last_index: _, last_term: _ } =&gt; {
+</a><a href="#h1-5-15" id="h1-5-15" class="d">-                self.role.progress.entry(msg.from).and_modify(|p| {
+</a><a href="#h1-5-16" id="h1-5-16" class="d">-                    if p.next &gt; 1 {
+</a><a href="#h1-5-17" id="h1-5-17" class="d">-                        p.next -= 1
+</a><a href="#h1-5-18" id="h1-5-18" class="d">-                    }
+</a><a href="#h1-5-19" id="h1-5-19" class="d">-                });
+</a><a href="#h1-5-20" id="h1-5-20" class="d">-                self.send_log(msg.from)?;
+</a><a href="#h1-5-21" id="h1-5-21" class="i">+            // This linear probing can be slow with long divergent logs, but we
+</a><a href="#h1-5-22" id="h1-5-22" class="i">+            // keep it simple.
+</a><a href="#h1-5-23" id="h1-5-23" class="i">+            Message::AppendResponse { reject_index, last_index, last_term: _ } =&gt; {
+</a><a href="#h1-5-24" id="h1-5-24" class="i">+                let progress = self.role.progress.get_mut(&amp;msg.from).expect(&quot;unknown node&quot;);
+</a><a href="#h1-5-25" id="h1-5-25" class="i">+
+</a><a href="#h1-5-26" id="h1-5-26" class="i">+                // If the next index was rejected, try the previous one.
+</a><a href="#h1-5-27" id="h1-5-27" class="i">+                // Otherwise, the rejection is stale and can be ignored. If the
+</a><a href="#h1-5-28" id="h1-5-28" class="i">+                // follower&#39;s log is shorter, skip straight to its last index.
+</a><a href="#h1-5-29" id="h1-5-29" class="i">+                if progress.next == reject_index + 1 {
+</a><a href="#h1-5-30" id="h1-5-30" class="i">+                    progress.next = std::cmp::min(progress.next - 1, last_index + 1);
+</a><a href="#h1-5-31" id="h1-5-31" class="i">+                    self.send_log(msg.from)?;
+</a><a href="#h1-5-32" id="h1-5-32" class="i">+                }
+</a>             }
+ 
+             // A client submitted a read command. To ensure linearizability, we
+<a href="#h1-6" id="h1-6" class="h">@@ -1859,8 +1860,8 @@ mod tests {
+</a>                         entries.iter().map(|e| format!(&quot;{}@{}&quot;, e.index, e.term)).join(&quot; &quot;)
+                     )
+                 }
+<a href="#h1-6-3" id="h1-6-3" class="d">-                Message::AppendResponse { reject, last_index, last_term } =&gt; {
+</a><a href="#h1-6-4" id="h1-6-4" class="d">-                    format!(&quot;AppendResponse last={last_index}@{last_term} reject={reject}&quot;)
+</a><a href="#h1-6-5" id="h1-6-5" class="i">+                Message::AppendResponse { reject_index, last_index, last_term } =&gt; {
+</a><a href="#h1-6-6" id="h1-6-6" class="i">+                    format!(&quot;AppendResponse last={last_index}@{last_term} reject={reject_index}&quot;)
+</a>                 }
+                 Message::ClientRequest { id, request } =&gt; {
+                     format!(
+<b>diff --git a/<a id="h2" href="../file/src/raft/testscripts/node/append.html">src/raft/testscripts/node/append</a> b/<a href="../file/src/raft/testscripts/node/append.html">src/raft/testscripts/node/append</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -22,7 +22,7 @@ n1@1 ⇥ n3 A̶p̶p̶e̶n̶d̶ ̶b̶a̶s̶e̶=̶1̶@̶1̶ ̶[̶2̶@̶1̶]̶
+</a> stabilize
+ ---
+ n2@1 append 2@1 put foo=bar
+<a href="#h2-0-3" id="h2-0-3" class="d">-n2@1 → n1 AppendResponse last=2@1 reject=false
+</a><a href="#h2-0-4" id="h2-0-4" class="i">+n2@1 → n1 AppendResponse last=2@1 reject=0
+</a> n1@1 commit 2@1
+ n1@1 apply 2@1 put foo=bar
+ n1@1 → c1 ClientResponse id=0x01 write 0x0102
+<a href="#h2-1" id="h2-1" class="h">@@ -39,7 +39,7 @@ n1@1 ⇥ n3 A̶p̶p̶e̶n̶d̶ ̶b̶a̶s̶e̶=̶1̶@̶1̶ ̶[̶2̶@̶1̶ ̶3̶@
+</a> stabilize
+ ---
+ n2@1 append 3@1 put a=1
+<a href="#h2-1-3" id="h2-1-3" class="d">-n2@1 → n1 AppendResponse last=3@1 reject=false
+</a><a href="#h2-1-4" id="h2-1-4" class="i">+n2@1 → n1 AppendResponse last=3@1 reject=0
+</a> n1@1 commit 3@1
+ n1@1 apply 3@1 put a=1
+ n1@1 → c1 ClientResponse id=0x02 write 0x0103
+<a href="#h2-2" id="h2-2" class="h">@@ -61,11 +61,11 @@ n1@1 → n3 Append base=1@1 [2@1 3@1 4@1]
+</a> stabilize
+ ---
+ n2@1 append 4@1 put b=2
+<a href="#h2-2-3" id="h2-2-3" class="d">-n2@1 → n1 AppendResponse last=4@1 reject=false
+</a><a href="#h2-2-4" id="h2-2-4" class="i">+n2@1 → n1 AppendResponse last=4@1 reject=0
+</a> n3@1 append 2@1 put foo=bar
+ n3@1 append 3@1 put a=1
+ n3@1 append 4@1 put b=2
+<a href="#h2-2-8" id="h2-2-8" class="d">-n3@1 → n1 AppendResponse last=4@1 reject=false
+</a><a href="#h2-2-9" id="h2-2-9" class="i">+n3@1 → n1 AppendResponse last=4@1 reject=0
+</a> n1@1 commit 4@1
+ n1@1 apply 4@1 put b=2
+ n1@1 → c1 ClientResponse id=0x03 write 0x0104
+<b>diff --git a/<a id="h3" href="../file/src/raft/testscripts/node/append_base_missing.html">src/raft/testscripts/node/append_base_missing</a> b/<a href="../file/src/raft/testscripts/node/append_base_missing.html">src/raft/testscripts/node/append_base_missing</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -44,23 +44,9 @@ n2@2 → n3 Append base=3@1 [4@2 5@2]
+</a> deliver 3
+ ---
+ n3@1 follower(n1) ⇨ n3@2 follower(n2)
+<a href="#h3-0-3" id="h3-0-3" class="d">-n3@2 → n2 AppendResponse last=1@1 reject=true
+</a><a href="#h3-0-4" id="h3-0-4" class="i">+n3@2 → n2 AppendResponse last=1@1 reject=3
+</a> 
+<a href="#h3-0-6" id="h3-0-6" class="d">-# n2 reduces the base by 1 and tries again, but this is also rejected.
+</a><a href="#h3-0-7" id="h3-0-7" class="d">-#
+</a><a href="#h3-0-8" id="h3-0-8" class="d">-# TODO: this should retry at 1@1 immediately, since the leader knows the
+</a><a href="#h3-0-9" id="h3-0-9" class="d">-# follower&#39;s last index. The progress also isn&#39;t updated.
+</a><a href="#h3-0-10" id="h3-0-10" class="d">-deliver 2
+</a><a href="#h3-0-11" id="h3-0-11" class="d">-status 2
+</a><a href="#h3-0-12" id="h3-0-12" class="d">----
+</a><a href="#h3-0-13" id="h3-0-13" class="d">-n2@2 → n3 Append base=2@1 [3@1 4@2 5@2]
+</a><a href="#h3-0-14" id="h3-0-14" class="d">-n2@2 leader last=5@2 commit=4@2 apply=4 progress={1:4→5 3:0→3}
+</a><a href="#h3-0-15" id="h3-0-15" class="d">-
+</a><a href="#h3-0-16" id="h3-0-16" class="d">-deliver 3
+</a><a href="#h3-0-17" id="h3-0-17" class="d">----
+</a><a href="#h3-0-18" id="h3-0-18" class="d">-n3@2 → n2 AppendResponse last=1@1 reject=true
+</a><a href="#h3-0-19" id="h3-0-19" class="d">-
+</a><a href="#h3-0-20" id="h3-0-20" class="d">-# Finally, n2 sends base 1 which succeeds.
+</a><a href="#h3-0-21" id="h3-0-21" class="i">+# n2 tries replicating using n3&#39;s last index as a base, which succeeds.
+</a> deliver 2
+ status 2
+ ---
+<a href="#h3-1" id="h3-1" class="h">@@ -73,7 +59,7 @@ n3@2 append 2@1 put a=1
+</a> n3@2 append 3@1 put b=2
+ n3@2 append 4@2 None
+ n3@2 append 5@2 put c=3
+<a href="#h3-1-3" id="h3-1-3" class="d">-n3@2 → n2 AppendResponse last=5@2 reject=false
+</a><a href="#h3-1-4" id="h3-1-4" class="i">+n3@2 → n2 AppendResponse last=5@2 reject=0
+</a> 
+ # When n2 receives the ack, it commits and applies the write.
+ deliver 2
+<a href="#h3-2" id="h3-2" class="h">@@ -83,7 +69,7 @@ n2@2 apply 5@2 put c=3
+</a> n2@2 → c2 ClientResponse id=0x03 write 0x0105
+ c2@2 put c=3 ⇒ 5
+ 
+<a href="#h3-2-3" id="h3-2-3" class="d">-# The progress is also updated (finally).
+</a><a href="#h3-2-4" id="h3-2-4" class="i">+# The progress is also updated.
+</a> status
+ ---
+ n1@2 follower(n2) last=4@2 commit=4@2 apply=4
+<b>diff --git a/<a id="h4" href="../file/src/raft/testscripts/node/append_commit_quorum.html">src/raft/testscripts/node/append_commit_quorum</a> b/<a href="../file/src/raft/testscripts/node/append_commit_quorum.html">src/raft/testscripts/node/append_commit_quorum</a></b>
+<a href="#h4-0" id="h4-0" class="h">@@ -29,7 +29,7 @@ n1@1 ⇥ n4 A̶p̶p̶e̶n̶d̶ ̶b̶a̶s̶e̶=̶1̶@̶1̶ ̶[̶2̶@̶1̶]̶
+</a> n1@1 ⇥ n5 A̶p̶p̶e̶n̶d̶ ̶b̶a̶s̶e̶=̶1̶@̶1̶ ̶[̶2̶@̶1̶]̶
+ n1@1 ⇥ n6 A̶p̶p̶e̶n̶d̶ ̶b̶a̶s̶e̶=̶1̶@̶1̶ ̶[̶2̶@̶1̶]̶
+ n2@1 append 2@1 put a=1
+<a href="#h4-0-3" id="h4-0-3" class="d">-n2@1 → n1 AppendResponse last=2@1 reject=false
+</a><a href="#h4-0-4" id="h4-0-4" class="i">+n2@1 → n1 AppendResponse last=2@1 reject=0
+</a> 
+ status
+ ---
+<a href="#h4-1" id="h4-1" class="h">@@ -59,7 +59,7 @@ n1@1 ⇥ n5 A̶p̶p̶e̶n̶d̶ ̶b̶a̶s̶e̶=̶1̶@̶1̶ ̶[̶2̶@̶1̶ ̶3̶@
+</a> n1@1 ⇥ n6 A̶p̶p̶e̶n̶d̶ ̶b̶a̶s̶e̶=̶1̶@̶1̶ ̶[̶2̶@̶1̶ ̶3̶@̶1̶]̶
+ n3@1 append 2@1 put a=1
+ n3@1 append 3@1 put b=2
+<a href="#h4-1-3" id="h4-1-3" class="d">-n3@1 → n1 AppendResponse last=3@1 reject=false
+</a><a href="#h4-1-4" id="h4-1-4" class="i">+n3@1 → n1 AppendResponse last=3@1 reject=0
+</a> 
+ status
+ ---
+<a href="#h4-2" id="h4-2" class="h">@@ -90,7 +90,7 @@ n1@1 ⇥ n6 A̶p̶p̶e̶n̶d̶ ̶b̶a̶s̶e̶=̶1̶@̶1̶ ̶[̶2̶@̶1̶ ̶3̶@
+</a> n4@1 append 2@1 put a=1
+ n4@1 append 3@1 put b=2
+ n4@1 append 4@1 put c=3
+<a href="#h4-2-3" id="h4-2-3" class="d">-n4@1 → n1 AppendResponse last=4@1 reject=false
+</a><a href="#h4-2-4" id="h4-2-4" class="i">+n4@1 → n1 AppendResponse last=4@1 reject=0
+</a> n1@1 commit 2@1
+ n1@1 apply 2@1 put a=1
+ n1@1 → c1 ClientResponse id=0x01 write 0x0102
+<a href="#h4-3" id="h4-3" class="h">@@ -126,7 +126,7 @@ n5@1 append 2@1 put a=1
+</a> n5@1 append 3@1 put b=2
+ n5@1 append 4@1 put c=3
+ n5@1 append 5@1 put d=4
+<a href="#h4-3-3" id="h4-3-3" class="d">-n5@1 → n1 AppendResponse last=5@1 reject=false
+</a><a href="#h4-3-4" id="h4-3-4" class="i">+n5@1 → n1 AppendResponse last=5@1 reject=0
+</a> n1@1 commit 3@1
+ n1@1 apply 3@1 put b=2
+ n1@1 → c1 ClientResponse id=0x02 write 0x0103
+<a href="#h4-4" id="h4-4" class="h">@@ -163,7 +163,7 @@ n6@1 append 3@1 put b=2
+</a> n6@1 append 4@1 put c=3
+ n6@1 append 5@1 put d=4
+ n6@1 append 6@1 put e=5
+<a href="#h4-4-3" id="h4-4-3" class="d">-n6@1 → n1 AppendResponse last=6@1 reject=false
+</a><a href="#h4-4-4" id="h4-4-4" class="i">+n6@1 → n1 AppendResponse last=6@1 reject=0
+</a> n1@1 commit 4@1
+ n1@1 apply 4@1 put c=3
+ n1@1 → c1 ClientResponse id=0x03 write 0x0104
+<a href="#h4-5" id="h4-5" class="h">@@ -199,21 +199,21 @@ n2@1 append 4@1 put c=3
+</a> n2@1 append 5@1 put d=4
+ n2@1 append 6@1 put e=5
+ n2@1 append 7@1 put f=6
+<a href="#h4-5-3" id="h4-5-3" class="d">-n2@1 → n1 AppendResponse last=7@1 reject=false
+</a><a href="#h4-5-4" id="h4-5-4" class="i">+n2@1 → n1 AppendResponse last=7@1 reject=0
+</a> n3@1 append 4@1 put c=3
+ n3@1 append 5@1 put d=4
+ n3@1 append 6@1 put e=5
+ n3@1 append 7@1 put f=6
+<a href="#h4-5-9" id="h4-5-9" class="d">-n3@1 → n1 AppendResponse last=7@1 reject=false
+</a><a href="#h4-5-10" id="h4-5-10" class="i">+n3@1 → n1 AppendResponse last=7@1 reject=0
+</a> n4@1 append 5@1 put d=4
+ n4@1 append 6@1 put e=5
+ n4@1 append 7@1 put f=6
+<a href="#h4-5-14" id="h4-5-14" class="d">-n4@1 → n1 AppendResponse last=7@1 reject=false
+</a><a href="#h4-5-15" id="h4-5-15" class="i">+n4@1 → n1 AppendResponse last=7@1 reject=0
+</a> n5@1 append 6@1 put e=5
+ n5@1 append 7@1 put f=6
+<a href="#h4-5-18" id="h4-5-18" class="d">-n5@1 → n1 AppendResponse last=7@1 reject=false
+</a><a href="#h4-5-19" id="h4-5-19" class="i">+n5@1 → n1 AppendResponse last=7@1 reject=0
+</a> n6@1 append 7@1 put f=6
+<a href="#h4-5-21" id="h4-5-21" class="d">-n6@1 → n1 AppendResponse last=7@1 reject=false
+</a><a href="#h4-5-22" id="h4-5-22" class="i">+n6@1 → n1 AppendResponse last=7@1 reject=0
+</a> n1@1 commit 5@1
+ n1@1 apply 5@1 put d=4
+ n1@1 → c1 ClientResponse id=0x04 write 0x0105
+<b>diff --git a/<a id="h5" href="../file/src/raft/testscripts/node/append_conflict_divergent.html">src/raft/testscripts/node/append_conflict_divergent</a> b/<a href="../file/src/raft/testscripts/node/append_conflict_divergent.html">src/raft/testscripts/node/append_conflict_divergent</a></b>
+<a href="#h5-0" id="h5-0" class="h">@@ -130,9 +130,9 @@ n1@1 → c1 ClientResponse id=0x0b Error::Abort
+</a> c1@1 put a=8 ⇒ Error::Abort (operation aborted)
+ n1@1 → c1 ClientResponse id=0x0c Error::Abort
+ c1@1 put a=9 ⇒ Error::Abort (operation aborted)
+<a href="#h5-0-3" id="h5-0-3" class="d">-n1@4 → n5 AppendResponse last=10@1 reject=true
+</a><a href="#h5-0-4" id="h5-0-4" class="i">+n1@4 → n5 AppendResponse last=10@1 reject=5
+</a> n2@1 follower(n1) ⇨ n2@4 follower(n5)
+<a href="#h5-0-6" id="h5-0-6" class="d">-n2@4 → n5 AppendResponse last=10@1 reject=true
+</a><a href="#h5-0-7" id="h5-0-7" class="i">+n2@4 → n5 AppendResponse last=10@1 reject=5
+</a> 
+ # n5 will send the previous entry, which is again rejected.
+ deliver 5
+<a href="#h5-1" id="h5-1" class="h">@@ -141,8 +141,8 @@ status 5
+</a> ---
+ n5@4 → n1 Append base=4@3 [5@3 6@4 7@4 8@4]
+ n5@4 → n2 Append base=4@3 [5@3 6@4 7@4 8@4]
+<a href="#h5-1-3" id="h5-1-3" class="d">-n1@4 → n5 AppendResponse last=10@1 reject=true
+</a><a href="#h5-1-4" id="h5-1-4" class="d">-n2@4 → n5 AppendResponse last=10@1 reject=true
+</a><a href="#h5-1-5" id="h5-1-5" class="i">+n1@4 → n5 AppendResponse last=10@1 reject=4
+</a><a href="#h5-1-6" id="h5-1-6" class="i">+n2@4 → n5 AppendResponse last=10@1 reject=4
+</a> n5@4 leader last=8@4 commit=7@4 apply=7 progress={1:0→5 2:0→5 3:7→8 4:7→8}
+ 
+ # This repeats until they find a common base at 1@1.
+<a href="#h5-2" id="h5-2" class="h">@@ -152,8 +152,8 @@ status 5
+</a> ---
+ n5@4 → n1 Append base=3@2 [4@3 5@3 6@4 7@4 8@4]
+ n5@4 → n2 Append base=3@2 [4@3 5@3 6@4 7@4 8@4]
+<a href="#h5-2-3" id="h5-2-3" class="d">-n1@4 → n5 AppendResponse last=10@1 reject=true
+</a><a href="#h5-2-4" id="h5-2-4" class="d">-n2@4 → n5 AppendResponse last=10@1 reject=true
+</a><a href="#h5-2-5" id="h5-2-5" class="i">+n1@4 → n5 AppendResponse last=10@1 reject=3
+</a><a href="#h5-2-6" id="h5-2-6" class="i">+n2@4 → n5 AppendResponse last=10@1 reject=3
+</a> n5@4 leader last=8@4 commit=7@4 apply=7 progress={1:0→4 2:0→4 3:7→8 4:7→8}
+ 
+ deliver 5
+<a href="#h5-3" id="h5-3" class="h">@@ -162,8 +162,8 @@ status 5
+</a> ---
+ n5@4 → n1 Append base=2@2 [3@2 4@3 5@3 6@4 7@4 8@4]
+ n5@4 → n2 Append base=2@2 [3@2 4@3 5@3 6@4 7@4 8@4]
+<a href="#h5-3-3" id="h5-3-3" class="d">-n1@4 → n5 AppendResponse last=10@1 reject=true
+</a><a href="#h5-3-4" id="h5-3-4" class="d">-n2@4 → n5 AppendResponse last=10@1 reject=true
+</a><a href="#h5-3-5" id="h5-3-5" class="i">+n1@4 → n5 AppendResponse last=10@1 reject=2
+</a><a href="#h5-3-6" id="h5-3-6" class="i">+n2@4 → n5 AppendResponse last=10@1 reject=2
+</a> n5@4 leader last=8@4 commit=7@4 apply=7 progress={1:0→3 2:0→3 3:7→8 4:7→8}
+ 
+ deliver 5
+<a href="#h5-4" id="h5-4" class="h">@@ -173,8 +173,8 @@ status 5
+</a> ---
+ n5@4 → n1 Append base=1@1 [2@2 3@2 4@3 5@3 6@4 7@4 8@4]
+ n5@4 → n2 Append base=1@1 [2@2 3@2 4@3 5@3 6@4 7@4 8@4]
+<a href="#h5-4-3" id="h5-4-3" class="d">-n1@4 → n5 AppendResponse last=8@4 reject=false
+</a><a href="#h5-4-4" id="h5-4-4" class="d">-n2@4 → n5 AppendResponse last=8@4 reject=false
+</a><a href="#h5-4-5" id="h5-4-5" class="i">+n1@4 → n5 AppendResponse last=8@4 reject=0
+</a><a href="#h5-4-6" id="h5-4-6" class="i">+n2@4 → n5 AppendResponse last=8@4 reject=0
+</a> n5@4 leader last=8@4 commit=7@4 apply=7 progress={1:0→2 2:0→2 3:7→8 4:7→8}
+ 
+ # The new write can now commit and apply.
+<a href="#h5-5" id="h5-5" class="h">@@ -197,9 +197,9 @@ n5@4 leader last=8@4 commit=8@4 apply=8 progress={1:8→9 2:8→9 3:7→8 4:7→
+</a> stabilize heartbeat=true
+ ---
+ n3@4 append 8@4 put d=4
+<a href="#h5-5-3" id="h5-5-3" class="d">-n3@4 → n5 AppendResponse last=8@4 reject=false
+</a><a href="#h5-5-4" id="h5-5-4" class="i">+n3@4 → n5 AppendResponse last=8@4 reject=0
+</a> n4@4 append 8@4 put d=4
+<a href="#h5-5-6" id="h5-5-6" class="d">-n4@4 → n5 AppendResponse last=8@4 reject=false
+</a><a href="#h5-5-7" id="h5-5-7" class="i">+n4@4 → n5 AppendResponse last=8@4 reject=0
+</a> n5@4 → n1 Heartbeat commit=8@4 read_seq=0
+ n5@4 → n2 Heartbeat commit=8@4 read_seq=0
+ n5@4 → n3 Heartbeat commit=8@4 read_seq=0
+<b>diff --git a/<a id="h6" href="../file/src/raft/testscripts/node/append_conflict_replace_term.html">src/raft/testscripts/node/append_conflict_replace_term</a> b/<a href="../file/src/raft/testscripts/node/append_conflict_replace_term.html">src/raft/testscripts/node/append_conflict_replace_term</a></b>
+<a href="#h6-0" id="h6-0" class="h">@@ -24,7 +24,7 @@ n1@1 ⇥ n3 A̶p̶p̶e̶n̶d̶ ̶b̶a̶s̶e̶=̶1̶@̶1̶ ̶[̶2̶@̶1̶]̶
+</a> n1@1 ⇥ n4 A̶p̶p̶e̶n̶d̶ ̶b̶a̶s̶e̶=̶1̶@̶1̶ ̶[̶2̶@̶1̶]̶
+ n1@1 ⇥ n5 A̶p̶p̶e̶n̶d̶ ̶b̶a̶s̶e̶=̶1̶@̶1̶ ̶[̶2̶@̶1̶]̶
+ n2@1 append 2@1 put a=1
+<a href="#h6-0-3" id="h6-0-3" class="d">-n2@1 → n1 AppendResponse last=2@1 reject=false
+</a><a href="#h6-0-4" id="h6-0-4" class="i">+n2@1 → n1 AppendResponse last=2@1 reject=0
+</a> 
+ log 1 2
+ ---
+<a href="#h6-1" id="h6-1" class="h">@@ -83,11 +83,11 @@ n1@2 append 3@2 put b=2
+</a> n1@2 append 4@2 put c=3
+ n1@1 → c1 ClientResponse id=0x01 Error::Abort
+ c1@1 put a=1 ⇒ Error::Abort (operation aborted)
+<a href="#h6-1-3" id="h6-1-3" class="d">-n1@2 → n5 AppendResponse last=4@2 reject=false
+</a><a href="#h6-1-4" id="h6-1-4" class="i">+n1@2 → n5 AppendResponse last=4@2 reject=0
+</a> n2@1 follower(n1) ⇨ n2@2 follower(n5)
+ n2@2 append 3@2 put b=2
+ n2@2 append 4@2 put c=3
+<a href="#h6-1-8" id="h6-1-8" class="d">-n2@2 → n5 AppendResponse last=4@2 reject=false
+</a><a href="#h6-1-9" id="h6-1-9" class="i">+n2@2 → n5 AppendResponse last=4@2 reject=0
+</a> 
+ log 1 2
+ ---
+<b>diff --git a/<a id="h7" href="../file/src/raft/testscripts/node/append_initial.html">src/raft/testscripts/node/append_initial</a> b/<a href="../file/src/raft/testscripts/node/append_initial.html">src/raft/testscripts/node/append_initial</a></b>
+<a href="#h7-0" id="h7-0" class="h">@@ -32,7 +32,7 @@ n1@1 → n2 Heartbeat commit=0@0 read_seq=0
+</a> n1@1 ⇥ n3 H̶e̶a̶r̶t̶b̶e̶a̶t̶ ̶c̶o̶m̶m̶i̶t̶=̶0̶@̶0̶ ̶r̶e̶a̶d̶_̶s̶e̶q̶=̶0̶
+ n2@1 follower() ⇨ n2@1 follower(n1)
+ n2@1 append 1@1 None
+<a href="#h7-0-3" id="h7-0-3" class="d">-n2@1 → n1 AppendResponse last=1@1 reject=false
+</a><a href="#h7-0-4" id="h7-0-4" class="i">+n2@1 → n1 AppendResponse last=1@1 reject=0
+</a> n2@1 → n1 HeartbeatResponse last=1@1 read_seq=0
+ n1@1 commit 1@1
+ n1@1 apply 1@1 None
+<a href="#h7-1" id="h7-1" class="h">@@ -59,11 +59,11 @@ n1@1 → n3 Append base=0@0 [1@1 2@1]
+</a> deliver
+ ---
+ n2@1 append 2@1 put foo=bar
+<a href="#h7-1-3" id="h7-1-3" class="d">-n2@1 → n1 AppendResponse last=2@1 reject=false
+</a><a href="#h7-1-4" id="h7-1-4" class="i">+n2@1 → n1 AppendResponse last=2@1 reject=0
+</a> n3@0 follower() ⇨ n3@1 follower(n1)
+ n3@1 append 1@1 None
+ n3@1 append 2@1 put foo=bar
+<a href="#h7-1-8" id="h7-1-8" class="d">-n3@1 → n1 AppendResponse last=2@1 reject=false
+</a><a href="#h7-1-9" id="h7-1-9" class="i">+n3@1 → n1 AppendResponse last=2@1 reject=0
+</a> 
+ log
+ ---
+<b>diff --git a/<a id="h8" href="../file/src/raft/testscripts/node/append_overlap.html">src/raft/testscripts/node/append_overlap</a> b/<a href="../file/src/raft/testscripts/node/append_overlap.html">src/raft/testscripts/node/append_overlap</a></b>
+<a href="#h8-0" id="h8-0" class="h">@@ -16,9 +16,9 @@ n1@1 append 2@1 put a=1
+</a> n1@1 → n2 Append base=1@1 [2@1]
+ n1@1 → n3 Append base=1@1 [2@1]
+ n2@1 append 2@1 put a=1
+<a href="#h8-0-3" id="h8-0-3" class="d">-n2@1 → n1 AppendResponse last=2@1 reject=false
+</a><a href="#h8-0-4" id="h8-0-4" class="i">+n2@1 → n1 AppendResponse last=2@1 reject=0
+</a> n3@1 append 2@1 put a=1
+<a href="#h8-0-6" id="h8-0-6" class="d">-n3@1 → n1 AppendResponse last=2@1 reject=false
+</a><a href="#h8-0-7" id="h8-0-7" class="i">+n3@1 → n1 AppendResponse last=2@1 reject=0
+</a> 
+ put 1 b=2
+ deliver 2 3
+<a href="#h8-1" id="h8-1" class="h">@@ -28,9 +28,9 @@ n1@1 append 3@1 put b=2
+</a> n1@1 → n2 Append base=1@1 [2@1 3@1]
+ n1@1 → n3 Append base=1@1 [2@1 3@1]
+ n2@1 append 3@1 put b=2
+<a href="#h8-1-3" id="h8-1-3" class="d">-n2@1 → n1 AppendResponse last=3@1 reject=false
+</a><a href="#h8-1-4" id="h8-1-4" class="i">+n2@1 → n1 AppendResponse last=3@1 reject=0
+</a> n3@1 append 3@1 put b=2
+<a href="#h8-1-6" id="h8-1-6" class="d">-n3@1 → n1 AppendResponse last=3@1 reject=false
+</a><a href="#h8-1-7" id="h8-1-7" class="i">+n3@1 → n1 AppendResponse last=3@1 reject=0
+</a> 
+ put 1 c=3
+ deliver 2 3
+<a href="#h8-2" id="h8-2" class="h">@@ -40,9 +40,9 @@ n1@1 append 4@1 put c=3
+</a> n1@1 → n2 Append base=1@1 [2@1 3@1 4@1]
+ n1@1 → n3 Append base=1@1 [2@1 3@1 4@1]
+ n2@1 append 4@1 put c=3
+<a href="#h8-2-3" id="h8-2-3" class="d">-n2@1 → n1 AppendResponse last=4@1 reject=false
+</a><a href="#h8-2-4" id="h8-2-4" class="i">+n2@1 → n1 AppendResponse last=4@1 reject=0
+</a> n3@1 append 4@1 put c=3
+<a href="#h8-2-6" id="h8-2-6" class="d">-n3@1 → n1 AppendResponse last=4@1 reject=false
+</a><a href="#h8-2-7" id="h8-2-7" class="i">+n3@1 → n1 AppendResponse last=4@1 reject=0
+</a> 
+ stabilize
+ ---
+<b>diff --git a/<a id="h9" href="../file/src/raft/testscripts/node/append_response_beyond_last_index_panics.html">src/raft/testscripts/node/append_response_beyond_last_index_panics</a> b/<a href="../file/src/raft/testscripts/node/append_response_beyond_last_index_panics.html">src/raft/testscripts/node/append_response_beyond_last_index_panics</a></b>
+<a href="#h9-0" id="h9-0" class="h">@@ -16,6 +16,6 @@ n1@1 → n2 Append base=1@1 [2@1]
+</a> n1@1 → n3 Append base=1@1 [2@1]
+ 
+ # An AppendResponse beyond leader&#39;s last log should panic.
+<a href="#h9-0-3" id="h9-0-3" class="d">-!step 1 &#39;{&quot;from&quot;:2, &quot;to&quot;:1, &quot;term&quot;:1, &quot;message&quot;:{&quot;AppendResponse&quot;:{&quot;last_index&quot;:3,&quot;last_term&quot;:1,&quot;reject&quot;:false}}}&#39;
+</a><a href="#h9-0-4" id="h9-0-4" class="i">+!step 1 &#39;{&quot;from&quot;:2, &quot;to&quot;:1, &quot;term&quot;:1, &quot;message&quot;:{&quot;AppendResponse&quot;:{&quot;last_index&quot;:3,&quot;last_term&quot;:1,&quot;reject_index&quot;:0}}}&#39;
+</a> ---
+<a href="#h9-0-6" id="h9-0-6" class="d">-Panic: follower accepted entries after last index
+</a><a href="#h9-0-7" id="h9-0-7" class="i">+Panic: follower appended future entries
+</a><b>diff --git a/<a id="h10" href="../file/src/raft/testscripts/node/append_response_beyond_last_term_panics.html">src/raft/testscripts/node/append_response_beyond_last_term_panics</a> b/<a href="../file/src/raft/testscripts/node/append_response_beyond_last_term_panics.html">src/raft/testscripts/node/append_response_beyond_last_term_panics</a></b>
+<a href="#h10-0" id="h10-0" class="h">@@ -16,6 +16,6 @@ n1@1 → n2 Append base=1@1 [2@1]
+</a> n1@1 → n3 Append base=1@1 [2@1]
+ 
+ # An AppendResponse beyond leader&#39;s last term should panic.
+<a href="#h10-0-3" id="h10-0-3" class="d">-!step 1 &#39;{&quot;from&quot;:2, &quot;to&quot;:1, &quot;term&quot;:1, &quot;message&quot;:{&quot;AppendResponse&quot;:{&quot;last_index&quot;:2,&quot;last_term&quot;:2,&quot;reject&quot;:false}}}&#39;
+</a><a href="#h10-0-4" id="h10-0-4" class="i">+!step 1 &#39;{&quot;from&quot;:2, &quot;to&quot;:1, &quot;term&quot;:1, &quot;message&quot;:{&quot;AppendResponse&quot;:{&quot;last_index&quot;:2,&quot;last_term&quot;:2,&quot;reject_index&quot;:0}}}&#39;
+</a> ---
+<a href="#h10-0-6" id="h10-0-6" class="d">-Panic: follower accepted entries after last term
+</a><a href="#h10-0-7" id="h10-0-7" class="i">+Panic: follower appended future entries
+</a><b>diff --git a/<a id="h11" href="../file/src/raft/testscripts/node/election.html">src/raft/testscripts/node/election</a> b/<a href="../file/src/raft/testscripts/node/election.html">src/raft/testscripts/node/election</a></b>
+<a href="#h11-0" id="h11-0" class="h">@@ -41,11 +41,11 @@ stabilize
+</a> ---
+ n2@1 follower() ⇨ n2@1 follower(n1)
+ n2@1 append 1@1 None
+<a href="#h11-0-3" id="h11-0-3" class="d">-n2@1 → n1 AppendResponse last=1@1 reject=false
+</a><a href="#h11-0-4" id="h11-0-4" class="i">+n2@1 → n1 AppendResponse last=1@1 reject=0
+</a> n2@1 → n1 HeartbeatResponse last=1@1 read_seq=0
+ n3@1 follower() ⇨ n3@1 follower(n1)
+ n3@1 append 1@1 None
+<a href="#h11-0-8" id="h11-0-8" class="d">-n3@1 → n1 AppendResponse last=1@1 reject=false
+</a><a href="#h11-0-9" id="h11-0-9" class="i">+n3@1 → n1 AppendResponse last=1@1 reject=0
+</a> n3@1 → n1 HeartbeatResponse last=1@1 read_seq=0
+ n1@1 commit 1@1
+ n1@1 apply 1@1 None
+<b>diff --git a/<a id="h12" href="../file/src/raft/testscripts/node/election_candidate_behind_leader.html">src/raft/testscripts/node/election_candidate_behind_leader</a> b/<a href="../file/src/raft/testscripts/node/election_candidate_behind_leader.html">src/raft/testscripts/node/election_candidate_behind_leader</a></b>
+<a href="#h12-0" id="h12-0" class="h">@@ -78,18 +78,18 @@ n5@2 → n2 Heartbeat commit=1@1 read_seq=0
+</a> n5@2 → n3 Heartbeat commit=1@1 read_seq=0
+ n5@2 → n4 Heartbeat commit=1@1 read_seq=0
+ n1@2 follower() ⇨ n1@2 follower(n5)
+<a href="#h12-0-3" id="h12-0-3" class="d">-n1@2 → n5 AppendResponse last=2@2 reject=false
+</a><a href="#h12-0-4" id="h12-0-4" class="i">+n1@2 → n5 AppendResponse last=2@2 reject=0
+</a> n1@2 → n5 HeartbeatResponse last=2@2 read_seq=0
+ n2@2 follower() ⇨ n2@2 follower(n5)
+<a href="#h12-0-7" id="h12-0-7" class="d">-n2@2 → n5 AppendResponse last=2@2 reject=false
+</a><a href="#h12-0-8" id="h12-0-8" class="i">+n2@2 → n5 AppendResponse last=2@2 reject=0
+</a> n2@2 → n5 HeartbeatResponse last=2@2 read_seq=0
+ n3@2 follower() ⇨ n3@2 follower(n5)
+ n3@2 append 2@2 None
+<a href="#h12-0-12" id="h12-0-12" class="d">-n3@2 → n5 AppendResponse last=2@2 reject=false
+</a><a href="#h12-0-13" id="h12-0-13" class="i">+n3@2 → n5 AppendResponse last=2@2 reject=0
+</a> n3@2 → n5 HeartbeatResponse last=2@2 read_seq=0
+ n4@2 follower() ⇨ n4@2 follower(n5)
+ n4@2 append 2@2 None
+<a href="#h12-0-17" id="h12-0-17" class="d">-n4@2 → n5 AppendResponse last=2@2 reject=false
+</a><a href="#h12-0-18" id="h12-0-18" class="i">+n4@2 → n5 AppendResponse last=2@2 reject=0
+</a> n4@2 → n5 HeartbeatResponse last=2@2 read_seq=0
+ n5@2 commit 2@2
+ n5@2 apply 2@2 None
+<b>diff --git a/<a id="h13" href="../file/src/raft/testscripts/node/election_contested.html">src/raft/testscripts/node/election_contested</a> b/<a href="../file/src/raft/testscripts/node/election_contested.html">src/raft/testscripts/node/election_contested</a></b>
+<a href="#h13-0" id="h13-0" class="h">@@ -63,19 +63,19 @@ stabilize
+</a> ---
+ n2@1 follower() ⇨ n2@1 follower(n1)
+ n2@1 append 1@1 None
+<a href="#h13-0-3" id="h13-0-3" class="d">-n2@1 → n1 AppendResponse last=1@1 reject=false
+</a><a href="#h13-0-4" id="h13-0-4" class="i">+n2@1 → n1 AppendResponse last=1@1 reject=0
+</a> n2@1 → n1 HeartbeatResponse last=1@1 read_seq=0
+ n3@1 follower() ⇨ n3@1 follower(n1)
+ n3@1 append 1@1 None
+<a href="#h13-0-8" id="h13-0-8" class="d">-n3@1 → n1 AppendResponse last=1@1 reject=false
+</a><a href="#h13-0-9" id="h13-0-9" class="i">+n3@1 → n1 AppendResponse last=1@1 reject=0
+</a> n3@1 → n1 HeartbeatResponse last=1@1 read_seq=0
+ n4@1 follower() ⇨ n4@1 follower(n1)
+ n4@1 append 1@1 None
+<a href="#h13-0-13" id="h13-0-13" class="d">-n4@1 → n1 AppendResponse last=1@1 reject=false
+</a><a href="#h13-0-14" id="h13-0-14" class="i">+n4@1 → n1 AppendResponse last=1@1 reject=0
+</a> n4@1 → n1 HeartbeatResponse last=1@1 read_seq=0
+ n5@1 candidate ⇨ n5@1 follower(n1)
+ n5@1 append 1@1 None
+<a href="#h13-0-18" id="h13-0-18" class="d">-n5@1 → n1 AppendResponse last=1@1 reject=false
+</a><a href="#h13-0-19" id="h13-0-19" class="i">+n5@1 → n1 AppendResponse last=1@1 reject=0
+</a> n5@1 → n1 HeartbeatResponse last=1@1 read_seq=0
+ n1@1 commit 1@1
+ n1@1 apply 1@1 None
+<b>diff --git a/<a id="h14" href="../file/src/raft/testscripts/node/election_tie.html">src/raft/testscripts/node/election_tie</a> b/<a href="../file/src/raft/testscripts/node/election_tie.html">src/raft/testscripts/node/election_tie</a></b>
+<a href="#h14-0" id="h14-0" class="h">@@ -64,11 +64,11 @@ stabilize
+</a> ---
+ n1@2 follower() ⇨ n1@2 follower(n2)
+ n1@2 append 1@2 None
+<a href="#h14-0-3" id="h14-0-3" class="d">-n1@2 → n2 AppendResponse last=1@2 reject=false
+</a><a href="#h14-0-4" id="h14-0-4" class="i">+n1@2 → n2 AppendResponse last=1@2 reject=0
+</a> n1@2 → n2 HeartbeatResponse last=1@2 read_seq=0
+ n3@2 follower() ⇨ n3@2 follower(n2)
+ n3@2 append 1@2 None
+<a href="#h14-0-8" id="h14-0-8" class="d">-n3@2 → n2 AppendResponse last=1@2 reject=false
+</a><a href="#h14-0-9" id="h14-0-9" class="i">+n3@2 → n2 AppendResponse last=1@2 reject=0
+</a> n3@2 → n2 HeartbeatResponse last=1@2 read_seq=0
+ n2@2 commit 1@2
+ n2@2 apply 1@2 None
+<b>diff --git a/<a id="h15" href="../file/src/raft/testscripts/node/election_tie_even.html">src/raft/testscripts/node/election_tie_even</a> b/<a href="../file/src/raft/testscripts/node/election_tie_even.html">src/raft/testscripts/node/election_tie_even</a></b>
+<a href="#h15-0" id="h15-0" class="h">@@ -78,15 +78,15 @@ stabilize
+</a> ---
+ n1@2 follower() ⇨ n1@2 follower(n3)
+ n1@2 append 1@2 None
+<a href="#h15-0-3" id="h15-0-3" class="d">-n1@2 → n3 AppendResponse last=1@2 reject=false
+</a><a href="#h15-0-4" id="h15-0-4" class="i">+n1@2 → n3 AppendResponse last=1@2 reject=0
+</a> n1@2 → n3 HeartbeatResponse last=1@2 read_seq=0
+ n2@2 follower() ⇨ n2@2 follower(n3)
+ n2@2 append 1@2 None
+<a href="#h15-0-8" id="h15-0-8" class="d">-n2@2 → n3 AppendResponse last=1@2 reject=false
+</a><a href="#h15-0-9" id="h15-0-9" class="i">+n2@2 → n3 AppendResponse last=1@2 reject=0
+</a> n2@2 → n3 HeartbeatResponse last=1@2 read_seq=0
+ n4@2 follower() ⇨ n4@2 follower(n3)
+ n4@2 append 1@2 None
+<a href="#h15-0-13" id="h15-0-13" class="d">-n4@2 → n3 AppendResponse last=1@2 reject=false
+</a><a href="#h15-0-14" id="h15-0-14" class="i">+n4@2 → n3 AppendResponse last=1@2 reject=0
+</a> n4@2 → n3 HeartbeatResponse last=1@2 read_seq=0
+ n3@2 commit 1@2
+ n3@2 apply 1@2 None
+<b>diff --git a/<a id="h16" href="../file/src/raft/testscripts/node/heartbeat_commits_follower.html">src/raft/testscripts/node/heartbeat_commits_follower</a> b/<a href="../file/src/raft/testscripts/node/heartbeat_commits_follower.html">src/raft/testscripts/node/heartbeat_commits_follower</a></b>
+<a href="#h16-0" id="h16-0" class="h">@@ -15,9 +15,9 @@ n1@1 append 2@1 put foo=bar
+</a> n1@1 → n2 Append base=1@1 [2@1]
+ n1@1 → n3 Append base=1@1 [2@1]
+ n2@1 append 2@1 put foo=bar
+<a href="#h16-0-3" id="h16-0-3" class="d">-n2@1 → n1 AppendResponse last=2@1 reject=false
+</a><a href="#h16-0-4" id="h16-0-4" class="i">+n2@1 → n1 AppendResponse last=2@1 reject=0
+</a> n3@1 append 2@1 put foo=bar
+<a href="#h16-0-6" id="h16-0-6" class="d">-n3@1 → n1 AppendResponse last=2@1 reject=false
+</a><a href="#h16-0-7" id="h16-0-7" class="i">+n3@1 → n1 AppendResponse last=2@1 reject=0
+</a> n1@1 commit 2@1
+ n1@1 apply 2@1 put foo=bar
+ n1@1 → c1 ClientResponse id=0x01 write 0x0102
+<b>diff --git a/<a id="h17" href="../file/src/raft/testscripts/node/heartbeat_converts_candidate.html">src/raft/testscripts/node/heartbeat_converts_candidate</a> b/<a href="../file/src/raft/testscripts/node/heartbeat_converts_candidate.html">src/raft/testscripts/node/heartbeat_converts_candidate</a></b>
+<a href="#h17-0" id="h17-0" class="h">@@ -49,7 +49,7 @@ n3@1 candidate ⇨ n3@1 follower(n1)
+</a> n3@1 → n1 HeartbeatResponse last=0@0 read_seq=0
+ n1@1 → n3 Append base=0@0 [1@1]
+ n3@1 append 1@1 None
+<a href="#h17-0-3" id="h17-0-3" class="d">-n3@1 → n1 AppendResponse last=1@1 reject=false
+</a><a href="#h17-0-4" id="h17-0-4" class="i">+n3@1 → n1 AppendResponse last=1@1 reject=0
+</a> 
+ status
+ ---
+<b>diff --git a/<a id="h18" href="../file/src/raft/testscripts/node/heartbeat_converts_follower.html">src/raft/testscripts/node/heartbeat_converts_follower</a> b/<a href="../file/src/raft/testscripts/node/heartbeat_converts_follower.html">src/raft/testscripts/node/heartbeat_converts_follower</a></b>
+<a href="#h18-0" id="h18-0" class="h">@@ -37,7 +37,7 @@ n2@1 follower(n1) ⇨ n2@2 follower(n3)
+</a> n2@2 → n3 HeartbeatResponse last=1@1 read_seq=0
+ n3@2 → n2 Append base=1@1 [2@2]
+ n2@2 append 2@2 None
+<a href="#h18-0-3" id="h18-0-3" class="d">-n2@2 → n3 AppendResponse last=2@2 reject=false
+</a><a href="#h18-0-4" id="h18-0-4" class="i">+n2@2 → n3 AppendResponse last=2@2 reject=0
+</a> n3@2 → n1 Heartbeat commit=2@2 read_seq=0
+ n3@2 → n2 Heartbeat commit=2@2 read_seq=0
+ n1@2 → n3 HeartbeatResponse last=2@2 read_seq=0
+<b>diff --git a/<a id="h19" href="../file/src/raft/testscripts/node/heartbeat_converts_follower_leaderless.html">src/raft/testscripts/node/heartbeat_converts_follower_leaderless</a> b/<a href="../file/src/raft/testscripts/node/heartbeat_converts_follower_leaderless.html">src/raft/testscripts/node/heartbeat_converts_follower_leaderless</a></b>
+<a href="#h19-0" id="h19-0" class="h">@@ -36,7 +36,7 @@ n3@0 follower() ⇨ n3@1 follower(n1)
+</a> n3@1 → n1 HeartbeatResponse last=0@0 read_seq=0
+ n1@1 → n3 Append base=0@0 [1@1]
+ n3@1 append 1@1 None
+<a href="#h19-0-3" id="h19-0-3" class="d">-n3@1 → n1 AppendResponse last=1@1 reject=false
+</a><a href="#h19-0-4" id="h19-0-4" class="i">+n3@1 → n1 AppendResponse last=1@1 reject=0
+</a> 
+ status
+ ---
+<b>diff --git a/<a id="h20" href="../file/src/raft/testscripts/node/heartbeat_converts_leader.html">src/raft/testscripts/node/heartbeat_converts_leader</a> b/<a href="../file/src/raft/testscripts/node/heartbeat_converts_leader.html">src/raft/testscripts/node/heartbeat_converts_leader</a></b>
+<a href="#h20-0" id="h20-0" class="h">@@ -37,7 +37,7 @@ n3@1 leader ⇨ n3@2 follower(n1)
+</a> n3@2 → n1 HeartbeatResponse last=1@1 read_seq=0
+ n1@2 → n3 Append base=1@1 [2@2]
+ n3@2 append 2@2 None
+<a href="#h20-0-3" id="h20-0-3" class="d">-n3@2 → n1 AppendResponse last=2@2 reject=false
+</a><a href="#h20-0-4" id="h20-0-4" class="i">+n3@2 → n1 AppendResponse last=2@2 reject=0
+</a> n1@2 → n2 Heartbeat commit=2@2 read_seq=0
+ n1@2 → n3 Heartbeat commit=2@2 read_seq=0
+ n2@2 → n1 HeartbeatResponse last=2@2 read_seq=0
+<b>diff --git a/<a id="h21" href="../file/src/raft/testscripts/node/old_campaign_rejected.html">src/raft/testscripts/node/old_campaign_rejected</a> b/<a href="../file/src/raft/testscripts/node/old_campaign_rejected.html">src/raft/testscripts/node/old_campaign_rejected</a></b>
+<a href="#h21-0" id="h21-0" class="h">@@ -38,7 +38,7 @@ deliver 3 from=1
+</a> ---
+ n3@1 follower() ⇨ n3@1 follower(n1)
+ n3@1 append 1@1 None
+<a href="#h21-0-3" id="h21-0-3" class="d">-n3@1 → n1 AppendResponse last=1@1 reject=false
+</a><a href="#h21-0-4" id="h21-0-4" class="i">+n3@1 → n1 AppendResponse last=1@1 reject=0
+</a> n3@1 → n1 HeartbeatResponse last=1@1 read_seq=0
+ 
+ status
+<b>diff --git a/<a id="h22" href="../file/src/raft/testscripts/node/old_campaign_response_ignored.html">src/raft/testscripts/node/old_campaign_response_ignored</a> b/<a href="../file/src/raft/testscripts/node/old_campaign_response_ignored.html">src/raft/testscripts/node/old_campaign_response_ignored</a></b>
+<a href="#h22-0" id="h22-0" class="h">@@ -70,7 +70,7 @@ deliver 2 from=1
+</a> n2@1 → n1 CampaignResponse vote=false
+ n2@1 candidate ⇨ n2@1 follower(n1)
+ n2@1 append 1@1 None
+<a href="#h22-0-3" id="h22-0-3" class="d">-n2@1 → n1 AppendResponse last=1@1 reject=false
+</a><a href="#h22-0-4" id="h22-0-4" class="i">+n2@1 → n1 AppendResponse last=1@1 reject=0
+</a> n2@1 → n1 HeartbeatResponse last=1@1 read_seq=0
+ 
+ # n1 (leader) receives n6&#39;s vote and ignores it. n2 (follower) receives n7&#39;s
+<b>diff --git a/<a id="h23" href="../file/src/raft/testscripts/node/request_follower.html">src/raft/testscripts/node/request_follower</a> b/<a href="../file/src/raft/testscripts/node/request_follower.html">src/raft/testscripts/node/request_follower</a></b>
+<a href="#h23-0" id="h23-0" class="h">@@ -31,9 +31,9 @@ n1@1 append 2@1 put foo=bar
+</a> n1@1 → n2 Append base=1@1 [2@1]
+ n1@1 → n3 Append base=1@1 [2@1]
+ n2@1 append 2@1 put foo=bar
+<a href="#h23-0-3" id="h23-0-3" class="d">-n2@1 → n1 AppendResponse last=2@1 reject=false
+</a><a href="#h23-0-4" id="h23-0-4" class="i">+n2@1 → n1 AppendResponse last=2@1 reject=0
+</a> n3@1 append 2@1 put foo=bar
+<a href="#h23-0-6" id="h23-0-6" class="d">-n3@1 → n1 AppendResponse last=2@1 reject=false
+</a><a href="#h23-0-7" id="h23-0-7" class="i">+n3@1 → n1 AppendResponse last=2@1 reject=0
+</a> n1@1 commit 2@1
+ n1@1 apply 2@1 put foo=bar
+ n1@1 → n2 ClientResponse id=0x02 write 0x0102
+<b>diff --git a/<a id="h24" href="../file/src/raft/testscripts/node/request_leader.html">src/raft/testscripts/node/request_leader</a> b/<a href="../file/src/raft/testscripts/node/request_leader.html">src/raft/testscripts/node/request_leader</a></b>
+<a href="#h24-0" id="h24-0" class="h">@@ -28,9 +28,9 @@ n1@1 append 2@1 put foo=bar
+</a> n1@1 → n2 Append base=1@1 [2@1]
+ n1@1 → n3 Append base=1@1 [2@1]
+ n2@1 append 2@1 put foo=bar
+<a href="#h24-0-3" id="h24-0-3" class="d">-n2@1 → n1 AppendResponse last=2@1 reject=false
+</a><a href="#h24-0-4" id="h24-0-4" class="i">+n2@1 → n1 AppendResponse last=2@1 reject=0
+</a> n3@1 append 2@1 put foo=bar
+<a href="#h24-0-6" id="h24-0-6" class="d">-n3@1 → n1 AppendResponse last=2@1 reject=false
+</a><a href="#h24-0-7" id="h24-0-7" class="i">+n3@1 → n1 AppendResponse last=2@1 reject=0
+</a> n1@1 commit 2@1
+ n1@1 apply 2@1 put foo=bar
+ n1@1 → c1 ClientResponse id=0x02 write 0x0102
+<b>diff --git a/<a id="h25" href="../file/src/raft/testscripts/node/request_leader_change_linearizability.html">src/raft/testscripts/node/request_leader_change_linearizability</a> b/<a href="../file/src/raft/testscripts/node/request_leader_change_linearizability.html">src/raft/testscripts/node/request_leader_change_linearizability</a></b>
+<a href="#h25-0" id="h25-0" class="h">@@ -76,9 +76,9 @@ c2@2 get b ⇒ None
+</a> n2@2 → n1 Append base=3@1 [4@2]
+ n2@2 → n3 Append base=3@1 [4@2]
+ n1@2 append 4@2 None
+<a href="#h25-0-3" id="h25-0-3" class="d">-n1@2 → n2 AppendResponse last=4@2 reject=false
+</a><a href="#h25-0-4" id="h25-0-4" class="i">+n1@2 → n2 AppendResponse last=4@2 reject=0
+</a> n3@2 append 4@2 None
+<a href="#h25-0-6" id="h25-0-6" class="d">-n3@2 → n2 AppendResponse last=4@2 reject=false
+</a><a href="#h25-0-7" id="h25-0-7" class="i">+n3@2 → n2 AppendResponse last=4@2 reject=0
+</a> n2@2 commit 4@2
+ n2@2 apply 3@1 put b=2
+ n2@2 apply 4@2 None
+<b>diff --git a/<a id="h26" href="../file/src/raft/testscripts/node/request_leader_disconnect.html">src/raft/testscripts/node/request_leader_disconnect</a> b/<a href="../file/src/raft/testscripts/node/request_leader_disconnect.html">src/raft/testscripts/node/request_leader_disconnect</a></b>
+<a href="#h26-0" id="h26-0" class="h">@@ -41,9 +41,9 @@ c1@1 get foo ⇒ None
+</a> n1@1 → n2 Append base=1@1 [2@1]
+ n1@1 → n3 Append base=1@1 [2@1]
+ n2@1 append 2@1 put foo=bar
+<a href="#h26-0-3" id="h26-0-3" class="d">-n2@1 → n1 AppendResponse last=2@1 reject=false
+</a><a href="#h26-0-4" id="h26-0-4" class="i">+n2@1 → n1 AppendResponse last=2@1 reject=0
+</a> n3@1 append 2@1 put foo=bar
+<a href="#h26-0-6" id="h26-0-6" class="d">-n3@1 → n1 AppendResponse last=2@1 reject=false
+</a><a href="#h26-0-7" id="h26-0-7" class="i">+n3@1 → n1 AppendResponse last=2@1 reject=0
+</a> n1@1 commit 2@1
+ n1@1 apply 2@1 put foo=bar
+ n1@1 → c1 ClientResponse id=0x01 write 0x0102
+</pre>
+</div>
+</body>
+</html>

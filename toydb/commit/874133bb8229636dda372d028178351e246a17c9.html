@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>kv: simplified the Simple store trait bounds - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/874133bb8229636dda372d028178351e246a17c9.html">874133bb8229636dda372d028178351e246a17c9</a>
+<b>parent</b> <a href="../commit/f92c2b76c0764743f0574d584149af328e895ef6.html">f92c2b76c0764743f0574d584149af328e895ef6</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Sun, 15 Dec 2019 17:25:10 +0100
+
+kv: simplified the Simple store trait bounds
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/kv/mod.rs</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/kv/simple.rs</a></td><td> | </td><td class="num">31</td><td><span class="i">+++++++++++++</span><span class="d">------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/kv/storage/file.rs</a></td><td> | </td><td class="num">26</td><td><span class="i">++++++++++++</span><span class="d">--------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">src/kv/storage/memory.rs</a></td><td> | </td><td class="num">6</td><td><span class="i">++++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h4">src/kv/storage/mod.rs</a></td><td> | </td><td class="num">7</td><td><span class="i">+++++</span><span class="d">--</span></td></tr>
+<tr><td class="A">A</td><td><a href="#h5">src/kv/storage/test.rs</a></td><td> | </td><td class="num">55</td><td><span class="i">+++++++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h6">src/raft/log.rs</a></td><td> | </td><td class="num">26</td><td><span class="i">++++++++++++++</span><span class="d">------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h7">src/raft/node/mod.rs</a></td><td> | </td><td class="num">16</td><td><span class="i">++++++++++</span><span class="d">------</span></td></tr>
+</table></pre><pre>8 files changed, 114 insertions(+), 54 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/kv/mod.rs.html">src/kv/mod.rs</a> b/<a href="../file/src/kv/mod.rs.html">src/kv/mod.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -4,3 +4,4 @@ pub mod storage;
+</a> 
+ pub use mvcc::{Mode, Transaction, MVCC};
+ pub use simple::Simple;
+<a href="#h0-0-3" id="h0-0-3" class="i">+pub use storage::Range;
+</a><b>diff --git a/<a id="h1" href="../file/src/kv/simple.rs.html">src/kv/simple.rs</a> b/<a href="../file/src/kv/simple.rs.html">src/kv/simple.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -2,43 +2,38 @@ use super::storage::{Range, Storage};
+</a> use crate::Error;
+ 
+ use std::ops::RangeBounds;
+<a href="#h1-0-3" id="h1-0-3" class="d">-use std::sync::{Arc, RwLock};
+</a> 
+<a href="#h1-0-5" id="h1-0-5" class="d">-/// A simple key-value store
+</a><a href="#h1-0-6" id="h1-0-6" class="d">-#[derive(Clone, Debug)]
+</a><a href="#h1-0-7" id="h1-0-7" class="i">+/// A simple key-value store, which stores the key-value pairs directly in the storage backend.
+</a> pub struct Simple&lt;S: Storage&gt; {
+<a href="#h1-0-9" id="h1-0-9" class="d">-    storage: Arc&lt;RwLock&lt;S&gt;&gt;,
+</a><a href="#h1-0-10" id="h1-0-10" class="i">+    /// The underlying storage backend.
+</a><a href="#h1-0-11" id="h1-0-11" class="i">+    storage: S,
+</a> }
+ 
+ impl&lt;S: Storage&gt; Simple&lt;S&gt; {
+<a href="#h1-0-15" id="h1-0-15" class="d">-    /// Creates a new Simple store
+</a><a href="#h1-0-16" id="h1-0-16" class="i">+    /// Creates a new Simple store.
+</a>     pub fn new(storage: S) -&gt; Self {
+<a href="#h1-0-18" id="h1-0-18" class="d">-        Self { storage: Arc::new(RwLock::new(storage)) }
+</a><a href="#h1-0-19" id="h1-0-19" class="i">+        Self { storage }
+</a>     }
+ 
+<a href="#h1-0-22" id="h1-0-22" class="d">-    /// Deletes a key
+</a><a href="#h1-0-23" id="h1-0-23" class="i">+    /// Deletes a key, if it exists.
+</a>     pub fn delete(&amp;mut self, key: &amp;[u8]) -&gt; Result&lt;(), Error&gt; {
+<a href="#h1-0-25" id="h1-0-25" class="d">-        self.storage.write()?.remove(key)
+</a><a href="#h1-0-26" id="h1-0-26" class="i">+        self.storage.remove(key)
+</a>     }
+ 
+<a href="#h1-0-29" id="h1-0-29" class="d">-    /// Fetches a key
+</a><a href="#h1-0-30" id="h1-0-30" class="i">+    /// Gets a value for a key, or `None` if it does not exist.
+</a>     pub fn get(&amp;self, key: &amp;[u8]) -&gt; Result&lt;Option&lt;Vec&lt;u8&gt;&gt;, Error&gt; {
+<a href="#h1-0-32" id="h1-0-32" class="d">-        self.storage.read()?.read(key)
+</a><a href="#h1-0-33" id="h1-0-33" class="i">+        self.storage.read(key)
+</a>     }
+ 
+<a href="#h1-0-36" id="h1-0-36" class="d">-    /// Scans a key range
+</a><a href="#h1-0-37" id="h1-0-37" class="i">+    /// Returns an iterator over a range of key/value pairs.
+</a>     #[allow(dead_code)]
+     pub fn scan(&amp;self, range: impl RangeBounds&lt;Vec&lt;u8&gt;&gt;) -&gt; Result&lt;Range, Error&gt; {
+<a href="#h1-0-40" id="h1-0-40" class="d">-        // FIXME We temporarily buffer the iterator here, to avoid dealing with
+</a><a href="#h1-0-41" id="h1-0-41" class="d">-        // borrow issues.
+</a><a href="#h1-0-42" id="h1-0-42" class="d">-        Ok(Box::new(
+</a><a href="#h1-0-43" id="h1-0-43" class="d">-            self.storage.read()?.scan(range).collect::&lt;Vec&lt;Result&lt;_, Error&gt;&gt;&gt;().into_iter(),
+</a><a href="#h1-0-44" id="h1-0-44" class="d">-        ))
+</a><a href="#h1-0-45" id="h1-0-45" class="i">+        Ok(self.storage.scan(range))
+</a>     }
+ 
+<a href="#h1-0-48" id="h1-0-48" class="d">-    /// Sets a key
+</a><a href="#h1-0-49" id="h1-0-49" class="i">+    /// Sets a value for a key, replacing the existing value if any.
+</a>     pub fn set(&amp;mut self, key: &amp;[u8], value: Vec&lt;u8&gt;) -&gt; Result&lt;(), Error&gt; {
+<a href="#h1-0-51" id="h1-0-51" class="d">-        self.storage.write()?.write(key, value)
+</a><a href="#h1-0-52" id="h1-0-52" class="i">+        self.storage.write(key, value)
+</a>     }
+ }
+ 
+<b>diff --git a/<a id="h2" href="../file/src/kv/storage/file.rs.html">src/kv/storage/file.rs</a> b/<a href="../file/src/kv/storage/file.rs.html">src/kv/storage/file.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -1,20 +1,18 @@
+</a><a href="#h2-0-0" id="h2-0-0" class="d">-use super::{Range, Storage};
+</a><a href="#h2-0-1" id="h2-0-1" class="i">+use super::{Memory, Range, Storage};
+</a> use crate::Error;
+ 
+<a href="#h2-0-4" id="h2-0-4" class="d">-use std::collections::BTreeMap;
+</a> use std::io::Seek;
+ use std::ops::RangeBounds;
+ 
+<a href="#h2-0-8" id="h2-0-8" class="d">-/// A prototype file-based key-value backend. Keeps the entire dataset in
+</a><a href="#h2-0-9" id="h2-0-9" class="d">-/// memory and writes it out to disk on every write, as a stop-gap solution
+</a><a href="#h2-0-10" id="h2-0-10" class="d">-/// until a proper store is written.
+</a><a href="#h2-0-11" id="h2-0-11" class="d">-#[derive(Debug)]
+</a><a href="#h2-0-12" id="h2-0-12" class="i">+/// A prototype file-based key-value backend. Uses a Memory store internally,
+</a><a href="#h2-0-13" id="h2-0-13" class="i">+/// and writes it out to disk on every write, as a stop-gap solution until
+</a><a href="#h2-0-14" id="h2-0-14" class="i">+/// a proper store is written.
+</a> pub struct File {
+<a href="#h2-0-16" id="h2-0-16" class="i">+    /// The in-memory key-value store that is flushed to disk.
+</a><a href="#h2-0-17" id="h2-0-17" class="i">+    data: Memory,
+</a><a href="#h2-0-18" id="h2-0-18" class="i">+
+</a>     /// The file handle of the backing file.
+     file: std::fs::File,
+<a href="#h2-0-21" id="h2-0-21" class="d">-
+</a><a href="#h2-0-22" id="h2-0-22" class="d">-    /// The in-memory key-value store that is flushed to disk.
+</a><a href="#h2-0-23" id="h2-0-23" class="d">-    data: BTreeMap&lt;Vec&lt;u8&gt;, Vec&lt;u8&gt;&gt;,
+</a> }
+ 
+ impl File {
+<a href="#h2-1" id="h2-1" class="h">@@ -23,7 +21,7 @@ impl File {
+</a>         let data = if file.metadata()?.len() &gt; 0 {
+             rmp_serde::decode::from_read(file.try_clone()?)?
+         } else {
+<a href="#h2-1-3" id="h2-1-3" class="d">-            BTreeMap::new()
+</a><a href="#h2-1-4" id="h2-1-4" class="i">+            Memory::new()
+</a>         };
+         Ok(Self { file, data })
+     }
+<a href="#h2-2" id="h2-2" class="h">@@ -38,21 +36,21 @@ impl File {
+</a> 
+ impl Storage for File {
+     fn read(&amp;self, key: &amp;[u8]) -&gt; Result&lt;Option&lt;Vec&lt;u8&gt;&gt;, Error&gt; {
+<a href="#h2-2-3" id="h2-2-3" class="d">-        Ok(self.data.get(key).cloned())
+</a><a href="#h2-2-4" id="h2-2-4" class="i">+        self.data.read(key)
+</a>     }
+ 
+     fn remove(&amp;mut self, key: &amp;[u8]) -&gt; Result&lt;(), Error&gt; {
+<a href="#h2-2-8" id="h2-2-8" class="d">-        self.data.remove(key);
+</a><a href="#h2-2-9" id="h2-2-9" class="i">+        self.data.remove(key)?;
+</a>         self.flush()?;
+         Ok(())
+     }
+ 
+     fn scan(&amp;self, range: impl RangeBounds&lt;Vec&lt;u8&gt;&gt;) -&gt; Range {
+<a href="#h2-2-15" id="h2-2-15" class="d">-        Box::new(self.data.range(range).map(|(k, v)| Ok((k.clone(), v.clone()))))
+</a><a href="#h2-2-16" id="h2-2-16" class="i">+        self.data.scan(range)
+</a>     }
+ 
+     fn write(&amp;mut self, key: &amp;[u8], value: Vec&lt;u8&gt;) -&gt; Result&lt;(), Error&gt; {
+<a href="#h2-2-20" id="h2-2-20" class="d">-        self.data.insert(key.to_vec(), value);
+</a><a href="#h2-2-21" id="h2-2-21" class="i">+        self.data.write(key, value)?;
+</a>         self.flush()?;
+         Ok(())
+     }
+<b>diff --git a/<a id="h3" href="../file/src/kv/storage/memory.rs.html">src/kv/storage/memory.rs</a> b/<a href="../file/src/kv/storage/memory.rs.html">src/kv/storage/memory.rs</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -4,8 +4,10 @@ use crate::Error;
+</a> use std::collections::BTreeMap;
+ use std::ops::RangeBounds;
+ 
+<a href="#h3-0-3" id="h3-0-3" class="d">-/// In-memory key-value storage backend. Primarily used for prototyping and testing.
+</a><a href="#h3-0-4" id="h3-0-4" class="d">-#[derive(Clone, Debug)]
+</a><a href="#h3-0-5" id="h3-0-5" class="i">+/// In-memory key-value storage backend.
+</a><a href="#h3-0-6" id="h3-0-6" class="i">+///
+</a><a href="#h3-0-7" id="h3-0-7" class="i">+/// Derives serialize/deserialize because the File backend uses this for storage.
+</a><a href="#h3-0-8" id="h3-0-8" class="i">+#[derive(Serialize, Deserialize)]
+</a> pub struct Memory {
+     /// The underlying key-value storage.
+     data: BTreeMap&lt;Vec&lt;u8&gt;, Vec&lt;u8&gt;&gt;,
+<b>diff --git a/<a id="h4" href="../file/src/kv/storage/mod.rs.html">src/kv/storage/mod.rs</a> b/<a href="../file/src/kv/storage/mod.rs.html">src/kv/storage/mod.rs</a></b>
+<a href="#h4-0" id="h4-0" class="h">@@ -1,17 +1,20 @@
+</a> //! Key-value storage backends, with primitive IO operations.
+ 
+ mod file;
+<a href="#h4-0-3" id="h4-0-3" class="d">-#[cfg(test)]
+</a> mod memory;
+<a href="#h4-0-5" id="h4-0-5" class="i">+#[cfg(test)]
+</a><a href="#h4-0-6" id="h4-0-6" class="i">+mod test;
+</a> 
+ pub use file::File;
+<a href="#h4-0-9" id="h4-0-9" class="d">-#[cfg(test)]
+</a> pub use memory::Memory;
+<a href="#h4-0-11" id="h4-0-11" class="i">+#[cfg(test)]
+</a><a href="#h4-0-12" id="h4-0-12" class="i">+pub use test::Test;
+</a> 
+ use crate::Error;
+ use std::ops::RangeBounds;
+ 
+ /// Key/value storage backend.
+<a href="#h4-0-18" id="h4-0-18" class="i">+// FIXME Should not require &#39;static + Sync + Send, but necessary due to raft::State.
+</a> pub trait Storage: &#39;static + Sync + Send {
+     /// Reads a value for a key, or `None` if it does not exist.
+     fn read(&amp;self, key: &amp;[u8]) -&gt; Result&lt;Option&lt;Vec&lt;u8&gt;&gt;, Error&gt;;
+<b>diff --git a/<a id="h5" href="../file/src/kv/storage/test.rs.html">src/kv/storage/test.rs</a> b/<a href="../file/src/kv/storage/test.rs.html">src/kv/storage/test.rs</a></b>
+<a href="#h5-0" id="h5-0" class="h">@@ -0,0 +1,55 @@
+</a><a href="#h5-0-0" id="h5-0-0" class="i">+use super::{Memory, Range, Storage};
+</a><a href="#h5-0-1" id="h5-0-1" class="i">+use crate::Error;
+</a><a href="#h5-0-2" id="h5-0-2" class="i">+
+</a><a href="#h5-0-3" id="h5-0-3" class="i">+use std::ops::RangeBounds;
+</a><a href="#h5-0-4" id="h5-0-4" class="i">+use std::sync::{Arc, RwLock};
+</a><a href="#h5-0-5" id="h5-0-5" class="i">+
+</a><a href="#h5-0-6" id="h5-0-6" class="i">+/// Key-value storage backend for testing. Protects an inner Memory backend
+</a><a href="#h5-0-7" id="h5-0-7" class="i">+/// using a mutex, so it can be cloned and inspected.
+</a><a href="#h5-0-8" id="h5-0-8" class="i">+#[derive(Clone)]
+</a><a href="#h5-0-9" id="h5-0-9" class="i">+pub struct Test {
+</a><a href="#h5-0-10" id="h5-0-10" class="i">+    /// The underlying key-value store.
+</a><a href="#h5-0-11" id="h5-0-11" class="i">+    data: Arc&lt;RwLock&lt;Memory&gt;&gt;,
+</a><a href="#h5-0-12" id="h5-0-12" class="i">+}
+</a><a href="#h5-0-13" id="h5-0-13" class="i">+
+</a><a href="#h5-0-14" id="h5-0-14" class="i">+impl Test {
+</a><a href="#h5-0-15" id="h5-0-15" class="i">+    /// Creates a new Test key-value storage engine.
+</a><a href="#h5-0-16" id="h5-0-16" class="i">+    pub fn new() -&gt; Self {
+</a><a href="#h5-0-17" id="h5-0-17" class="i">+        Self { data: Arc::new(RwLock::new(Memory::new())) }
+</a><a href="#h5-0-18" id="h5-0-18" class="i">+    }
+</a><a href="#h5-0-19" id="h5-0-19" class="i">+}
+</a><a href="#h5-0-20" id="h5-0-20" class="i">+
+</a><a href="#h5-0-21" id="h5-0-21" class="i">+impl Storage for Test {
+</a><a href="#h5-0-22" id="h5-0-22" class="i">+    fn read(&amp;self, key: &amp;[u8]) -&gt; Result&lt;Option&lt;Vec&lt;u8&gt;&gt;, Error&gt; {
+</a><a href="#h5-0-23" id="h5-0-23" class="i">+        self.data.read()?.read(key)
+</a><a href="#h5-0-24" id="h5-0-24" class="i">+    }
+</a><a href="#h5-0-25" id="h5-0-25" class="i">+
+</a><a href="#h5-0-26" id="h5-0-26" class="i">+    fn remove(&amp;mut self, key: &amp;[u8]) -&gt; Result&lt;(), Error&gt; {
+</a><a href="#h5-0-27" id="h5-0-27" class="i">+        self.data.write()?.remove(key)
+</a><a href="#h5-0-28" id="h5-0-28" class="i">+    }
+</a><a href="#h5-0-29" id="h5-0-29" class="i">+
+</a><a href="#h5-0-30" id="h5-0-30" class="i">+    fn scan(&amp;self, range: impl RangeBounds&lt;Vec&lt;u8&gt;&gt;) -&gt; Range {
+</a><a href="#h5-0-31" id="h5-0-31" class="i">+        // Since the mutex guard is scoped to this method, we have to
+</a><a href="#h5-0-32" id="h5-0-32" class="i">+        // buffer the result and return an owned iterator.
+</a><a href="#h5-0-33" id="h5-0-33" class="i">+        Box::new(
+</a><a href="#h5-0-34" id="h5-0-34" class="i">+            self.data.read().unwrap().scan(range).collect::&lt;Vec&lt;Result&lt;_, Error&gt;&gt;&gt;().into_iter(),
+</a><a href="#h5-0-35" id="h5-0-35" class="i">+        )
+</a><a href="#h5-0-36" id="h5-0-36" class="i">+    }
+</a><a href="#h5-0-37" id="h5-0-37" class="i">+
+</a><a href="#h5-0-38" id="h5-0-38" class="i">+    fn write(&amp;mut self, key: &amp;[u8], value: Vec&lt;u8&gt;) -&gt; Result&lt;(), Error&gt; {
+</a><a href="#h5-0-39" id="h5-0-39" class="i">+        self.data.write()?.write(key, value)
+</a><a href="#h5-0-40" id="h5-0-40" class="i">+    }
+</a><a href="#h5-0-41" id="h5-0-41" class="i">+}
+</a><a href="#h5-0-42" id="h5-0-42" class="i">+
+</a><a href="#h5-0-43" id="h5-0-43" class="i">+#[cfg(test)]
+</a><a href="#h5-0-44" id="h5-0-44" class="i">+impl super::TestSuite&lt;Test&gt; for Test {
+</a><a href="#h5-0-45" id="h5-0-45" class="i">+    fn setup() -&gt; Result&lt;Self, Error&gt; {
+</a><a href="#h5-0-46" id="h5-0-46" class="i">+        Ok(Test::new())
+</a><a href="#h5-0-47" id="h5-0-47" class="i">+    }
+</a><a href="#h5-0-48" id="h5-0-48" class="i">+}
+</a><a href="#h5-0-49" id="h5-0-49" class="i">+
+</a><a href="#h5-0-50" id="h5-0-50" class="i">+#[test]
+</a><a href="#h5-0-51" id="h5-0-51" class="i">+fn tests() -&gt; Result&lt;(), Error&gt; {
+</a><a href="#h5-0-52" id="h5-0-52" class="i">+    use super::TestSuite;
+</a><a href="#h5-0-53" id="h5-0-53" class="i">+    Test::test()
+</a><a href="#h5-0-54" id="h5-0-54" class="i">+}
+</a><b>diff --git a/<a id="h6" href="../file/src/raft/log.rs.html">src/raft/log.rs</a> b/<a href="../file/src/raft/log.rs.html">src/raft/log.rs</a></b>
+<a href="#h6-0" id="h6-0" class="h">@@ -13,7 +13,6 @@ pub struct Entry {
+</a> }
+ 
+ /// The replicated Raft log
+<a href="#h6-0-3" id="h6-0-3" class="d">-#[derive(Debug)]
+</a> pub struct Log&lt;S: kv::storage::Storage&gt; {
+     /// The underlying key-value store
+     kv: kv::Simple&lt;S&gt;,
+<a href="#h6-1" id="h6-1" class="h">@@ -250,9 +249,10 @@ mod tests {
+</a>     use super::super::tests::TestState;
+     use super::*;
+ 
+<a href="#h6-1-3" id="h6-1-3" class="d">-    fn setup() -&gt; (Log&lt;kv::storage::Memory&gt;, kv::Simple&lt;kv::storage::Memory&gt;) {
+</a><a href="#h6-1-4" id="h6-1-4" class="d">-        let store = kv::Simple::new(kv::storage::Memory::new());
+</a><a href="#h6-1-5" id="h6-1-5" class="d">-        let log = Log::new(store.clone()).unwrap();
+</a><a href="#h6-1-6" id="h6-1-6" class="i">+    fn setup() -&gt; (Log&lt;kv::storage::Test&gt;, kv::Simple&lt;kv::storage::Test&gt;) {
+</a><a href="#h6-1-7" id="h6-1-7" class="i">+        let backend = kv::storage::Test::new();
+</a><a href="#h6-1-8" id="h6-1-8" class="i">+        let log = Log::new(kv::Simple::new(backend.clone())).unwrap();
+</a><a href="#h6-1-9" id="h6-1-9" class="i">+        let store = kv::Simple::new(backend.clone());
+</a>         (log, store)
+     }
+ 
+<a href="#h6-2" id="h6-2" class="h">@@ -447,19 +447,21 @@ mod tests {
+</a> 
+     #[test]
+     fn load_save_term() {
+<a href="#h6-2-3" id="h6-2-3" class="d">-        let (mut l, store) = setup();
+</a><a href="#h6-2-4" id="h6-2-4" class="i">+        // Test loading empty term
+</a><a href="#h6-2-5" id="h6-2-5" class="i">+        let (l, _) = setup();
+</a>         assert_eq!(Ok((0, None)), l.load_term());
+<a href="#h6-2-7" id="h6-2-7" class="d">-        assert_eq!(Ok(()), l.save_term(1, Some(&quot;a&quot;)));
+</a> 
+<a href="#h6-2-9" id="h6-2-9" class="d">-        let mut l = Log::new(store.clone()).unwrap();
+</a><a href="#h6-2-10" id="h6-2-10" class="i">+        // Test loading saved term
+</a><a href="#h6-2-11" id="h6-2-11" class="i">+        let (mut l, store) = setup();
+</a><a href="#h6-2-12" id="h6-2-12" class="i">+        assert_eq!(Ok(()), l.save_term(1, Some(&quot;a&quot;)));
+</a><a href="#h6-2-13" id="h6-2-13" class="i">+        let l = Log::new(store).unwrap();
+</a>         assert_eq!(Ok((1, Some(&quot;a&quot;.into()))), l.load_term());
+<a href="#h6-2-15" id="h6-2-15" class="d">-        assert_eq!(Ok(()), l.save_term(3, Some(&quot;c&quot;)));
+</a> 
+<a href="#h6-2-17" id="h6-2-17" class="d">-        let mut l = Log::new(store.clone()).unwrap();
+</a><a href="#h6-2-18" id="h6-2-18" class="d">-        assert_eq!(Ok((3, Some(&quot;c&quot;.into()))), l.load_term());
+</a><a href="#h6-2-19" id="h6-2-19" class="i">+        // Test replacing saved term with none
+</a><a href="#h6-2-20" id="h6-2-20" class="i">+        let (mut l, _) = setup();
+</a><a href="#h6-2-21" id="h6-2-21" class="i">+        assert_eq!(Ok(()), l.save_term(1, Some(&quot;a&quot;)));
+</a><a href="#h6-2-22" id="h6-2-22" class="i">+        assert_eq!(Ok((1, Some(&quot;a&quot;.into()))), l.load_term());
+</a>         assert_eq!(Ok(()), l.save_term(0, None));
+<a href="#h6-2-24" id="h6-2-24" class="d">-
+</a><a href="#h6-2-25" id="h6-2-25" class="d">-        let l = Log::new(store.clone()).unwrap();
+</a>         assert_eq!(Ok((0, None)), l.load_term());
+     }
+ 
+<b>diff --git a/<a id="h7" href="../file/src/raft/node/mod.rs.html">src/raft/node/mod.rs</a> b/<a href="../file/src/raft/node/mod.rs.html">src/raft/node/mod.rs</a></b>
+<a href="#h7-0" id="h7-0" class="h">@@ -26,7 +26,6 @@ const ELECTION_TIMEOUT_MIN: u64 = 8 * HEARTBEAT_INTERVAL;
+</a> const ELECTION_TIMEOUT_MAX: u64 = 15 * HEARTBEAT_INTERVAL;
+ 
+ /// The local Raft node state machine.
+<a href="#h7-0-3" id="h7-0-3" class="d">-#[derive(Debug)]
+</a> pub enum Node&lt;L: kv::storage::Storage, S: State&gt; {
+     Candidate(RoleNode&lt;Candidate, L, S&gt;),
+     Follower(RoleNode&lt;Follower, L, S&gt;),
+<a href="#h7-1" id="h7-1" class="h">@@ -101,7 +100,6 @@ impl&lt;L: kv::storage::Storage, S: State&gt; From&lt;RoleNode&lt;Leader, L, S&gt;&gt; for Node&lt;L,
+</a> }
+ 
+ // A Raft node with role R
+<a href="#h7-1-3" id="h7-1-3" class="d">-#[derive(Debug)]
+</a> pub struct RoleNode&lt;R, L: kv::storage::Storage, S: State&gt; {
+     id: String,
+     peers: Vec&lt;String&gt;,
+<a href="#h7-2" id="h7-2" class="h">@@ -354,10 +352,16 @@ mod tests {
+</a>     #[test]
+     fn new_loads_term() {
+         let (sender, _) = crossbeam_channel::unbounded();
+<a href="#h7-2-3" id="h7-2-3" class="d">-        let store = kv::Simple::new(kv::storage::Memory::new());
+</a><a href="#h7-2-4" id="h7-2-4" class="d">-        Log::new(store.clone()).unwrap().save_term(3, Some(&quot;c&quot;)).unwrap();
+</a><a href="#h7-2-5" id="h7-2-5" class="d">-        let node =
+</a><a href="#h7-2-6" id="h7-2-6" class="d">-            Node::new(&quot;a&quot;, vec![&quot;b&quot;.into(), &quot;c&quot;.into()], store, TestState::new(), sender).unwrap();
+</a><a href="#h7-2-7" id="h7-2-7" class="i">+        let storage = kv::storage::Test::new();
+</a><a href="#h7-2-8" id="h7-2-8" class="i">+        Log::new(kv::Simple::new(storage.clone())).unwrap().save_term(3, Some(&quot;c&quot;)).unwrap();
+</a><a href="#h7-2-9" id="h7-2-9" class="i">+        let node = Node::new(
+</a><a href="#h7-2-10" id="h7-2-10" class="i">+            &quot;a&quot;,
+</a><a href="#h7-2-11" id="h7-2-11" class="i">+            vec![&quot;b&quot;.into(), &quot;c&quot;.into()],
+</a><a href="#h7-2-12" id="h7-2-12" class="i">+            kv::Simple::new(storage.clone()),
+</a><a href="#h7-2-13" id="h7-2-13" class="i">+            TestState::new(),
+</a><a href="#h7-2-14" id="h7-2-14" class="i">+            sender,
+</a><a href="#h7-2-15" id="h7-2-15" class="i">+        )
+</a><a href="#h7-2-16" id="h7-2-16" class="i">+        .unwrap();
+</a>         match node {
+             Node::Follower(rolenode) =&gt; assert_eq!(rolenode.term, 3),
+             _ =&gt; panic!(&quot;Expected node to start as follower&quot;),
+</pre>
+</div>
+</body>
+</html>

@@ -1,0 +1,611 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>client: roll back open txns for returned clients (fixes #27) - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/e68e0b9ba57e6a74f65f134296ed4986218f0ea4.html">e68e0b9ba57e6a74f65f134296ed4986218f0ea4</a>
+<b>parent</b> <a href="../commit/fa1704c7ffb0c5cba719628180b81ade5f17e89d.html">fa1704c7ffb0c5cba719628180b81ade5f17e89d</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Fri,  1 May 2020 00:24:09 +0200
+
+client: roll back open txns for returned clients (fixes #27)
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/bin/bank.rs</a></td><td> | </td><td class="num">8</td><td><span class="i">++++</span><span class="d">----</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/bin/toysql.rs</a></td><td> | </td><td class="num">33</td><td><span class="i">+++++++++++</span><span class="d">----------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/client.rs</a></td><td> | </td><td class="num">59</td><td><span class="i">+++++++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d">----</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">src/kv/mvcc.rs</a></td><td> | </td><td class="num">4</td><td><span class="i">++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h4">src/sql/engine/raft.rs</a></td><td> | </td><td class="num">4</td><td><span class="i">++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h5">tests/client/mod.rs</a></td><td> | </td><td class="num">29</td><td><span class="i">++++++++++++++++++++</span><span class="d">---------</span></td></tr>
+<tr><td class="A">A</td><td><a href="#h6">tests/client/pool.rs</a></td><td> | </td><td class="num">70</td><td><span class="i">++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h7">tests/setup.rs</a></td><td> | </td><td class="num">81</td><td><span class="i">+++++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d">---------------------------</span></td></tr>
+</table></pre><pre>8 files changed, 218 insertions(+), 70 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/bin/bank.rs.html">src/bin/bank.rs</a> b/<a href="../file/src/bin/bank.rs.html">src/bin/bank.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -136,7 +136,7 @@ impl Bank {
+</a> 
+     // Sets up the database
+     async fn setup(&amp;self) -&gt; Result&lt;(), Error&gt; {
+<a href="#h0-0-3" id="h0-0-3" class="d">-        let (_, client) = self.clients.get().await;
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+        let client = self.clients.get().await;
+</a>         let start = std::time::Instant::now();
+         client.execute(&quot;BEGIN&quot;).await?;
+         client
+<a href="#h0-1" id="h0-1" class="h">@@ -190,7 +190,7 @@ impl Bank {
+</a> 
+     /// Verifies that all invariants hold
+     async fn verify(&amp;self) -&gt; Result&lt;(), Error&gt; {
+<a href="#h0-1-3" id="h0-1-3" class="d">-        let (_, client) = self.clients.get().await;
+</a><a href="#h0-1-4" id="h0-1-4" class="i">+        let client = self.clients.get().await;
+</a>         let expect = self.customers * self.customer_accounts * Self::INITIAL_BALANCE as i64;
+         let balance =
+             client.execute(&quot;SELECT SUM(balance) FROM account&quot;).await?.into_value()?.integer()?;
+<a href="#h0-2" id="h0-2" class="h">@@ -215,7 +215,7 @@ impl Bank {
+</a>     /// Transfers a random amount between two customers, retrying serialization failures
+     /// FIXME The serialization rety with exponential backoff should be a helper on Client
+     async fn transfer(&amp;self, from: i64, to: i64) -&gt; Result&lt;(), Error&gt; {
+<a href="#h0-2-3" id="h0-2-3" class="d">-        let (client_id, client) = self.clients.get().await;
+</a><a href="#h0-2-4" id="h0-2-4" class="i">+        let client = self.clients.get().await;
+</a>         let mut attempts = 0;
+         let start = std::time::Instant::now();
+ 
+<a href="#h0-3" id="h0-3" class="h">@@ -243,7 +243,7 @@ impl Bank {
+</a>             let (from_account, to_account, amount) = result?;
+             println!(
+                 &quot;Thread {} transferred {: &gt;4} from {: &gt;3} ({:0&gt;4}) to {: &gt;3} ({:0&gt;4}) in {:.3}s ({} attempts)&quot;,
+<a href="#h0-3-3" id="h0-3-3" class="d">-                client_id,
+</a><a href="#h0-3-4" id="h0-3-4" class="i">+                client.id(),
+</a>                 amount,
+                 from,
+                 from_account,
+<b>diff --git a/<a id="h1" href="../file/src/bin/toysql.rs.html">src/bin/toysql.rs</a> b/<a href="../file/src/bin/toysql.rs.html">src/bin/toysql.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -57,7 +57,6 @@ struct ToySQL {
+</a>     editor: Editor&lt;()&gt;,
+     history_path: Option&lt;std::path::PathBuf&gt;,
+     show_headers: bool,
+<a href="#h1-0-3" id="h1-0-3" class="d">-    txn: Option&lt;(u64, Mode)&gt;,
+</a> }
+ 
+ impl ToySQL {
+<a href="#h1-1" id="h1-1" class="h">@@ -69,7 +68,6 @@ impl ToySQL {
+</a>             history_path: std::env::var_os(&quot;HOME&quot;)
+                 .map(|home| std::path::Path::new(&amp;home).join(&quot;.toysql.history&quot;)),
+             show_headers: false,
+<a href="#h1-1-3" id="h1-1-3" class="d">-            txn: None,
+</a>         })
+     }
+ 
+<a href="#h1-2" id="h1-2" class="h">@@ -142,25 +140,16 @@ impl ToySQL {
+</a>     /// Runs a query and displays the results
+     async fn execute_query(&amp;mut self, query: &amp;str) -&gt; Result&lt;(), Error&gt; {
+         match self.client.execute(query).await? {
+<a href="#h1-2-3" id="h1-2-3" class="d">-            ResultSet::Begin { id, mode } =&gt; {
+</a><a href="#h1-2-4" id="h1-2-4" class="d">-                self.txn = Some((id, mode.clone()));
+</a><a href="#h1-2-5" id="h1-2-5" class="d">-                match mode {
+</a><a href="#h1-2-6" id="h1-2-6" class="d">-                    Mode::ReadWrite =&gt; println!(&quot;Began transaction {}&quot;, id),
+</a><a href="#h1-2-7" id="h1-2-7" class="d">-                    Mode::ReadOnly =&gt; println!(&quot;Began read-only transaction {}&quot;, id),
+</a><a href="#h1-2-8" id="h1-2-8" class="d">-                    Mode::Snapshot { version, .. } =&gt; println!(
+</a><a href="#h1-2-9" id="h1-2-9" class="d">-                        &quot;Began read-only transaction {} in snapshot at version {}&quot;,
+</a><a href="#h1-2-10" id="h1-2-10" class="d">-                        id, version
+</a><a href="#h1-2-11" id="h1-2-11" class="d">-                    ),
+</a><a href="#h1-2-12" id="h1-2-12" class="d">-                };
+</a><a href="#h1-2-13" id="h1-2-13" class="d">-            }
+</a><a href="#h1-2-14" id="h1-2-14" class="d">-            ResultSet::Commit { id } =&gt; {
+</a><a href="#h1-2-15" id="h1-2-15" class="d">-                self.txn = None;
+</a><a href="#h1-2-16" id="h1-2-16" class="d">-                println!(&quot;Committed transaction {}&quot;, id);
+</a><a href="#h1-2-17" id="h1-2-17" class="d">-            }
+</a><a href="#h1-2-18" id="h1-2-18" class="d">-            ResultSet::Rollback { id } =&gt; {
+</a><a href="#h1-2-19" id="h1-2-19" class="d">-                self.txn = None;
+</a><a href="#h1-2-20" id="h1-2-20" class="d">-                println!(&quot;Rolled back transaction {}&quot;, id);
+</a><a href="#h1-2-21" id="h1-2-21" class="d">-            }
+</a><a href="#h1-2-22" id="h1-2-22" class="i">+            ResultSet::Begin { id, mode } =&gt; match mode {
+</a><a href="#h1-2-23" id="h1-2-23" class="i">+                Mode::ReadWrite =&gt; println!(&quot;Began transaction {}&quot;, id),
+</a><a href="#h1-2-24" id="h1-2-24" class="i">+                Mode::ReadOnly =&gt; println!(&quot;Began read-only transaction {}&quot;, id),
+</a><a href="#h1-2-25" id="h1-2-25" class="i">+                Mode::Snapshot { version, .. } =&gt; println!(
+</a><a href="#h1-2-26" id="h1-2-26" class="i">+                    &quot;Began read-only transaction {} in snapshot at version {}&quot;,
+</a><a href="#h1-2-27" id="h1-2-27" class="i">+                    id, version
+</a><a href="#h1-2-28" id="h1-2-28" class="i">+                ),
+</a><a href="#h1-2-29" id="h1-2-29" class="i">+            },
+</a><a href="#h1-2-30" id="h1-2-30" class="i">+            ResultSet::Commit { id } =&gt; println!(&quot;Committed transaction {}&quot;, id),
+</a><a href="#h1-2-31" id="h1-2-31" class="i">+            ResultSet::Rollback { id } =&gt; println!(&quot;Rolled back transaction {}&quot;, id),
+</a>             ResultSet::Create { count } =&gt; println!(&quot;Created {} rows&quot;, count),
+             ResultSet::Delete { count } =&gt; println!(&quot;Deleted {} rows&quot;, count),
+             ResultSet::Update { count } =&gt; println!(&quot;Updated {} rows&quot;, count),
+<a href="#h1-3" id="h1-3" class="h">@@ -192,7 +181,7 @@ impl ToySQL {
+</a> 
+     /// Prompts the user for input
+     fn prompt(&amp;mut self) -&gt; Result&lt;Option&lt;String&gt;, Error&gt; {
+<a href="#h1-3-3" id="h1-3-3" class="d">-        let prompt = match self.txn {
+</a><a href="#h1-3-4" id="h1-3-4" class="i">+        let prompt = match self.client.txn() {
+</a>             Some((id, Mode::ReadWrite)) =&gt; format!(&quot;toydb:{}&gt; &quot;, id),
+             Some((id, Mode::ReadOnly)) =&gt; format!(&quot;toydb:{}&gt; &quot;, id),
+             Some((_, Mode::Snapshot { version })) =&gt; format!(&quot;toydb@{}&gt; &quot;, version),
+<b>diff --git a/<a id="h2" href="../file/src/client.rs.html">src/client.rs</a> b/<a href="../file/src/client.rs.html">src/client.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -1,5 +1,6 @@
+</a> use crate::raft;
+ use crate::server::{Request, Response};
+<a href="#h2-0-2" id="h2-0-2" class="i">+use crate::sql::engine::Mode;
+</a> use crate::sql::execution::ResultSet;
+ use crate::sql::schema::Table;
+ use crate::Error;
+<a href="#h2-1" id="h2-1" class="h">@@ -7,6 +8,8 @@ use crate::Error;
+</a> use futures::future::FutureExt as _;
+ use futures::sink::SinkExt as _;
+ use futures::stream::TryStreamExt as _;
+<a href="#h2-1-3" id="h2-1-3" class="i">+use std::cell::Cell;
+</a><a href="#h2-1-4" id="h2-1-4" class="i">+use std::ops::{Deref, Drop};
+</a> use tokio::net::{TcpStream, ToSocketAddrs};
+ use tokio::sync::{Mutex, MutexGuard};
+ use tokio_util::codec::{Framed, LengthDelimitedCodec};
+<a href="#h2-2" id="h2-2" class="h">@@ -21,6 +24,7 @@ type Connection = tokio_serde::Framed&lt;
+</a> /// A ToyDB client
+ pub struct Client {
+     conn: Mutex&lt;Connection&gt;,
+<a href="#h2-2-3" id="h2-2-3" class="i">+    txn: Cell&lt;Option&lt;(u64, Mode)&gt;&gt;,
+</a> }
+ 
+ impl Client {
+<a href="#h2-3" id="h2-3" class="h">@@ -31,6 +35,7 @@ impl Client {
+</a>                 Framed::new(TcpStream::connect(addr).await?, LengthDelimitedCodec::new()),
+                 tokio_serde::formats::Cbor::default(),
+             )),
+<a href="#h2-3-3" id="h2-3-3" class="i">+            txn: Cell::new(None),
+</a>         })
+     }
+ 
+<a href="#h2-4" id="h2-4" class="h">@@ -77,6 +82,12 @@ impl Client {
+</a>             }
+             relation.rows = Some(Box::new(rows.into_iter().map(Ok)));
+         };
+<a href="#h2-4-3" id="h2-4-3" class="i">+        match &amp;resultset {
+</a><a href="#h2-4-4" id="h2-4-4" class="i">+            ResultSet::Begin { id, mode } =&gt; self.txn.set(Some((*id, *mode))),
+</a><a href="#h2-4-5" id="h2-4-5" class="i">+            ResultSet::Commit { .. } =&gt; self.txn.set(None),
+</a><a href="#h2-4-6" id="h2-4-6" class="i">+            ResultSet::Rollback { .. } =&gt; self.txn.set(None),
+</a><a href="#h2-4-7" id="h2-4-7" class="i">+            _ =&gt; {}
+</a><a href="#h2-4-8" id="h2-4-8" class="i">+        }
+</a>         Ok(resultset)
+     }
+ 
+<a href="#h2-5" id="h2-5" class="h">@@ -103,6 +114,11 @@ impl Client {
+</a>             resp =&gt; Err(Error::Value(format!(&quot;Unexpected response: {:?}&quot;, resp))),
+         }
+     }
+<a href="#h2-5-3" id="h2-5-3" class="i">+
+</a><a href="#h2-5-4" id="h2-5-4" class="i">+    /// Returns the transaction status of the client
+</a><a href="#h2-5-5" id="h2-5-5" class="i">+    pub fn txn(&amp;self) -&gt; Option&lt;(u64, Mode)&gt; {
+</a><a href="#h2-5-6" id="h2-5-6" class="i">+        self.txn.get()
+</a><a href="#h2-5-7" id="h2-5-7" class="i">+    }
+</a> }
+ 
+ /// A ToyDB client pool
+<a href="#h2-6" id="h2-6" class="h">@@ -124,12 +140,12 @@ impl Pool {
+</a>         Ok(Self { clients })
+     }
+ 
+<a href="#h2-6-3" id="h2-6-3" class="d">-    /// Fetches a client from the pool, returning it when it goes out of scope.
+</a><a href="#h2-6-4" id="h2-6-4" class="d">-    /// FIXME Should rollback txn (if any) when returning.
+</a><a href="#h2-6-5" id="h2-6-5" class="d">-    pub async fn get(&amp;self) -&gt; (usize, MutexGuard&lt;&#39;_, Client&gt;) {
+</a><a href="#h2-6-6" id="h2-6-6" class="i">+    /// Fetches a client from the pool. It is reset (i.e. any open txns are rolled back) and
+</a><a href="#h2-6-7" id="h2-6-7" class="i">+    /// returned when it goes out of scope.
+</a><a href="#h2-6-8" id="h2-6-8" class="i">+    pub async fn get(&amp;self) -&gt; PoolClient&lt;&#39;_&gt; {
+</a>         let (client, index, _) =
+             futures::future::select_all(self.clients.iter().map(|m| m.lock().boxed())).await;
+<a href="#h2-6-11" id="h2-6-11" class="d">-        (index, client)
+</a><a href="#h2-6-12" id="h2-6-12" class="i">+        PoolClient::new(index, client)
+</a>     }
+ 
+     /// Returns the size of the pool
+<a href="#h2-7" id="h2-7" class="h">@@ -137,3 +153,38 @@ impl Pool {
+</a>         self.clients.len()
+     }
+ }
+<a href="#h2-7-3" id="h2-7-3" class="i">+
+</a><a href="#h2-7-4" id="h2-7-4" class="i">+/// A client returned from the pool
+</a><a href="#h2-7-5" id="h2-7-5" class="i">+pub struct PoolClient&lt;&#39;a&gt; {
+</a><a href="#h2-7-6" id="h2-7-6" class="i">+    id: usize,
+</a><a href="#h2-7-7" id="h2-7-7" class="i">+    client: MutexGuard&lt;&#39;a, Client&gt;,
+</a><a href="#h2-7-8" id="h2-7-8" class="i">+}
+</a><a href="#h2-7-9" id="h2-7-9" class="i">+
+</a><a href="#h2-7-10" id="h2-7-10" class="i">+impl&lt;&#39;a&gt; PoolClient&lt;&#39;a&gt; {
+</a><a href="#h2-7-11" id="h2-7-11" class="i">+    /// Creates a new PoolClient
+</a><a href="#h2-7-12" id="h2-7-12" class="i">+    fn new(id: usize, client: MutexGuard&lt;&#39;a, Client&gt;) -&gt; Self {
+</a><a href="#h2-7-13" id="h2-7-13" class="i">+        Self { id, client }
+</a><a href="#h2-7-14" id="h2-7-14" class="i">+    }
+</a><a href="#h2-7-15" id="h2-7-15" class="i">+
+</a><a href="#h2-7-16" id="h2-7-16" class="i">+    /// Returns the ID of the client in the pool
+</a><a href="#h2-7-17" id="h2-7-17" class="i">+    pub fn id(&amp;self) -&gt; usize {
+</a><a href="#h2-7-18" id="h2-7-18" class="i">+        self.id
+</a><a href="#h2-7-19" id="h2-7-19" class="i">+    }
+</a><a href="#h2-7-20" id="h2-7-20" class="i">+}
+</a><a href="#h2-7-21" id="h2-7-21" class="i">+
+</a><a href="#h2-7-22" id="h2-7-22" class="i">+impl&lt;&#39;a&gt; Deref for PoolClient&lt;&#39;a&gt; {
+</a><a href="#h2-7-23" id="h2-7-23" class="i">+    type Target = MutexGuard&lt;&#39;a, Client&gt;;
+</a><a href="#h2-7-24" id="h2-7-24" class="i">+
+</a><a href="#h2-7-25" id="h2-7-25" class="i">+    fn deref(&amp;self) -&gt; &amp;Self::Target {
+</a><a href="#h2-7-26" id="h2-7-26" class="i">+        &amp;self.client
+</a><a href="#h2-7-27" id="h2-7-27" class="i">+    }
+</a><a href="#h2-7-28" id="h2-7-28" class="i">+}
+</a><a href="#h2-7-29" id="h2-7-29" class="i">+
+</a><a href="#h2-7-30" id="h2-7-30" class="i">+impl&lt;&#39;a&gt; Drop for PoolClient&lt;&#39;a&gt; {
+</a><a href="#h2-7-31" id="h2-7-31" class="i">+    fn drop(&amp;mut self) {
+</a><a href="#h2-7-32" id="h2-7-32" class="i">+        if self.txn().is_some() {
+</a><a href="#h2-7-33" id="h2-7-33" class="i">+            // FIXME This should disconnect or destroy the client if it errors.
+</a><a href="#h2-7-34" id="h2-7-34" class="i">+            futures::executor::block_on(self.client.execute(&quot;ROLLBACK&quot;)).ok();
+</a><a href="#h2-7-35" id="h2-7-35" class="i">+        }
+</a><a href="#h2-7-36" id="h2-7-36" class="i">+    }
+</a><a href="#h2-7-37" id="h2-7-37" class="i">+}
+</a><b>diff --git a/<a id="h3" href="../file/src/kv/mvcc.rs.html">src/kv/mvcc.rs</a> b/<a href="../file/src/kv/mvcc.rs.html">src/kv/mvcc.rs</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -102,7 +102,7 @@ impl&lt;S: Storage&gt; Transaction&lt;S&gt; {
+</a> 
+     /// Returns the transaction mode.
+     pub fn mode(&amp;self) -&gt; Mode {
+<a href="#h3-0-3" id="h3-0-3" class="d">-        self.mode.clone()
+</a><a href="#h3-0-4" id="h3-0-4" class="i">+        self.mode
+</a>     }
+ 
+     /// Commits the transaction, by removing the txn from the active set.
+<a href="#h3-1" id="h3-1" class="h">@@ -209,7 +209,7 @@ impl&lt;S: Storage&gt; Transaction&lt;S&gt; {
+</a> }
+ 
+ /// An MVCC transaction mode.
+<a href="#h3-1-3" id="h3-1-3" class="d">-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+</a><a href="#h3-1-4" id="h3-1-4" class="i">+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+</a> pub enum Mode {
+     /// A read-write transaction.
+     ReadWrite,
+<b>diff --git a/<a id="h4" href="../file/src/sql/engine/raft.rs.html">src/sql/engine/raft.rs</a> b/<a href="../file/src/sql/engine/raft.rs.html">src/sql/engine/raft.rs</a></b>
+<a href="#h4-0" id="h4-0" class="h">@@ -102,7 +102,7 @@ pub struct Transaction {
+</a> impl Transaction {
+     /// Starts a transaction in the given mode
+     fn begin(client: raft::Client, mode: Mode) -&gt; Result&lt;Self, Error&gt; {
+<a href="#h4-0-3" id="h4-0-3" class="d">-        let id = deserialize(&amp;client.mutate_sync(serialize(&amp;Mutation::Begin(mode.clone()))?)?)?;
+</a><a href="#h4-0-4" id="h4-0-4" class="i">+        let id = deserialize(&amp;client.mutate_sync(serialize(&amp;Mutation::Begin(mode))?)?)?;
+</a>         Ok(Self { client, id, mode })
+     }
+ 
+<a href="#h4-1" id="h4-1" class="h">@@ -119,7 +119,7 @@ impl super::Transaction for Transaction {
+</a>     }
+ 
+     fn mode(&amp;self) -&gt; Mode {
+<a href="#h4-1-3" id="h4-1-3" class="d">-        self.mode.clone()
+</a><a href="#h4-1-4" id="h4-1-4" class="i">+        self.mode
+</a>     }
+ 
+     fn commit(self) -&gt; Result&lt;(), Error&gt; {
+<b>diff --git a/<a id="h5" href="../file/tests/client/mod.rs.html">tests/client/mod.rs</a> b/<a href="../file/tests/client/mod.rs.html">tests/client/mod.rs</a></b>
+<a href="#h5-0" id="h5-0" class="h">@@ -1,3 +1,5 @@
+</a><a href="#h5-0-0" id="h5-0-0" class="i">+mod pool;
+</a><a href="#h5-0-1" id="h5-0-1" class="i">+
+</a> use super::{assert_row, assert_rows, setup};
+ 
+ use toydb::raft::Status;
+<a href="#h5-1" id="h5-1" class="h">@@ -13,7 +15,7 @@ use serial_test::serial;
+</a> #[tokio::test(core_threads = 2)]
+ #[serial]
+ async fn get_table() -&gt; Result&lt;(), Error&gt; {
+<a href="#h5-1-3" id="h5-1-3" class="d">-    let (c, _teardown) = setup::server_with_data(setup::movies()).await?;
+</a><a href="#h5-1-4" id="h5-1-4" class="i">+    let (c, _teardown) = setup::server_with_client(setup::movies()).await?;
+</a> 
+     assert_eq!(
+         c.get_table(&quot;unknown&quot;).await,
+<a href="#h5-2" id="h5-2" class="h">@@ -103,7 +105,7 @@ async fn get_table() -&gt; Result&lt;(), Error&gt; {
+</a> #[tokio::test(core_threads = 2)]
+ #[serial]
+ async fn list_tables() -&gt; Result&lt;(), Error&gt; {
+<a href="#h5-2-3" id="h5-2-3" class="d">-    let (c, _teardown) = setup::server_with_data(setup::movies()).await?;
+</a><a href="#h5-2-4" id="h5-2-4" class="i">+    let (c, _teardown) = setup::server_with_client(setup::movies()).await?;
+</a> 
+     assert_eq!(c.list_tables().await?, vec![&quot;countries&quot;, &quot;genres&quot;, &quot;movies&quot;, &quot;studios&quot;]);
+     Ok(())
+<a href="#h5-3" id="h5-3" class="h">@@ -112,7 +114,7 @@ async fn list_tables() -&gt; Result&lt;(), Error&gt; {
+</a> #[tokio::test(core_threads = 2)]
+ #[serial]
+ async fn status() -&gt; Result&lt;(), Error&gt; {
+<a href="#h5-3-3" id="h5-3-3" class="d">-    let (c, _teardown) = setup::server_with_data(setup::movies()).await?;
+</a><a href="#h5-3-4" id="h5-3-4" class="i">+    let (c, _teardown) = setup::server_with_client(setup::movies()).await?;
+</a> 
+     assert_eq!(
+         c.status().await?,
+<a href="#h5-4" id="h5-4" class="h">@@ -132,8 +134,8 @@ async fn status() -&gt; Result&lt;(), Error&gt; {
+</a> 
+ #[tokio::test(core_threads = 2)]
+ #[serial]
+<a href="#h5-4-3" id="h5-4-3" class="d">-async fn query() -&gt; Result&lt;(), Error&gt; {
+</a><a href="#h5-4-4" id="h5-4-4" class="d">-    let (c, _teardown) = setup::server_with_data(setup::movies()).await?;
+</a><a href="#h5-4-5" id="h5-4-5" class="i">+async fn execute() -&gt; Result&lt;(), Error&gt; {
+</a><a href="#h5-4-6" id="h5-4-6" class="i">+    let (c, _teardown) = setup::server_with_client(setup::movies()).await?;
+</a> 
+     // SELECT
+     let result = c.execute(&quot;SELECT * FROM genres&quot;).await?;
+<a href="#h5-5" id="h5-5" class="h">@@ -225,20 +227,25 @@ async fn query() -&gt; Result&lt;(), Error&gt; {
+</a> 
+ #[tokio::test(core_threads = 2)]
+ #[serial]
+<a href="#h5-5-3" id="h5-5-3" class="d">-async fn query_txn() -&gt; Result&lt;(), Error&gt; {
+</a><a href="#h5-5-4" id="h5-5-4" class="d">-    let (c, _teardown) = setup::server_with_data(setup::movies()).await?;
+</a><a href="#h5-5-5" id="h5-5-5" class="i">+async fn execute_txn() -&gt; Result&lt;(), Error&gt; {
+</a><a href="#h5-5-6" id="h5-5-6" class="i">+    let (c, _teardown) = setup::server_with_client(setup::movies()).await?;
+</a><a href="#h5-5-7" id="h5-5-7" class="i">+
+</a><a href="#h5-5-8" id="h5-5-8" class="i">+    assert_eq!(c.txn(), None);
+</a> 
+     // Committing a change in a txn should work
+     assert_eq!(c.execute(&quot;BEGIN&quot;).await?, ResultSet::Begin { id: 2, mode: Mode::ReadWrite });
+<a href="#h5-5-12" id="h5-5-12" class="i">+    assert_eq!(c.txn(), Some((2, Mode::ReadWrite)));
+</a>     c.execute(&quot;INSERT INTO genres VALUES (4, &#39;Drama&#39;)&quot;).await?;
+     assert_eq!(c.execute(&quot;COMMIT&quot;).await?, ResultSet::Commit { id: 2 });
+     assert_row(
+         c.execute(&quot;SELECT * FROM genres WHERE id = 4&quot;).await?,
+         vec![Value::Integer(4), Value::String(&quot;Drama&quot;.into())],
+     );
+<a href="#h5-5-19" id="h5-5-19" class="i">+    assert_eq!(c.txn(), None);
+</a> 
+     // Rolling back a change in a txn should also work
+     assert_eq!(c.execute(&quot;BEGIN&quot;).await?, ResultSet::Begin { id: 4, mode: Mode::ReadWrite });
+<a href="#h5-5-23" id="h5-5-23" class="i">+    assert_eq!(c.txn(), Some((4, Mode::ReadWrite)));
+</a>     c.execute(&quot;INSERT INTO genres VALUES (5, &#39;Musical&#39;)&quot;).await?;
+     assert_row(
+         c.execute(&quot;SELECT * FROM genres WHERE id = 5&quot;).await?,
+<a href="#h5-6" id="h5-6" class="h">@@ -246,12 +253,14 @@ async fn query_txn() -&gt; Result&lt;(), Error&gt; {
+</a>     );
+     assert_eq!(c.execute(&quot;ROLLBACK&quot;).await?, ResultSet::Rollback { id: 4 });
+     assert_rows(c.execute(&quot;SELECT * FROM genres WHERE id = 5&quot;).await?, Vec::new());
+<a href="#h5-6-3" id="h5-6-3" class="i">+    assert_eq!(c.txn(), None);
+</a> 
+     // Starting a read-only txn should block writes
+     assert_eq!(
+         c.execute(&quot;BEGIN READ ONLY&quot;).await?,
+         ResultSet::Begin { id: 6, mode: Mode::ReadOnly }
+     );
+<a href="#h5-6-10" id="h5-6-10" class="i">+    assert_eq!(c.txn(), Some((6, Mode::ReadOnly)));
+</a>     assert_row(
+         c.execute(&quot;SELECT * FROM genres WHERE id = 4&quot;).await?,
+         vec![Value::Integer(4), Value::String(&quot;Drama&quot;.into())],
+<a href="#h5-7" id="h5-7" class="h">@@ -269,6 +278,7 @@ async fn query_txn() -&gt; Result&lt;(), Error&gt; {
+</a>         c.execute(&quot;BEGIN READ ONLY AS OF SYSTEM TIME 1&quot;).await?,
+         ResultSet::Begin { id: 7, mode: Mode::Snapshot { version: 1 } }
+     );
+<a href="#h5-7-3" id="h5-7-3" class="i">+    assert_eq!(c.txn(), Some((7, Mode::Snapshot { version: 1 })));
+</a>     assert_rows(
+         c.execute(&quot;SELECT * FROM genres&quot;).await?,
+         vec![
+<a href="#h5-8" id="h5-8" class="h">@@ -287,6 +297,7 @@ async fn query_txn() -&gt; Result&lt;(), Error&gt; {
+</a>         c.execute(&quot;INSERT INTO genres VALUES (5, &#39;Musical&#39;)&quot;).await,
+         Err(Error::Value(&quot;Primary key 5 already exists for table genres&quot;.into()))
+     );
+<a href="#h5-8-3" id="h5-8-3" class="i">+    assert_eq!(c.txn(), Some((8, Mode::ReadWrite)));
+</a>     c.execute(&quot;INSERT INTO genres VALUES (6, &#39;Western&#39;)&quot;).await?;
+     assert_eq!(c.execute(&quot;COMMIT&quot;).await?, ResultSet::Commit { id: 8 });
+     assert_rows(
+<a href="#h5-9" id="h5-9" class="h">@@ -306,8 +317,8 @@ async fn query_txn() -&gt; Result&lt;(), Error&gt; {
+</a> 
+ #[tokio::test(core_threads = 2)]
+ #[serial]
+<a href="#h5-9-3" id="h5-9-3" class="d">-async fn query_txn_concurrent() -&gt; Result&lt;(), Error&gt; {
+</a><a href="#h5-9-4" id="h5-9-4" class="d">-    let (a, _teardown) = setup::server_with_data(setup::movies()).await?;
+</a><a href="#h5-9-5" id="h5-9-5" class="i">+async fn execute_txn_concurrent() -&gt; Result&lt;(), Error&gt; {
+</a><a href="#h5-9-6" id="h5-9-6" class="i">+    let (a, _teardown) = setup::server_with_client(setup::movies()).await?;
+</a>     let b = Client::new(&quot;127.0.0.1:9605&quot;).await?;
+ 
+     // Concurrent updates should throw a serialization failure on conflict.
+<b>diff --git a/<a id="h6" href="../file/tests/client/pool.rs.html">tests/client/pool.rs</a> b/<a href="../file/tests/client/pool.rs.html">tests/client/pool.rs</a></b>
+<a href="#h6-0" id="h6-0" class="h">@@ -0,0 +1,70 @@
+</a><a href="#h6-0-0" id="h6-0-0" class="i">+use super::super::{assert_rows, setup};
+</a><a href="#h6-0-1" id="h6-0-1" class="i">+
+</a><a href="#h6-0-2" id="h6-0-2" class="i">+use toydb::sql::types::Value;
+</a><a href="#h6-0-3" id="h6-0-3" class="i">+use toydb::Error;
+</a><a href="#h6-0-4" id="h6-0-4" class="i">+
+</a><a href="#h6-0-5" id="h6-0-5" class="i">+use futures::future::FutureExt as _;
+</a><a href="#h6-0-6" id="h6-0-6" class="i">+use pretty_assertions::assert_eq;
+</a><a href="#h6-0-7" id="h6-0-7" class="i">+use serial_test::serial;
+</a><a href="#h6-0-8" id="h6-0-8" class="i">+use std::collections::HashSet;
+</a><a href="#h6-0-9" id="h6-0-9" class="i">+use std::iter::FromIterator as _;
+</a><a href="#h6-0-10" id="h6-0-10" class="i">+
+</a><a href="#h6-0-11" id="h6-0-11" class="i">+#[tokio::test(core_threads = 4)]
+</a><a href="#h6-0-12" id="h6-0-12" class="i">+#[serial]
+</a><a href="#h6-0-13" id="h6-0-13" class="i">+#[allow(clippy::many_single_char_names)]
+</a><a href="#h6-0-14" id="h6-0-14" class="i">+async fn get() -&gt; Result&lt;(), Error&gt; {
+</a><a href="#h6-0-15" id="h6-0-15" class="i">+    let (pool, _teardown) = setup::cluster_with_pool(3, 5, setup::simple()).await?;
+</a><a href="#h6-0-16" id="h6-0-16" class="i">+
+</a><a href="#h6-0-17" id="h6-0-17" class="i">+    // The clients are allocated to all servers
+</a><a href="#h6-0-18" id="h6-0-18" class="i">+    let a = pool.get().await;
+</a><a href="#h6-0-19" id="h6-0-19" class="i">+    let b = pool.get().await;
+</a><a href="#h6-0-20" id="h6-0-20" class="i">+    let c = pool.get().await;
+</a><a href="#h6-0-21" id="h6-0-21" class="i">+    let d = pool.get().await;
+</a><a href="#h6-0-22" id="h6-0-22" class="i">+    let e = pool.get().await;
+</a><a href="#h6-0-23" id="h6-0-23" class="i">+
+</a><a href="#h6-0-24" id="h6-0-24" class="i">+    let mut servers = HashSet::new();
+</a><a href="#h6-0-25" id="h6-0-25" class="i">+    let mut ids = HashSet::new();
+</a><a href="#h6-0-26" id="h6-0-26" class="i">+    for client in vec![a, b, c, d, e] {
+</a><a href="#h6-0-27" id="h6-0-27" class="i">+        servers.insert(client.status().await?.id);
+</a><a href="#h6-0-28" id="h6-0-28" class="i">+        ids.insert(client.id());
+</a><a href="#h6-0-29" id="h6-0-29" class="i">+    }
+</a><a href="#h6-0-30" id="h6-0-30" class="i">+    assert_eq!(
+</a><a href="#h6-0-31" id="h6-0-31" class="i">+        servers,
+</a><a href="#h6-0-32" id="h6-0-32" class="i">+        HashSet::from_iter(vec![&quot;toydb0&quot;.into(), &quot;toydb1&quot;.into(), &quot;toydb2&quot;.into()])
+</a><a href="#h6-0-33" id="h6-0-33" class="i">+    );
+</a><a href="#h6-0-34" id="h6-0-34" class="i">+    assert_eq!(ids, HashSet::from_iter(vec![0, 1, 2, 3, 4]));
+</a><a href="#h6-0-35" id="h6-0-35" class="i">+
+</a><a href="#h6-0-36" id="h6-0-36" class="i">+    // Further clients won&#39;t be ready
+</a><a href="#h6-0-37" id="h6-0-37" class="i">+    assert!(tokio::spawn(async move { pool.get().await.id() }).now_or_never().is_none());
+</a><a href="#h6-0-38" id="h6-0-38" class="i">+
+</a><a href="#h6-0-39" id="h6-0-39" class="i">+    Ok(())
+</a><a href="#h6-0-40" id="h6-0-40" class="i">+}
+</a><a href="#h6-0-41" id="h6-0-41" class="i">+
+</a><a href="#h6-0-42" id="h6-0-42" class="i">+#[tokio::test(core_threads = 4)]
+</a><a href="#h6-0-43" id="h6-0-43" class="i">+#[serial]
+</a><a href="#h6-0-44" id="h6-0-44" class="i">+async fn drop_rollback() -&gt; Result&lt;(), Error&gt; {
+</a><a href="#h6-0-45" id="h6-0-45" class="i">+    let (pool, _teardown) = setup::cluster_with_pool(3, 1, setup::simple()).await?;
+</a><a href="#h6-0-46" id="h6-0-46" class="i">+
+</a><a href="#h6-0-47" id="h6-0-47" class="i">+    // Starting a client and dropping it mid-transaction should work.
+</a><a href="#h6-0-48" id="h6-0-48" class="i">+    let a = pool.get().await;
+</a><a href="#h6-0-49" id="h6-0-49" class="i">+    assert_eq!(a.id(), 0);
+</a><a href="#h6-0-50" id="h6-0-50" class="i">+    assert_eq!(a.txn(), None);
+</a><a href="#h6-0-51" id="h6-0-51" class="i">+    a.execute(&quot;BEGIN&quot;).await?;
+</a><a href="#h6-0-52" id="h6-0-52" class="i">+    a.execute(&quot;INSERT INTO test VALUES (1, &#39;a&#39;)&quot;).await?;
+</a><a href="#h6-0-53" id="h6-0-53" class="i">+    assert_rows(
+</a><a href="#h6-0-54" id="h6-0-54" class="i">+        a.execute(&quot;SELECT * FROM test&quot;).await?,
+</a><a href="#h6-0-55" id="h6-0-55" class="i">+        vec![vec![Value::Integer(1), Value::String(&quot;a&quot;.into())]],
+</a><a href="#h6-0-56" id="h6-0-56" class="i">+    );
+</a><a href="#h6-0-57" id="h6-0-57" class="i">+    std::mem::drop(a);
+</a><a href="#h6-0-58" id="h6-0-58" class="i">+
+</a><a href="#h6-0-59" id="h6-0-59" class="i">+    // Fetching the client again from the pool should have reset it.
+</a><a href="#h6-0-60" id="h6-0-60" class="i">+    let a = pool.get().await;
+</a><a href="#h6-0-61" id="h6-0-61" class="i">+    assert_eq!(a.id(), 0);
+</a><a href="#h6-0-62" id="h6-0-62" class="i">+    assert_eq!(a.txn(), None);
+</a><a href="#h6-0-63" id="h6-0-63" class="i">+    assert_rows(a.execute(&quot;SELECT * FROM test&quot;).await?, Vec::new());
+</a><a href="#h6-0-64" id="h6-0-64" class="i">+    a.execute(&quot;BEGIN&quot;).await?;
+</a><a href="#h6-0-65" id="h6-0-65" class="i">+    a.execute(&quot;INSERT INTO test VALUES (1, &#39;a&#39;)&quot;).await?;
+</a><a href="#h6-0-66" id="h6-0-66" class="i">+    a.execute(&quot;COMMIT&quot;).await?;
+</a><a href="#h6-0-67" id="h6-0-67" class="i">+
+</a><a href="#h6-0-68" id="h6-0-68" class="i">+    Ok(())
+</a><a href="#h6-0-69" id="h6-0-69" class="i">+}
+</a><b>diff --git a/<a id="h7" href="../file/tests/setup.rs.html">tests/setup.rs</a> b/<a href="../file/tests/setup.rs.html">tests/setup.rs</a></b>
+<a href="#h7-0" id="h7-0" class="h">@@ -1,7 +1,7 @@
+</a> #![allow(clippy::implicit_hasher)]
+ #![allow(clippy::type_complexity)]
+ 
+<a href="#h7-0-3" id="h7-0-3" class="d">-use toydb::client::Client;
+</a><a href="#h7-0-4" id="h7-0-4" class="i">+use toydb::client::{Client, Pool};
+</a> use toydb::server::Server;
+ use toydb::Error;
+ 
+<a href="#h7-1" id="h7-1" class="h">@@ -62,6 +62,11 @@ pub fn movies() -&gt; Vec&lt;&amp;&#39;static str&gt; {
+</a>     ]
+ }
+ 
+<a href="#h7-1-3" id="h7-1-3" class="i">+/// Simple data
+</a><a href="#h7-1-4" id="h7-1-4" class="i">+pub fn simple() -&gt; Vec&lt;&amp;&#39;static str&gt; {
+</a><a href="#h7-1-5" id="h7-1-5" class="i">+    vec![&quot;CREATE TABLE test (id INTEGER PRIMARY KEY, value STRING)&quot;]
+</a><a href="#h7-1-6" id="h7-1-6" class="i">+}
+</a><a href="#h7-1-7" id="h7-1-7" class="i">+
+</a> /// Sets up a test server
+ pub async fn server(
+     id: &amp;str,
+<a href="#h7-2" id="h7-2" class="h">@@ -83,20 +88,16 @@ pub async fn server(
+</a> }
+ 
+ /// Sets up a server with a client
+<a href="#h7-2-3" id="h7-2-3" class="d">-pub async fn server_with_client() -&gt; Result&lt;(Client, Teardown), Error&gt; {
+</a><a href="#h7-2-4" id="h7-2-4" class="i">+pub async fn server_with_client(queries: Vec&lt;&amp;str&gt;) -&gt; Result&lt;(Client, Teardown), Error&gt; {
+</a>     let teardown = server(&quot;test&quot;, &quot;127.0.0.1:9605&quot;, &quot;127.0.0.1:9705&quot;, HashMap::new()).await?;
+     let client = Client::new(&quot;127.0.0.1:9605&quot;).await?;
+<a href="#h7-2-7" id="h7-2-7" class="d">-    Ok((client, teardown))
+</a><a href="#h7-2-8" id="h7-2-8" class="d">-}
+</a><a href="#h7-2-9" id="h7-2-9" class="d">-
+</a><a href="#h7-2-10" id="h7-2-10" class="d">-/// Sets up a server with a client and a set of queries
+</a><a href="#h7-2-11" id="h7-2-11" class="d">-pub async fn server_with_data(queries: Vec&lt;&amp;str&gt;) -&gt; Result&lt;(Client, Teardown), Error&gt; {
+</a><a href="#h7-2-12" id="h7-2-12" class="d">-    let (client, teardown) = server_with_client().await?;
+</a><a href="#h7-2-13" id="h7-2-13" class="d">-    client.execute(&quot;BEGIN&quot;).await?;
+</a><a href="#h7-2-14" id="h7-2-14" class="d">-    for query in queries {
+</a><a href="#h7-2-15" id="h7-2-15" class="d">-        client.execute(query).await?;
+</a><a href="#h7-2-16" id="h7-2-16" class="i">+    if !queries.is_empty() {
+</a><a href="#h7-2-17" id="h7-2-17" class="i">+        client.execute(&quot;BEGIN&quot;).await?;
+</a><a href="#h7-2-18" id="h7-2-18" class="i">+        for query in queries {
+</a><a href="#h7-2-19" id="h7-2-19" class="i">+            client.execute(query).await?;
+</a><a href="#h7-2-20" id="h7-2-20" class="i">+        }
+</a><a href="#h7-2-21" id="h7-2-21" class="i">+        client.execute(&quot;COMMIT&quot;).await?;
+</a>     }
+<a href="#h7-2-23" id="h7-2-23" class="d">-    client.execute(&quot;COMMIT&quot;).await?;
+</a>     Ok((client, teardown))
+ }
+ 
+<a href="#h7-3" id="h7-3" class="h">@@ -115,7 +116,10 @@ pub async fn cluster(nodes: HashMap&lt;String, (String, String)&gt;) -&gt; Result&lt;Teardow
+</a> }
+ 
+ /// Sets up a server cluster with clients
+<a href="#h7-3-3" id="h7-3-3" class="d">-pub async fn cluster_with_clients(size: u64) -&gt; Result&lt;(Vec&lt;Client&gt;, Teardown), Error&gt; {
+</a><a href="#h7-3-4" id="h7-3-4" class="i">+pub async fn cluster_with_clients(
+</a><a href="#h7-3-5" id="h7-3-5" class="i">+    size: u64,
+</a><a href="#h7-3-6" id="h7-3-6" class="i">+    queries: Vec&lt;&amp;str&gt;,
+</a><a href="#h7-3-7" id="h7-3-7" class="i">+) -&gt; Result&lt;(Vec&lt;Client&gt;, Teardown), Error&gt; {
+</a>     let mut nodes = HashMap::new();
+     for i in 0..size {
+         nodes.insert(
+<a href="#h7-4" id="h7-4" class="h">@@ -131,34 +135,57 @@ pub async fn cluster_with_clients(size: u64) -&gt; Result&lt;(Vec&lt;Client&gt;, Teardown), 
+</a>         assert_eq!(id, client.status().await?.id);
+         clients.push(client);
+     }
+<a href="#h7-4-3" id="h7-4-3" class="i">+
+</a><a href="#h7-4-4" id="h7-4-4" class="i">+    // FIXME Wait for cluster to stabilize, see: https://github.com/erikgrinaker/toydb/issues/19
+</a><a href="#h7-4-5" id="h7-4-5" class="i">+    tokio::time::delay_for(std::time::Duration::from_millis(2000)).await;
+</a><a href="#h7-4-6" id="h7-4-6" class="i">+
+</a><a href="#h7-4-7" id="h7-4-7" class="i">+    if !queries.is_empty() {
+</a><a href="#h7-4-8" id="h7-4-8" class="i">+        let c = clients.get_mut(0).unwrap();
+</a><a href="#h7-4-9" id="h7-4-9" class="i">+        c.execute(&quot;BEGIN&quot;).await?;
+</a><a href="#h7-4-10" id="h7-4-10" class="i">+        for query in queries {
+</a><a href="#h7-4-11" id="h7-4-11" class="i">+            c.execute(query).await?;
+</a><a href="#h7-4-12" id="h7-4-12" class="i">+        }
+</a><a href="#h7-4-13" id="h7-4-13" class="i">+        c.execute(&quot;COMMIT&quot;).await?;
+</a><a href="#h7-4-14" id="h7-4-14" class="i">+    }
+</a><a href="#h7-4-15" id="h7-4-15" class="i">+
+</a>     Ok((clients, teardown))
+ }
+ 
+<a href="#h7-4-19" id="h7-4-19" class="d">-/// Sets up a server cluster with clients and queries
+</a><a href="#h7-4-20" id="h7-4-20" class="d">-pub async fn cluster_with_data(
+</a><a href="#h7-4-21" id="h7-4-21" class="d">-    size: u64,
+</a><a href="#h7-4-22" id="h7-4-22" class="i">+/// Sets up a server cluster with a client pool
+</a><a href="#h7-4-23" id="h7-4-23" class="i">+pub async fn cluster_with_pool(
+</a><a href="#h7-4-24" id="h7-4-24" class="i">+    cluster_size: u64,
+</a><a href="#h7-4-25" id="h7-4-25" class="i">+    pool_size: u64,
+</a>     queries: Vec&lt;&amp;str&gt;,
+<a href="#h7-4-27" id="h7-4-27" class="d">-) -&gt; Result&lt;(Vec&lt;Client&gt;, Teardown), Error&gt; {
+</a><a href="#h7-4-28" id="h7-4-28" class="d">-    let (mut clients, teardown) = cluster_with_clients(size).await?;
+</a><a href="#h7-4-29" id="h7-4-29" class="i">+) -&gt; Result&lt;(Pool, Teardown), Error&gt; {
+</a><a href="#h7-4-30" id="h7-4-30" class="i">+    let mut nodes = HashMap::new();
+</a><a href="#h7-4-31" id="h7-4-31" class="i">+    for i in 0..cluster_size {
+</a><a href="#h7-4-32" id="h7-4-32" class="i">+        nodes.insert(
+</a><a href="#h7-4-33" id="h7-4-33" class="i">+            format!(&quot;toydb{}&quot;, i),
+</a><a href="#h7-4-34" id="h7-4-34" class="i">+            (format!(&quot;127.0.0.1:{}&quot;, 9605 + i), format!(&quot;127.0.0.1:{}&quot;, 9705 + i)),
+</a><a href="#h7-4-35" id="h7-4-35" class="i">+        );
+</a><a href="#h7-4-36" id="h7-4-36" class="i">+    }
+</a><a href="#h7-4-37" id="h7-4-37" class="i">+    let teardown = cluster(nodes.clone()).await?;
+</a><a href="#h7-4-38" id="h7-4-38" class="i">+
+</a><a href="#h7-4-39" id="h7-4-39" class="i">+    let pool = Pool::new(nodes.into_iter().map(|(_, (addr, _))| addr).collect(), pool_size).await?;
+</a> 
+     // FIXME Wait for cluster to stabilize, see: https://github.com/erikgrinaker/toydb/issues/19
+     tokio::time::delay_for(std::time::Duration::from_millis(2000)).await;
+ 
+<a href="#h7-4-44" id="h7-4-44" class="d">-    let c = clients.get_mut(0).unwrap();
+</a><a href="#h7-4-45" id="h7-4-45" class="d">-    c.execute(&quot;BEGIN&quot;).await?;
+</a><a href="#h7-4-46" id="h7-4-46" class="d">-    for query in queries {
+</a><a href="#h7-4-47" id="h7-4-47" class="d">-        c.execute(query).await?;
+</a><a href="#h7-4-48" id="h7-4-48" class="i">+    if !queries.is_empty() {
+</a><a href="#h7-4-49" id="h7-4-49" class="i">+        let c = pool.get().await;
+</a><a href="#h7-4-50" id="h7-4-50" class="i">+        c.execute(&quot;BEGIN&quot;).await?;
+</a><a href="#h7-4-51" id="h7-4-51" class="i">+        for query in queries {
+</a><a href="#h7-4-52" id="h7-4-52" class="i">+            c.execute(query).await?;
+</a><a href="#h7-4-53" id="h7-4-53" class="i">+        }
+</a><a href="#h7-4-54" id="h7-4-54" class="i">+        c.execute(&quot;COMMIT&quot;).await?;
+</a>     }
+<a href="#h7-4-56" id="h7-4-56" class="d">-    c.execute(&quot;COMMIT&quot;).await?;
+</a> 
+<a href="#h7-4-58" id="h7-4-58" class="d">-    Ok((clients, teardown))
+</a><a href="#h7-4-59" id="h7-4-59" class="i">+    Ok((pool, teardown))
+</a> }
+ 
+ /// Sets up a simple cluster with 3 clients and a test table
+ pub async fn cluster_simple() -&gt; Result&lt;(Client, Client, Client, Teardown), Error&gt; {
+<a href="#h7-4-64" id="h7-4-64" class="d">-    let (mut clients, teardown) =
+</a><a href="#h7-4-65" id="h7-4-65" class="d">-        cluster_with_data(3, vec![&quot;CREATE TABLE test (id INTEGER PRIMARY KEY, value STRING)&quot;])
+</a><a href="#h7-4-66" id="h7-4-66" class="d">-            .await?;
+</a><a href="#h7-4-67" id="h7-4-67" class="i">+    let (mut clients, teardown) = cluster_with_clients(3, simple()).await?;
+</a>     let a = clients.remove(0);
+     let b = clients.remove(0);
+     let c = clients.remove(0);
+</pre>
+</div>
+</body>
+</html>

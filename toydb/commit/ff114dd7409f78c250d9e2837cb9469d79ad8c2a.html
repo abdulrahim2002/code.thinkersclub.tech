@@ -1,0 +1,2370 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>sql: rewrote executor. - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/ff114dd7409f78c250d9e2837cb9469d79ad8c2a.html">ff114dd7409f78c250d9e2837cb9469d79ad8c2a</a>
+<b>parent</b> <a href="../commit/07b799bd68656b47107fef5efa1b4c5ebd78d591.html">07b799bd68656b47107fef5efa1b4c5ebd78d591</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Sun, 12 Jan 2020 20:09:54 +0100
+
+sql: rewrote executor.
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/bin/toysql.rs</a></td><td> | </td><td class="num">21</td><td><span class="i">+++++++++++++</span><span class="d">--------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/client.rs</a></td><td> | </td><td class="num">15</td><td><span class="i">++++</span><span class="d">-----------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/kv/mvcc.rs</a></td><td> | </td><td class="num">7</td><td><span class="i">+++++++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">src/server/toydb.rs</a></td><td> | </td><td class="num">92</td><td><span class="i">++++++++</span><span class="d">-----------------------------------------------------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h4">src/sql/engine/kv.rs</a></td><td> | </td><td class="num">7</td><td><span class="i">+++++++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h5">src/sql/engine/mod.rs</a></td><td> | </td><td class="num">86</td><td><span class="i">++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h6">src/sql/engine/raft.rs</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h7">src/sql/executor/create_table.rs</a></td><td> | </td><td class="num">29</td><td><span class="i">++++++++++++</span><span class="d">-----------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h8">src/sql/executor/delete.rs</a></td><td> | </td><td class="num">43</td><td><span class="i">+++++++++++++++++++++</span><span class="d">----------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h9">src/sql/executor/drop_table.rs</a></td><td> | </td><td class="num">27</td><td><span class="i">+++++++++++</span><span class="d">----------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h10">src/sql/executor/filter.rs</a></td><td> | </td><td class="num">66</td><td><span class="i">+++++++++++++++++++++++++++++++++</span><span class="d">---------------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h11">src/sql/executor/insert.rs</a></td><td> | </td><td class="num">54</td><td><span class="i">++++++++++++++++++++++++++++</span><span class="d">--------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h12">src/sql/executor/limit.rs</a></td><td> | </td><td class="num">41</td><td><span class="i">+++++++++++++++</span><span class="d">--------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h13">src/sql/executor/mod.rs</a></td><td> | </td><td class="num">137</td><td><span class="i">++++++++++++++++++++++++++++++++++++++++</span><span class="d">---------------------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h14">src/sql/executor/nothing.rs</a></td><td> | </td><td class="num">27</td><td><span class="i">++++++++</span><span class="d">-------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h15">src/sql/executor/offset.rs</a></td><td> | </td><td class="num">40</td><td><span class="i">+++++++++++++++++</span><span class="d">-----------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h16">src/sql/executor/order.rs</a></td><td> | </td><td class="num">103</td><td><span class="i">+++++++++++++++++++++++++++++++++++++++</span><span class="d">----------------------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h17">src/sql/executor/projection.rs</a></td><td> | </td><td class="num">71</td><td><span class="i">++++++++++++++++++++++++++++++++++++++</span><span class="d">---------------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h18">src/sql/executor/scan.rs</a></td><td> | </td><td class="num">34</td><td><span class="i">+++++++++++++</span><span class="d">---------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h19">src/sql/executor/update.rs</a></td><td> | </td><td class="num">53</td><td><span class="i">+++++++++++++++++++++++++++++</span><span class="d">------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h20">src/sql/mod.rs</a></td><td> | </td><td class="num">4</td><td><span class="i">++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h21">src/sql/planner/mod.rs</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h22">src/sql/planner/plan.rs</a></td><td> | </td><td class="num">19</td><td><span class="i">+++++++++++</span><span class="d">--------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h23">src/sql/tests/expression.rs</a></td><td> | </td><td class="num">11</td><td><span class="i">+++</span><span class="d">--------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h24">src/sql/tests/mod.rs</a></td><td> | </td><td class="num">24</td><td><span class="i">+++++</span><span class="d">-------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h25">src/sql/tests/results/select_error_where_nonboolean</a></td><td> | </td><td class="num">4</td><td><span class="i">++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h26">src/sql/tests/schema.rs</a></td><td> | </td><td class="num">11</td><td><span class="i">++++++++</span><span class="d">---</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h27">src/sql/tests/schema/create_table_datatype</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h28">src/sql/tests/schema/create_table_default_boolean</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h29">src/sql/tests/schema/create_table_default_expr</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h30">src/sql/tests/schema/create_table_default_float</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h31">src/sql/tests/schema/create_table_default_integer</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h32">src/sql/tests/schema/create_table_default_null</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h33">src/sql/tests/schema/create_table_default_string</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h34">src/sql/tests/schema/create_table_name_alphanumeric</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h35">src/sql/tests/schema/create_table_name_case</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h36">src/sql/tests/schema/create_table_name_emoji_quoted</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h37">src/sql/tests/schema/create_table_name_japanese</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h38">src/sql/tests/schema/create_table_name_keyword_quoted</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h39">src/sql/tests/schema/create_table_name_quote_double</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h40">src/sql/tests/schema/create_table_name_quote_double_escaped</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h41">src/sql/tests/schema/create_table_name_quote_double_single</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h42">src/sql/tests/schema/create_table_null</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h43">src/sql/tests/schema/create_table_null_default</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h44">src/sql/tests/schema/create_table_null_not</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h45">src/sql/tests/schema/create_table_pk_default</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h46">src/sql/tests/schema/create_table_pk_unique</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h47">src/sql/tests/schema/create_table_ref</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h48">src/sql/tests/schema/create_table_ref_multiple</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h49">src/sql/tests/schema/create_table_ref_self</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h50">src/sql/tests/schema/create_table_unique</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h51">src/sql/tests/schema/create_table_unique_default</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h52">src/sql/tests/schema/create_table_unique_not_null</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h53">src/sql/tests/schema/create_table_unique_null</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h54">src/sql/tests/schema/delete_ref_noref</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h55">src/sql/tests/schema/delete_ref_self</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h56">src/sql/tests/schema/delete_ref_source</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h57">src/sql/tests/schema/drop_table</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h58">src/sql/tests/schema/drop_table_ref_self</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h59">src/sql/tests/schema/drop_table_ref_source</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h60">src/sql/tests/schema/insert_boolean_false</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h61">src/sql/tests/schema/insert_boolean_null</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h62">src/sql/tests/schema/insert_boolean_true</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h63">src/sql/tests/schema/insert_default</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h64">src/sql/tests/schema/insert_default_override</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h65">src/sql/tests/schema/insert_default_override_null</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h66">src/sql/tests/schema/insert_default_unnamed</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h67">src/sql/tests/schema/insert_float</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h68">src/sql/tests/schema/insert_float_infinity</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h69">src/sql/tests/schema/insert_float_infinity_negative</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h70">src/sql/tests/schema/insert_float_max</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h71">src/sql/tests/schema/insert_float_max_negative</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h72">src/sql/tests/schema/insert_float_min</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h73">src/sql/tests/schema/insert_float_min_negative</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h74">src/sql/tests/schema/insert_float_min_round</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h75">src/sql/tests/schema/insert_float_nan</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h76">src/sql/tests/schema/insert_float_null</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h77">src/sql/tests/schema/insert_integer</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h78">src/sql/tests/schema/insert_integer_max</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h79">src/sql/tests/schema/insert_integer_min</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h80">src/sql/tests/schema/insert_integer_null</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h81">src/sql/tests/schema/insert_nulls</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h82">src/sql/tests/schema/insert_nulls_default</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h83">src/sql/tests/schema/insert_pk_boolean</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h84">src/sql/tests/schema/insert_pk_float</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h85">src/sql/tests/schema/insert_pk_float_negative</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h86">src/sql/tests/schema/insert_pk_float_zero</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h87">src/sql/tests/schema/insert_pk_integer</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h88">src/sql/tests/schema/insert_pk_integer_negative</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h89">src/sql/tests/schema/insert_pk_integer_zero</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h90">src/sql/tests/schema/insert_pk_string</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h91">src/sql/tests/schema/insert_pk_string_case</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h92">src/sql/tests/schema/insert_pk_string_empty</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h93">src/sql/tests/schema/insert_ref_boolean</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h94">src/sql/tests/schema/insert_ref_boolean_null</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h95">src/sql/tests/schema/insert_ref_float</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h96">src/sql/tests/schema/insert_ref_float_null</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h97">src/sql/tests/schema/insert_ref_integer</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h98">src/sql/tests/schema/insert_ref_integer_null</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h99">src/sql/tests/schema/insert_ref_self</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h100">src/sql/tests/schema/insert_ref_self_null</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h101">src/sql/tests/schema/insert_ref_self_self</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h102">src/sql/tests/schema/insert_ref_string</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h103">src/sql/tests/schema/insert_ref_string_null</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h104">src/sql/tests/schema/insert_string</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h105">src/sql/tests/schema/insert_string_1024</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h106">src/sql/tests/schema/insert_string_1024_unicode</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h107">src/sql/tests/schema/insert_string_empty</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h108">src/sql/tests/schema/insert_string_null</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h109">src/sql/tests/schema/insert_string_unicode</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h110">src/sql/tests/schema/insert_unique_boolean</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h111">src/sql/tests/schema/insert_unique_float</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h112">src/sql/tests/schema/insert_unique_integer</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h113">src/sql/tests/schema/insert_unique_nulls</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h114">src/sql/tests/schema/insert_unique_string</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h115">src/sql/tests/schema/insert_unique_string_case</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h116">src/sql/tests/schema/update_integer</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h117">src/sql/tests/schema/update_integer_null</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h118">src/sql/tests/schema/update_pk_boolean</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h119">src/sql/tests/schema/update_pk_float</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h120">src/sql/tests/schema/update_pk_integer</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h121">src/sql/tests/schema/update_pk_string</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h122">src/sql/tests/schema/update_pk_string_case</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h123">src/sql/tests/schema/update_ref_pk_noref</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h124">src/sql/tests/schema/update_ref_self_pk_noref</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h125">src/sql/tests/schema/update_ref_self_self</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h126">src/sql/tests/schema/update_ref_self_value</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h127">src/sql/tests/schema/update_ref_source</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h128">src/sql/tests/schema/update_ref_source_null</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h129">src/sql/tests/schema/update_ref_value</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h130">src/sql/tests/schema/update_unique_boolean</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h131">src/sql/tests/schema/update_unique_boolean_same</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h132">src/sql/tests/schema/update_unique_nulls</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+</table></pre><pre>133 files changed, 609 insertions(+), 526 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/bin/toysql.rs.html">src/bin/toysql.rs</a> b/<a href="../file/src/bin/toysql.rs.html">src/bin/toysql.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -11,6 +11,7 @@ extern crate rustyline;
+</a> extern crate toydb;
+ 
+ use rustyline::error::ReadlineError;
+<a href="#h0-0-3" id="h0-0-3" class="i">+use toydb::client::{Effect, Mode};
+</a> 
+ fn main() -&gt; Result&lt;(), toydb::Error&gt; {
+     let opts = app_from_crate!()
+<a href="#h0-1" id="h0-1" class="h">@@ -148,18 +149,22 @@ Semicolons are not supported. The following !-commands are also available:
+</a>         let resultset = self.client.query(query)?;
+ 
+         match resultset.effect() {
+<a href="#h0-1-3" id="h0-1-3" class="d">-            Some(toydb::client::Effect::Begin { id, mode: toydb::client::Mode::ReadWrite }) =&gt; {
+</a><a href="#h0-1-4" id="h0-1-4" class="i">+            Some(Effect::Begin { id, mode: Mode::ReadWrite }) =&gt; {
+</a>                 println!(&quot;Began transaction {}&quot;, id)
+             }
+<a href="#h0-1-7" id="h0-1-7" class="d">-            Some(toydb::client::Effect::Begin { id, mode: toydb::client::Mode::ReadOnly }) =&gt; {
+</a><a href="#h0-1-8" id="h0-1-8" class="i">+            Some(Effect::Begin { id, mode: Mode::ReadOnly }) =&gt; {
+</a>                 println!(&quot;Began read-only transaction {}&quot;, id)
+             }
+<a href="#h0-1-11" id="h0-1-11" class="d">-            Some(toydb::client::Effect::Begin {
+</a><a href="#h0-1-12" id="h0-1-12" class="d">-                id,
+</a><a href="#h0-1-13" id="h0-1-13" class="d">-                mode: toydb::client::Mode::Snapshot { version },
+</a><a href="#h0-1-14" id="h0-1-14" class="d">-            }) =&gt; println!(&quot;Began read-only transaction {} in version {} snapshot&quot;, id, version),
+</a><a href="#h0-1-15" id="h0-1-15" class="d">-            Some(toydb::client::Effect::Commit(id)) =&gt; println!(&quot;Committed transaction {}&quot;, id),
+</a><a href="#h0-1-16" id="h0-1-16" class="d">-            Some(toydb::client::Effect::Rollback(id)) =&gt; println!(&quot;Rolled back transaction {}&quot;, id),
+</a><a href="#h0-1-17" id="h0-1-17" class="i">+            Some(Effect::Begin { id, mode: Mode::Snapshot { version } }) =&gt; {
+</a><a href="#h0-1-18" id="h0-1-18" class="i">+                println!(&quot;Began read-only transaction {} in version {} snapshot&quot;, id, version)
+</a><a href="#h0-1-19" id="h0-1-19" class="i">+            }
+</a><a href="#h0-1-20" id="h0-1-20" class="i">+            Some(Effect::Commit { id }) =&gt; println!(&quot;Committed transaction {}&quot;, id),
+</a><a href="#h0-1-21" id="h0-1-21" class="i">+            Some(Effect::Rollback { id }) =&gt; println!(&quot;Rolled back transaction {}&quot;, id),
+</a><a href="#h0-1-22" id="h0-1-22" class="i">+            Some(Effect::Create { count }) =&gt; println!(&quot;Created {} rows&quot;, count),
+</a><a href="#h0-1-23" id="h0-1-23" class="i">+            Some(Effect::Delete { count }) =&gt; println!(&quot;Deleted {} rows&quot;, count),
+</a><a href="#h0-1-24" id="h0-1-24" class="i">+            Some(Effect::Update { count }) =&gt; println!(&quot;Updated {} rows&quot;, count),
+</a><a href="#h0-1-25" id="h0-1-25" class="i">+            Some(Effect::CreateTable { name }) =&gt; println!(&quot;Created table {}&quot;, name),
+</a><a href="#h0-1-26" id="h0-1-26" class="i">+            Some(Effect::DropTable { name }) =&gt; println!(&quot;Dropped table {}&quot;, name),
+</a>             None =&gt; {}
+         }
+ 
+<b>diff --git a/<a id="h1" href="../file/src/client.rs.html">src/client.rs</a> b/<a href="../file/src/client.rs.html">src/client.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -1,6 +1,6 @@
+</a> use crate::service;
+<a href="#h1-0-1" id="h1-0-1" class="d">-pub use crate::sql::engine::Mode;
+</a> use crate::sql::types::{Row, Value};
+<a href="#h1-0-3" id="h1-0-3" class="i">+pub use crate::sql::{Effect, Mode};
+</a> use crate::utility::deserialize;
+ use crate::Error;
+ use grpc::ClientStubExt;
+<a href="#h1-1" id="h1-1" class="h">@@ -66,9 +66,9 @@ impl Client {
+</a>         let rs = ResultSet::from_grpc(metadata, iter)?;
+         match rs.effect() {
+             Some(Effect::Begin { id, mode }) =&gt; self.txn = Some((id, mode)),
+<a href="#h1-1-3" id="h1-1-3" class="d">-            Some(Effect::Commit(_)) =&gt; self.txn = None,
+</a><a href="#h1-1-4" id="h1-1-4" class="d">-            Some(Effect::Rollback(_)) =&gt; self.txn = None,
+</a><a href="#h1-1-5" id="h1-1-5" class="d">-            None =&gt; {}
+</a><a href="#h1-1-6" id="h1-1-6" class="i">+            Some(Effect::Commit { .. }) =&gt; self.txn = None,
+</a><a href="#h1-1-7" id="h1-1-7" class="i">+            Some(Effect::Rollback { .. }) =&gt; self.txn = None,
+</a><a href="#h1-1-8" id="h1-1-8" class="i">+            _ =&gt; {}
+</a>         }
+         Ok(rs)
+     }
+<a href="#h1-2" id="h1-2" class="h">@@ -90,13 +90,6 @@ pub struct ResultSet {
+</a>     rows: Box&lt;dyn Iterator&lt;Item = Result&lt;service::Row, grpc::Error&gt;&gt;&gt;,
+ }
+ 
+<a href="#h1-2-3" id="h1-2-3" class="d">-#[derive(Clone, Serialize, Deserialize)]
+</a><a href="#h1-2-4" id="h1-2-4" class="d">-pub enum Effect {
+</a><a href="#h1-2-5" id="h1-2-5" class="d">-    Begin { id: u64, mode: Mode },
+</a><a href="#h1-2-6" id="h1-2-6" class="d">-    Commit(u64),
+</a><a href="#h1-2-7" id="h1-2-7" class="d">-    Rollback(u64),
+</a><a href="#h1-2-8" id="h1-2-8" class="d">-}
+</a><a href="#h1-2-9" id="h1-2-9" class="d">-
+</a> impl Iterator for ResultSet {
+     type Item = Result&lt;Row, Error&gt;;
+ 
+<b>diff --git a/<a id="h2" href="../file/src/kv/mvcc.rs.html">src/kv/mvcc.rs</a> b/<a href="../file/src/kv/mvcc.rs.html">src/kv/mvcc.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -13,6 +13,13 @@ pub struct MVCC&lt;S: Storage&gt; {
+</a>     storage: Arc&lt;RwLock&lt;S&gt;&gt;,
+ }
+ 
+<a href="#h2-0-3" id="h2-0-3" class="i">+// FIXME Implement Clone manually due to https://github.com/rust-lang/rust/issues/26925
+</a><a href="#h2-0-4" id="h2-0-4" class="i">+impl&lt;S: Storage&gt; Clone for MVCC&lt;S&gt; {
+</a><a href="#h2-0-5" id="h2-0-5" class="i">+    fn clone(&amp;self) -&gt; Self {
+</a><a href="#h2-0-6" id="h2-0-6" class="i">+        MVCC { storage: self.storage.clone() }
+</a><a href="#h2-0-7" id="h2-0-7" class="i">+    }
+</a><a href="#h2-0-8" id="h2-0-8" class="i">+}
+</a><a href="#h2-0-9" id="h2-0-9" class="i">+
+</a> impl&lt;S: Storage&gt; MVCC&lt;S&gt; {
+     /// Creates a new MVCC key-value store with the given storage backend.
+     pub fn new(storage: S) -&gt; Self {
+<b>diff --git a/<a id="h3" href="../file/src/server/toydb.rs.html">src/server/toydb.rs</a> b/<a href="../file/src/server/toydb.rs.html">src/server/toydb.rs</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -1,11 +1,10 @@
+</a><a href="#h3-0-0" id="h3-0-0" class="d">-use crate::client;
+</a> use crate::raft::Raft;
+ use crate::service;
+ use crate::sql;
+ use crate::sql::types::{Row, Value};
+ use crate::utility::serialize;
+ use crate::Error;
+<a href="#h3-0-7" id="h3-0-7" class="d">-use sql::engine::{Engine, Mode, Transaction};
+</a><a href="#h3-0-8" id="h3-0-8" class="i">+use sql::engine::{Engine, Transaction};
+</a> 
+ pub struct ToyDB {
+     pub id: String,
+<a href="#h3-1" id="h3-1" class="h">@@ -57,7 +56,12 @@ impl service::ToyDB for ToyDB {
+</a>         _: grpc::RequestOptions,
+         req: service::QueryRequest,
+     ) -&gt; grpc::StreamingResponse&lt;service::Row&gt; {
+<a href="#h3-1-3" id="h3-1-3" class="d">-        let result = match self.execute(Some(req.txn_id).filter(|&amp;id| id &gt; 0), &amp;req.query) {
+</a><a href="#h3-1-4" id="h3-1-4" class="i">+        let result = match self
+</a><a href="#h3-1-5" id="h3-1-5" class="i">+            .engine
+</a><a href="#h3-1-6" id="h3-1-6" class="i">+            .session(Some(req.txn_id).filter(|&amp;id| id &gt; 0))
+</a><a href="#h3-1-7" id="h3-1-7" class="i">+            .unwrap()
+</a><a href="#h3-1-8" id="h3-1-8" class="i">+            .execute(&amp;req.query)
+</a><a href="#h3-1-9" id="h3-1-9" class="i">+        {
+</a>             Ok(result) =&gt; result,
+             Err(err) =&gt; {
+                 return grpc::StreamingResponse::completed(vec![service::Row {
+<a href="#h3-2" id="h3-2" class="h">@@ -69,8 +73,8 @@ impl service::ToyDB for ToyDB {
+</a>         let mut metadata = grpc::Metadata::new();
+         metadata
+             .add(grpc::MetadataKey::from(&quot;columns&quot;), serialize(&amp;result.columns()).unwrap().into());
+<a href="#h3-2-3" id="h3-2-3" class="d">-        if let Some(effect) = &amp;result.effect {
+</a><a href="#h3-2-4" id="h3-2-4" class="d">-            metadata.add(grpc::MetadataKey::from(&quot;effect&quot;), serialize(effect).unwrap().into());
+</a><a href="#h3-2-5" id="h3-2-5" class="i">+        if let Some(effect) = result.effect() {
+</a><a href="#h3-2-6" id="h3-2-6" class="i">+            metadata.add(grpc::MetadataKey::from(&quot;effect&quot;), serialize(&amp;effect).unwrap().into());
+</a>         }
+         grpc::StreamingResponse::iter_with_metadata(
+             metadata,
+<a href="#h3-3" id="h3-3" class="h">@@ -97,84 +101,6 @@ impl service::ToyDB for ToyDB {
+</a> }
+ 
+ impl ToyDB {
+<a href="#h3-3-3" id="h3-3-3" class="d">-    /// Executes an SQL statement
+</a><a href="#h3-3-4" id="h3-3-4" class="d">-    fn execute(&amp;self, txn_id: Option&lt;u64&gt;, query: &amp;str) -&gt; Result&lt;sql::ResultSet, Error&gt; {
+</a><a href="#h3-3-5" id="h3-3-5" class="d">-        let statement = sql::Parser::new(query).parse()?;
+</a><a href="#h3-3-6" id="h3-3-6" class="d">-
+</a><a href="#h3-3-7" id="h3-3-7" class="d">-        // FIXME Needs to return effect for DDL statements as well
+</a><a href="#h3-3-8" id="h3-3-8" class="d">-        if let Some(txn_id) = txn_id {
+</a><a href="#h3-3-9" id="h3-3-9" class="d">-            let mut txn = self.engine.resume(txn_id)?;
+</a><a href="#h3-3-10" id="h3-3-10" class="d">-            match statement {
+</a><a href="#h3-3-11" id="h3-3-11" class="d">-                sql::ast::Statement::Begin { .. } =&gt; {
+</a><a href="#h3-3-12" id="h3-3-12" class="d">-                    Err(Error::Value(&quot;Already in a transaction&quot;.into()))
+</a><a href="#h3-3-13" id="h3-3-13" class="d">-                }
+</a><a href="#h3-3-14" id="h3-3-14" class="d">-                sql::ast::Statement::Commit =&gt; {
+</a><a href="#h3-3-15" id="h3-3-15" class="d">-                    let mut rs = sql::ResultSet::empty();
+</a><a href="#h3-3-16" id="h3-3-16" class="d">-                    rs.effect = Some(client::Effect::Commit(txn.id()));
+</a><a href="#h3-3-17" id="h3-3-17" class="d">-                    txn.commit()?;
+</a><a href="#h3-3-18" id="h3-3-18" class="d">-                    Ok(rs)
+</a><a href="#h3-3-19" id="h3-3-19" class="d">-                }
+</a><a href="#h3-3-20" id="h3-3-20" class="d">-                sql::ast::Statement::Rollback =&gt; {
+</a><a href="#h3-3-21" id="h3-3-21" class="d">-                    let mut rs = sql::ResultSet::empty();
+</a><a href="#h3-3-22" id="h3-3-22" class="d">-                    rs.effect = Some(client::Effect::Rollback(txn.id()));
+</a><a href="#h3-3-23" id="h3-3-23" class="d">-                    txn.rollback()?;
+</a><a href="#h3-3-24" id="h3-3-24" class="d">-                    Ok(rs)
+</a><a href="#h3-3-25" id="h3-3-25" class="d">-                }
+</a><a href="#h3-3-26" id="h3-3-26" class="d">-                _ =&gt; {
+</a><a href="#h3-3-27" id="h3-3-27" class="d">-                    let rs = sql::Plan::build(statement)?
+</a><a href="#h3-3-28" id="h3-3-28" class="d">-                        .optimize()?
+</a><a href="#h3-3-29" id="h3-3-29" class="d">-                        .execute(sql::Context { txn: &amp;mut txn })?;
+</a><a href="#h3-3-30" id="h3-3-30" class="d">-                    Ok(rs)
+</a><a href="#h3-3-31" id="h3-3-31" class="d">-                }
+</a><a href="#h3-3-32" id="h3-3-32" class="d">-            }
+</a><a href="#h3-3-33" id="h3-3-33" class="d">-        } else {
+</a><a href="#h3-3-34" id="h3-3-34" class="d">-            match statement {
+</a><a href="#h3-3-35" id="h3-3-35" class="d">-                sql::ast::Statement::Begin { readonly: false, version } =&gt; {
+</a><a href="#h3-3-36" id="h3-3-36" class="d">-                    if version.is_some() {
+</a><a href="#h3-3-37" id="h3-3-37" class="d">-                        return Err(Error::Value(
+</a><a href="#h3-3-38" id="h3-3-38" class="d">-                            &quot;Can&#39;t start read-write transaction in a given version&quot;.into(),
+</a><a href="#h3-3-39" id="h3-3-39" class="d">-                        ));
+</a><a href="#h3-3-40" id="h3-3-40" class="d">-                    }
+</a><a href="#h3-3-41" id="h3-3-41" class="d">-                    let txn = self.engine.begin()?;
+</a><a href="#h3-3-42" id="h3-3-42" class="d">-                    let mut rs = sql::ResultSet::empty();
+</a><a href="#h3-3-43" id="h3-3-43" class="d">-                    rs.effect = Some(client::Effect::Begin { id: txn.id(), mode: txn.mode() });
+</a><a href="#h3-3-44" id="h3-3-44" class="d">-                    Ok(rs)
+</a><a href="#h3-3-45" id="h3-3-45" class="d">-                }
+</a><a href="#h3-3-46" id="h3-3-46" class="d">-                sql::ast::Statement::Begin { readonly: true, version: None } =&gt; {
+</a><a href="#h3-3-47" id="h3-3-47" class="d">-                    let txn = self.engine.begin_with_mode(Mode::ReadOnly)?;
+</a><a href="#h3-3-48" id="h3-3-48" class="d">-                    let mut rs = sql::ResultSet::empty();
+</a><a href="#h3-3-49" id="h3-3-49" class="d">-                    rs.effect = Some(client::Effect::Begin { id: txn.id(), mode: txn.mode() });
+</a><a href="#h3-3-50" id="h3-3-50" class="d">-                    Ok(rs)
+</a><a href="#h3-3-51" id="h3-3-51" class="d">-                }
+</a><a href="#h3-3-52" id="h3-3-52" class="d">-                sql::ast::Statement::Begin { readonly: true, version: Some(version) } =&gt; {
+</a><a href="#h3-3-53" id="h3-3-53" class="d">-                    let txn = self.engine.begin_with_mode(Mode::Snapshot { version })?;
+</a><a href="#h3-3-54" id="h3-3-54" class="d">-                    let mut rs = sql::ResultSet::empty();
+</a><a href="#h3-3-55" id="h3-3-55" class="d">-                    rs.effect = Some(client::Effect::Begin { id: txn.id(), mode: txn.mode() });
+</a><a href="#h3-3-56" id="h3-3-56" class="d">-                    Ok(rs)
+</a><a href="#h3-3-57" id="h3-3-57" class="d">-                }
+</a><a href="#h3-3-58" id="h3-3-58" class="d">-                sql::ast::Statement::Commit | sql::ast::Statement::Rollback =&gt; {
+</a><a href="#h3-3-59" id="h3-3-59" class="d">-                    Err(Error::Value(&quot;Not in a transaction&quot;.into()))
+</a><a href="#h3-3-60" id="h3-3-60" class="d">-                }
+</a><a href="#h3-3-61" id="h3-3-61" class="d">-                sql::ast::Statement::Select { .. } =&gt; {
+</a><a href="#h3-3-62" id="h3-3-62" class="d">-                    let mut txn = self.engine.begin_with_mode(Mode::ReadOnly)?;
+</a><a href="#h3-3-63" id="h3-3-63" class="d">-                    let result = sql::Plan::build(statement)?
+</a><a href="#h3-3-64" id="h3-3-64" class="d">-                        .optimize()?
+</a><a href="#h3-3-65" id="h3-3-65" class="d">-                        .execute(sql::Context { txn: &amp;mut txn });
+</a><a href="#h3-3-66" id="h3-3-66" class="d">-                    txn.commit()?;
+</a><a href="#h3-3-67" id="h3-3-67" class="d">-                    result
+</a><a href="#h3-3-68" id="h3-3-68" class="d">-                }
+</a><a href="#h3-3-69" id="h3-3-69" class="d">-                _ =&gt; {
+</a><a href="#h3-3-70" id="h3-3-70" class="d">-                    let mut txn = self.engine.begin()?;
+</a><a href="#h3-3-71" id="h3-3-71" class="d">-                    let result = sql::Plan::build(statement)?
+</a><a href="#h3-3-72" id="h3-3-72" class="d">-                        .optimize()?
+</a><a href="#h3-3-73" id="h3-3-73" class="d">-                        .execute(sql::Context { txn: &amp;mut txn });
+</a><a href="#h3-3-74" id="h3-3-74" class="d">-                    txn.commit()?;
+</a><a href="#h3-3-75" id="h3-3-75" class="d">-                    result
+</a><a href="#h3-3-76" id="h3-3-76" class="d">-                }
+</a><a href="#h3-3-77" id="h3-3-77" class="d">-            }
+</a><a href="#h3-3-78" id="h3-3-78" class="d">-        }
+</a><a href="#h3-3-79" id="h3-3-79" class="d">-    }
+</a><a href="#h3-3-80" id="h3-3-80" class="d">-
+</a>     /// Converts an error into a protobuf object
+     fn error_to_protobuf(err: Error) -&gt; protobuf::SingularPtrField&lt;service::Error&gt; {
+         protobuf::SingularPtrField::from(Some(service::Error {
+<b>diff --git a/<a id="h4" href="../file/src/sql/engine/kv.rs.html">src/sql/engine/kv.rs</a> b/<a href="../file/src/sql/engine/kv.rs.html">src/sql/engine/kv.rs</a></b>
+<a href="#h4-0" id="h4-0" class="h">@@ -10,6 +10,13 @@ pub struct KV&lt;S: kv::storage::Storage&gt; {
+</a>     kv: kv::MVCC&lt;S&gt;,
+ }
+ 
+<a href="#h4-0-3" id="h4-0-3" class="i">+// FIXME Implement Clone manually due to https://github.com/rust-lang/rust/issues/26925
+</a><a href="#h4-0-4" id="h4-0-4" class="i">+impl&lt;S: kv::storage::Storage&gt; std::clone::Clone for KV&lt;S&gt; {
+</a><a href="#h4-0-5" id="h4-0-5" class="i">+    fn clone(&amp;self) -&gt; Self {
+</a><a href="#h4-0-6" id="h4-0-6" class="i">+        KV::new(self.kv.clone())
+</a><a href="#h4-0-7" id="h4-0-7" class="i">+    }
+</a><a href="#h4-0-8" id="h4-0-8" class="i">+}
+</a><a href="#h4-0-9" id="h4-0-9" class="i">+
+</a> impl&lt;S: kv::storage::Storage&gt; KV&lt;S&gt; {
+     /// Creates a new key/value-based SQL engine
+     pub fn new(kv: kv::MVCC&lt;S&gt;) -&gt; Self {
+<b>diff --git a/<a id="h5" href="../file/src/sql/engine/mod.rs.html">src/sql/engine/mod.rs</a> b/<a href="../file/src/sql/engine/mod.rs.html">src/sql/engine/mod.rs</a></b>
+<a href="#h5-0" id="h5-0" class="h">@@ -5,12 +5,15 @@ mod raft;
+</a> pub use kv::KV;
+ pub use raft::Raft;
+ 
+<a href="#h5-0-3" id="h5-0-3" class="i">+use super::executor::{Context, Effect, ResultSet};
+</a><a href="#h5-0-4" id="h5-0-4" class="i">+use super::parser::{ast, Parser};
+</a><a href="#h5-0-5" id="h5-0-5" class="i">+use super::planner::Plan;
+</a> use super::types::schema::Table;
+ use super::types::{Row, Value};
+ use crate::Error;
+ 
+ /// The SQL engine interface
+<a href="#h5-0-11" id="h5-0-11" class="d">-pub trait Engine {
+</a><a href="#h5-0-12" id="h5-0-12" class="i">+pub trait Engine: Clone {
+</a>     /// The transaction type
+     type Transaction: Transaction;
+ 
+<a href="#h5-1" id="h5-1" class="h">@@ -19,6 +22,12 @@ pub trait Engine {
+</a>         self.begin_with_mode(Mode::ReadWrite)
+     }
+ 
+<a href="#h5-1-3" id="h5-1-3" class="i">+    /// Begins a session, optionally resuming an active transaction with the given ID
+</a><a href="#h5-1-4" id="h5-1-4" class="i">+    fn session(&amp;self, id: Option&lt;u64&gt;) -&gt; Result&lt;Session&lt;Self&gt;, Error&gt; {
+</a><a href="#h5-1-5" id="h5-1-5" class="i">+        let txn = if let Some(id) = id { Some(self.resume(id)?) } else { None };
+</a><a href="#h5-1-6" id="h5-1-6" class="i">+        Ok(Session { engine: self.clone(), txn })
+</a><a href="#h5-1-7" id="h5-1-7" class="i">+    }
+</a><a href="#h5-1-8" id="h5-1-8" class="i">+
+</a>     /// Begins a transaction in the given mode
+     fn begin_with_mode(&amp;self, mode: Mode) -&gt; Result&lt;Self::Transaction, Error&gt;;
+ 
+<a href="#h5-2" id="h5-2" class="h">@@ -64,6 +73,81 @@ pub trait Transaction {
+</a>     }
+ }
+ 
+<a href="#h5-2-3" id="h5-2-3" class="i">+/// An SQL session, which handles transaction control and simplified query execution
+</a><a href="#h5-2-4" id="h5-2-4" class="i">+pub struct Session&lt;E: Engine&gt; {
+</a><a href="#h5-2-5" id="h5-2-5" class="i">+    /// The underlying engine
+</a><a href="#h5-2-6" id="h5-2-6" class="i">+    engine: E,
+</a><a href="#h5-2-7" id="h5-2-7" class="i">+    /// The current session transaction, if any
+</a><a href="#h5-2-8" id="h5-2-8" class="i">+    txn: Option&lt;E::Transaction&gt;,
+</a><a href="#h5-2-9" id="h5-2-9" class="i">+}
+</a><a href="#h5-2-10" id="h5-2-10" class="i">+
+</a><a href="#h5-2-11" id="h5-2-11" class="i">+impl&lt;E: Engine + &#39;static&gt; Session&lt;E&gt; {
+</a><a href="#h5-2-12" id="h5-2-12" class="i">+    /// Executes a query, managing transaction status for the session
+</a><a href="#h5-2-13" id="h5-2-13" class="i">+    pub fn execute(&amp;mut self, query: &amp;str) -&gt; Result&lt;ResultSet, Error&gt; {
+</a><a href="#h5-2-14" id="h5-2-14" class="i">+        // FIXME We should match on self.txn as well, but get this error:
+</a><a href="#h5-2-15" id="h5-2-15" class="i">+        // error[E0009]: cannot bind by-move and by-ref in the same pattern
+</a><a href="#h5-2-16" id="h5-2-16" class="i">+        // ...which seems like an arbitrary compiler limitation
+</a><a href="#h5-2-17" id="h5-2-17" class="i">+        match Parser::new(query).parse()? {
+</a><a href="#h5-2-18" id="h5-2-18" class="i">+            ast::Statement::Begin { .. } if self.txn.is_some() =&gt; {
+</a><a href="#h5-2-19" id="h5-2-19" class="i">+                Err(Error::Value(&quot;Already in a transaction&quot;.into()))
+</a><a href="#h5-2-20" id="h5-2-20" class="i">+            }
+</a><a href="#h5-2-21" id="h5-2-21" class="i">+            ast::Statement::Begin { readonly: true, version: None } =&gt; {
+</a><a href="#h5-2-22" id="h5-2-22" class="i">+                let txn = self.engine.begin_with_mode(Mode::ReadOnly)?;
+</a><a href="#h5-2-23" id="h5-2-23" class="i">+                let effect = Effect::Begin { id: txn.id(), mode: txn.mode() };
+</a><a href="#h5-2-24" id="h5-2-24" class="i">+                self.txn = Some(txn);
+</a><a href="#h5-2-25" id="h5-2-25" class="i">+                Ok(ResultSet::from_effect(effect))
+</a><a href="#h5-2-26" id="h5-2-26" class="i">+            }
+</a><a href="#h5-2-27" id="h5-2-27" class="i">+            ast::Statement::Begin { readonly: true, version: Some(version) } =&gt; {
+</a><a href="#h5-2-28" id="h5-2-28" class="i">+                let txn = self.engine.begin_with_mode(Mode::Snapshot { version })?;
+</a><a href="#h5-2-29" id="h5-2-29" class="i">+                let effect = Effect::Begin { id: txn.id(), mode: txn.mode() };
+</a><a href="#h5-2-30" id="h5-2-30" class="i">+                self.txn = Some(txn);
+</a><a href="#h5-2-31" id="h5-2-31" class="i">+                Ok(ResultSet::from_effect(effect))
+</a><a href="#h5-2-32" id="h5-2-32" class="i">+            }
+</a><a href="#h5-2-33" id="h5-2-33" class="i">+            ast::Statement::Begin { readonly: false, version: Some(_) } =&gt; {
+</a><a href="#h5-2-34" id="h5-2-34" class="i">+                Err(Error::Value(&quot;Can&#39;t start read-write transaction in a given version&quot;.into()))
+</a><a href="#h5-2-35" id="h5-2-35" class="i">+            }
+</a><a href="#h5-2-36" id="h5-2-36" class="i">+            ast::Statement::Begin { readonly: false, version: None } =&gt; {
+</a><a href="#h5-2-37" id="h5-2-37" class="i">+                let txn = self.engine.begin_with_mode(Mode::ReadWrite)?;
+</a><a href="#h5-2-38" id="h5-2-38" class="i">+                let effect = Effect::Begin { id: txn.id(), mode: txn.mode() };
+</a><a href="#h5-2-39" id="h5-2-39" class="i">+                self.txn = Some(txn);
+</a><a href="#h5-2-40" id="h5-2-40" class="i">+                Ok(ResultSet::from_effect(effect))
+</a><a href="#h5-2-41" id="h5-2-41" class="i">+            }
+</a><a href="#h5-2-42" id="h5-2-42" class="i">+            ast::Statement::Commit | ast::Statement::Rollback if self.txn.is_none() =&gt; {
+</a><a href="#h5-2-43" id="h5-2-43" class="i">+                Err(Error::Value(&quot;Not in a transaction&quot;.into()))
+</a><a href="#h5-2-44" id="h5-2-44" class="i">+            }
+</a><a href="#h5-2-45" id="h5-2-45" class="i">+            ast::Statement::Commit =&gt; {
+</a><a href="#h5-2-46" id="h5-2-46" class="i">+                let txn = std::mem::replace(&amp;mut self.txn, None).unwrap();
+</a><a href="#h5-2-47" id="h5-2-47" class="i">+                let effect = Effect::Commit { id: txn.id() };
+</a><a href="#h5-2-48" id="h5-2-48" class="i">+                txn.commit()?;
+</a><a href="#h5-2-49" id="h5-2-49" class="i">+                Ok(ResultSet::from_effect(effect))
+</a><a href="#h5-2-50" id="h5-2-50" class="i">+            }
+</a><a href="#h5-2-51" id="h5-2-51" class="i">+            ast::Statement::Rollback =&gt; {
+</a><a href="#h5-2-52" id="h5-2-52" class="i">+                let txn = std::mem::replace(&amp;mut self.txn, None).unwrap();
+</a><a href="#h5-2-53" id="h5-2-53" class="i">+                let effect = Effect::Rollback { id: txn.id() };
+</a><a href="#h5-2-54" id="h5-2-54" class="i">+                txn.rollback()?;
+</a><a href="#h5-2-55" id="h5-2-55" class="i">+                Ok(ResultSet::from_effect(effect))
+</a><a href="#h5-2-56" id="h5-2-56" class="i">+            }
+</a><a href="#h5-2-57" id="h5-2-57" class="i">+            statement if self.txn.is_some() =&gt; Plan::build(statement)?
+</a><a href="#h5-2-58" id="h5-2-58" class="i">+                .optimize()?
+</a><a href="#h5-2-59" id="h5-2-59" class="i">+                .execute(Context { txn: self.txn.as_mut().unwrap() }),
+</a><a href="#h5-2-60" id="h5-2-60" class="i">+            statement @ ast::Statement::Select { .. } =&gt; {
+</a><a href="#h5-2-61" id="h5-2-61" class="i">+                let mut txn = self.engine.begin_with_mode(Mode::ReadOnly)?;
+</a><a href="#h5-2-62" id="h5-2-62" class="i">+                let result =
+</a><a href="#h5-2-63" id="h5-2-63" class="i">+                    Plan::build(statement)?.optimize()?.execute(Context { txn: &amp;mut txn })?;
+</a><a href="#h5-2-64" id="h5-2-64" class="i">+                txn.commit()?;
+</a><a href="#h5-2-65" id="h5-2-65" class="i">+                Ok(result)
+</a><a href="#h5-2-66" id="h5-2-66" class="i">+            }
+</a><a href="#h5-2-67" id="h5-2-67" class="i">+            statement =&gt; {
+</a><a href="#h5-2-68" id="h5-2-68" class="i">+                let mut txn = self.engine.begin_with_mode(Mode::ReadWrite)?;
+</a><a href="#h5-2-69" id="h5-2-69" class="i">+                let result =
+</a><a href="#h5-2-70" id="h5-2-70" class="i">+                    Plan::build(statement)?.optimize()?.execute(Context { txn: &amp;mut txn })?;
+</a><a href="#h5-2-71" id="h5-2-71" class="i">+                txn.commit()?;
+</a><a href="#h5-2-72" id="h5-2-72" class="i">+                Ok(result)
+</a><a href="#h5-2-73" id="h5-2-73" class="i">+            }
+</a><a href="#h5-2-74" id="h5-2-74" class="i">+        }
+</a><a href="#h5-2-75" id="h5-2-75" class="i">+    }
+</a><a href="#h5-2-76" id="h5-2-76" class="i">+}
+</a><a href="#h5-2-77" id="h5-2-77" class="i">+
+</a> /// The transaction mode
+ pub type Mode = crate::kv::Mode;
+ 
+<b>diff --git a/<a id="h6" href="../file/src/sql/engine/raft.rs.html">src/sql/engine/raft.rs</a> b/<a href="../file/src/sql/engine/raft.rs.html">src/sql/engine/raft.rs</a></b>
+<a href="#h6-0" id="h6-0" class="h">@@ -48,6 +48,7 @@ enum Query {
+</a> }
+ 
+ /// An SQL engine that wraps a Raft cluster.
+<a href="#h6-0-3" id="h6-0-3" class="i">+#[derive(Clone)]
+</a> pub struct Raft {
+     /// The underlying Raft cluster.
+     raft: raft::Raft,
+<b>diff --git a/<a id="h7" href="../file/src/sql/executor/create_table.rs.html">src/sql/executor/create_table.rs</a> b/<a href="../file/src/sql/executor/create_table.rs.html">src/sql/executor/create_table.rs</a></b>
+<a href="#h7-0" id="h7-0" class="h">@@ -1,28 +1,23 @@
+</a> use super::super::engine::Transaction;
+<a href="#h7-0-1" id="h7-0-1" class="d">-use super::super::types::schema;
+</a><a href="#h7-0-2" id="h7-0-2" class="d">-use super::super::types::Row;
+</a><a href="#h7-0-3" id="h7-0-3" class="d">-use super::{Context, Executor};
+</a><a href="#h7-0-4" id="h7-0-4" class="i">+use super::super::types::schema::Table;
+</a><a href="#h7-0-5" id="h7-0-5" class="i">+use super::{Context, Effect, Executor, ResultSet};
+</a> use crate::Error;
+ 
+ /// A CREATE TABLE executor
+<a href="#h7-0-9" id="h7-0-9" class="d">-pub struct CreateTable;
+</a><a href="#h7-0-10" id="h7-0-10" class="i">+pub struct CreateTable {
+</a><a href="#h7-0-11" id="h7-0-11" class="i">+    /// The table schema
+</a><a href="#h7-0-12" id="h7-0-12" class="i">+    table: Table,
+</a><a href="#h7-0-13" id="h7-0-13" class="i">+}
+</a> 
+ impl CreateTable {
+<a href="#h7-0-16" id="h7-0-16" class="d">-    pub fn execute&lt;T: Transaction&gt;(
+</a><a href="#h7-0-17" id="h7-0-17" class="d">-        ctx: &amp;mut Context&lt;T&gt;,
+</a><a href="#h7-0-18" id="h7-0-18" class="d">-        schema: schema::Table,
+</a><a href="#h7-0-19" id="h7-0-19" class="d">-    ) -&gt; Result&lt;Box&lt;dyn Executor&gt;, Error&gt; {
+</a><a href="#h7-0-20" id="h7-0-20" class="d">-        ctx.txn.create_table(&amp;schema)?;
+</a><a href="#h7-0-21" id="h7-0-21" class="d">-        Ok(Box::new(Self))
+</a><a href="#h7-0-22" id="h7-0-22" class="i">+    pub fn new(table: Table) -&gt; Box&lt;Self&gt; {
+</a><a href="#h7-0-23" id="h7-0-23" class="i">+        Box::new(Self { table })
+</a>     }
+ }
+ 
+<a href="#h7-0-27" id="h7-0-27" class="d">-impl Executor for CreateTable {
+</a><a href="#h7-0-28" id="h7-0-28" class="d">-    fn columns(&amp;self) -&gt; Vec&lt;String&gt; {
+</a><a href="#h7-0-29" id="h7-0-29" class="d">-        Vec::new()
+</a><a href="#h7-0-30" id="h7-0-30" class="d">-    }
+</a><a href="#h7-0-31" id="h7-0-31" class="d">-
+</a><a href="#h7-0-32" id="h7-0-32" class="d">-    fn fetch(&amp;mut self) -&gt; Result&lt;Option&lt;Row&gt;, Error&gt; {
+</a><a href="#h7-0-33" id="h7-0-33" class="d">-        Ok(None)
+</a><a href="#h7-0-34" id="h7-0-34" class="i">+impl&lt;T: Transaction&gt; Executor&lt;T&gt; for CreateTable {
+</a><a href="#h7-0-35" id="h7-0-35" class="i">+    fn execute(self: Box&lt;Self&gt;, ctx: &amp;mut Context&lt;T&gt;) -&gt; Result&lt;ResultSet, Error&gt; {
+</a><a href="#h7-0-36" id="h7-0-36" class="i">+        ctx.txn.create_table(&amp;self.table)?;
+</a><a href="#h7-0-37" id="h7-0-37" class="i">+        Ok(ResultSet::from_effect(Effect::CreateTable { name: self.table.name }))
+</a>     }
+ }
+<b>diff --git a/<a id="h8" href="../file/src/sql/executor/delete.rs.html">src/sql/executor/delete.rs</a> b/<a href="../file/src/sql/executor/delete.rs.html">src/sql/executor/delete.rs</a></b>
+<a href="#h8-0" id="h8-0" class="h">@@ -1,31 +1,30 @@
+</a> use super::super::engine::Transaction;
+<a href="#h8-0-1" id="h8-0-1" class="d">-use super::super::types::Row;
+</a><a href="#h8-0-2" id="h8-0-2" class="d">-use super::{Context, Executor};
+</a><a href="#h8-0-3" id="h8-0-3" class="i">+use super::{Context, Effect, Executor, ResultSet};
+</a> use crate::Error;
+ 
+<a href="#h8-0-6" id="h8-0-6" class="d">-/// A delete executor
+</a><a href="#h8-0-7" id="h8-0-7" class="d">-pub struct Delete;
+</a><a href="#h8-0-8" id="h8-0-8" class="d">-
+</a><a href="#h8-0-9" id="h8-0-9" class="d">-impl Delete {
+</a><a href="#h8-0-10" id="h8-0-10" class="d">-    pub fn execute&lt;T: Transaction&gt;(
+</a><a href="#h8-0-11" id="h8-0-11" class="d">-        ctx: &amp;mut Context&lt;T&gt;,
+</a><a href="#h8-0-12" id="h8-0-12" class="d">-        mut source: Box&lt;dyn Executor&gt;,
+</a><a href="#h8-0-13" id="h8-0-13" class="d">-        table: String,
+</a><a href="#h8-0-14" id="h8-0-14" class="d">-    ) -&gt; Result&lt;Box&lt;dyn Executor&gt;, Error&gt; {
+</a><a href="#h8-0-15" id="h8-0-15" class="d">-        let table = ctx.txn.must_read_table(&amp;table)?;
+</a><a href="#h8-0-16" id="h8-0-16" class="d">-        while let Some(row) = source.fetch()? {
+</a><a href="#h8-0-17" id="h8-0-17" class="d">-            ctx.txn.delete(&amp;table.name, &amp;table.get_row_key(&amp;row)?)?
+</a><a href="#h8-0-18" id="h8-0-18" class="d">-        }
+</a><a href="#h8-0-19" id="h8-0-19" class="d">-        Ok(Box::new(Self))
+</a><a href="#h8-0-20" id="h8-0-20" class="d">-    }
+</a><a href="#h8-0-21" id="h8-0-21" class="i">+/// A DELETE executor
+</a><a href="#h8-0-22" id="h8-0-22" class="i">+pub struct Delete&lt;T: Transaction&gt; {
+</a><a href="#h8-0-23" id="h8-0-23" class="i">+    /// Table name to delete from
+</a><a href="#h8-0-24" id="h8-0-24" class="i">+    table: String,
+</a><a href="#h8-0-25" id="h8-0-25" class="i">+    /// Source of rows to delete (must be complete rows from the table)
+</a><a href="#h8-0-26" id="h8-0-26" class="i">+    source: Box&lt;dyn Executor&lt;T&gt;&gt;,
+</a> }
+ 
+<a href="#h8-0-29" id="h8-0-29" class="d">-impl Executor for Delete {
+</a><a href="#h8-0-30" id="h8-0-30" class="d">-    fn columns(&amp;self) -&gt; Vec&lt;String&gt; {
+</a><a href="#h8-0-31" id="h8-0-31" class="d">-        Vec::new()
+</a><a href="#h8-0-32" id="h8-0-32" class="i">+impl&lt;T: Transaction&gt; Delete&lt;T&gt; {
+</a><a href="#h8-0-33" id="h8-0-33" class="i">+    pub fn new(table: String, source: Box&lt;dyn Executor&lt;T&gt;&gt;) -&gt; Box&lt;Self&gt; {
+</a><a href="#h8-0-34" id="h8-0-34" class="i">+        Box::new(Self { table, source })
+</a>     }
+<a href="#h8-0-36" id="h8-0-36" class="i">+}
+</a> 
+<a href="#h8-0-38" id="h8-0-38" class="d">-    fn fetch(&amp;mut self) -&gt; Result&lt;Option&lt;Row&gt;, Error&gt; {
+</a><a href="#h8-0-39" id="h8-0-39" class="d">-        Ok(None)
+</a><a href="#h8-0-40" id="h8-0-40" class="i">+impl&lt;T: Transaction&gt; Executor&lt;T&gt; for Delete&lt;T&gt; {
+</a><a href="#h8-0-41" id="h8-0-41" class="i">+    fn execute(self: Box&lt;Self&gt;, ctx: &amp;mut Context&lt;T&gt;) -&gt; Result&lt;ResultSet, Error&gt; {
+</a><a href="#h8-0-42" id="h8-0-42" class="i">+        let table = ctx.txn.must_read_table(&amp;self.table)?;
+</a><a href="#h8-0-43" id="h8-0-43" class="i">+        let mut count = 0;
+</a><a href="#h8-0-44" id="h8-0-44" class="i">+        let mut rows = self.source.execute(ctx)?;
+</a><a href="#h8-0-45" id="h8-0-45" class="i">+        while let Some(row) = rows.next().transpose()? {
+</a><a href="#h8-0-46" id="h8-0-46" class="i">+            ctx.txn.delete(&amp;table.name, &amp;table.get_row_key(&amp;row)?)?;
+</a><a href="#h8-0-47" id="h8-0-47" class="i">+            count += 1
+</a><a href="#h8-0-48" id="h8-0-48" class="i">+        }
+</a><a href="#h8-0-49" id="h8-0-49" class="i">+        Ok(ResultSet::from_effect(Effect::Delete { count }))
+</a>     }
+ }
+<b>diff --git a/<a id="h9" href="../file/src/sql/executor/drop_table.rs.html">src/sql/executor/drop_table.rs</a> b/<a href="../file/src/sql/executor/drop_table.rs.html">src/sql/executor/drop_table.rs</a></b>
+<a href="#h9-0" id="h9-0" class="h">@@ -1,27 +1,22 @@
+</a> use super::super::engine::Transaction;
+<a href="#h9-0-1" id="h9-0-1" class="d">-use super::super::types::Row;
+</a><a href="#h9-0-2" id="h9-0-2" class="d">-use super::{Context, Executor};
+</a><a href="#h9-0-3" id="h9-0-3" class="i">+use super::{Context, Effect, Executor, ResultSet};
+</a> use crate::Error;
+ 
+ /// A DROP TABLE executor
+<a href="#h9-0-7" id="h9-0-7" class="d">-pub struct DropTable;
+</a><a href="#h9-0-8" id="h9-0-8" class="i">+pub struct DropTable {
+</a><a href="#h9-0-9" id="h9-0-9" class="i">+    /// Table name to drop
+</a><a href="#h9-0-10" id="h9-0-10" class="i">+    table: String,
+</a><a href="#h9-0-11" id="h9-0-11" class="i">+}
+</a> 
+ impl DropTable {
+<a href="#h9-0-14" id="h9-0-14" class="d">-    pub fn execute&lt;T: Transaction&gt;(
+</a><a href="#h9-0-15" id="h9-0-15" class="d">-        ctx: &amp;mut Context&lt;T&gt;,
+</a><a href="#h9-0-16" id="h9-0-16" class="d">-        name: String,
+</a><a href="#h9-0-17" id="h9-0-17" class="d">-    ) -&gt; Result&lt;Box&lt;dyn Executor&gt;, Error&gt; {
+</a><a href="#h9-0-18" id="h9-0-18" class="d">-        ctx.txn.delete_table(&amp;name)?;
+</a><a href="#h9-0-19" id="h9-0-19" class="d">-        Ok(Box::new(Self))
+</a><a href="#h9-0-20" id="h9-0-20" class="i">+    pub fn new(table: String) -&gt; Box&lt;Self&gt; {
+</a><a href="#h9-0-21" id="h9-0-21" class="i">+        Box::new(Self { table })
+</a>     }
+ }
+ 
+<a href="#h9-0-25" id="h9-0-25" class="d">-impl Executor for DropTable {
+</a><a href="#h9-0-26" id="h9-0-26" class="d">-    fn columns(&amp;self) -&gt; Vec&lt;String&gt; {
+</a><a href="#h9-0-27" id="h9-0-27" class="d">-        Vec::new()
+</a><a href="#h9-0-28" id="h9-0-28" class="d">-    }
+</a><a href="#h9-0-29" id="h9-0-29" class="d">-
+</a><a href="#h9-0-30" id="h9-0-30" class="d">-    fn fetch(&amp;mut self) -&gt; Result&lt;Option&lt;Row&gt;, Error&gt; {
+</a><a href="#h9-0-31" id="h9-0-31" class="d">-        Ok(None)
+</a><a href="#h9-0-32" id="h9-0-32" class="i">+impl&lt;T: Transaction&gt; Executor&lt;T&gt; for DropTable {
+</a><a href="#h9-0-33" id="h9-0-33" class="i">+    fn execute(self: Box&lt;Self&gt;, ctx: &amp;mut Context&lt;T&gt;) -&gt; Result&lt;ResultSet, Error&gt; {
+</a><a href="#h9-0-34" id="h9-0-34" class="i">+        ctx.txn.delete_table(&amp;self.table)?;
+</a><a href="#h9-0-35" id="h9-0-35" class="i">+        Ok(ResultSet::from_effect(Effect::DropTable { name: self.table }))
+</a>     }
+ }
+<b>diff --git a/<a id="h10" href="../file/src/sql/executor/filter.rs.html">src/sql/executor/filter.rs</a> b/<a href="../file/src/sql/executor/filter.rs.html">src/sql/executor/filter.rs</a></b>
+<a href="#h10-0" id="h10-0" class="h">@@ -1,47 +1,47 @@
+</a> use super::super::engine::Transaction;
+ use super::super::types::expression::{Environment, Expression};
+<a href="#h10-0-2" id="h10-0-2" class="d">-use super::super::types::{Row, Value};
+</a><a href="#h10-0-3" id="h10-0-3" class="d">-use super::{Context, Executor};
+</a><a href="#h10-0-4" id="h10-0-4" class="i">+use super::super::types::Value;
+</a><a href="#h10-0-5" id="h10-0-5" class="i">+use super::{Context, Executor, ResultSet};
+</a> use crate::Error;
+ 
+ /// A filter executor
+<a href="#h10-0-9" id="h10-0-9" class="d">-pub struct Filter {
+</a><a href="#h10-0-10" id="h10-0-10" class="d">-    source: Box&lt;dyn Executor&gt;,
+</a><a href="#h10-0-11" id="h10-0-11" class="d">-    columns: Vec&lt;String&gt;,
+</a><a href="#h10-0-12" id="h10-0-12" class="i">+pub struct Filter&lt;T: Transaction&gt; {
+</a><a href="#h10-0-13" id="h10-0-13" class="i">+    /// The source of rows to filter
+</a><a href="#h10-0-14" id="h10-0-14" class="i">+    source: Box&lt;dyn Executor&lt;T&gt;&gt;,
+</a><a href="#h10-0-15" id="h10-0-15" class="i">+    /// The predicate to filter by
+</a>     predicate: Expression,
+ }
+ 
+<a href="#h10-0-19" id="h10-0-19" class="d">-impl Filter {
+</a><a href="#h10-0-20" id="h10-0-20" class="d">-    pub fn execute&lt;T: Transaction&gt;(
+</a><a href="#h10-0-21" id="h10-0-21" class="d">-        _: &amp;mut Context&lt;T&gt;,
+</a><a href="#h10-0-22" id="h10-0-22" class="d">-        source: Box&lt;dyn Executor&gt;,
+</a><a href="#h10-0-23" id="h10-0-23" class="d">-        predicate: Expression,
+</a><a href="#h10-0-24" id="h10-0-24" class="d">-    ) -&gt; Result&lt;Box&lt;dyn Executor&gt;, Error&gt; {
+</a><a href="#h10-0-25" id="h10-0-25" class="d">-        Ok(Box::new(Self { columns: source.columns(), source, predicate }))
+</a><a href="#h10-0-26" id="h10-0-26" class="i">+impl&lt;T: Transaction&gt; Filter&lt;T&gt; {
+</a><a href="#h10-0-27" id="h10-0-27" class="i">+    pub fn new(source: Box&lt;dyn Executor&lt;T&gt;&gt;, predicate: Expression) -&gt; Box&lt;Self&gt; {
+</a><a href="#h10-0-28" id="h10-0-28" class="i">+        Box::new(Self { source, predicate })
+</a>     }
+ }
+ 
+<a href="#h10-0-32" id="h10-0-32" class="d">-impl Executor for Filter {
+</a><a href="#h10-0-33" id="h10-0-33" class="d">-    fn columns(&amp;self) -&gt; Vec&lt;String&gt; {
+</a><a href="#h10-0-34" id="h10-0-34" class="d">-        self.columns.clone()
+</a><a href="#h10-0-35" id="h10-0-35" class="d">-    }
+</a><a href="#h10-0-36" id="h10-0-36" class="d">-
+</a><a href="#h10-0-37" id="h10-0-37" class="d">-    fn fetch(&amp;mut self) -&gt; Result&lt;Option&lt;Row&gt;, Error&gt; {
+</a><a href="#h10-0-38" id="h10-0-38" class="d">-        while let Some(row) = self.source.fetch()? {
+</a><a href="#h10-0-39" id="h10-0-39" class="d">-            let env =
+</a><a href="#h10-0-40" id="h10-0-40" class="d">-                Environment::new(self.columns.iter().cloned().zip(row.iter().cloned()).collect());
+</a><a href="#h10-0-41" id="h10-0-41" class="d">-            match self.predicate.evaluate(&amp;env)? {
+</a><a href="#h10-0-42" id="h10-0-42" class="d">-                Value::Boolean(true) =&gt; return Ok(Some(row)),
+</a><a href="#h10-0-43" id="h10-0-43" class="d">-                Value::Boolean(false) =&gt; {}
+</a><a href="#h10-0-44" id="h10-0-44" class="d">-                Value::Null =&gt; {}
+</a><a href="#h10-0-45" id="h10-0-45" class="d">-                value =&gt; {
+</a><a href="#h10-0-46" id="h10-0-46" class="d">-                    return Err(Error::Value(format!(
+</a><a href="#h10-0-47" id="h10-0-47" class="d">-                        &quot;Unexpected value {} for filter, expected boolean&quot;,
+</a><a href="#h10-0-48" id="h10-0-48" class="d">-                        value
+</a><a href="#h10-0-49" id="h10-0-49" class="d">-                    )))
+</a><a href="#h10-0-50" id="h10-0-50" class="d">-                }
+</a><a href="#h10-0-51" id="h10-0-51" class="d">-            }
+</a><a href="#h10-0-52" id="h10-0-52" class="i">+impl&lt;T: Transaction&gt; Executor&lt;T&gt; for Filter&lt;T&gt; {
+</a><a href="#h10-0-53" id="h10-0-53" class="i">+    fn execute(self: Box&lt;Self&gt;, ctx: &amp;mut Context&lt;T&gt;) -&gt; Result&lt;ResultSet, Error&gt; {
+</a><a href="#h10-0-54" id="h10-0-54" class="i">+        let mut result = self.source.execute(ctx)?;
+</a><a href="#h10-0-55" id="h10-0-55" class="i">+        if let Some(rows) = result.rows {
+</a><a href="#h10-0-56" id="h10-0-56" class="i">+            let columns = result.columns.clone();
+</a><a href="#h10-0-57" id="h10-0-57" class="i">+            let predicate = self.predicate;
+</a><a href="#h10-0-58" id="h10-0-58" class="i">+            result.rows = Some(Box::new(rows.filter_map(move |r| {
+</a><a href="#h10-0-59" id="h10-0-59" class="i">+                r.and_then(|row| {
+</a><a href="#h10-0-60" id="h10-0-60" class="i">+                    let env = Environment::new(
+</a><a href="#h10-0-61" id="h10-0-61" class="i">+                        columns.iter().cloned().zip(row.iter().cloned()).collect(),
+</a><a href="#h10-0-62" id="h10-0-62" class="i">+                    );
+</a><a href="#h10-0-63" id="h10-0-63" class="i">+                    match predicate.evaluate(&amp;env)? {
+</a><a href="#h10-0-64" id="h10-0-64" class="i">+                        Value::Boolean(true) =&gt; Ok(Some(row)),
+</a><a href="#h10-0-65" id="h10-0-65" class="i">+                        Value::Boolean(false) =&gt; Ok(None),
+</a><a href="#h10-0-66" id="h10-0-66" class="i">+                        Value::Null =&gt; Ok(None),
+</a><a href="#h10-0-67" id="h10-0-67" class="i">+                        value =&gt; Err(Error::Value(format!(
+</a><a href="#h10-0-68" id="h10-0-68" class="i">+                            &quot;Filter returned {}, expected boolean&quot;,
+</a><a href="#h10-0-69" id="h10-0-69" class="i">+                            value
+</a><a href="#h10-0-70" id="h10-0-70" class="i">+                        ))),
+</a><a href="#h10-0-71" id="h10-0-71" class="i">+                    }
+</a><a href="#h10-0-72" id="h10-0-72" class="i">+                })
+</a><a href="#h10-0-73" id="h10-0-73" class="i">+                .transpose()
+</a><a href="#h10-0-74" id="h10-0-74" class="i">+            })));
+</a>         }
+<a href="#h10-0-76" id="h10-0-76" class="d">-        Ok(None)
+</a><a href="#h10-0-77" id="h10-0-77" class="i">+        Ok(result)
+</a>     }
+ }
+<b>diff --git a/<a id="h11" href="../file/src/sql/executor/insert.rs.html">src/sql/executor/insert.rs</a> b/<a href="../file/src/sql/executor/insert.rs.html">src/sql/executor/insert.rs</a></b>
+<a href="#h11-0" id="h11-0" class="h">@@ -1,40 +1,42 @@
+</a> use super::super::engine::Transaction;
+ use super::super::types::expression::{Environment, Expressions};
+<a href="#h11-0-2" id="h11-0-2" class="d">-use super::super::types::Row;
+</a><a href="#h11-0-3" id="h11-0-3" class="d">-use super::{Context, Executor};
+</a><a href="#h11-0-4" id="h11-0-4" class="i">+use super::{Context, Effect, Executor, ResultSet};
+</a> use crate::Error;
+ 
+<a href="#h11-0-7" id="h11-0-7" class="d">-pub struct Insert;
+</a><a href="#h11-0-8" id="h11-0-8" class="i">+/// An INSERT executor
+</a><a href="#h11-0-9" id="h11-0-9" class="i">+pub struct Insert {
+</a><a href="#h11-0-10" id="h11-0-10" class="i">+    /// The table to insert into
+</a><a href="#h11-0-11" id="h11-0-11" class="i">+    table: String,
+</a><a href="#h11-0-12" id="h11-0-12" class="i">+    /// The columns to insert into
+</a><a href="#h11-0-13" id="h11-0-13" class="i">+    columns: Vec&lt;String&gt;,
+</a><a href="#h11-0-14" id="h11-0-14" class="i">+    /// The row expressions to insert
+</a><a href="#h11-0-15" id="h11-0-15" class="i">+    rows: Vec&lt;Expressions&gt;,
+</a><a href="#h11-0-16" id="h11-0-16" class="i">+}
+</a> 
+ impl Insert {
+<a href="#h11-0-19" id="h11-0-19" class="d">-    pub fn execute&lt;T: Transaction&gt;(
+</a><a href="#h11-0-20" id="h11-0-20" class="d">-        ctx: &amp;mut Context&lt;T&gt;,
+</a><a href="#h11-0-21" id="h11-0-21" class="d">-        table: &amp;str,
+</a><a href="#h11-0-22" id="h11-0-22" class="d">-        columns: Vec&lt;String&gt;,
+</a><a href="#h11-0-23" id="h11-0-23" class="d">-        expressions: Vec&lt;Expressions&gt;,
+</a><a href="#h11-0-24" id="h11-0-24" class="d">-    ) -&gt; Result&lt;Box&lt;dyn Executor&gt;, Error&gt; {
+</a><a href="#h11-0-25" id="h11-0-25" class="d">-        let table = ctx.txn.must_read_table(&amp;table)?;
+</a><a href="#h11-0-26" id="h11-0-26" class="i">+    pub fn new(table: String, columns: Vec&lt;String&gt;, rows: Vec&lt;Expressions&gt;) -&gt; Box&lt;Self&gt; {
+</a><a href="#h11-0-27" id="h11-0-27" class="i">+        Box::new(Self { table, columns, rows })
+</a><a href="#h11-0-28" id="h11-0-28" class="i">+    }
+</a><a href="#h11-0-29" id="h11-0-29" class="i">+}
+</a><a href="#h11-0-30" id="h11-0-30" class="i">+
+</a><a href="#h11-0-31" id="h11-0-31" class="i">+impl&lt;T: Transaction&gt; Executor&lt;T&gt; for Insert {
+</a><a href="#h11-0-32" id="h11-0-32" class="i">+    fn execute(self: Box&lt;Self&gt;, ctx: &amp;mut Context&lt;T&gt;) -&gt; Result&lt;ResultSet, Error&gt; {
+</a><a href="#h11-0-33" id="h11-0-33" class="i">+        let table = ctx.txn.must_read_table(&amp;self.table)?;
+</a>         let env = Environment::empty();
+<a href="#h11-0-35" id="h11-0-35" class="d">-        for exprs in expressions {
+</a><a href="#h11-0-36" id="h11-0-36" class="d">-            let mut row =
+</a><a href="#h11-0-37" id="h11-0-37" class="d">-                exprs.into_iter().map(|e| e.evaluate(&amp;env)).collect::&lt;Result&lt;_, Error&gt;&gt;()?;
+</a><a href="#h11-0-38" id="h11-0-38" class="d">-            if columns.is_empty() {
+</a><a href="#h11-0-39" id="h11-0-39" class="i">+        let mut count = 0;
+</a><a href="#h11-0-40" id="h11-0-40" class="i">+        for expressions in self.rows {
+</a><a href="#h11-0-41" id="h11-0-41" class="i">+            let mut row = expressions
+</a><a href="#h11-0-42" id="h11-0-42" class="i">+                .into_iter()
+</a><a href="#h11-0-43" id="h11-0-43" class="i">+                .map(|expr| expr.evaluate(&amp;env))
+</a><a href="#h11-0-44" id="h11-0-44" class="i">+                .collect::&lt;Result&lt;_, Error&gt;&gt;()?;
+</a><a href="#h11-0-45" id="h11-0-45" class="i">+            if self.columns.is_empty() {
+</a>                 row = table.pad_row(row)?;
+             } else {
+<a href="#h11-0-48" id="h11-0-48" class="d">-                row = table.make_row(&amp;columns, row)?;
+</a><a href="#h11-0-49" id="h11-0-49" class="i">+                row = table.make_row(&amp;self.columns, row)?;
+</a>             }
+             ctx.txn.create(&amp;table.name, row)?;
+<a href="#h11-0-52" id="h11-0-52" class="i">+            count += 1;
+</a>         }
+<a href="#h11-0-54" id="h11-0-54" class="d">-        Ok(Box::new(Self))
+</a><a href="#h11-0-55" id="h11-0-55" class="d">-    }
+</a><a href="#h11-0-56" id="h11-0-56" class="d">-}
+</a><a href="#h11-0-57" id="h11-0-57" class="d">-
+</a><a href="#h11-0-58" id="h11-0-58" class="d">-impl Executor for Insert {
+</a><a href="#h11-0-59" id="h11-0-59" class="d">-    fn columns(&amp;self) -&gt; Vec&lt;String&gt; {
+</a><a href="#h11-0-60" id="h11-0-60" class="d">-        Vec::new()
+</a><a href="#h11-0-61" id="h11-0-61" class="d">-    }
+</a><a href="#h11-0-62" id="h11-0-62" class="d">-
+</a><a href="#h11-0-63" id="h11-0-63" class="d">-    fn fetch(&amp;mut self) -&gt; Result&lt;Option&lt;Row&gt;, Error&gt; {
+</a><a href="#h11-0-64" id="h11-0-64" class="d">-        Ok(None)
+</a><a href="#h11-0-65" id="h11-0-65" class="i">+        Ok(ResultSet::from_effect(Effect::Create { count }))
+</a>     }
+ }
+<b>diff --git a/<a id="h12" href="../file/src/sql/executor/limit.rs.html">src/sql/executor/limit.rs</a> b/<a href="../file/src/sql/executor/limit.rs.html">src/sql/executor/limit.rs</a></b>
+<a href="#h12-0" id="h12-0" class="h">@@ -1,38 +1,27 @@
+</a> use super::super::engine::Transaction;
+<a href="#h12-0-1" id="h12-0-1" class="d">-use super::super::types::Row;
+</a><a href="#h12-0-2" id="h12-0-2" class="d">-use super::{Context, Executor};
+</a><a href="#h12-0-3" id="h12-0-3" class="i">+use super::{Context, Executor, ResultSet};
+</a> use crate::Error;
+ 
+<a href="#h12-0-6" id="h12-0-6" class="d">-/// A limit executor
+</a><a href="#h12-0-7" id="h12-0-7" class="d">-pub struct Limit {
+</a><a href="#h12-0-8" id="h12-0-8" class="d">-    source: Box&lt;dyn Executor&gt;,
+</a><a href="#h12-0-9" id="h12-0-9" class="i">+/// A LIMIT executor
+</a><a href="#h12-0-10" id="h12-0-10" class="i">+pub struct Limit&lt;T: Transaction&gt; {
+</a><a href="#h12-0-11" id="h12-0-11" class="i">+    /// The source of rows to limit
+</a><a href="#h12-0-12" id="h12-0-12" class="i">+    source: Box&lt;dyn Executor&lt;T&gt;&gt;,
+</a><a href="#h12-0-13" id="h12-0-13" class="i">+    /// The number of rows to limit results to
+</a>     limit: u64,
+<a href="#h12-0-15" id="h12-0-15" class="d">-    fetched: u64,
+</a> }
+ 
+<a href="#h12-0-18" id="h12-0-18" class="d">-impl Limit {
+</a><a href="#h12-0-19" id="h12-0-19" class="d">-    pub fn execute&lt;T: Transaction&gt;(
+</a><a href="#h12-0-20" id="h12-0-20" class="d">-        _: &amp;mut Context&lt;T&gt;,
+</a><a href="#h12-0-21" id="h12-0-21" class="d">-        source: Box&lt;dyn Executor&gt;,
+</a><a href="#h12-0-22" id="h12-0-22" class="d">-        limit: u64,
+</a><a href="#h12-0-23" id="h12-0-23" class="d">-    ) -&gt; Result&lt;Box&lt;dyn Executor&gt;, Error&gt; {
+</a><a href="#h12-0-24" id="h12-0-24" class="d">-        Ok(Box::new(Self { source, limit, fetched: 0 }))
+</a><a href="#h12-0-25" id="h12-0-25" class="i">+impl&lt;T: Transaction&gt; Limit&lt;T&gt; {
+</a><a href="#h12-0-26" id="h12-0-26" class="i">+    pub fn new(source: Box&lt;dyn Executor&lt;T&gt;&gt;, limit: u64) -&gt; Box&lt;Self&gt; {
+</a><a href="#h12-0-27" id="h12-0-27" class="i">+        Box::new(Self { source, limit })
+</a>     }
+ }
+ 
+<a href="#h12-0-31" id="h12-0-31" class="d">-impl Executor for Limit {
+</a><a href="#h12-0-32" id="h12-0-32" class="d">-    fn columns(&amp;self) -&gt; Vec&lt;String&gt; {
+</a><a href="#h12-0-33" id="h12-0-33" class="d">-        self.source.columns()
+</a><a href="#h12-0-34" id="h12-0-34" class="d">-    }
+</a><a href="#h12-0-35" id="h12-0-35" class="d">-
+</a><a href="#h12-0-36" id="h12-0-36" class="d">-    fn fetch(&amp;mut self) -&gt; Result&lt;Option&lt;Row&gt;, Error&gt; {
+</a><a href="#h12-0-37" id="h12-0-37" class="d">-        if self.fetched &gt;= self.limit {
+</a><a href="#h12-0-38" id="h12-0-38" class="d">-            Ok(None)
+</a><a href="#h12-0-39" id="h12-0-39" class="d">-        } else if let Some(row) = self.source.fetch()? {
+</a><a href="#h12-0-40" id="h12-0-40" class="d">-            self.fetched += 1;
+</a><a href="#h12-0-41" id="h12-0-41" class="d">-            Ok(Some(row))
+</a><a href="#h12-0-42" id="h12-0-42" class="d">-        } else {
+</a><a href="#h12-0-43" id="h12-0-43" class="d">-            Ok(None)
+</a><a href="#h12-0-44" id="h12-0-44" class="i">+impl&lt;T: Transaction&gt; Executor&lt;T&gt; for Limit&lt;T&gt; {
+</a><a href="#h12-0-45" id="h12-0-45" class="i">+    fn execute(self: Box&lt;Self&gt;, ctx: &amp;mut Context&lt;T&gt;) -&gt; Result&lt;ResultSet, Error&gt; {
+</a><a href="#h12-0-46" id="h12-0-46" class="i">+        let mut result = self.source.execute(ctx)?;
+</a><a href="#h12-0-47" id="h12-0-47" class="i">+        if let Some(rows) = result.rows {
+</a><a href="#h12-0-48" id="h12-0-48" class="i">+            result.rows = Some(Box::new(rows.take(self.limit as usize)))
+</a>         }
+<a href="#h12-0-50" id="h12-0-50" class="i">+        Ok(result)
+</a>     }
+ }
+<b>diff --git a/<a id="h13" href="../file/src/sql/executor/mod.rs.html">src/sql/executor/mod.rs</a> b/<a href="../file/src/sql/executor/mod.rs.html">src/sql/executor/mod.rs</a></b>
+<a href="#h13-0" id="h13-0" class="h">@@ -27,96 +27,76 @@ use update::Update;
+</a> use super::engine::Transaction;
+ use super::planner::Node;
+ use super::types::Row;
+<a href="#h13-0-3" id="h13-0-3" class="d">-use crate::client;
+</a> use crate::Error;
+ 
+ /// A plan executor
+<a href="#h13-0-7" id="h13-0-7" class="d">-pub trait Executor: &#39;static + Sync + Send {
+</a><a href="#h13-0-8" id="h13-0-8" class="d">-    //fn affected(&amp;self) -&gt; Option&lt;u64&gt;;
+</a><a href="#h13-0-9" id="h13-0-9" class="d">-    fn columns(&amp;self) -&gt; Vec&lt;String&gt;;
+</a><a href="#h13-0-10" id="h13-0-10" class="d">-    fn fetch(&amp;mut self) -&gt; Result&lt;Option&lt;Row&gt;, Error&gt;;
+</a><a href="#h13-0-11" id="h13-0-11" class="i">+pub trait Executor&lt;T: Transaction&gt; {
+</a><a href="#h13-0-12" id="h13-0-12" class="i">+    /// Executes the executor, consuming it and returning a result set
+</a><a href="#h13-0-13" id="h13-0-13" class="i">+    fn execute(self: Box&lt;Self&gt;, ctx: &amp;mut Context&lt;T&gt;) -&gt; Result&lt;ResultSet, Error&gt;;
+</a> }
+ 
+<a href="#h13-0-16" id="h13-0-16" class="d">-impl dyn Executor {
+</a><a href="#h13-0-17" id="h13-0-17" class="d">-    /// Executes a plan node, consuming it
+</a><a href="#h13-0-18" id="h13-0-18" class="d">-    pub fn execute&lt;T: Transaction&gt;(ctx: &amp;mut Context&lt;T&gt;, node: Node) -&gt; Result&lt;Box&lt;Self&gt;, Error&gt; {
+</a><a href="#h13-0-19" id="h13-0-19" class="d">-        Ok(match node {
+</a><a href="#h13-0-20" id="h13-0-20" class="d">-            Node::CreateTable { schema } =&gt; CreateTable::execute(ctx, schema)?,
+</a><a href="#h13-0-21" id="h13-0-21" class="d">-            Node::Delete { table, source } =&gt; {
+</a><a href="#h13-0-22" id="h13-0-22" class="d">-                let source = Self::execute(ctx, *source)?;
+</a><a href="#h13-0-23" id="h13-0-23" class="d">-                Delete::execute(ctx, source, table)?
+</a><a href="#h13-0-24" id="h13-0-24" class="d">-            }
+</a><a href="#h13-0-25" id="h13-0-25" class="d">-            Node::DropTable { name } =&gt; DropTable::execute(ctx, name)?,
+</a><a href="#h13-0-26" id="h13-0-26" class="d">-            Node::Filter { source, predicate } =&gt; {
+</a><a href="#h13-0-27" id="h13-0-27" class="d">-                let source = Self::execute(ctx, *source)?;
+</a><a href="#h13-0-28" id="h13-0-28" class="d">-                Filter::execute(ctx, source, predicate)?
+</a><a href="#h13-0-29" id="h13-0-29" class="d">-            }
+</a><a href="#h13-0-30" id="h13-0-30" class="i">+impl&lt;T: Transaction + &#39;static&gt; dyn Executor&lt;T&gt; {
+</a><a href="#h13-0-31" id="h13-0-31" class="i">+    /// Builds an executor for a plan node, consuming it
+</a><a href="#h13-0-32" id="h13-0-32" class="i">+    pub fn build(node: Node) -&gt; Box&lt;dyn Executor&lt;T&gt;&gt; {
+</a><a href="#h13-0-33" id="h13-0-33" class="i">+        match node {
+</a><a href="#h13-0-34" id="h13-0-34" class="i">+            Node::CreateTable { schema } =&gt; CreateTable::new(schema),
+</a><a href="#h13-0-35" id="h13-0-35" class="i">+            Node::Delete { table, source } =&gt; Delete::new(table, Self::build(*source)),
+</a><a href="#h13-0-36" id="h13-0-36" class="i">+            Node::DropTable { name } =&gt; DropTable::new(name),
+</a><a href="#h13-0-37" id="h13-0-37" class="i">+            Node::Filter { source, predicate } =&gt; Filter::new(Self::build(*source), predicate),
+</a>             Node::Insert { table, columns, expressions } =&gt; {
+<a href="#h13-0-39" id="h13-0-39" class="d">-                Insert::execute(ctx, &amp;table, columns, expressions)?
+</a><a href="#h13-0-40" id="h13-0-40" class="d">-            }
+</a><a href="#h13-0-41" id="h13-0-41" class="d">-            Node::Limit { source, limit } =&gt; {
+</a><a href="#h13-0-42" id="h13-0-42" class="d">-                let source = Self::execute(ctx, *source)?;
+</a><a href="#h13-0-43" id="h13-0-43" class="d">-                Limit::execute(ctx, source, limit)?
+</a><a href="#h13-0-44" id="h13-0-44" class="d">-            }
+</a><a href="#h13-0-45" id="h13-0-45" class="d">-            Node::Nothing =&gt; Nothing::execute(ctx)?,
+</a><a href="#h13-0-46" id="h13-0-46" class="d">-            Node::Offset { source, offset } =&gt; {
+</a><a href="#h13-0-47" id="h13-0-47" class="d">-                let source = Self::execute(ctx, *source)?;
+</a><a href="#h13-0-48" id="h13-0-48" class="d">-                Offset::execute(ctx, source, offset)?
+</a><a href="#h13-0-49" id="h13-0-49" class="d">-            }
+</a><a href="#h13-0-50" id="h13-0-50" class="d">-            Node::Order { source, orders } =&gt; {
+</a><a href="#h13-0-51" id="h13-0-51" class="d">-                let source = Self::execute(ctx, *source)?;
+</a><a href="#h13-0-52" id="h13-0-52" class="d">-                Order::execute(ctx, source, orders)?
+</a><a href="#h13-0-53" id="h13-0-53" class="i">+                Insert::new(table, columns, expressions)
+</a>             }
+<a href="#h13-0-55" id="h13-0-55" class="i">+            Node::Limit { source, limit } =&gt; Limit::new(Self::build(*source), limit),
+</a><a href="#h13-0-56" id="h13-0-56" class="i">+            Node::Nothing =&gt; Nothing::new(),
+</a><a href="#h13-0-57" id="h13-0-57" class="i">+            Node::Offset { source, offset } =&gt; Offset::new(Self::build(*source), offset),
+</a><a href="#h13-0-58" id="h13-0-58" class="i">+            Node::Order { source, orders } =&gt; Order::new(Self::build(*source), orders),
+</a>             Node::Projection { source, labels, expressions } =&gt; {
+<a href="#h13-0-60" id="h13-0-60" class="d">-                let source = Self::execute(ctx, *source)?;
+</a><a href="#h13-0-61" id="h13-0-61" class="d">-                Projection::execute(ctx, source, labels, expressions)?
+</a><a href="#h13-0-62" id="h13-0-62" class="i">+                Projection::new(Self::build(*source), labels, expressions)
+</a>             }
+<a href="#h13-0-64" id="h13-0-64" class="d">-            Node::Scan { table } =&gt; Scan::execute(ctx, table)?,
+</a><a href="#h13-0-65" id="h13-0-65" class="i">+            Node::Scan { table } =&gt; Scan::new(table),
+</a>             Node::Update { table, source, expressions } =&gt; {
+<a href="#h13-0-67" id="h13-0-67" class="d">-                let source = Self::execute(ctx, *source)?;
+</a><a href="#h13-0-68" id="h13-0-68" class="d">-                Update::execute(ctx, table, source, expressions)?
+</a><a href="#h13-0-69" id="h13-0-69" class="i">+                Update::new(table, Self::build(*source), expressions)
+</a>             }
+<a href="#h13-0-71" id="h13-0-71" class="d">-        })
+</a><a href="#h13-0-72" id="h13-0-72" class="d">-    }
+</a><a href="#h13-0-73" id="h13-0-73" class="d">-}
+</a><a href="#h13-0-74" id="h13-0-74" class="d">-
+</a><a href="#h13-0-75" id="h13-0-75" class="d">-impl Iterator for dyn Executor {
+</a><a href="#h13-0-76" id="h13-0-76" class="d">-    type Item = Result&lt;Row, Error&gt;;
+</a><a href="#h13-0-77" id="h13-0-77" class="d">-
+</a><a href="#h13-0-78" id="h13-0-78" class="d">-    fn next(&amp;mut self) -&gt; Option&lt;Self::Item&gt; {
+</a><a href="#h13-0-79" id="h13-0-79" class="d">-        self.fetch().transpose()
+</a><a href="#h13-0-80" id="h13-0-80" class="i">+        }
+</a>     }
+ }
+ 
+<a href="#h13-0-84" id="h13-0-84" class="d">-/// A plan execution context
+</a><a href="#h13-0-85" id="h13-0-85" class="i">+/// An execution context
+</a> pub struct Context&lt;&#39;a, T: Transaction&gt; {
+<a href="#h13-0-87" id="h13-0-87" class="d">-    /// The underlying storage engine
+</a><a href="#h13-0-88" id="h13-0-88" class="i">+    /// The transaction to execute in
+</a>     pub txn: &amp;&#39;a mut T,
+ }
+ 
+<a href="#h13-0-92" id="h13-0-92" class="d">-/// An execution result set
+</a><a href="#h13-0-93" id="h13-0-93" class="i">+/// An executor result
+</a> pub struct ResultSet {
+<a href="#h13-0-95" id="h13-0-95" class="d">-    // FIXME Shouldn&#39;t be public, and shouldn&#39;t use client package
+</a><a href="#h13-0-96" id="h13-0-96" class="d">-    pub effect: Option&lt;client::Effect&gt;,
+</a><a href="#h13-0-97" id="h13-0-97" class="i">+    /// The executor effect (i.e. mutation), if any
+</a><a href="#h13-0-98" id="h13-0-98" class="i">+    effect: Option&lt;Effect&gt;,
+</a><a href="#h13-0-99" id="h13-0-99" class="i">+    /// The column names of the result
+</a>     columns: Vec&lt;String&gt;,
+<a href="#h13-0-101" id="h13-0-101" class="d">-    executor: Option&lt;Box&lt;dyn Executor&gt;&gt;,
+</a><a href="#h13-0-102" id="h13-0-102" class="i">+    /// The result rows
+</a><a href="#h13-0-103" id="h13-0-103" class="i">+    rows: Option&lt;ResultRows&gt;,
+</a> }
+ 
+ impl ResultSet {
+<a href="#h13-0-107" id="h13-0-107" class="d">-    /// Creates an empty result set
+</a><a href="#h13-0-108" id="h13-0-108" class="d">-    pub fn empty() -&gt; Self {
+</a><a href="#h13-0-109" id="h13-0-109" class="d">-        Self { effect: None, columns: Vec::new(), executor: None }
+</a><a href="#h13-0-110" id="h13-0-110" class="i">+    /// Creates a new result set for an effect
+</a><a href="#h13-0-111" id="h13-0-111" class="i">+    pub fn from_effect(effect: Effect) -&gt; Self {
+</a><a href="#h13-0-112" id="h13-0-112" class="i">+        Self { effect: Some(effect), columns: Vec::new(), rows: None }
+</a>     }
+ 
+<a href="#h13-0-115" id="h13-0-115" class="d">-    /// Creates a result set from an executor
+</a><a href="#h13-0-116" id="h13-0-116" class="d">-    pub fn from_executor(executor: Box&lt;dyn Executor&gt;) -&gt; Self {
+</a><a href="#h13-0-117" id="h13-0-117" class="d">-        Self { effect: None, columns: executor.columns(), executor: Some(executor) }
+</a><a href="#h13-0-118" id="h13-0-118" class="i">+    /// Creates a new result set for a row iterator
+</a><a href="#h13-0-119" id="h13-0-119" class="i">+    pub fn from_rows(columns: Vec&lt;String&gt;, rows: ResultRows) -&gt; Self {
+</a><a href="#h13-0-120" id="h13-0-120" class="i">+        Self { effect: None, columns, rows: Some(rows) }
+</a>     }
+ 
+<a href="#h13-0-123" id="h13-0-123" class="d">-    /// Fetches the columns of the result set
+</a><a href="#h13-0-124" id="h13-0-124" class="i">+    /// Returns the result columns
+</a>     pub fn columns(&amp;self) -&gt; Vec&lt;String&gt; {
+         self.columns.clone()
+     }
+<a href="#h13-0-128" id="h13-0-128" class="i">+
+</a><a href="#h13-0-129" id="h13-0-129" class="i">+    /// Returns the query effect, if any
+</a><a href="#h13-0-130" id="h13-0-130" class="i">+    pub fn effect(&amp;self) -&gt; Option&lt;Effect&gt; {
+</a><a href="#h13-0-131" id="h13-0-131" class="i">+        self.effect.clone()
+</a><a href="#h13-0-132" id="h13-0-132" class="i">+    }
+</a> }
+ 
+ impl Iterator for ResultSet {
+<a href="#h13-1" id="h13-1" class="h">@@ -124,17 +104,38 @@ impl Iterator for ResultSet {
+</a> 
+     fn next(&amp;mut self) -&gt; Option&lt;Self::Item&gt; {
+         // Make sure iteration is aborted on the first error, otherwise callers
+<a href="#h13-1-3" id="h13-1-3" class="d">-        // may keep calling next for as long as it keeps returning errors
+</a><a href="#h13-1-4" id="h13-1-4" class="d">-        if let Some(ref mut iter) = self.executor {
+</a><a href="#h13-1-5" id="h13-1-5" class="d">-            match iter.next() {
+</a><a href="#h13-1-6" id="h13-1-6" class="d">-                Some(Err(err)) =&gt; {
+</a><a href="#h13-1-7" id="h13-1-7" class="d">-                    self.executor = None;
+</a><a href="#h13-1-8" id="h13-1-8" class="d">-                    Some(Err(err))
+</a><a href="#h13-1-9" id="h13-1-9" class="d">-                }
+</a><a href="#h13-1-10" id="h13-1-10" class="d">-                r =&gt; r,
+</a><a href="#h13-1-11" id="h13-1-11" class="i">+        // will keep calling next for as long as it keeps returning errors
+</a><a href="#h13-1-12" id="h13-1-12" class="i">+        if let Some(ref mut iter) = self.rows {
+</a><a href="#h13-1-13" id="h13-1-13" class="i">+            let result = iter.next();
+</a><a href="#h13-1-14" id="h13-1-14" class="i">+            if let Some(Err(_)) = result {
+</a><a href="#h13-1-15" id="h13-1-15" class="i">+                self.rows = None
+</a>             }
+<a href="#h13-1-17" id="h13-1-17" class="i">+            result
+</a>         } else {
+             None
+         }
+     }
+ }
+<a href="#h13-1-23" id="h13-1-23" class="i">+
+</a><a href="#h13-1-24" id="h13-1-24" class="i">+type ResultRows = Box&lt;dyn Iterator&lt;Item = Result&lt;Row, Error&gt;&gt; + &#39;static + Sync + Send&gt;;
+</a><a href="#h13-1-25" id="h13-1-25" class="i">+
+</a><a href="#h13-1-26" id="h13-1-26" class="i">+#[derive(Clone, Debug, Serialize, Deserialize)]
+</a><a href="#h13-1-27" id="h13-1-27" class="i">+/// An executor effect
+</a><a href="#h13-1-28" id="h13-1-28" class="i">+pub enum Effect {
+</a><a href="#h13-1-29" id="h13-1-29" class="i">+    // Transaction started
+</a><a href="#h13-1-30" id="h13-1-30" class="i">+    Begin { id: u64, mode: super::engine::Mode },
+</a><a href="#h13-1-31" id="h13-1-31" class="i">+    // Transaction committed
+</a><a href="#h13-1-32" id="h13-1-32" class="i">+    Commit { id: u64 },
+</a><a href="#h13-1-33" id="h13-1-33" class="i">+    // Transaction rolled back
+</a><a href="#h13-1-34" id="h13-1-34" class="i">+    Rollback { id: u64 },
+</a><a href="#h13-1-35" id="h13-1-35" class="i">+    // Rows created
+</a><a href="#h13-1-36" id="h13-1-36" class="i">+    Create { count: u64 },
+</a><a href="#h13-1-37" id="h13-1-37" class="i">+    // Rows deleted
+</a><a href="#h13-1-38" id="h13-1-38" class="i">+    Delete { count: u64 },
+</a><a href="#h13-1-39" id="h13-1-39" class="i">+    // Rows updated
+</a><a href="#h13-1-40" id="h13-1-40" class="i">+    Update { count: u64 },
+</a><a href="#h13-1-41" id="h13-1-41" class="i">+    // Table created
+</a><a href="#h13-1-42" id="h13-1-42" class="i">+    CreateTable { name: String },
+</a><a href="#h13-1-43" id="h13-1-43" class="i">+    // Table dropped
+</a><a href="#h13-1-44" id="h13-1-44" class="i">+    DropTable { name: String },
+</a><a href="#h13-1-45" id="h13-1-45" class="i">+}
+</a><b>diff --git a/<a id="h14" href="../file/src/sql/executor/nothing.rs.html">src/sql/executor/nothing.rs</a> b/<a href="../file/src/sql/executor/nothing.rs.html">src/sql/executor/nothing.rs</a></b>
+<a href="#h14-0" id="h14-0" class="h">@@ -1,30 +1,19 @@
+</a> use super::super::engine::Transaction;
+ use super::super::types::Row;
+<a href="#h14-0-2" id="h14-0-2" class="d">-use super::{Context, Executor};
+</a><a href="#h14-0-3" id="h14-0-3" class="i">+use super::{Context, Executor, ResultSet};
+</a> use crate::Error;
+ 
+<a href="#h14-0-6" id="h14-0-6" class="d">-/// A source node which produces a single empty row
+</a><a href="#h14-0-7" id="h14-0-7" class="d">-pub struct Nothing {
+</a><a href="#h14-0-8" id="h14-0-8" class="d">-    done: bool,
+</a><a href="#h14-0-9" id="h14-0-9" class="d">-}
+</a><a href="#h14-0-10" id="h14-0-10" class="i">+/// An executor that produces a single empty row
+</a><a href="#h14-0-11" id="h14-0-11" class="i">+pub struct Nothing;
+</a> 
+ impl Nothing {
+<a href="#h14-0-14" id="h14-0-14" class="d">-    pub fn execute&lt;T: Transaction&gt;(_: &amp;mut Context&lt;T&gt;) -&gt; Result&lt;Box&lt;dyn Executor&gt;, Error&gt; {
+</a><a href="#h14-0-15" id="h14-0-15" class="d">-        Ok(Box::new(Self { done: false }))
+</a><a href="#h14-0-16" id="h14-0-16" class="i">+    pub fn new() -&gt; Box&lt;Self&gt; {
+</a><a href="#h14-0-17" id="h14-0-17" class="i">+        Box::new(Self)
+</a>     }
+ }
+ 
+<a href="#h14-0-21" id="h14-0-21" class="d">-impl Executor for Nothing {
+</a><a href="#h14-0-22" id="h14-0-22" class="d">-    fn columns(&amp;self) -&gt; Vec&lt;String&gt; {
+</a><a href="#h14-0-23" id="h14-0-23" class="d">-        Vec::new()
+</a><a href="#h14-0-24" id="h14-0-24" class="d">-    }
+</a><a href="#h14-0-25" id="h14-0-25" class="d">-
+</a><a href="#h14-0-26" id="h14-0-26" class="d">-    fn fetch(&amp;mut self) -&gt; Result&lt;Option&lt;Row&gt;, Error&gt; {
+</a><a href="#h14-0-27" id="h14-0-27" class="d">-        if self.done {
+</a><a href="#h14-0-28" id="h14-0-28" class="d">-            Ok(None)
+</a><a href="#h14-0-29" id="h14-0-29" class="d">-        } else {
+</a><a href="#h14-0-30" id="h14-0-30" class="d">-            self.done = true;
+</a><a href="#h14-0-31" id="h14-0-31" class="d">-            Ok(Some(Row::new()))
+</a><a href="#h14-0-32" id="h14-0-32" class="d">-        }
+</a><a href="#h14-0-33" id="h14-0-33" class="i">+impl&lt;T: Transaction&gt; Executor&lt;T&gt; for Nothing {
+</a><a href="#h14-0-34" id="h14-0-34" class="i">+    fn execute(self: Box&lt;Self&gt;, _ctx: &amp;mut Context&lt;T&gt;) -&gt; Result&lt;ResultSet, Error&gt; {
+</a><a href="#h14-0-35" id="h14-0-35" class="i">+        Ok(ResultSet::from_rows(Vec::new(), Box::new(std::iter::once(Ok(Row::new())))))
+</a>     }
+ }
+<b>diff --git a/<a id="h15" href="../file/src/sql/executor/offset.rs.html">src/sql/executor/offset.rs</a> b/<a href="../file/src/sql/executor/offset.rs.html">src/sql/executor/offset.rs</a></b>
+<a href="#h15-0" id="h15-0" class="h">@@ -1,33 +1,27 @@
+</a> use super::super::engine::Transaction;
+<a href="#h15-0-1" id="h15-0-1" class="d">-use super::super::types::Row;
+</a><a href="#h15-0-2" id="h15-0-2" class="d">-use super::{Context, Executor};
+</a><a href="#h15-0-3" id="h15-0-3" class="i">+use super::{Context, Executor, ResultSet};
+</a> use crate::Error;
+ 
+<a href="#h15-0-6" id="h15-0-6" class="d">-/// An offset executor
+</a><a href="#h15-0-7" id="h15-0-7" class="d">-pub struct Offset {
+</a><a href="#h15-0-8" id="h15-0-8" class="d">-    source: Box&lt;dyn Executor&gt;,
+</a><a href="#h15-0-9" id="h15-0-9" class="i">+/// An OFFSET executor
+</a><a href="#h15-0-10" id="h15-0-10" class="i">+pub struct Offset&lt;T: Transaction&gt; {
+</a><a href="#h15-0-11" id="h15-0-11" class="i">+    /// The source of rows to limit
+</a><a href="#h15-0-12" id="h15-0-12" class="i">+    source: Box&lt;dyn Executor&lt;T&gt;&gt;,
+</a><a href="#h15-0-13" id="h15-0-13" class="i">+    /// The number of rows to skip
+</a><a href="#h15-0-14" id="h15-0-14" class="i">+    offset: u64,
+</a> }
+ 
+<a href="#h15-0-17" id="h15-0-17" class="d">-impl Offset {
+</a><a href="#h15-0-18" id="h15-0-18" class="d">-    pub fn execute&lt;T: Transaction&gt;(
+</a><a href="#h15-0-19" id="h15-0-19" class="d">-        _: &amp;mut Context&lt;T&gt;,
+</a><a href="#h15-0-20" id="h15-0-20" class="d">-        mut source: Box&lt;dyn Executor&gt;,
+</a><a href="#h15-0-21" id="h15-0-21" class="d">-        offset: u64,
+</a><a href="#h15-0-22" id="h15-0-22" class="d">-    ) -&gt; Result&lt;Box&lt;dyn Executor&gt;, Error&gt; {
+</a><a href="#h15-0-23" id="h15-0-23" class="d">-        let mut fetched = 0;
+</a><a href="#h15-0-24" id="h15-0-24" class="d">-        while fetched &lt; offset &amp;&amp; source.fetch()?.is_some() {
+</a><a href="#h15-0-25" id="h15-0-25" class="d">-            fetched += 1
+</a><a href="#h15-0-26" id="h15-0-26" class="d">-        }
+</a><a href="#h15-0-27" id="h15-0-27" class="d">-        Ok(Box::new(Self { source }))
+</a><a href="#h15-0-28" id="h15-0-28" class="i">+impl&lt;T: Transaction&gt; Offset&lt;T&gt; {
+</a><a href="#h15-0-29" id="h15-0-29" class="i">+    pub fn new(source: Box&lt;dyn Executor&lt;T&gt;&gt;, offset: u64) -&gt; Box&lt;Self&gt; {
+</a><a href="#h15-0-30" id="h15-0-30" class="i">+        Box::new(Self { source, offset })
+</a>     }
+ }
+ 
+<a href="#h15-0-34" id="h15-0-34" class="d">-impl Executor for Offset {
+</a><a href="#h15-0-35" id="h15-0-35" class="d">-    fn columns(&amp;self) -&gt; Vec&lt;String&gt; {
+</a><a href="#h15-0-36" id="h15-0-36" class="d">-        self.source.columns()
+</a><a href="#h15-0-37" id="h15-0-37" class="d">-    }
+</a><a href="#h15-0-38" id="h15-0-38" class="d">-
+</a><a href="#h15-0-39" id="h15-0-39" class="d">-    fn fetch(&amp;mut self) -&gt; Result&lt;Option&lt;Row&gt;, Error&gt; {
+</a><a href="#h15-0-40" id="h15-0-40" class="d">-        self.source.fetch()
+</a><a href="#h15-0-41" id="h15-0-41" class="i">+impl&lt;T: Transaction&gt; Executor&lt;T&gt; for Offset&lt;T&gt; {
+</a><a href="#h15-0-42" id="h15-0-42" class="i">+    fn execute(self: Box&lt;Self&gt;, ctx: &amp;mut Context&lt;T&gt;) -&gt; Result&lt;ResultSet, Error&gt; {
+</a><a href="#h15-0-43" id="h15-0-43" class="i">+        let mut result = self.source.execute(ctx)?;
+</a><a href="#h15-0-44" id="h15-0-44" class="i">+        if let Some(rows) = result.rows {
+</a><a href="#h15-0-45" id="h15-0-45" class="i">+            result.rows = Some(Box::new(rows.skip(self.offset as usize)))
+</a><a href="#h15-0-46" id="h15-0-46" class="i">+        }
+</a><a href="#h15-0-47" id="h15-0-47" class="i">+        Ok(result)
+</a>     }
+ }
+<b>diff --git a/<a id="h16" href="../file/src/sql/executor/order.rs.html">src/sql/executor/order.rs</a> b/<a href="../file/src/sql/executor/order.rs.html">src/sql/executor/order.rs</a></b>
+<a href="#h16-0" id="h16-0" class="h">@@ -1,68 +1,67 @@
+</a> use super::super::engine::Transaction;
+<a href="#h16-0-1" id="h16-0-1" class="d">-use super::super::planner;
+</a><a href="#h16-0-2" id="h16-0-2" class="i">+use super::super::planner::Direction;
+</a> use super::super::types::expression::{Environment, Expression};
+ use super::super::types::{Row, Value};
+<a href="#h16-0-5" id="h16-0-5" class="d">-use super::{Context, Executor};
+</a><a href="#h16-0-6" id="h16-0-6" class="i">+use super::{Context, Executor, ResultSet};
+</a> use crate::Error;
+ 
+ /// An order executor
+<a href="#h16-0-10" id="h16-0-10" class="d">-pub struct Order {
+</a><a href="#h16-0-11" id="h16-0-11" class="d">-    columns: Vec&lt;String&gt;,
+</a><a href="#h16-0-12" id="h16-0-12" class="d">-    stack: Vec&lt;Row&gt;,
+</a><a href="#h16-0-13" id="h16-0-13" class="i">+pub struct Order&lt;T: Transaction&gt; {
+</a><a href="#h16-0-14" id="h16-0-14" class="i">+    /// The source of rows to filter
+</a><a href="#h16-0-15" id="h16-0-15" class="i">+    source: Box&lt;dyn Executor&lt;T&gt;&gt;,
+</a><a href="#h16-0-16" id="h16-0-16" class="i">+    /// The sort orders
+</a><a href="#h16-0-17" id="h16-0-17" class="i">+    order: Vec&lt;(Expression, Direction)&gt;,
+</a> }
+ 
+<a href="#h16-0-20" id="h16-0-20" class="d">-impl Order {
+</a><a href="#h16-0-21" id="h16-0-21" class="d">-    pub fn execute&lt;T: Transaction&gt;(
+</a><a href="#h16-0-22" id="h16-0-22" class="d">-        _: &amp;mut Context&lt;T&gt;,
+</a><a href="#h16-0-23" id="h16-0-23" class="d">-        mut source: Box&lt;dyn Executor&gt;,
+</a><a href="#h16-0-24" id="h16-0-24" class="d">-        orders: Vec&lt;(Expression, planner::Order)&gt;,
+</a><a href="#h16-0-25" id="h16-0-25" class="d">-    ) -&gt; Result&lt;Box&lt;dyn Executor&gt;, Error&gt; {
+</a><a href="#h16-0-26" id="h16-0-26" class="d">-        let columns = source.columns();
+</a><a href="#h16-0-27" id="h16-0-27" class="i">+impl&lt;T: Transaction&gt; Order&lt;T&gt; {
+</a><a href="#h16-0-28" id="h16-0-28" class="i">+    pub fn new(source: Box&lt;dyn Executor&lt;T&gt;&gt;, order: Vec&lt;(Expression, Direction)&gt;) -&gt; Box&lt;Self&gt; {
+</a><a href="#h16-0-29" id="h16-0-29" class="i">+        Box::new(Self { source, order })
+</a><a href="#h16-0-30" id="h16-0-30" class="i">+    }
+</a><a href="#h16-0-31" id="h16-0-31" class="i">+}
+</a> 
+<a href="#h16-0-33" id="h16-0-33" class="d">-        // FIXME Since we can&#39;t return errors from the sort_by closure, we have to
+</a><a href="#h16-0-34" id="h16-0-34" class="d">-        // pre-evaluate all values. This means that we can&#39;t short-circuit evaluation,
+</a><a href="#h16-0-35" id="h16-0-35" class="d">-        // and have to temporarily store evaluated values, which is bad for performance
+</a><a href="#h16-0-36" id="h16-0-36" class="d">-        // and memory usage respectively.
+</a><a href="#h16-0-37" id="h16-0-37" class="d">-        struct Item {
+</a><a href="#h16-0-38" id="h16-0-38" class="d">-            row: Row,
+</a><a href="#h16-0-39" id="h16-0-39" class="d">-            values: Vec&lt;Value&gt;,
+</a><a href="#h16-0-40" id="h16-0-40" class="d">-        };
+</a><a href="#h16-0-41" id="h16-0-41" class="d">-        let mut items = Vec::new();
+</a><a href="#h16-0-42" id="h16-0-42" class="d">-        while let Some(row) = source.fetch()? {
+</a><a href="#h16-0-43" id="h16-0-43" class="d">-            let env = Environment::new(columns.iter().cloned().zip(row.iter().cloned()).collect());
+</a><a href="#h16-0-44" id="h16-0-44" class="d">-            let mut values = Vec::new();
+</a><a href="#h16-0-45" id="h16-0-45" class="d">-            for (expr, _) in orders.iter() {
+</a><a href="#h16-0-46" id="h16-0-46" class="d">-                values.push(expr.evaluate(&amp;env)?);
+</a><a href="#h16-0-47" id="h16-0-47" class="d">-            }
+</a><a href="#h16-0-48" id="h16-0-48" class="d">-            items.push(Item { row, values });
+</a><a href="#h16-0-49" id="h16-0-49" class="d">-        }
+</a><a href="#h16-0-50" id="h16-0-50" class="i">+impl&lt;T: Transaction&gt; Executor&lt;T&gt; for Order&lt;T&gt; {
+</a><a href="#h16-0-51" id="h16-0-51" class="i">+    fn execute(self: Box&lt;Self&gt;, ctx: &amp;mut Context&lt;T&gt;) -&gt; Result&lt;ResultSet, Error&gt; {
+</a><a href="#h16-0-52" id="h16-0-52" class="i">+        let mut result = self.source.execute(ctx)?;
+</a> 
+<a href="#h16-0-54" id="h16-0-54" class="d">-        items.sort_by(|a, b| {
+</a><a href="#h16-0-55" id="h16-0-55" class="d">-            for (i, (_, order)) in orders.iter().enumerate() {
+</a><a href="#h16-0-56" id="h16-0-56" class="d">-                let value_a = &amp;a.values[i];
+</a><a href="#h16-0-57" id="h16-0-57" class="d">-                let value_b = &amp;b.values[i];
+</a><a href="#h16-0-58" id="h16-0-58" class="d">-                match value_a.partial_cmp(value_b) {
+</a><a href="#h16-0-59" id="h16-0-59" class="d">-                    Some(std::cmp::Ordering::Equal) =&gt; {}
+</a><a href="#h16-0-60" id="h16-0-60" class="d">-                    Some(o) =&gt; {
+</a><a href="#h16-0-61" id="h16-0-61" class="d">-                        return if *order == planner::Order::Ascending { o } else { o.reverse() }
+</a><a href="#h16-0-62" id="h16-0-62" class="d">-                    }
+</a><a href="#h16-0-63" id="h16-0-63" class="d">-                    None =&gt; {}
+</a><a href="#h16-0-64" id="h16-0-64" class="i">+        if let Some(mut rows) = result.rows {
+</a><a href="#h16-0-65" id="h16-0-65" class="i">+            // FIXME Since we can&#39;t return errors from the sort_by closure, we have to
+</a><a href="#h16-0-66" id="h16-0-66" class="i">+            // pre-evaluate all values. This means that we can&#39;t short-circuit evaluation,
+</a><a href="#h16-0-67" id="h16-0-67" class="i">+            // and have to temporarily store evaluated values, which is bad for performance
+</a><a href="#h16-0-68" id="h16-0-68" class="i">+            // and memory usage respectively
+</a><a href="#h16-0-69" id="h16-0-69" class="i">+            struct Item {
+</a><a href="#h16-0-70" id="h16-0-70" class="i">+                row: Row,
+</a><a href="#h16-0-71" id="h16-0-71" class="i">+                values: Vec&lt;Value&gt;,
+</a><a href="#h16-0-72" id="h16-0-72" class="i">+            };
+</a><a href="#h16-0-73" id="h16-0-73" class="i">+            let mut items = Vec::new();
+</a><a href="#h16-0-74" id="h16-0-74" class="i">+            while let Some(row) = rows.next().transpose()? {
+</a><a href="#h16-0-75" id="h16-0-75" class="i">+                let env = Environment::new(
+</a><a href="#h16-0-76" id="h16-0-76" class="i">+                    result.columns.iter().cloned().zip(row.iter().cloned()).collect(),
+</a><a href="#h16-0-77" id="h16-0-77" class="i">+                );
+</a><a href="#h16-0-78" id="h16-0-78" class="i">+                let mut values = Vec::new();
+</a><a href="#h16-0-79" id="h16-0-79" class="i">+                for (expr, _) in self.order.iter() {
+</a><a href="#h16-0-80" id="h16-0-80" class="i">+                    values.push(expr.evaluate(&amp;env)?);
+</a>                 }
+<a href="#h16-0-82" id="h16-0-82" class="i">+                items.push(Item { row, values })
+</a>             }
+<a href="#h16-0-84" id="h16-0-84" class="d">-            std::cmp::Ordering::Equal
+</a><a href="#h16-0-85" id="h16-0-85" class="d">-        });
+</a><a href="#h16-0-86" id="h16-0-86" class="d">-        let mut rows: Vec&lt;Row&gt; = items.into_iter().map(|i| i.row).collect();
+</a><a href="#h16-0-87" id="h16-0-87" class="d">-        rows.reverse(); // To make it a stack - should be optimized
+</a><a href="#h16-0-88" id="h16-0-88" class="d">-        Ok(Box::new(Self { columns, stack: rows }))
+</a><a href="#h16-0-89" id="h16-0-89" class="d">-    }
+</a><a href="#h16-0-90" id="h16-0-90" class="d">-}
+</a> 
+<a href="#h16-0-92" id="h16-0-92" class="d">-impl Executor for Order {
+</a><a href="#h16-0-93" id="h16-0-93" class="d">-    fn columns(&amp;self) -&gt; Vec&lt;String&gt; {
+</a><a href="#h16-0-94" id="h16-0-94" class="d">-        self.columns.clone()
+</a><a href="#h16-0-95" id="h16-0-95" class="d">-    }
+</a><a href="#h16-0-96" id="h16-0-96" class="i">+            let order = &amp;self.order;
+</a><a href="#h16-0-97" id="h16-0-97" class="i">+            items.sort_by(|a, b| {
+</a><a href="#h16-0-98" id="h16-0-98" class="i">+                for (i, (_, order)) in order.iter().enumerate() {
+</a><a href="#h16-0-99" id="h16-0-99" class="i">+                    let value_a = &amp;a.values[i];
+</a><a href="#h16-0-100" id="h16-0-100" class="i">+                    let value_b = &amp;b.values[i];
+</a><a href="#h16-0-101" id="h16-0-101" class="i">+                    match value_a.partial_cmp(value_b) {
+</a><a href="#h16-0-102" id="h16-0-102" class="i">+                        Some(std::cmp::Ordering::Equal) =&gt; {}
+</a><a href="#h16-0-103" id="h16-0-103" class="i">+                        Some(o) =&gt; {
+</a><a href="#h16-0-104" id="h16-0-104" class="i">+                            return if *order == Direction::Ascending { o } else { o.reverse() }
+</a><a href="#h16-0-105" id="h16-0-105" class="i">+                        }
+</a><a href="#h16-0-106" id="h16-0-106" class="i">+                        None =&gt; {}
+</a><a href="#h16-0-107" id="h16-0-107" class="i">+                    }
+</a><a href="#h16-0-108" id="h16-0-108" class="i">+                }
+</a><a href="#h16-0-109" id="h16-0-109" class="i">+                std::cmp::Ordering::Equal
+</a><a href="#h16-0-110" id="h16-0-110" class="i">+            });
+</a> 
+<a href="#h16-0-112" id="h16-0-112" class="d">-    fn fetch(&amp;mut self) -&gt; Result&lt;Option&lt;Row&gt;, Error&gt; {
+</a><a href="#h16-0-113" id="h16-0-113" class="d">-        Ok(self.stack.pop())
+</a><a href="#h16-0-114" id="h16-0-114" class="i">+            result.rows = Some(Box::new(items.into_iter().map(|i| Ok(i.row))));
+</a><a href="#h16-0-115" id="h16-0-115" class="i">+        }
+</a><a href="#h16-0-116" id="h16-0-116" class="i">+        Ok(result)
+</a>     }
+ }
+<b>diff --git a/<a id="h17" href="../file/src/sql/executor/projection.rs.html">src/sql/executor/projection.rs</a> b/<a href="../file/src/sql/executor/projection.rs.html">src/sql/executor/projection.rs</a></b>
+<a href="#h17-0" id="h17-0" class="h">@@ -1,55 +1,60 @@
+</a> use super::super::engine::Transaction;
+ use super::super::types::expression::{Environment, Expression, Expressions};
+<a href="#h17-0-2" id="h17-0-2" class="d">-use super::super::types::Row;
+</a><a href="#h17-0-3" id="h17-0-3" class="d">-use super::{Context, Executor};
+</a><a href="#h17-0-4" id="h17-0-4" class="i">+use super::{Context, Executor, ResultSet};
+</a> use crate::Error;
+ 
+<a href="#h17-0-7" id="h17-0-7" class="d">-pub struct Projection {
+</a><a href="#h17-0-8" id="h17-0-8" class="d">-    source: Box&lt;dyn Executor&gt;,
+</a><a href="#h17-0-9" id="h17-0-9" class="d">-    source_columns: Vec&lt;String&gt;,
+</a><a href="#h17-0-10" id="h17-0-10" class="d">-    columns: Vec&lt;String&gt;,
+</a><a href="#h17-0-11" id="h17-0-11" class="i">+/// A filter executor
+</a><a href="#h17-0-12" id="h17-0-12" class="i">+pub struct Projection&lt;T: Transaction&gt; {
+</a><a href="#h17-0-13" id="h17-0-13" class="i">+    /// The source of rows to project
+</a><a href="#h17-0-14" id="h17-0-14" class="i">+    source: Box&lt;dyn Executor&lt;T&gt;&gt;,
+</a><a href="#h17-0-15" id="h17-0-15" class="i">+    /// Labels for each column, if any
+</a><a href="#h17-0-16" id="h17-0-16" class="i">+    labels: Vec&lt;Option&lt;String&gt;&gt;,
+</a><a href="#h17-0-17" id="h17-0-17" class="i">+    /// Expressions to project
+</a>     expressions: Expressions,
+ }
+ 
+<a href="#h17-0-21" id="h17-0-21" class="d">-impl Projection {
+</a><a href="#h17-0-22" id="h17-0-22" class="d">-    pub fn execute&lt;T: Transaction&gt;(
+</a><a href="#h17-0-23" id="h17-0-23" class="d">-        _: &amp;mut Context&lt;T&gt;,
+</a><a href="#h17-0-24" id="h17-0-24" class="d">-        source: Box&lt;dyn Executor&gt;,
+</a><a href="#h17-0-25" id="h17-0-25" class="i">+impl&lt;T: Transaction&gt; Projection&lt;T&gt; {
+</a><a href="#h17-0-26" id="h17-0-26" class="i">+    pub fn new(
+</a><a href="#h17-0-27" id="h17-0-27" class="i">+        source: Box&lt;dyn Executor&lt;T&gt;&gt;,
+</a>         labels: Vec&lt;Option&lt;String&gt;&gt;,
+         expressions: Expressions,
+<a href="#h17-0-30" id="h17-0-30" class="d">-    ) -&gt; Result&lt;Box&lt;dyn Executor&gt;, Error&gt; {
+</a><a href="#h17-0-31" id="h17-0-31" class="d">-        let columns = expressions
+</a><a href="#h17-0-32" id="h17-0-32" class="i">+    ) -&gt; Box&lt;Self&gt; {
+</a><a href="#h17-0-33" id="h17-0-33" class="i">+        Box::new(Self { source, labels, expressions })
+</a><a href="#h17-0-34" id="h17-0-34" class="i">+    }
+</a><a href="#h17-0-35" id="h17-0-35" class="i">+}
+</a><a href="#h17-0-36" id="h17-0-36" class="i">+
+</a><a href="#h17-0-37" id="h17-0-37" class="i">+impl&lt;T: Transaction&gt; Executor&lt;T&gt; for Projection&lt;T&gt; {
+</a><a href="#h17-0-38" id="h17-0-38" class="i">+    fn execute(self: Box&lt;Self&gt;, ctx: &amp;mut Context&lt;T&gt;) -&gt; Result&lt;ResultSet, Error&gt; {
+</a><a href="#h17-0-39" id="h17-0-39" class="i">+        let mut result = self.source.execute(ctx)?;
+</a><a href="#h17-0-40" id="h17-0-40" class="i">+        let columns = result.columns;
+</a><a href="#h17-0-41" id="h17-0-41" class="i">+        let labels = self.labels;
+</a><a href="#h17-0-42" id="h17-0-42" class="i">+        result.columns = self
+</a><a href="#h17-0-43" id="h17-0-43" class="i">+            .expressions
+</a>             .iter()
+             .enumerate()
+<a href="#h17-0-46" id="h17-0-46" class="d">-            .map(|(i, expr)| {
+</a><a href="#h17-0-47" id="h17-0-47" class="i">+            .map(|(i, e)| {
+</a>                 if let Some(Some(label)) = labels.get(i) {
+                     label.clone()
+<a href="#h17-0-50" id="h17-0-50" class="d">-                } else if let Expression::Field(field) = expr {
+</a><a href="#h17-0-51" id="h17-0-51" class="i">+                } else if let Expression::Field(field) = e {
+</a>                     field.clone()
+                 } else {
+                     &quot;?&quot;.to_string()
+                 }
+             })
+             .collect();
+<a href="#h17-0-58" id="h17-0-58" class="d">-        Ok(Box::new(Self { source_columns: source.columns(), source, columns, expressions }))
+</a><a href="#h17-0-59" id="h17-0-59" class="d">-    }
+</a><a href="#h17-0-60" id="h17-0-60" class="d">-}
+</a><a href="#h17-0-61" id="h17-0-61" class="d">-
+</a><a href="#h17-0-62" id="h17-0-62" class="d">-impl Executor for Projection {
+</a><a href="#h17-0-63" id="h17-0-63" class="d">-    fn columns(&amp;self) -&gt; Vec&lt;String&gt; {
+</a><a href="#h17-0-64" id="h17-0-64" class="d">-        self.columns.clone()
+</a><a href="#h17-0-65" id="h17-0-65" class="d">-    }
+</a><a href="#h17-0-66" id="h17-0-66" class="d">-
+</a><a href="#h17-0-67" id="h17-0-67" class="d">-    fn fetch(&amp;mut self) -&gt; Result&lt;Option&lt;Row&gt;, Error&gt; {
+</a><a href="#h17-0-68" id="h17-0-68" class="d">-        if let Some(row) = self.source.fetch()? {
+</a><a href="#h17-0-69" id="h17-0-69" class="d">-            let env = Environment::new(
+</a><a href="#h17-0-70" id="h17-0-70" class="d">-                self.source_columns.iter().cloned().zip(row.iter().cloned()).collect(),
+</a><a href="#h17-0-71" id="h17-0-71" class="d">-            );
+</a><a href="#h17-0-72" id="h17-0-72" class="d">-            Ok(Some(
+</a><a href="#h17-0-73" id="h17-0-73" class="d">-                self.expressions.iter().map(|e| e.evaluate(&amp;env)).collect::&lt;Result&lt;_, Error&gt;&gt;()?,
+</a><a href="#h17-0-74" id="h17-0-74" class="d">-            ))
+</a><a href="#h17-0-75" id="h17-0-75" class="d">-        } else {
+</a><a href="#h17-0-76" id="h17-0-76" class="d">-            Ok(None)
+</a><a href="#h17-0-77" id="h17-0-77" class="i">+        if let Some(rows) = result.rows {
+</a><a href="#h17-0-78" id="h17-0-78" class="i">+            let expressions = self.expressions;
+</a><a href="#h17-0-79" id="h17-0-79" class="i">+            result.rows = Some(Box::new(rows.map(move |r| {
+</a><a href="#h17-0-80" id="h17-0-80" class="i">+                r.and_then(|row| {
+</a><a href="#h17-0-81" id="h17-0-81" class="i">+                    let env =
+</a><a href="#h17-0-82" id="h17-0-82" class="i">+                        Environment::new(columns.iter().cloned().zip(row.into_iter()).collect());
+</a><a href="#h17-0-83" id="h17-0-83" class="i">+                    Ok(expressions
+</a><a href="#h17-0-84" id="h17-0-84" class="i">+                        .iter()
+</a><a href="#h17-0-85" id="h17-0-85" class="i">+                        .map(|e| e.evaluate(&amp;env))
+</a><a href="#h17-0-86" id="h17-0-86" class="i">+                        .collect::&lt;Result&lt;_, Error&gt;&gt;()?)
+</a><a href="#h17-0-87" id="h17-0-87" class="i">+                })
+</a><a href="#h17-0-88" id="h17-0-88" class="i">+            })));
+</a>         }
+<a href="#h17-0-90" id="h17-0-90" class="i">+        Ok(result)
+</a>     }
+ }
+<b>diff --git a/<a id="h18" href="../file/src/sql/executor/scan.rs.html">src/sql/executor/scan.rs</a> b/<a href="../file/src/sql/executor/scan.rs.html">src/sql/executor/scan.rs</a></b>
+<a href="#h18-0" id="h18-0" class="h">@@ -1,33 +1,25 @@
+</a> use super::super::engine::Transaction;
+<a href="#h18-0-1" id="h18-0-1" class="d">-use super::super::types::Row;
+</a><a href="#h18-0-2" id="h18-0-2" class="d">-use super::{Context, Executor};
+</a><a href="#h18-0-3" id="h18-0-3" class="i">+use super::{Context, Executor, ResultSet};
+</a> use crate::Error;
+ 
+<a href="#h18-0-6" id="h18-0-6" class="d">-/// A table scan node
+</a><a href="#h18-0-7" id="h18-0-7" class="i">+/// A table scan executor
+</a> pub struct Scan {
+<a href="#h18-0-9" id="h18-0-9" class="d">-    columns: Vec&lt;String&gt;,
+</a><a href="#h18-0-10" id="h18-0-10" class="d">-    range: super::super::engine::Scan,
+</a><a href="#h18-0-11" id="h18-0-11" class="i">+    /// The table to scan
+</a><a href="#h18-0-12" id="h18-0-12" class="i">+    table: String,
+</a> }
+ 
+ impl Scan {
+<a href="#h18-0-16" id="h18-0-16" class="d">-    pub fn execute&lt;T: Transaction&gt;(
+</a><a href="#h18-0-17" id="h18-0-17" class="d">-        ctx: &amp;mut Context&lt;T&gt;,
+</a><a href="#h18-0-18" id="h18-0-18" class="d">-        table: String,
+</a><a href="#h18-0-19" id="h18-0-19" class="d">-    ) -&gt; Result&lt;Box&lt;dyn Executor&gt;, Error&gt; {
+</a><a href="#h18-0-20" id="h18-0-20" class="d">-        let table = ctx.txn.must_read_table(&amp;table)?;
+</a><a href="#h18-0-21" id="h18-0-21" class="d">-        Ok(Box::new(Self {
+</a><a href="#h18-0-22" id="h18-0-22" class="d">-            columns: table.columns.iter().map(|c| c.name.clone()).collect(),
+</a><a href="#h18-0-23" id="h18-0-23" class="d">-            range: ctx.txn.scan(&amp;table.name)?,
+</a><a href="#h18-0-24" id="h18-0-24" class="d">-        }))
+</a><a href="#h18-0-25" id="h18-0-25" class="i">+    pub fn new(table: String) -&gt; Box&lt;Self&gt; {
+</a><a href="#h18-0-26" id="h18-0-26" class="i">+        Box::new(Self { table })
+</a>     }
+ }
+ 
+<a href="#h18-0-30" id="h18-0-30" class="d">-impl Executor for Scan {
+</a><a href="#h18-0-31" id="h18-0-31" class="d">-    fn columns(&amp;self) -&gt; Vec&lt;String&gt; {
+</a><a href="#h18-0-32" id="h18-0-32" class="d">-        self.columns.clone()
+</a><a href="#h18-0-33" id="h18-0-33" class="d">-    }
+</a><a href="#h18-0-34" id="h18-0-34" class="d">-
+</a><a href="#h18-0-35" id="h18-0-35" class="d">-    fn fetch(&amp;mut self) -&gt; Result&lt;Option&lt;Row&gt;, Error&gt; {
+</a><a href="#h18-0-36" id="h18-0-36" class="d">-        self.range.next().transpose()
+</a><a href="#h18-0-37" id="h18-0-37" class="i">+impl&lt;T: Transaction&gt; Executor&lt;T&gt; for Scan {
+</a><a href="#h18-0-38" id="h18-0-38" class="i">+    fn execute(self: Box&lt;Self&gt;, ctx: &amp;mut Context&lt;T&gt;) -&gt; Result&lt;ResultSet, Error&gt; {
+</a><a href="#h18-0-39" id="h18-0-39" class="i">+        let table = ctx.txn.must_read_table(&amp;self.table)?;
+</a><a href="#h18-0-40" id="h18-0-40" class="i">+        let columns = table.columns.into_iter().map(|c| c.name).collect();
+</a><a href="#h18-0-41" id="h18-0-41" class="i">+        let rows = ctx.txn.scan(&amp;table.name)?;
+</a><a href="#h18-0-42" id="h18-0-42" class="i">+        // FIXME We use extra Box to cast to ResultRows iterator (apparently)
+</a><a href="#h18-0-43" id="h18-0-43" class="i">+        Ok(ResultSet::from_rows(columns, Box::new(rows)))
+</a>     }
+ }
+<b>diff --git a/<a id="h19" href="../file/src/sql/executor/update.rs.html">src/sql/executor/update.rs</a> b/<a href="../file/src/sql/executor/update.rs.html">src/sql/executor/update.rs</a></b>
+<a href="#h19-0" id="h19-0" class="h">@@ -1,39 +1,44 @@
+</a> use super::super::engine::Transaction;
+ use super::super::types::expression::{Environment, Expression};
+<a href="#h19-0-2" id="h19-0-2" class="d">-use super::super::types::Row;
+</a><a href="#h19-0-3" id="h19-0-3" class="d">-use super::{Context, Executor};
+</a><a href="#h19-0-4" id="h19-0-4" class="i">+use super::{Context, Effect, Executor, ResultSet};
+</a> use crate::Error;
+ use std::collections::BTreeMap;
+ 
+<a href="#h19-0-8" id="h19-0-8" class="d">-/// An update executor
+</a><a href="#h19-0-9" id="h19-0-9" class="d">-pub struct Update;
+</a><a href="#h19-0-10" id="h19-0-10" class="i">+/// An UPDATE executor
+</a><a href="#h19-0-11" id="h19-0-11" class="i">+pub struct Update&lt;T: Transaction&gt; {
+</a><a href="#h19-0-12" id="h19-0-12" class="i">+    /// The table to update
+</a><a href="#h19-0-13" id="h19-0-13" class="i">+    table: String,
+</a><a href="#h19-0-14" id="h19-0-14" class="i">+    /// The source of rows to update
+</a><a href="#h19-0-15" id="h19-0-15" class="i">+    source: Box&lt;dyn Executor&lt;T&gt;&gt;,
+</a><a href="#h19-0-16" id="h19-0-16" class="i">+    /// The expressions to update columns with
+</a><a href="#h19-0-17" id="h19-0-17" class="i">+    /// FIXME Uses BTreeMap instead of HashMap for test stability
+</a><a href="#h19-0-18" id="h19-0-18" class="i">+    expressions: BTreeMap&lt;String, Expression&gt;,
+</a><a href="#h19-0-19" id="h19-0-19" class="i">+}
+</a> 
+<a href="#h19-0-21" id="h19-0-21" class="d">-impl Update {
+</a><a href="#h19-0-22" id="h19-0-22" class="d">-    pub fn execute&lt;T: Transaction&gt;(
+</a><a href="#h19-0-23" id="h19-0-23" class="d">-        ctx: &amp;mut Context&lt;T&gt;,
+</a><a href="#h19-0-24" id="h19-0-24" class="i">+impl&lt;T: Transaction&gt; Update&lt;T&gt; {
+</a><a href="#h19-0-25" id="h19-0-25" class="i">+    pub fn new(
+</a>         table: String,
+<a href="#h19-0-27" id="h19-0-27" class="d">-        mut source: Box&lt;dyn Executor&gt;,
+</a><a href="#h19-0-28" id="h19-0-28" class="i">+        source: Box&lt;dyn Executor&lt;T&gt;&gt;,
+</a>         expressions: BTreeMap&lt;String, Expression&gt;,
+<a href="#h19-0-30" id="h19-0-30" class="d">-    ) -&gt; Result&lt;Box&lt;dyn Executor&gt;, Error&gt; {
+</a><a href="#h19-0-31" id="h19-0-31" class="d">-        let table = ctx.txn.must_read_table(&amp;table)?;
+</a><a href="#h19-0-32" id="h19-0-32" class="d">-        while let Some(mut row) = source.fetch()? {
+</a><a href="#h19-0-33" id="h19-0-33" class="i">+    ) -&gt; Box&lt;Self&gt; {
+</a><a href="#h19-0-34" id="h19-0-34" class="i">+        Box::new(Self { table, source, expressions })
+</a><a href="#h19-0-35" id="h19-0-35" class="i">+    }
+</a><a href="#h19-0-36" id="h19-0-36" class="i">+}
+</a><a href="#h19-0-37" id="h19-0-37" class="i">+
+</a><a href="#h19-0-38" id="h19-0-38" class="i">+impl&lt;T: Transaction&gt; Executor&lt;T&gt; for Update&lt;T&gt; {
+</a><a href="#h19-0-39" id="h19-0-39" class="i">+    fn execute(self: Box&lt;Self&gt;, ctx: &amp;mut Context&lt;T&gt;) -&gt; Result&lt;ResultSet, Error&gt; {
+</a><a href="#h19-0-40" id="h19-0-40" class="i">+        let mut source = self.source.execute(ctx)?;
+</a><a href="#h19-0-41" id="h19-0-41" class="i">+        let table = ctx.txn.must_read_table(&amp;self.table)?;
+</a><a href="#h19-0-42" id="h19-0-42" class="i">+        let mut count = 0;
+</a><a href="#h19-0-43" id="h19-0-43" class="i">+        while let Some(mut row) = source.next().transpose()? {
+</a>             let id = table.get_row_key(&amp;row)?;
+             let env = Environment::new(table.make_row_hashmap(row.clone()));
+<a href="#h19-0-46" id="h19-0-46" class="d">-            for (field, expr) in &amp;expressions {
+</a><a href="#h19-0-47" id="h19-0-47" class="i">+            for (field, expr) in &amp;self.expressions {
+</a>                 table.set_row_field(&amp;mut row, field, expr.evaluate(&amp;env)?)?;
+             }
+<a href="#h19-0-50" id="h19-0-50" class="d">-            ctx.txn.update(&amp;table.name, &amp;id, row)?
+</a><a href="#h19-0-51" id="h19-0-51" class="i">+            ctx.txn.update(&amp;table.name, &amp;id, row)?;
+</a><a href="#h19-0-52" id="h19-0-52" class="i">+            count += 1
+</a>         }
+<a href="#h19-0-54" id="h19-0-54" class="d">-        Ok(Box::new(Self))
+</a><a href="#h19-0-55" id="h19-0-55" class="d">-    }
+</a><a href="#h19-0-56" id="h19-0-56" class="d">-}
+</a><a href="#h19-0-57" id="h19-0-57" class="d">-
+</a><a href="#h19-0-58" id="h19-0-58" class="d">-impl Executor for Update {
+</a><a href="#h19-0-59" id="h19-0-59" class="d">-    fn columns(&amp;self) -&gt; Vec&lt;String&gt; {
+</a><a href="#h19-0-60" id="h19-0-60" class="d">-        Vec::new()
+</a><a href="#h19-0-61" id="h19-0-61" class="d">-    }
+</a><a href="#h19-0-62" id="h19-0-62" class="d">-
+</a><a href="#h19-0-63" id="h19-0-63" class="d">-    fn fetch(&amp;mut self) -&gt; Result&lt;Option&lt;Row&gt;, Error&gt; {
+</a><a href="#h19-0-64" id="h19-0-64" class="d">-        Ok(None)
+</a><a href="#h19-0-65" id="h19-0-65" class="i">+        Ok(ResultSet::from_effect(Effect::Update { count }))
+</a>     }
+ }
+<b>diff --git a/<a id="h20" href="../file/src/sql/mod.rs.html">src/sql/mod.rs</a> b/<a href="../file/src/sql/mod.rs.html">src/sql/mod.rs</a></b>
+<a href="#h20-0" id="h20-0" class="h">@@ -7,7 +7,7 @@ mod planner;
+</a> mod tests;
+ pub mod types;
+ 
+<a href="#h20-0-3" id="h20-0-3" class="d">-pub use engine::{Engine, Transaction};
+</a><a href="#h20-0-4" id="h20-0-4" class="d">-pub use executor::{Context, ResultSet};
+</a><a href="#h20-0-5" id="h20-0-5" class="i">+pub use engine::{Engine, Mode, Transaction};
+</a><a href="#h20-0-6" id="h20-0-6" class="i">+pub use executor::{Context, Effect, ResultSet};
+</a> pub use parser::{ast, lexer, Parser};
+ pub use planner::Plan;
+<b>diff --git a/<a id="h21" href="../file/src/sql/planner/mod.rs.html">src/sql/planner/mod.rs</a> b/<a href="../file/src/sql/planner/mod.rs.html">src/sql/planner/mod.rs</a></b>
+<a href="#h21-0" id="h21-0" class="h">@@ -1,6 +1,6 @@
+</a> mod plan;
+ 
+<a href="#h21-0-2" id="h21-0-2" class="d">-pub use plan::{Node, Order, Plan};
+</a><a href="#h21-0-3" id="h21-0-3" class="i">+pub use plan::{Direction, Node, Plan};
+</a> 
+ use super::parser::ast;
+ use super::types::expression::{Environment, Expression};
+<b>diff --git a/<a id="h22" href="../file/src/sql/planner/plan.rs.html">src/sql/planner/plan.rs</a> b/<a href="../file/src/sql/planner/plan.rs.html">src/sql/planner/plan.rs</a></b>
+<a href="#h22-0" id="h22-0" class="h">@@ -22,8 +22,11 @@ impl Plan {
+</a>     }
+ 
+     /// Executes the plan, consuming it
+<a href="#h22-0-3" id="h22-0-3" class="d">-    pub fn execute&lt;T: Transaction&gt;(self, mut ctx: Context&lt;T&gt;) -&gt; Result&lt;ResultSet, Error&gt; {
+</a><a href="#h22-0-4" id="h22-0-4" class="d">-        Ok(ResultSet::from_executor(Executor::execute(&amp;mut ctx, self.root)?))
+</a><a href="#h22-0-5" id="h22-0-5" class="i">+    pub fn execute&lt;T: Transaction + &#39;static&gt;(
+</a><a href="#h22-0-6" id="h22-0-6" class="i">+        self,
+</a><a href="#h22-0-7" id="h22-0-7" class="i">+        mut ctx: Context&lt;T&gt;,
+</a><a href="#h22-0-8" id="h22-0-8" class="i">+    ) -&gt; Result&lt;ResultSet, Error&gt; {
+</a><a href="#h22-0-9" id="h22-0-9" class="i">+        Executor::build(self.root).execute(&amp;mut ctx)
+</a>     }
+ 
+     /// Optimizes the plan, consuming it
+<a href="#h22-1" id="h22-1" class="h">@@ -44,7 +47,7 @@ pub enum Node {
+</a>     Limit { source: Box&lt;Self&gt;, limit: u64 },
+     Nothing,
+     Offset { source: Box&lt;Self&gt;, offset: u64 },
+<a href="#h22-1-3" id="h22-1-3" class="d">-    Order { source: Box&lt;Self&gt;, orders: Vec&lt;(Expression, Order)&gt; },
+</a><a href="#h22-1-4" id="h22-1-4" class="i">+    Order { source: Box&lt;Self&gt;, orders: Vec&lt;(Expression, Direction)&gt; },
+</a>     Projection { source: Box&lt;Self&gt;, labels: Vec&lt;Option&lt;String&gt;&gt;, expressions: Expressions },
+     Scan { table: String },
+     // Uses BTreeMap for test stability
+<a href="#h22-2" id="h22-2" class="h">@@ -145,16 +148,16 @@ impl Node {
+</a>     }
+ }
+ 
+<a href="#h22-2-3" id="h22-2-3" class="d">-/// A sort order
+</a><a href="#h22-2-4" id="h22-2-4" class="i">+/// A sort order direction
+</a> #[derive(Debug, PartialEq)]
+<a href="#h22-2-6" id="h22-2-6" class="d">-pub enum Order {
+</a><a href="#h22-2-7" id="h22-2-7" class="i">+pub enum Direction {
+</a>     Ascending,
+     Descending,
+ }
+ 
+<a href="#h22-2-12" id="h22-2-12" class="d">-impl From&lt;ast::Order&gt; for Order {
+</a><a href="#h22-2-13" id="h22-2-13" class="d">-    fn from(o: ast::Order) -&gt; Self {
+</a><a href="#h22-2-14" id="h22-2-14" class="d">-        match o {
+</a><a href="#h22-2-15" id="h22-2-15" class="i">+impl From&lt;ast::Order&gt; for Direction {
+</a><a href="#h22-2-16" id="h22-2-16" class="i">+    fn from(order: ast::Order) -&gt; Self {
+</a><a href="#h22-2-17" id="h22-2-17" class="i">+        match order {
+</a>             ast::Order::Ascending =&gt; Self::Ascending,
+             ast::Order::Descending =&gt; Self::Descending,
+         }
+<b>diff --git a/<a id="h23" href="../file/src/sql/tests/expression.rs.html">src/sql/tests/expression.rs</a> b/<a href="../file/src/sql/tests/expression.rs.html">src/sql/tests/expression.rs</a></b>
+<a href="#h23-0" id="h23-0" class="h">@@ -1,17 +1,12 @@
+</a> ///! Evaluates SQL expressions and compares with expectations.
+ use super::super::types::Value;
+<a href="#h23-0-2" id="h23-0-2" class="d">-use super::super::{Context, Engine, Parser, Plan, Transaction};
+</a><a href="#h23-0-3" id="h23-0-3" class="d">-use crate::kv;
+</a><a href="#h23-0-4" id="h23-0-4" class="i">+use super::super::Engine;
+</a> use crate::Error;
+ 
+ fn eval_expr(expr: &amp;str) -&gt; Result&lt;Value, Error&gt; {
+<a href="#h23-0-8" id="h23-0-8" class="d">-    let engine = super::super::engine::KV::new(kv::MVCC::new(kv::storage::Memory::new()));
+</a><a href="#h23-0-9" id="h23-0-9" class="d">-    let mut txn = engine.begin()?;
+</a><a href="#h23-0-10" id="h23-0-10" class="d">-    let ctx = Context { txn: &amp;mut txn };
+</a><a href="#h23-0-11" id="h23-0-11" class="d">-    let ast = Parser::new(&amp;format!(&quot;SELECT {}&quot;, expr)).parse()?;
+</a><a href="#h23-0-12" id="h23-0-12" class="d">-    let mut result = Plan::build(ast)?.optimize()?.execute(ctx)?;
+</a><a href="#h23-0-13" id="h23-0-13" class="i">+    let engine = super::setup(Vec::new())?;
+</a><a href="#h23-0-14" id="h23-0-14" class="i">+    let mut result = engine.session(None)?.execute(&amp;format!(&quot;SELECT {}&quot;, expr))?;
+</a>     let value = result.next().unwrap().unwrap().get(0).unwrap().clone();
+<a href="#h23-0-16" id="h23-0-16" class="d">-    txn.rollback()?;
+</a>     Ok(value)
+ }
+ 
+<b>diff --git a/<a id="h24" href="../file/src/sql/tests/mod.rs.html">src/sql/tests/mod.rs</a> b/<a href="../file/src/sql/tests/mod.rs.html">src/sql/tests/mod.rs</a></b>
+<a href="#h24-0" id="h24-0" class="h">@@ -2,31 +2,17 @@ mod expression;
+</a> mod schema;
+ mod sql;
+ 
+<a href="#h24-0-3" id="h24-0-3" class="d">-use super::{Context, Engine, Parser, Plan, ResultSet, Transaction};
+</a><a href="#h24-0-4" id="h24-0-4" class="i">+use super::Engine;
+</a> use crate::kv;
+ use crate::Error;
+ 
+ fn setup(queries: Vec&lt;&amp;str&gt;) -&gt; Result&lt;super::engine::KV&lt;kv::storage::Memory&gt;, Error&gt; {
+     let engine = super::engine::KV::new(kv::MVCC::new(kv::storage::Memory::new()));
+<a href="#h24-0-10" id="h24-0-10" class="d">-    let mut txn = engine.begin()?;
+</a><a href="#h24-0-11" id="h24-0-11" class="i">+    let mut session = engine.session(None)?;
+</a><a href="#h24-0-12" id="h24-0-12" class="i">+    session.execute(&quot;BEGIN&quot;)?;
+</a>     for query in queries {
+<a href="#h24-0-14" id="h24-0-14" class="d">-        let ast = Parser::new(query).parse()?;
+</a><a href="#h24-0-15" id="h24-0-15" class="d">-        let plan = Plan::build(ast)?.optimize()?;
+</a><a href="#h24-0-16" id="h24-0-16" class="d">-        plan.execute(Context { txn: &amp;mut txn })?;
+</a><a href="#h24-0-17" id="h24-0-17" class="i">+        session.execute(query)?;
+</a>     }
+<a href="#h24-0-19" id="h24-0-19" class="d">-    txn.commit()?;
+</a><a href="#h24-0-20" id="h24-0-20" class="i">+    session.execute(&quot;COMMIT&quot;)?;
+</a>     Ok(engine)
+ }
+<a href="#h24-0-23" id="h24-0-23" class="d">-
+</a><a href="#h24-0-24" id="h24-0-24" class="d">-fn execute&lt;E: Engine&gt;(engine: &amp;E, query: &amp;str) -&gt; Result&lt;ResultSet, Error&gt; {
+</a><a href="#h24-0-25" id="h24-0-25" class="d">-    let mut txn = engine.begin()?;
+</a><a href="#h24-0-26" id="h24-0-26" class="d">-    let ast = Parser::new(query).parse()?;
+</a><a href="#h24-0-27" id="h24-0-27" class="d">-    let plan = Plan::build(ast)?.optimize()?;
+</a><a href="#h24-0-28" id="h24-0-28" class="d">-    let result = plan.execute(Context { txn: &amp;mut txn });
+</a><a href="#h24-0-29" id="h24-0-29" class="d">-    if result.is_ok() {
+</a><a href="#h24-0-30" id="h24-0-30" class="d">-        txn.commit()?;
+</a><a href="#h24-0-31" id="h24-0-31" class="d">-    } else {
+</a><a href="#h24-0-32" id="h24-0-32" class="d">-        txn.rollback()?;
+</a><a href="#h24-0-33" id="h24-0-33" class="d">-    }
+</a><a href="#h24-0-34" id="h24-0-34" class="d">-    result
+</a><a href="#h24-0-35" id="h24-0-35" class="d">-}
+</a><b>diff --git a/<a id="h25" href="../file/src/sql/tests/results/select_error_where_nonboolean.html">src/sql/tests/results/select_error_where_nonboolean</a> b/<a href="../file/src/sql/tests/results/select_error_where_nonboolean.html">src/sql/tests/results/select_error_where_nonboolean</a></b>
+<a href="#h25-0" id="h25-0" class="h">@@ -62,4 +62,4 @@ Optimized plan: Plan {
+</a> 
+ Query: SELECT * FROM movies WHERE 1
+ 
+<a href="#h25-0-3" id="h25-0-3" class="d">-Result: Value(&quot;Unexpected value 1 for filter, expected boolean&quot;)
+</a><a href="#h25-0-4" id="h25-0-4" class="d">-\ No newline at end of file
+</a><a href="#h25-0-5" id="h25-0-5" class="i">+Result: Value(&quot;Filter returned 1, expected boolean&quot;)
+</a><a href="#h25-0-6" id="h25-0-6" class="i">+\ No newline at end of file
+</a><b>diff --git a/<a id="h26" href="../file/src/sql/tests/schema.rs.html">src/sql/tests/schema.rs</a> b/<a href="../file/src/sql/tests/schema.rs.html">src/sql/tests/schema.rs</a></b>
+<a href="#h26-0" id="h26-0" class="h">@@ -20,9 +20,14 @@ macro_rules! test_schema {
+</a>                 let mut f = mint.new_goldenfile(stringify!($name))?;
+ 
+                 write!(f, &quot;Query: {}\n&quot;, $query.trim())?;
+<a href="#h26-0-3" id="h26-0-3" class="d">-                match super::execute(&amp;engine, $query) {
+</a><a href="#h26-0-4" id="h26-0-4" class="d">-                    // FIXME We need to output something sensible here.
+</a><a href="#h26-0-5" id="h26-0-5" class="d">-                    Ok(_) =&gt; write!(f, &quot;\n&quot;)?,
+</a><a href="#h26-0-6" id="h26-0-6" class="i">+                match engine.session(None)?.execute($query) {
+</a><a href="#h26-0-7" id="h26-0-7" class="i">+                    Ok(resultset) =&gt; {
+</a><a href="#h26-0-8" id="h26-0-8" class="i">+                        write!(f, &quot;Effect:&quot;)?;
+</a><a href="#h26-0-9" id="h26-0-9" class="i">+                        if let Some(effect) = resultset.effect() {
+</a><a href="#h26-0-10" id="h26-0-10" class="i">+                            write!(f, &quot; {:?}&quot;, effect)?;
+</a><a href="#h26-0-11" id="h26-0-11" class="i">+                        }
+</a><a href="#h26-0-12" id="h26-0-12" class="i">+                        write!(f, &quot;\n\n&quot;)?;
+</a><a href="#h26-0-13" id="h26-0-13" class="i">+                    },
+</a>                     Err(err) =&gt; write!(f, &quot;Error: {:?}\n\n&quot;, err)?,
+                 };
+ 
+<b>diff --git a/<a id="h27" href="../file/src/sql/tests/schema/create_table_datatype.html">src/sql/tests/schema/create_table_datatype</a> b/<a href="../file/src/sql/tests/schema/create_table_datatype.html">src/sql/tests/schema/create_table_datatype</a></b>
+<a href="#h27-0" id="h27-0" class="h">@@ -11,6 +11,7 @@ Query: CREATE TABLE name (
+</a>             &quot;text&quot; TEXT,
+             &quot;varchar&quot; VARCHAR
+         )
+<a href="#h27-0-3" id="h27-0-3" class="i">+Effect: CreateTable { name: &quot;name&quot; }
+</a> 
+ Storage:
+ CREATE TABLE name (
+<b>diff --git a/<a id="h28" href="../file/src/sql/tests/schema/create_table_default_boolean.html">src/sql/tests/schema/create_table_default_boolean</a> b/<a href="../file/src/sql/tests/schema/create_table_default_boolean.html">src/sql/tests/schema/create_table_default_boolean</a></b>
+<a href="#h28-0" id="h28-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: CREATE TABLE name (id INTEGER PRIMARY KEY, value BOOLEAN DEFAULT TRUE)
+<a href="#h28-0-1" id="h28-0-1" class="i">+Effect: CreateTable { name: &quot;name&quot; }
+</a> 
+ Storage:
+ CREATE TABLE name (
+<b>diff --git a/<a id="h29" href="../file/src/sql/tests/schema/create_table_default_expr.html">src/sql/tests/schema/create_table_default_expr</a> b/<a href="../file/src/sql/tests/schema/create_table_default_expr.html">src/sql/tests/schema/create_table_default_expr</a></b>
+<a href="#h29-0" id="h29-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: CREATE TABLE name (id INTEGER PRIMARY KEY, value INTEGER DEFAULT 1 + 2 * 3)
+<a href="#h29-0-1" id="h29-0-1" class="i">+Effect: CreateTable { name: &quot;name&quot; }
+</a> 
+ Storage:
+ CREATE TABLE name (
+<b>diff --git a/<a id="h30" href="../file/src/sql/tests/schema/create_table_default_float.html">src/sql/tests/schema/create_table_default_float</a> b/<a href="../file/src/sql/tests/schema/create_table_default_float.html">src/sql/tests/schema/create_table_default_float</a></b>
+<a href="#h30-0" id="h30-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: CREATE TABLE name (id INTEGER PRIMARY KEY, value FLOAT DEFAULT 3.14)
+<a href="#h30-0-1" id="h30-0-1" class="i">+Effect: CreateTable { name: &quot;name&quot; }
+</a> 
+ Storage:
+ CREATE TABLE name (
+<b>diff --git a/<a id="h31" href="../file/src/sql/tests/schema/create_table_default_integer.html">src/sql/tests/schema/create_table_default_integer</a> b/<a href="../file/src/sql/tests/schema/create_table_default_integer.html">src/sql/tests/schema/create_table_default_integer</a></b>
+<a href="#h31-0" id="h31-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: CREATE TABLE name (id INTEGER PRIMARY KEY, value INTEGER DEFAULT 7)
+<a href="#h31-0-1" id="h31-0-1" class="i">+Effect: CreateTable { name: &quot;name&quot; }
+</a> 
+ Storage:
+ CREATE TABLE name (
+<b>diff --git a/<a id="h32" href="../file/src/sql/tests/schema/create_table_default_null.html">src/sql/tests/schema/create_table_default_null</a> b/<a href="../file/src/sql/tests/schema/create_table_default_null.html">src/sql/tests/schema/create_table_default_null</a></b>
+<a href="#h32-0" id="h32-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: CREATE TABLE name (id INTEGER PRIMARY KEY, value STRING DEFAULT NULL)
+<a href="#h32-0-1" id="h32-0-1" class="i">+Effect: CreateTable { name: &quot;name&quot; }
+</a> 
+ Storage:
+ CREATE TABLE name (
+<b>diff --git a/<a id="h33" href="../file/src/sql/tests/schema/create_table_default_string.html">src/sql/tests/schema/create_table_default_string</a> b/<a href="../file/src/sql/tests/schema/create_table_default_string.html">src/sql/tests/schema/create_table_default_string</a></b>
+<a href="#h33-0" id="h33-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: CREATE TABLE name (id INTEGER PRIMARY KEY, value STRING DEFAULT &#39;foo&#39;)
+<a href="#h33-0-1" id="h33-0-1" class="i">+Effect: CreateTable { name: &quot;name&quot; }
+</a> 
+ Storage:
+ CREATE TABLE name (
+<b>diff --git a/<a id="h34" href="../file/src/sql/tests/schema/create_table_name_alphanumeric.html">src/sql/tests/schema/create_table_name_alphanumeric</a> b/<a href="../file/src/sql/tests/schema/create_table_name_alphanumeric.html">src/sql/tests/schema/create_table_name_alphanumeric</a></b>
+<a href="#h34-0" id="h34-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: CREATE TABLE a_123 (id INTEGER PRIMARY KEY)
+<a href="#h34-0-1" id="h34-0-1" class="i">+Effect: CreateTable { name: &quot;a_123&quot; }
+</a> 
+ Storage:
+ CREATE TABLE a_123 (
+<b>diff --git a/<a id="h35" href="../file/src/sql/tests/schema/create_table_name_case.html">src/sql/tests/schema/create_table_name_case</a> b/<a href="../file/src/sql/tests/schema/create_table_name_case.html">src/sql/tests/schema/create_table_name_case</a></b>
+<a href="#h35-0" id="h35-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: CREATE TABLE mIxEd_cAsE (ÄÅÆ STRING PRIMARY KEY)
+<a href="#h35-0-1" id="h35-0-1" class="i">+Effect: CreateTable { name: &quot;mixed_case&quot; }
+</a> 
+ Storage:
+ CREATE TABLE mixed_case (
+<b>diff --git a/<a id="h36" href="../file/src/sql/tests/schema/create_table_name_emoji_quoted.html">src/sql/tests/schema/create_table_name_emoji_quoted</a> b/<a href="../file/src/sql/tests/schema/create_table_name_emoji_quoted.html">src/sql/tests/schema/create_table_name_emoji_quoted</a></b>
+<a href="#h36-0" id="h36-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: CREATE TABLE &quot;👋&quot; (&quot;🆔&quot; INTEGER PRIMARY KEY)
+<a href="#h36-0-1" id="h36-0-1" class="i">+Effect: CreateTable { name: &quot;👋&quot; }
+</a> 
+ Storage:
+ CREATE TABLE &quot;👋&quot; (
+<b>diff --git a/<a id="h37" href="../file/src/sql/tests/schema/create_table_name_japanese.html">src/sql/tests/schema/create_table_name_japanese</a> b/<a href="../file/src/sql/tests/schema/create_table_name_japanese.html">src/sql/tests/schema/create_table_name_japanese</a></b>
+<a href="#h37-0" id="h37-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: CREATE TABLE 表 (身元 INTEGER PRIMARY KEY, 名前 STRING)
+<a href="#h37-0-1" id="h37-0-1" class="i">+Effect: CreateTable { name: &quot;表&quot; }
+</a> 
+ Storage:
+ CREATE TABLE 表 (
+<b>diff --git a/<a id="h38" href="../file/src/sql/tests/schema/create_table_name_keyword_quoted.html">src/sql/tests/schema/create_table_name_keyword_quoted</a> b/<a href="../file/src/sql/tests/schema/create_table_name_keyword_quoted.html">src/sql/tests/schema/create_table_name_keyword_quoted</a></b>
+<a href="#h38-0" id="h38-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: CREATE TABLE &quot;table&quot; (id INTEGER PRIMARY KEY)
+<a href="#h38-0-1" id="h38-0-1" class="i">+Effect: CreateTable { name: &quot;table&quot; }
+</a> 
+ Storage:
+ CREATE TABLE &quot;table&quot; (
+<b>diff --git a/<a id="h39" href="../file/src/sql/tests/schema/create_table_name_quote_double.html">src/sql/tests/schema/create_table_name_quote_double</a> b/<a href="../file/src/sql/tests/schema/create_table_name_quote_double.html">src/sql/tests/schema/create_table_name_quote_double</a></b>
+<a href="#h39-0" id="h39-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: CREATE TABLE &quot;name&quot; (id INTEGER PRIMARY KEY)
+<a href="#h39-0-1" id="h39-0-1" class="i">+Effect: CreateTable { name: &quot;name&quot; }
+</a> 
+ Storage:
+ CREATE TABLE name (
+<b>diff --git a/<a id="h40" href="../file/src/sql/tests/schema/create_table_name_quote_double_escaped.html">src/sql/tests/schema/create_table_name_quote_double_escaped</a> b/<a href="../file/src/sql/tests/schema/create_table_name_quote_double_escaped.html">src/sql/tests/schema/create_table_name_quote_double_escaped</a></b>
+<a href="#h40-0" id="h40-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: CREATE TABLE &quot;name with &quot;&quot; quote&quot; (id INTEGER PRIMARY KEY)
+<a href="#h40-0-1" id="h40-0-1" class="i">+Effect: CreateTable { name: &quot;name with \&quot; quote&quot; }
+</a> 
+ Storage:
+ CREATE TABLE &quot;name with &quot;&quot; quote&quot; (
+<b>diff --git a/<a id="h41" href="../file/src/sql/tests/schema/create_table_name_quote_double_single.html">src/sql/tests/schema/create_table_name_quote_double_single</a> b/<a href="../file/src/sql/tests/schema/create_table_name_quote_double_single.html">src/sql/tests/schema/create_table_name_quote_double_single</a></b>
+<a href="#h41-0" id="h41-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: CREATE TABLE &quot;name with &#39; quote&quot; (id INTEGER PRIMARY KEY)
+<a href="#h41-0-1" id="h41-0-1" class="i">+Effect: CreateTable { name: &quot;name with \&#39; quote&quot; }
+</a> 
+ Storage:
+ CREATE TABLE &quot;name with &#39; quote&quot; (
+<b>diff --git a/<a id="h42" href="../file/src/sql/tests/schema/create_table_null.html">src/sql/tests/schema/create_table_null</a> b/<a href="../file/src/sql/tests/schema/create_table_null.html">src/sql/tests/schema/create_table_null</a></b>
+<a href="#h42-0" id="h42-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: CREATE TABLE name (id INTEGER PRIMARY KEY, value STRING NULL)
+<a href="#h42-0-1" id="h42-0-1" class="i">+Effect: CreateTable { name: &quot;name&quot; }
+</a> 
+ Storage:
+ CREATE TABLE name (
+<b>diff --git a/<a id="h43" href="../file/src/sql/tests/schema/create_table_null_default.html">src/sql/tests/schema/create_table_null_default</a> b/<a href="../file/src/sql/tests/schema/create_table_null_default.html">src/sql/tests/schema/create_table_null_default</a></b>
+<a href="#h43-0" id="h43-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: CREATE TABLE name (id INTEGER PRIMARY KEY, value STRING)
+<a href="#h43-0-1" id="h43-0-1" class="i">+Effect: CreateTable { name: &quot;name&quot; }
+</a> 
+ Storage:
+ CREATE TABLE name (
+<b>diff --git a/<a id="h44" href="../file/src/sql/tests/schema/create_table_null_not.html">src/sql/tests/schema/create_table_null_not</a> b/<a href="../file/src/sql/tests/schema/create_table_null_not.html">src/sql/tests/schema/create_table_null_not</a></b>
+<a href="#h44-0" id="h44-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: CREATE TABLE name (id INTEGER PRIMARY KEY, value STRING NOT NULL)
+<a href="#h44-0-1" id="h44-0-1" class="i">+Effect: CreateTable { name: &quot;name&quot; }
+</a> 
+ Storage:
+ CREATE TABLE name (
+<b>diff --git a/<a id="h45" href="../file/src/sql/tests/schema/create_table_pk_default.html">src/sql/tests/schema/create_table_pk_default</a> b/<a href="../file/src/sql/tests/schema/create_table_pk_default.html">src/sql/tests/schema/create_table_pk_default</a></b>
+<a href="#h45-0" id="h45-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: CREATE TABLE name (id INTEGER PRIMARY KEY DEFAULT 1)
+<a href="#h45-0-1" id="h45-0-1" class="i">+Effect: CreateTable { name: &quot;name&quot; }
+</a> 
+ Storage:
+ CREATE TABLE name (
+<b>diff --git a/<a id="h46" href="../file/src/sql/tests/schema/create_table_pk_unique.html">src/sql/tests/schema/create_table_pk_unique</a> b/<a href="../file/src/sql/tests/schema/create_table_pk_unique.html">src/sql/tests/schema/create_table_pk_unique</a></b>
+<a href="#h46-0" id="h46-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: CREATE TABLE name (id INTEGER PRIMARY KEY UNIQUE)
+<a href="#h46-0-1" id="h46-0-1" class="i">+Effect: CreateTable { name: &quot;name&quot; }
+</a> 
+ Storage:
+ CREATE TABLE name (
+<b>diff --git a/<a id="h47" href="../file/src/sql/tests/schema/create_table_ref.html">src/sql/tests/schema/create_table_ref</a> b/<a href="../file/src/sql/tests/schema/create_table_ref.html">src/sql/tests/schema/create_table_ref</a></b>
+<a href="#h47-0" id="h47-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: CREATE TABLE other (id INTEGER PRIMARY KEY, test_id INTEGER REFERENCES test)
+<a href="#h47-0-1" id="h47-0-1" class="i">+Effect: CreateTable { name: &quot;other&quot; }
+</a> 
+ Storage:
+ CREATE TABLE other (
+<b>diff --git a/<a id="h48" href="../file/src/sql/tests/schema/create_table_ref_multiple.html">src/sql/tests/schema/create_table_ref_multiple</a> b/<a href="../file/src/sql/tests/schema/create_table_ref_multiple.html">src/sql/tests/schema/create_table_ref_multiple</a></b>
+<a href="#h48-0" id="h48-0" class="h">@@ -4,6 +4,7 @@ Query: CREATE TABLE other (
+</a>         test_id_b INTEGER REFERENCES test,
+         test_id_c INTEGER REFERENCES test
+     )
+<a href="#h48-0-3" id="h48-0-3" class="i">+Effect: CreateTable { name: &quot;other&quot; }
+</a> 
+ Storage:
+ CREATE TABLE other (
+<b>diff --git a/<a id="h49" href="../file/src/sql/tests/schema/create_table_ref_self.html">src/sql/tests/schema/create_table_ref_self</a> b/<a href="../file/src/sql/tests/schema/create_table_ref_self.html">src/sql/tests/schema/create_table_ref_self</a></b>
+<a href="#h49-0" id="h49-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: CREATE TABLE other (id INTEGER PRIMARY KEY, self_id INTEGER REFERENCES other)
+<a href="#h49-0-1" id="h49-0-1" class="i">+Effect: CreateTable { name: &quot;other&quot; }
+</a> 
+ Storage:
+ CREATE TABLE other (
+<b>diff --git a/<a id="h50" href="../file/src/sql/tests/schema/create_table_unique.html">src/sql/tests/schema/create_table_unique</a> b/<a href="../file/src/sql/tests/schema/create_table_unique.html">src/sql/tests/schema/create_table_unique</a></b>
+<a href="#h50-0" id="h50-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: CREATE TABLE name (id INTEGER PRIMARY KEY, value STRING UNIQUE)
+<a href="#h50-0-1" id="h50-0-1" class="i">+Effect: CreateTable { name: &quot;name&quot; }
+</a> 
+ Storage:
+ CREATE TABLE name (
+<b>diff --git a/<a id="h51" href="../file/src/sql/tests/schema/create_table_unique_default.html">src/sql/tests/schema/create_table_unique_default</a> b/<a href="../file/src/sql/tests/schema/create_table_unique_default.html">src/sql/tests/schema/create_table_unique_default</a></b>
+<a href="#h51-0" id="h51-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: CREATE TABLE name (id INTEGER PRIMARY KEY, value STRING DEFAULT &#39;foo&#39; UNIQUE)
+<a href="#h51-0-1" id="h51-0-1" class="i">+Effect: CreateTable { name: &quot;name&quot; }
+</a> 
+ Storage:
+ CREATE TABLE name (
+<b>diff --git a/<a id="h52" href="../file/src/sql/tests/schema/create_table_unique_not_null.html">src/sql/tests/schema/create_table_unique_not_null</a> b/<a href="../file/src/sql/tests/schema/create_table_unique_not_null.html">src/sql/tests/schema/create_table_unique_not_null</a></b>
+<a href="#h52-0" id="h52-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: CREATE TABLE name (id INTEGER PRIMARY KEY, value STRING NOT NULL UNIQUE)
+<a href="#h52-0-1" id="h52-0-1" class="i">+Effect: CreateTable { name: &quot;name&quot; }
+</a> 
+ Storage:
+ CREATE TABLE name (
+<b>diff --git a/<a id="h53" href="../file/src/sql/tests/schema/create_table_unique_null.html">src/sql/tests/schema/create_table_unique_null</a> b/<a href="../file/src/sql/tests/schema/create_table_unique_null.html">src/sql/tests/schema/create_table_unique_null</a></b>
+<a href="#h53-0" id="h53-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: CREATE TABLE name (id INTEGER PRIMARY KEY, value STRING NULL UNIQUE)
+<a href="#h53-0-1" id="h53-0-1" class="i">+Effect: CreateTable { name: &quot;name&quot; }
+</a> 
+ Storage:
+ CREATE TABLE name (
+<b>diff --git a/<a id="h54" href="../file/src/sql/tests/schema/delete_ref_noref.html">src/sql/tests/schema/delete_ref_noref</a> b/<a href="../file/src/sql/tests/schema/delete_ref_noref.html">src/sql/tests/schema/delete_ref_noref</a></b>
+<a href="#h54-0" id="h54-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: DELETE FROM target WHERE id = 3
+<a href="#h54-0-1" id="h54-0-1" class="i">+Effect: Delete { count: 1 }
+</a> 
+ Storage:
+ CREATE TABLE source (
+<b>diff --git a/<a id="h55" href="../file/src/sql/tests/schema/delete_ref_self.html">src/sql/tests/schema/delete_ref_self</a> b/<a href="../file/src/sql/tests/schema/delete_ref_self.html">src/sql/tests/schema/delete_ref_self</a></b>
+<a href="#h55-0" id="h55-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: DELETE FROM self WHERE id = 3
+<a href="#h55-0-1" id="h55-0-1" class="i">+Effect: Delete { count: 1 }
+</a> 
+ Storage:
+ CREATE TABLE self (
+<b>diff --git a/<a id="h56" href="../file/src/sql/tests/schema/delete_ref_source.html">src/sql/tests/schema/delete_ref_source</a> b/<a href="../file/src/sql/tests/schema/delete_ref_source.html">src/sql/tests/schema/delete_ref_source</a></b>
+<a href="#h56-0" id="h56-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: DELETE FROM source WHERE id = 1
+<a href="#h56-0-1" id="h56-0-1" class="i">+Effect: Delete { count: 1 }
+</a> 
+ Storage:
+ CREATE TABLE source (
+<b>diff --git a/<a id="h57" href="../file/src/sql/tests/schema/drop_table.html">src/sql/tests/schema/drop_table</a> b/<a href="../file/src/sql/tests/schema/drop_table.html">src/sql/tests/schema/drop_table</a></b>
+<a href="#h57-0" id="h57-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: DROP TABLE a
+<a href="#h57-0-1" id="h57-0-1" class="i">+Effect: DropTable { name: &quot;a&quot; }
+</a> 
+ Storage:
+ CREATE TABLE b (
+<b>diff --git a/<a id="h58" href="../file/src/sql/tests/schema/drop_table_ref_self.html">src/sql/tests/schema/drop_table_ref_self</a> b/<a href="../file/src/sql/tests/schema/drop_table_ref_self.html">src/sql/tests/schema/drop_table_ref_self</a></b>
+<a href="#h58-0" id="h58-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: DROP TABLE self
+<a href="#h58-0-1" id="h58-0-1" class="i">+Effect: DropTable { name: &quot;self&quot; }
+</a> 
+ Storage:
+ CREATE TABLE source (
+<b>diff --git a/<a id="h59" href="../file/src/sql/tests/schema/drop_table_ref_source.html">src/sql/tests/schema/drop_table_ref_source</a> b/<a href="../file/src/sql/tests/schema/drop_table_ref_source.html">src/sql/tests/schema/drop_table_ref_source</a></b>
+<a href="#h59-0" id="h59-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: DROP TABLE source
+<a href="#h59-0-1" id="h59-0-1" class="i">+Effect: DropTable { name: &quot;source&quot; }
+</a> 
+ Storage:
+ CREATE TABLE self (
+<b>diff --git a/<a id="h60" href="../file/src/sql/tests/schema/insert_boolean_false.html">src/sql/tests/schema/insert_boolean_false</a> b/<a href="../file/src/sql/tests/schema/insert_boolean_false.html">src/sql/tests/schema/insert_boolean_false</a></b>
+<a href="#h60-0" id="h60-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: INSERT INTO types (id, &quot;boolean&quot;) VALUES (0, FALSE)
+<a href="#h60-0-1" id="h60-0-1" class="i">+Effect: Create { count: 1 }
+</a> 
+ Storage:
+ CREATE TABLE types (
+<b>diff --git a/<a id="h61" href="../file/src/sql/tests/schema/insert_boolean_null.html">src/sql/tests/schema/insert_boolean_null</a> b/<a href="../file/src/sql/tests/schema/insert_boolean_null.html">src/sql/tests/schema/insert_boolean_null</a></b>
+<a href="#h61-0" id="h61-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: INSERT INTO types (id, &quot;boolean&quot;) VALUES (0, NULL)
+<a href="#h61-0-1" id="h61-0-1" class="i">+Effect: Create { count: 1 }
+</a> 
+ Storage:
+ CREATE TABLE types (
+<b>diff --git a/<a id="h62" href="../file/src/sql/tests/schema/insert_boolean_true.html">src/sql/tests/schema/insert_boolean_true</a> b/<a href="../file/src/sql/tests/schema/insert_boolean_true.html">src/sql/tests/schema/insert_boolean_true</a></b>
+<a href="#h62-0" id="h62-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: INSERT INTO types (id, &quot;boolean&quot;) VALUES (0, TRUE)
+<a href="#h62-0-1" id="h62-0-1" class="i">+Effect: Create { count: 1 }
+</a> 
+ Storage:
+ CREATE TABLE types (
+<b>diff --git a/<a id="h63" href="../file/src/sql/tests/schema/insert_default.html">src/sql/tests/schema/insert_default</a> b/<a href="../file/src/sql/tests/schema/insert_default.html">src/sql/tests/schema/insert_default</a></b>
+<a href="#h63-0" id="h63-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: INSERT INTO defaults (id, required) VALUES (1, TRUE)
+<a href="#h63-0-1" id="h63-0-1" class="i">+Effect: Create { count: 1 }
+</a> 
+ Storage:
+ CREATE TABLE defaults (
+<b>diff --git a/<a id="h64" href="../file/src/sql/tests/schema/insert_default_override.html">src/sql/tests/schema/insert_default_override</a> b/<a href="../file/src/sql/tests/schema/insert_default_override.html">src/sql/tests/schema/insert_default_override</a></b>
+<a href="#h64-0" id="h64-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: INSERT INTO defaults VALUES (1, TRUE, TRUE, FALSE, 2.718, 3, &#39;bar&#39;)
+<a href="#h64-0-1" id="h64-0-1" class="i">+Effect: Create { count: 1 }
+</a> 
+ Storage:
+ CREATE TABLE defaults (
+<b>diff --git a/<a id="h65" href="../file/src/sql/tests/schema/insert_default_override_null.html">src/sql/tests/schema/insert_default_override_null</a> b/<a href="../file/src/sql/tests/schema/insert_default_override_null.html">src/sql/tests/schema/insert_default_override_null</a></b>
+<a href="#h65-0" id="h65-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: INSERT INTO defaults VALUES (1, TRUE, NULL, NULL, NULL, NULL, NULL)
+<a href="#h65-0-1" id="h65-0-1" class="i">+Effect: Create { count: 1 }
+</a> 
+ Storage:
+ CREATE TABLE defaults (
+<b>diff --git a/<a id="h66" href="../file/src/sql/tests/schema/insert_default_unnamed.html">src/sql/tests/schema/insert_default_unnamed</a> b/<a href="../file/src/sql/tests/schema/insert_default_unnamed.html">src/sql/tests/schema/insert_default_unnamed</a></b>
+<a href="#h66-0" id="h66-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: INSERT INTO defaults VALUES (1, TRUE)
+<a href="#h66-0-1" id="h66-0-1" class="i">+Effect: Create { count: 1 }
+</a> 
+ Storage:
+ CREATE TABLE defaults (
+<b>diff --git a/<a id="h67" href="../file/src/sql/tests/schema/insert_float.html">src/sql/tests/schema/insert_float</a> b/<a href="../file/src/sql/tests/schema/insert_float.html">src/sql/tests/schema/insert_float</a></b>
+<a href="#h67-0" id="h67-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: INSERT INTO types (id, &quot;float&quot;) VALUES (0, 3.14)
+<a href="#h67-0-1" id="h67-0-1" class="i">+Effect: Create { count: 1 }
+</a> 
+ Storage:
+ CREATE TABLE types (
+<b>diff --git a/<a id="h68" href="../file/src/sql/tests/schema/insert_float_infinity.html">src/sql/tests/schema/insert_float_infinity</a> b/<a href="../file/src/sql/tests/schema/insert_float_infinity.html">src/sql/tests/schema/insert_float_infinity</a></b>
+<a href="#h68-0" id="h68-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: INSERT INTO types (id, &quot;float&quot;) VALUES (0, INFINITY)
+<a href="#h68-0-1" id="h68-0-1" class="i">+Effect: Create { count: 1 }
+</a> 
+ Storage:
+ CREATE TABLE types (
+<b>diff --git a/<a id="h69" href="../file/src/sql/tests/schema/insert_float_infinity_negative.html">src/sql/tests/schema/insert_float_infinity_negative</a> b/<a href="../file/src/sql/tests/schema/insert_float_infinity_negative.html">src/sql/tests/schema/insert_float_infinity_negative</a></b>
+<a href="#h69-0" id="h69-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: INSERT INTO types (id, &quot;float&quot;) VALUES (0, -INFINITY)
+<a href="#h69-0-1" id="h69-0-1" class="i">+Effect: Create { count: 1 }
+</a> 
+ Storage:
+ CREATE TABLE types (
+<b>diff --git a/<a id="h70" href="../file/src/sql/tests/schema/insert_float_max.html">src/sql/tests/schema/insert_float_max</a> b/<a href="../file/src/sql/tests/schema/insert_float_max.html">src/sql/tests/schema/insert_float_max</a></b>
+<a href="#h70-0" id="h70-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: INSERT INTO types (id, &quot;float&quot;) VALUES (0, 1.23456789012345e308)
+<a href="#h70-0-1" id="h70-0-1" class="i">+Effect: Create { count: 1 }
+</a> 
+ Storage:
+ CREATE TABLE types (
+<b>diff --git a/<a id="h71" href="../file/src/sql/tests/schema/insert_float_max_negative.html">src/sql/tests/schema/insert_float_max_negative</a> b/<a href="../file/src/sql/tests/schema/insert_float_max_negative.html">src/sql/tests/schema/insert_float_max_negative</a></b>
+<a href="#h71-0" id="h71-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: INSERT INTO types (id, &quot;float&quot;) VALUES (0, -1.23456789012345e308)
+<a href="#h71-0-1" id="h71-0-1" class="i">+Effect: Create { count: 1 }
+</a> 
+ Storage:
+ CREATE TABLE types (
+<b>diff --git a/<a id="h72" href="../file/src/sql/tests/schema/insert_float_min.html">src/sql/tests/schema/insert_float_min</a> b/<a href="../file/src/sql/tests/schema/insert_float_min.html">src/sql/tests/schema/insert_float_min</a></b>
+<a href="#h72-0" id="h72-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: INSERT INTO types (id, &quot;float&quot;) VALUES (0, 1.23456789012345e-307)
+<a href="#h72-0-1" id="h72-0-1" class="i">+Effect: Create { count: 1 }
+</a> 
+ Storage:
+ CREATE TABLE types (
+<b>diff --git a/<a id="h73" href="../file/src/sql/tests/schema/insert_float_min_negative.html">src/sql/tests/schema/insert_float_min_negative</a> b/<a href="../file/src/sql/tests/schema/insert_float_min_negative.html">src/sql/tests/schema/insert_float_min_negative</a></b>
+<a href="#h73-0" id="h73-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: INSERT INTO types (id, &quot;float&quot;) VALUES (0, -1.23456789012345e-307)
+<a href="#h73-0-1" id="h73-0-1" class="i">+Effect: Create { count: 1 }
+</a> 
+ Storage:
+ CREATE TABLE types (
+<b>diff --git a/<a id="h74" href="../file/src/sql/tests/schema/insert_float_min_round.html">src/sql/tests/schema/insert_float_min_round</a> b/<a href="../file/src/sql/tests/schema/insert_float_min_round.html">src/sql/tests/schema/insert_float_min_round</a></b>
+<a href="#h74-0" id="h74-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: INSERT INTO types (id, &quot;float&quot;) VALUES (0, 1.23456789012345e-323)
+<a href="#h74-0-1" id="h74-0-1" class="i">+Effect: Create { count: 1 }
+</a> 
+ Storage:
+ CREATE TABLE types (
+<b>diff --git a/<a id="h75" href="../file/src/sql/tests/schema/insert_float_nan.html">src/sql/tests/schema/insert_float_nan</a> b/<a href="../file/src/sql/tests/schema/insert_float_nan.html">src/sql/tests/schema/insert_float_nan</a></b>
+<a href="#h75-0" id="h75-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: INSERT INTO types (id, &quot;float&quot;) VALUES (0, NAN)
+<a href="#h75-0-1" id="h75-0-1" class="i">+Effect: Create { count: 1 }
+</a> 
+ Storage:
+ CREATE TABLE types (
+<b>diff --git a/<a id="h76" href="../file/src/sql/tests/schema/insert_float_null.html">src/sql/tests/schema/insert_float_null</a> b/<a href="../file/src/sql/tests/schema/insert_float_null.html">src/sql/tests/schema/insert_float_null</a></b>
+<a href="#h76-0" id="h76-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: INSERT INTO types (id, &quot;float&quot;) VALUES (0, NULL)
+<a href="#h76-0-1" id="h76-0-1" class="i">+Effect: Create { count: 1 }
+</a> 
+ Storage:
+ CREATE TABLE types (
+<b>diff --git a/<a id="h77" href="../file/src/sql/tests/schema/insert_integer.html">src/sql/tests/schema/insert_integer</a> b/<a href="../file/src/sql/tests/schema/insert_integer.html">src/sql/tests/schema/insert_integer</a></b>
+<a href="#h77-0" id="h77-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: INSERT INTO types (id, &quot;integer&quot;) VALUES (0, 1)
+<a href="#h77-0-1" id="h77-0-1" class="i">+Effect: Create { count: 1 }
+</a> 
+ Storage:
+ CREATE TABLE types (
+<b>diff --git a/<a id="h78" href="../file/src/sql/tests/schema/insert_integer_max.html">src/sql/tests/schema/insert_integer_max</a> b/<a href="../file/src/sql/tests/schema/insert_integer_max.html">src/sql/tests/schema/insert_integer_max</a></b>
+<a href="#h78-0" id="h78-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: INSERT INTO types (id, &quot;integer&quot;) VALUES (0, 9223372036854775807)
+<a href="#h78-0-1" id="h78-0-1" class="i">+Effect: Create { count: 1 }
+</a> 
+ Storage:
+ CREATE TABLE types (
+<b>diff --git a/<a id="h79" href="../file/src/sql/tests/schema/insert_integer_min.html">src/sql/tests/schema/insert_integer_min</a> b/<a href="../file/src/sql/tests/schema/insert_integer_min.html">src/sql/tests/schema/insert_integer_min</a></b>
+<a href="#h79-0" id="h79-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: INSERT INTO types (id, &quot;integer&quot;) VALUES (0, -9223372036854775807)
+<a href="#h79-0-1" id="h79-0-1" class="i">+Effect: Create { count: 1 }
+</a> 
+ Storage:
+ CREATE TABLE types (
+<b>diff --git a/<a id="h80" href="../file/src/sql/tests/schema/insert_integer_null.html">src/sql/tests/schema/insert_integer_null</a> b/<a href="../file/src/sql/tests/schema/insert_integer_null.html">src/sql/tests/schema/insert_integer_null</a></b>
+<a href="#h80-0" id="h80-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: INSERT INTO types (id, &quot;integer&quot;) VALUES (0, NULL)
+<a href="#h80-0-1" id="h80-0-1" class="i">+Effect: Create { count: 1 }
+</a> 
+ Storage:
+ CREATE TABLE types (
+<b>diff --git a/<a id="h81" href="../file/src/sql/tests/schema/insert_nulls.html">src/sql/tests/schema/insert_nulls</a> b/<a href="../file/src/sql/tests/schema/insert_nulls.html">src/sql/tests/schema/insert_nulls</a></b>
+<a href="#h81-0" id="h81-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: INSERT INTO nulls (id, &quot;null&quot;, not_null, &quot;default&quot;) VALUES (1, NULL, TRUE, NULL)
+<a href="#h81-0-1" id="h81-0-1" class="i">+Effect: Create { count: 1 }
+</a> 
+ Storage:
+ CREATE TABLE nulls (
+<b>diff --git a/<a id="h82" href="../file/src/sql/tests/schema/insert_nulls_default.html">src/sql/tests/schema/insert_nulls_default</a> b/<a href="../file/src/sql/tests/schema/insert_nulls_default.html">src/sql/tests/schema/insert_nulls_default</a></b>
+<a href="#h82-0" id="h82-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: INSERT INTO nulls (id, &quot;null&quot;, not_null) VALUES (1, NULL, TRUE)
+<a href="#h82-0-1" id="h82-0-1" class="i">+Effect: Create { count: 1 }
+</a> 
+ Storage:
+ CREATE TABLE nulls (
+<b>diff --git a/<a id="h83" href="../file/src/sql/tests/schema/insert_pk_boolean.html">src/sql/tests/schema/insert_pk_boolean</a> b/<a href="../file/src/sql/tests/schema/insert_pk_boolean.html">src/sql/tests/schema/insert_pk_boolean</a></b>
+<a href="#h83-0" id="h83-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: INSERT INTO &quot;boolean&quot; VALUES (TRUE)
+<a href="#h83-0-1" id="h83-0-1" class="i">+Effect: Create { count: 1 }
+</a> 
+ Storage:
+ CREATE TABLE &quot;boolean&quot; (
+<b>diff --git a/<a id="h84" href="../file/src/sql/tests/schema/insert_pk_float.html">src/sql/tests/schema/insert_pk_float</a> b/<a href="../file/src/sql/tests/schema/insert_pk_float.html">src/sql/tests/schema/insert_pk_float</a></b>
+<a href="#h84-0" id="h84-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: INSERT INTO &quot;float&quot; VALUES (1.618)
+<a href="#h84-0-1" id="h84-0-1" class="i">+Effect: Create { count: 1 }
+</a> 
+ Storage:
+ CREATE TABLE &quot;float&quot; (
+<b>diff --git a/<a id="h85" href="../file/src/sql/tests/schema/insert_pk_float_negative.html">src/sql/tests/schema/insert_pk_float_negative</a> b/<a href="../file/src/sql/tests/schema/insert_pk_float_negative.html">src/sql/tests/schema/insert_pk_float_negative</a></b>
+<a href="#h85-0" id="h85-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: INSERT INTO &quot;float&quot; VALUES (-3.14)
+<a href="#h85-0-1" id="h85-0-1" class="i">+Effect: Create { count: 1 }
+</a> 
+ Storage:
+ CREATE TABLE &quot;float&quot; (
+<b>diff --git a/<a id="h86" href="../file/src/sql/tests/schema/insert_pk_float_zero.html">src/sql/tests/schema/insert_pk_float_zero</a> b/<a href="../file/src/sql/tests/schema/insert_pk_float_zero.html">src/sql/tests/schema/insert_pk_float_zero</a></b>
+<a href="#h86-0" id="h86-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: INSERT INTO &quot;float&quot; VALUES (0.0)
+<a href="#h86-0-1" id="h86-0-1" class="i">+Effect: Create { count: 1 }
+</a> 
+ Storage:
+ CREATE TABLE &quot;float&quot; (
+<b>diff --git a/<a id="h87" href="../file/src/sql/tests/schema/insert_pk_integer.html">src/sql/tests/schema/insert_pk_integer</a> b/<a href="../file/src/sql/tests/schema/insert_pk_integer.html">src/sql/tests/schema/insert_pk_integer</a></b>
+<a href="#h87-0" id="h87-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: INSERT INTO &quot;integer&quot; VALUES (3)
+<a href="#h87-0-1" id="h87-0-1" class="i">+Effect: Create { count: 1 }
+</a> 
+ Storage:
+ CREATE TABLE &quot;integer&quot; (
+<b>diff --git a/<a id="h88" href="../file/src/sql/tests/schema/insert_pk_integer_negative.html">src/sql/tests/schema/insert_pk_integer_negative</a> b/<a href="../file/src/sql/tests/schema/insert_pk_integer_negative.html">src/sql/tests/schema/insert_pk_integer_negative</a></b>
+<a href="#h88-0" id="h88-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: INSERT INTO &quot;integer&quot; VALUES (-1)
+<a href="#h88-0-1" id="h88-0-1" class="i">+Effect: Create { count: 1 }
+</a> 
+ Storage:
+ CREATE TABLE &quot;integer&quot; (
+<b>diff --git a/<a id="h89" href="../file/src/sql/tests/schema/insert_pk_integer_zero.html">src/sql/tests/schema/insert_pk_integer_zero</a> b/<a href="../file/src/sql/tests/schema/insert_pk_integer_zero.html">src/sql/tests/schema/insert_pk_integer_zero</a></b>
+<a href="#h89-0" id="h89-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: INSERT INTO &quot;integer&quot; VALUES (0)
+<a href="#h89-0-1" id="h89-0-1" class="i">+Effect: Create { count: 1 }
+</a> 
+ Storage:
+ CREATE TABLE &quot;integer&quot; (
+<b>diff --git a/<a id="h90" href="../file/src/sql/tests/schema/insert_pk_string.html">src/sql/tests/schema/insert_pk_string</a> b/<a href="../file/src/sql/tests/schema/insert_pk_string.html">src/sql/tests/schema/insert_pk_string</a></b>
+<a href="#h90-0" id="h90-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: INSERT INTO &quot;string&quot; VALUES (&#39;baz&#39;)
+<a href="#h90-0-1" id="h90-0-1" class="i">+Effect: Create { count: 1 }
+</a> 
+ Storage:
+ CREATE TABLE &quot;string&quot; (
+<b>diff --git a/<a id="h91" href="../file/src/sql/tests/schema/insert_pk_string_case.html">src/sql/tests/schema/insert_pk_string_case</a> b/<a href="../file/src/sql/tests/schema/insert_pk_string_case.html">src/sql/tests/schema/insert_pk_string_case</a></b>
+<a href="#h91-0" id="h91-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: INSERT INTO &quot;string&quot; VALUES (&#39;Foo&#39;)
+<a href="#h91-0-1" id="h91-0-1" class="i">+Effect: Create { count: 1 }
+</a> 
+ Storage:
+ CREATE TABLE &quot;string&quot; (
+<b>diff --git a/<a id="h92" href="../file/src/sql/tests/schema/insert_pk_string_empty.html">src/sql/tests/schema/insert_pk_string_empty</a> b/<a href="../file/src/sql/tests/schema/insert_pk_string_empty.html">src/sql/tests/schema/insert_pk_string_empty</a></b>
+<a href="#h92-0" id="h92-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: INSERT INTO &quot;string&quot; VALUES (&#39;&#39;)
+<a href="#h92-0-1" id="h92-0-1" class="i">+Effect: Create { count: 1 }
+</a> 
+ Storage:
+ CREATE TABLE &quot;string&quot; (
+<b>diff --git a/<a id="h93" href="../file/src/sql/tests/schema/insert_ref_boolean.html">src/sql/tests/schema/insert_ref_boolean</a> b/<a href="../file/src/sql/tests/schema/insert_ref_boolean.html">src/sql/tests/schema/insert_ref_boolean</a></b>
+<a href="#h93-0" id="h93-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: INSERT INTO source VALUES (1, TRUE)
+<a href="#h93-0-1" id="h93-0-1" class="i">+Effect: Create { count: 1 }
+</a> 
+ Storage:
+ CREATE TABLE source (
+<b>diff --git a/<a id="h94" href="../file/src/sql/tests/schema/insert_ref_boolean_null.html">src/sql/tests/schema/insert_ref_boolean_null</a> b/<a href="../file/src/sql/tests/schema/insert_ref_boolean_null.html">src/sql/tests/schema/insert_ref_boolean_null</a></b>
+<a href="#h94-0" id="h94-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: INSERT INTO source VALUES (1, NULL)
+<a href="#h94-0-1" id="h94-0-1" class="i">+Effect: Create { count: 1 }
+</a> 
+ Storage:
+ CREATE TABLE source (
+<b>diff --git a/<a id="h95" href="../file/src/sql/tests/schema/insert_ref_float.html">src/sql/tests/schema/insert_ref_float</a> b/<a href="../file/src/sql/tests/schema/insert_ref_float.html">src/sql/tests/schema/insert_ref_float</a></b>
+<a href="#h95-0" id="h95-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: INSERT INTO source VALUES (1, 3.14)
+<a href="#h95-0-1" id="h95-0-1" class="i">+Effect: Create { count: 1 }
+</a> 
+ Storage:
+ CREATE TABLE source (
+<b>diff --git a/<a id="h96" href="../file/src/sql/tests/schema/insert_ref_float_null.html">src/sql/tests/schema/insert_ref_float_null</a> b/<a href="../file/src/sql/tests/schema/insert_ref_float_null.html">src/sql/tests/schema/insert_ref_float_null</a></b>
+<a href="#h96-0" id="h96-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: INSERT INTO source VALUES (1, NULL)
+<a href="#h96-0-1" id="h96-0-1" class="i">+Effect: Create { count: 1 }
+</a> 
+ Storage:
+ CREATE TABLE source (
+<b>diff --git a/<a id="h97" href="../file/src/sql/tests/schema/insert_ref_integer.html">src/sql/tests/schema/insert_ref_integer</a> b/<a href="../file/src/sql/tests/schema/insert_ref_integer.html">src/sql/tests/schema/insert_ref_integer</a></b>
+<a href="#h97-0" id="h97-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: INSERT INTO source VALUES (1, 1)
+<a href="#h97-0-1" id="h97-0-1" class="i">+Effect: Create { count: 1 }
+</a> 
+ Storage:
+ CREATE TABLE source (
+<b>diff --git a/<a id="h98" href="../file/src/sql/tests/schema/insert_ref_integer_null.html">src/sql/tests/schema/insert_ref_integer_null</a> b/<a href="../file/src/sql/tests/schema/insert_ref_integer_null.html">src/sql/tests/schema/insert_ref_integer_null</a></b>
+<a href="#h98-0" id="h98-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: INSERT INTO source VALUES (1, NULL)
+<a href="#h98-0-1" id="h98-0-1" class="i">+Effect: Create { count: 1 }
+</a> 
+ Storage:
+ CREATE TABLE source (
+<b>diff --git a/<a id="h99" href="../file/src/sql/tests/schema/insert_ref_self.html">src/sql/tests/schema/insert_ref_self</a> b/<a href="../file/src/sql/tests/schema/insert_ref_self.html">src/sql/tests/schema/insert_ref_self</a></b>
+<a href="#h99-0" id="h99-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: INSERT INTO self VALUES (5, 1, &#39;e&#39;)
+<a href="#h99-0-1" id="h99-0-1" class="i">+Effect: Create { count: 1 }
+</a> 
+ Storage:
+ CREATE TABLE self (
+<b>diff --git a/<a id="h100" href="../file/src/sql/tests/schema/insert_ref_self_null.html">src/sql/tests/schema/insert_ref_self_null</a> b/<a href="../file/src/sql/tests/schema/insert_ref_self_null.html">src/sql/tests/schema/insert_ref_self_null</a></b>
+<a href="#h100-0" id="h100-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: INSERT INTO self VALUES (5, NULL, &#39;e&#39;)
+<a href="#h100-0-1" id="h100-0-1" class="i">+Effect: Create { count: 1 }
+</a> 
+ Storage:
+ CREATE TABLE self (
+<b>diff --git a/<a id="h101" href="../file/src/sql/tests/schema/insert_ref_self_self.html">src/sql/tests/schema/insert_ref_self_self</a> b/<a href="../file/src/sql/tests/schema/insert_ref_self_self.html">src/sql/tests/schema/insert_ref_self_self</a></b>
+<a href="#h101-0" id="h101-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: INSERT INTO self VALUES (5, 5, &#39;e&#39;)
+<a href="#h101-0-1" id="h101-0-1" class="i">+Effect: Create { count: 1 }
+</a> 
+ Storage:
+ CREATE TABLE self (
+<b>diff --git a/<a id="h102" href="../file/src/sql/tests/schema/insert_ref_string.html">src/sql/tests/schema/insert_ref_string</a> b/<a href="../file/src/sql/tests/schema/insert_ref_string.html">src/sql/tests/schema/insert_ref_string</a></b>
+<a href="#h102-0" id="h102-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: INSERT INTO source VALUES (1, &#39;foo&#39;)
+<a href="#h102-0-1" id="h102-0-1" class="i">+Effect: Create { count: 1 }
+</a> 
+ Storage:
+ CREATE TABLE source (
+<b>diff --git a/<a id="h103" href="../file/src/sql/tests/schema/insert_ref_string_null.html">src/sql/tests/schema/insert_ref_string_null</a> b/<a href="../file/src/sql/tests/schema/insert_ref_string_null.html">src/sql/tests/schema/insert_ref_string_null</a></b>
+<a href="#h103-0" id="h103-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: INSERT INTO source VALUES (1, NULL)
+<a href="#h103-0-1" id="h103-0-1" class="i">+Effect: Create { count: 1 }
+</a> 
+ Storage:
+ CREATE TABLE source (
+<b>diff --git a/<a id="h104" href="../file/src/sql/tests/schema/insert_string.html">src/sql/tests/schema/insert_string</a> b/<a href="../file/src/sql/tests/schema/insert_string.html">src/sql/tests/schema/insert_string</a></b>
+<a href="#h104-0" id="h104-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: INSERT INTO types (id, &quot;string&quot;) VALUES (0, &#39;abc&#39;)
+<a href="#h104-0-1" id="h104-0-1" class="i">+Effect: Create { count: 1 }
+</a> 
+ Storage:
+ CREATE TABLE types (
+<b>diff --git a/<a id="h105" href="../file/src/sql/tests/schema/insert_string_1024.html">src/sql/tests/schema/insert_string_1024</a> b/<a href="../file/src/sql/tests/schema/insert_string_1024.html">src/sql/tests/schema/insert_string_1024</a></b>
+<a href="#h105-0" id="h105-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: INSERT INTO types (id, &quot;string&quot;) VALUES (0, &#39;aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa&#39;)
+<a href="#h105-0-1" id="h105-0-1" class="i">+Effect: Create { count: 1 }
+</a> 
+ Storage:
+ CREATE TABLE types (
+<b>diff --git a/<a id="h106" href="../file/src/sql/tests/schema/insert_string_1024_unicode.html">src/sql/tests/schema/insert_string_1024_unicode</a> b/<a href="../file/src/sql/tests/schema/insert_string_1024_unicode.html">src/sql/tests/schema/insert_string_1024_unicode</a></b>
+<a href="#h106-0" id="h106-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: INSERT INTO types (id, &quot;string&quot;) VALUES (0, &#39;𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈𐍈&#39;)
+<a href="#h106-0-1" id="h106-0-1" class="i">+Effect: Create { count: 1 }
+</a> 
+ Storage:
+ CREATE TABLE types (
+<b>diff --git a/<a id="h107" href="../file/src/sql/tests/schema/insert_string_empty.html">src/sql/tests/schema/insert_string_empty</a> b/<a href="../file/src/sql/tests/schema/insert_string_empty.html">src/sql/tests/schema/insert_string_empty</a></b>
+<a href="#h107-0" id="h107-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: INSERT INTO types (id, &quot;string&quot;) VALUES (0, &#39;&#39;)
+<a href="#h107-0-1" id="h107-0-1" class="i">+Effect: Create { count: 1 }
+</a> 
+ Storage:
+ CREATE TABLE types (
+<b>diff --git a/<a id="h108" href="../file/src/sql/tests/schema/insert_string_null.html">src/sql/tests/schema/insert_string_null</a> b/<a href="../file/src/sql/tests/schema/insert_string_null.html">src/sql/tests/schema/insert_string_null</a></b>
+<a href="#h108-0" id="h108-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: INSERT INTO types (id, &quot;string&quot;) VALUES (0, NULL)
+<a href="#h108-0-1" id="h108-0-1" class="i">+Effect: Create { count: 1 }
+</a> 
+ Storage:
+ CREATE TABLE types (
+<b>diff --git a/<a id="h109" href="../file/src/sql/tests/schema/insert_string_unicode.html">src/sql/tests/schema/insert_string_unicode</a> b/<a href="../file/src/sql/tests/schema/insert_string_unicode.html">src/sql/tests/schema/insert_string_unicode</a></b>
+<a href="#h109-0" id="h109-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: INSERT INTO types (id, &quot;string&quot;) VALUES (0, &#39; Hi! 👋&#39;)
+<a href="#h109-0-1" id="h109-0-1" class="i">+Effect: Create { count: 1 }
+</a> 
+ Storage:
+ CREATE TABLE types (
+<b>diff --git a/<a id="h110" href="../file/src/sql/tests/schema/insert_unique_boolean.html">src/sql/tests/schema/insert_unique_boolean</a> b/<a href="../file/src/sql/tests/schema/insert_unique_boolean.html">src/sql/tests/schema/insert_unique_boolean</a></b>
+<a href="#h110-0" id="h110-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: INSERT INTO &quot;unique&quot; (id, &quot;boolean&quot;) VALUES (2, FALSE)
+<a href="#h110-0-1" id="h110-0-1" class="i">+Effect: Create { count: 1 }
+</a> 
+ Storage:
+ CREATE TABLE &quot;unique&quot; (
+<b>diff --git a/<a id="h111" href="../file/src/sql/tests/schema/insert_unique_float.html">src/sql/tests/schema/insert_unique_float</a> b/<a href="../file/src/sql/tests/schema/insert_unique_float.html">src/sql/tests/schema/insert_unique_float</a></b>
+<a href="#h111-0" id="h111-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: INSERT INTO &quot;unique&quot; (id, &quot;float&quot;) VALUES (2, 2.718)
+<a href="#h111-0-1" id="h111-0-1" class="i">+Effect: Create { count: 1 }
+</a> 
+ Storage:
+ CREATE TABLE &quot;unique&quot; (
+<b>diff --git a/<a id="h112" href="../file/src/sql/tests/schema/insert_unique_integer.html">src/sql/tests/schema/insert_unique_integer</a> b/<a href="../file/src/sql/tests/schema/insert_unique_integer.html">src/sql/tests/schema/insert_unique_integer</a></b>
+<a href="#h112-0" id="h112-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: INSERT INTO &quot;unique&quot; (id, &quot;integer&quot;) VALUES (2, 3)
+<a href="#h112-0-1" id="h112-0-1" class="i">+Effect: Create { count: 1 }
+</a> 
+ Storage:
+ CREATE TABLE &quot;unique&quot; (
+<b>diff --git a/<a id="h113" href="../file/src/sql/tests/schema/insert_unique_nulls.html">src/sql/tests/schema/insert_unique_nulls</a> b/<a href="../file/src/sql/tests/schema/insert_unique_nulls.html">src/sql/tests/schema/insert_unique_nulls</a></b>
+<a href="#h113-0" id="h113-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: INSERT INTO &quot;unique&quot; VALUES (2, NULL, NULL, NULL, NULL)
+<a href="#h113-0-1" id="h113-0-1" class="i">+Effect: Create { count: 1 }
+</a> 
+ Storage:
+ CREATE TABLE &quot;unique&quot; (
+<b>diff --git a/<a id="h114" href="../file/src/sql/tests/schema/insert_unique_string.html">src/sql/tests/schema/insert_unique_string</a> b/<a href="../file/src/sql/tests/schema/insert_unique_string.html">src/sql/tests/schema/insert_unique_string</a></b>
+<a href="#h114-0" id="h114-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: INSERT INTO &quot;unique&quot; (id, &quot;string&quot;) VALUES (2, &#39;bar&#39;)
+<a href="#h114-0-1" id="h114-0-1" class="i">+Effect: Create { count: 1 }
+</a> 
+ Storage:
+ CREATE TABLE &quot;unique&quot; (
+<b>diff --git a/<a id="h115" href="../file/src/sql/tests/schema/insert_unique_string_case.html">src/sql/tests/schema/insert_unique_string_case</a> b/<a href="../file/src/sql/tests/schema/insert_unique_string_case.html">src/sql/tests/schema/insert_unique_string_case</a></b>
+<a href="#h115-0" id="h115-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: INSERT INTO &quot;unique&quot; (id, &quot;string&quot;) VALUES (2, &#39;Foo&#39;)
+<a href="#h115-0-1" id="h115-0-1" class="i">+Effect: Create { count: 1 }
+</a> 
+ Storage:
+ CREATE TABLE &quot;unique&quot; (
+<b>diff --git a/<a id="h116" href="../file/src/sql/tests/schema/update_integer.html">src/sql/tests/schema/update_integer</a> b/<a href="../file/src/sql/tests/schema/update_integer.html">src/sql/tests/schema/update_integer</a></b>
+<a href="#h116-0" id="h116-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: UPDATE test SET value = 3
+<a href="#h116-0-1" id="h116-0-1" class="i">+Effect: Update { count: 1 }
+</a> 
+ Storage:
+ CREATE TABLE test (
+<b>diff --git a/<a id="h117" href="../file/src/sql/tests/schema/update_integer_null.html">src/sql/tests/schema/update_integer_null</a> b/<a href="../file/src/sql/tests/schema/update_integer_null.html">src/sql/tests/schema/update_integer_null</a></b>
+<a href="#h117-0" id="h117-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: UPDATE test SET value = NULL
+<a href="#h117-0-1" id="h117-0-1" class="i">+Effect: Update { count: 1 }
+</a> 
+ Storage:
+ CREATE TABLE test (
+<b>diff --git a/<a id="h118" href="../file/src/sql/tests/schema/update_pk_boolean.html">src/sql/tests/schema/update_pk_boolean</a> b/<a href="../file/src/sql/tests/schema/update_pk_boolean.html">src/sql/tests/schema/update_pk_boolean</a></b>
+<a href="#h118-0" id="h118-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: UPDATE &quot;boolean&quot; SET pk = TRUE WHERE pk = FALSE
+<a href="#h118-0-1" id="h118-0-1" class="i">+Effect: Update { count: 1 }
+</a> 
+ Storage:
+ CREATE TABLE &quot;boolean&quot; (
+<b>diff --git a/<a id="h119" href="../file/src/sql/tests/schema/update_pk_float.html">src/sql/tests/schema/update_pk_float</a> b/<a href="../file/src/sql/tests/schema/update_pk_float.html">src/sql/tests/schema/update_pk_float</a></b>
+<a href="#h119-0" id="h119-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: UPDATE &quot;float&quot; SET pk = 1.618 WHERE pk = 3.14
+<a href="#h119-0-1" id="h119-0-1" class="i">+Effect: Update { count: 1 }
+</a> 
+ Storage:
+ CREATE TABLE &quot;float&quot; (
+<b>diff --git a/<a id="h120" href="../file/src/sql/tests/schema/update_pk_integer.html">src/sql/tests/schema/update_pk_integer</a> b/<a href="../file/src/sql/tests/schema/update_pk_integer.html">src/sql/tests/schema/update_pk_integer</a></b>
+<a href="#h120-0" id="h120-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: UPDATE &quot;integer&quot; SET pk = 3 WHERE pk = 2
+<a href="#h120-0-1" id="h120-0-1" class="i">+Effect: Update { count: 1 }
+</a> 
+ Storage:
+ CREATE TABLE &quot;integer&quot; (
+<b>diff --git a/<a id="h121" href="../file/src/sql/tests/schema/update_pk_string.html">src/sql/tests/schema/update_pk_string</a> b/<a href="../file/src/sql/tests/schema/update_pk_string.html">src/sql/tests/schema/update_pk_string</a></b>
+<a href="#h121-0" id="h121-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: UPDATE &quot;string&quot; SET pk = &#39;baz&#39; WHERE pk = &#39;foo&#39;
+<a href="#h121-0-1" id="h121-0-1" class="i">+Effect: Update { count: 1 }
+</a> 
+ Storage:
+ CREATE TABLE &quot;string&quot; (
+<b>diff --git a/<a id="h122" href="../file/src/sql/tests/schema/update_pk_string_case.html">src/sql/tests/schema/update_pk_string_case</a> b/<a href="../file/src/sql/tests/schema/update_pk_string_case.html">src/sql/tests/schema/update_pk_string_case</a></b>
+<a href="#h122-0" id="h122-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: UPDATE &quot;string&quot; SET pk = &#39;Bar&#39; WHERE pk = &#39;foo&#39;
+<a href="#h122-0-1" id="h122-0-1" class="i">+Effect: Update { count: 1 }
+</a> 
+ Storage:
+ CREATE TABLE &quot;string&quot; (
+<b>diff --git a/<a id="h123" href="../file/src/sql/tests/schema/update_ref_pk_noref.html">src/sql/tests/schema/update_ref_pk_noref</a> b/<a href="../file/src/sql/tests/schema/update_ref_pk_noref.html">src/sql/tests/schema/update_ref_pk_noref</a></b>
+<a href="#h123-0" id="h123-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: UPDATE target SET id = 9 WHERE id = 3
+<a href="#h123-0-1" id="h123-0-1" class="i">+Effect: Update { count: 1 }
+</a> 
+ Storage:
+ CREATE TABLE source (
+<b>diff --git a/<a id="h124" href="../file/src/sql/tests/schema/update_ref_self_pk_noref.html">src/sql/tests/schema/update_ref_self_pk_noref</a> b/<a href="../file/src/sql/tests/schema/update_ref_self_pk_noref.html">src/sql/tests/schema/update_ref_self_pk_noref</a></b>
+<a href="#h124-0" id="h124-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: UPDATE self SET id = 9 WHERE id = 2
+<a href="#h124-0-1" id="h124-0-1" class="i">+Effect: Update { count: 1 }
+</a> 
+ Storage:
+ CREATE TABLE self (
+<b>diff --git a/<a id="h125" href="../file/src/sql/tests/schema/update_ref_self_self.html">src/sql/tests/schema/update_ref_self_self</a> b/<a href="../file/src/sql/tests/schema/update_ref_self_self.html">src/sql/tests/schema/update_ref_self_self</a></b>
+<a href="#h125-0" id="h125-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: UPDATE self SET self_id = 2 WHERE id = 2
+<a href="#h125-0-1" id="h125-0-1" class="i">+Effect: Update { count: 1 }
+</a> 
+ Storage:
+ CREATE TABLE self (
+<b>diff --git a/<a id="h126" href="../file/src/sql/tests/schema/update_ref_self_value.html">src/sql/tests/schema/update_ref_self_value</a> b/<a href="../file/src/sql/tests/schema/update_ref_self_value.html">src/sql/tests/schema/update_ref_self_value</a></b>
+<a href="#h126-0" id="h126-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: UPDATE self SET value = &#39;x&#39; WHERE id = 1
+<a href="#h126-0-1" id="h126-0-1" class="i">+Effect: Update { count: 1 }
+</a> 
+ Storage:
+ CREATE TABLE self (
+<b>diff --git a/<a id="h127" href="../file/src/sql/tests/schema/update_ref_source.html">src/sql/tests/schema/update_ref_source</a> b/<a href="../file/src/sql/tests/schema/update_ref_source.html">src/sql/tests/schema/update_ref_source</a></b>
+<a href="#h127-0" id="h127-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: UPDATE source SET target_id = 1 WHERE id = 4
+<a href="#h127-0-1" id="h127-0-1" class="i">+Effect: Update { count: 1 }
+</a> 
+ Storage:
+ CREATE TABLE source (
+<b>diff --git a/<a id="h128" href="../file/src/sql/tests/schema/update_ref_source_null.html">src/sql/tests/schema/update_ref_source_null</a> b/<a href="../file/src/sql/tests/schema/update_ref_source_null.html">src/sql/tests/schema/update_ref_source_null</a></b>
+<a href="#h128-0" id="h128-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: UPDATE source SET target_id = NULL WHERE id = 2
+<a href="#h128-0-1" id="h128-0-1" class="i">+Effect: Update { count: 1 }
+</a> 
+ Storage:
+ CREATE TABLE source (
+<b>diff --git a/<a id="h129" href="../file/src/sql/tests/schema/update_ref_value.html">src/sql/tests/schema/update_ref_value</a> b/<a href="../file/src/sql/tests/schema/update_ref_value.html">src/sql/tests/schema/update_ref_value</a></b>
+<a href="#h129-0" id="h129-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: UPDATE target SET value = &#39;x&#39; WHERE id = 1
+<a href="#h129-0-1" id="h129-0-1" class="i">+Effect: Update { count: 1 }
+</a> 
+ Storage:
+ CREATE TABLE source (
+<b>diff --git a/<a id="h130" href="../file/src/sql/tests/schema/update_unique_boolean.html">src/sql/tests/schema/update_unique_boolean</a> b/<a href="../file/src/sql/tests/schema/update_unique_boolean.html">src/sql/tests/schema/update_unique_boolean</a></b>
+<a href="#h130-0" id="h130-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: UPDATE &quot;unique&quot; SET &quot;boolean&quot; = FALSE WHERE id = 0
+<a href="#h130-0-1" id="h130-0-1" class="i">+Effect: Update { count: 1 }
+</a> 
+ Storage:
+ CREATE TABLE &quot;unique&quot; (
+<b>diff --git a/<a id="h131" href="../file/src/sql/tests/schema/update_unique_boolean_same.html">src/sql/tests/schema/update_unique_boolean_same</a> b/<a href="../file/src/sql/tests/schema/update_unique_boolean_same.html">src/sql/tests/schema/update_unique_boolean_same</a></b>
+<a href="#h131-0" id="h131-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: UPDATE &quot;unique&quot; SET &quot;boolean&quot; = TRUE WHERE id = 1
+<a href="#h131-0-1" id="h131-0-1" class="i">+Effect: Update { count: 1 }
+</a> 
+ Storage:
+ CREATE TABLE &quot;unique&quot; (
+<b>diff --git a/<a id="h132" href="../file/src/sql/tests/schema/update_unique_nulls.html">src/sql/tests/schema/update_unique_nulls</a> b/<a href="../file/src/sql/tests/schema/update_unique_nulls.html">src/sql/tests/schema/update_unique_nulls</a></b>
+<a href="#h132-0" id="h132-0" class="h">@@ -1,4 +1,5 @@
+</a> Query: UPDATE &quot;unique&quot; SET &quot;boolean&quot; = NULL, &quot;float&quot; = NULL, &quot;integer&quot; = NULL, &quot;string&quot; = NULL WHERE id = 1
+<a href="#h132-0-1" id="h132-0-1" class="i">+Effect: Update { count: 1 }
+</a> 
+ Storage:
+ CREATE TABLE &quot;unique&quot; (
+</pre>
+</div>
+</body>
+</html>

@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>raft: fix queries submitted at no-op log indexes - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/b84eac790ecdfc2a11495748de794d2a037496b6.html">b84eac790ecdfc2a11495748de794d2a037496b6</a>
+<b>parent</b> <a href="../commit/6b0a662fb924151156236ca4f30c280306bb5d2f.html">6b0a662fb924151156236ca4f30c280306bb5d2f</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Tue,  5 May 2020 20:49:34 +0200
+
+raft: fix queries submitted at no-op log indexes
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/raft/state.rs</a></td><td> | </td><td class="num">35</td><td><span class="i">+++++++++++++++++++++++</span><span class="d">------------</span></td></tr>
+</table></pre><pre>1 file changed, 23 insertions(+), 12 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/raft/state.rs.html">src/raft/state.rs</a> b/<a href="../file/src/raft/state.rs.html">src/raft/state.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -49,6 +49,7 @@ struct Query {
+</a> pub struct Driver {
+     state_rx: mpsc::UnboundedReceiver&lt;Instruction&gt;,
+     node_tx: mpsc::UnboundedSender&lt;Message&gt;,
+<a href="#h0-0-3" id="h0-0-3" class="i">+    applied_index: u64,
+</a>     /// Notify clients when their mutation is applied. &lt;index, (client, id)&gt;
+     notify: HashMap&lt;u64, (Address, Vec&lt;u8&gt;)&gt;,
+     /// Execute client queries when they receive a quorum. &lt;index, &lt;id, query&gt;&gt;
+<a href="#h0-1" id="h0-1" class="h">@@ -61,7 +62,13 @@ impl Driver {
+</a>         state_rx: mpsc::UnboundedReceiver&lt;Instruction&gt;,
+         node_tx: mpsc::UnboundedSender&lt;Message&gt;,
+     ) -&gt; Self {
+<a href="#h0-1-3" id="h0-1-3" class="d">-        Self { state_rx, node_tx, notify: HashMap::new(), queries: BTreeMap::new() }
+</a><a href="#h0-1-4" id="h0-1-4" class="i">+        Self {
+</a><a href="#h0-1-5" id="h0-1-5" class="i">+            state_rx,
+</a><a href="#h0-1-6" id="h0-1-6" class="i">+            node_tx,
+</a><a href="#h0-1-7" id="h0-1-7" class="i">+            applied_index: 0,
+</a><a href="#h0-1-8" id="h0-1-8" class="i">+            notify: HashMap::new(),
+</a><a href="#h0-1-9" id="h0-1-9" class="i">+            queries: BTreeMap::new(),
+</a><a href="#h0-1-10" id="h0-1-10" class="i">+        }
+</a>     }
+ 
+     /// Drives a state machine.
+<a href="#h0-2" id="h0-2" class="h">@@ -86,19 +93,22 @@ impl Driver {
+</a>                 self.query_abort()?;
+             }
+ 
+<a href="#h0-2-3" id="h0-2-3" class="d">-            Instruction::Apply { entry: Entry { index, command: Some(command), .. } } =&gt; {
+</a><a href="#h0-2-4" id="h0-2-4" class="d">-                debug!(&quot;Applying state machine command {}: {:?}&quot;, index, command);
+</a><a href="#h0-2-5" id="h0-2-5" class="d">-                match tokio::task::block_in_place(|| state.mutate(index, command)) {
+</a><a href="#h0-2-6" id="h0-2-6" class="d">-                    Err(error @ Error::Internal(_)) =&gt; return Err(error),
+</a><a href="#h0-2-7" id="h0-2-7" class="d">-                    result =&gt; self.notify_applied(index, result)?,
+</a><a href="#h0-2-8" id="h0-2-8" class="d">-                };
+</a><a href="#h0-2-9" id="h0-2-9" class="d">-                // Try to execute any pending queries, since they may have been submitted for
+</a><a href="#h0-2-10" id="h0-2-10" class="d">-                // a commit_index which hadn&#39;t been applied yet.
+</a><a href="#h0-2-11" id="h0-2-11" class="i">+            Instruction::Apply { entry: Entry { index, command, .. } } =&gt; {
+</a><a href="#h0-2-12" id="h0-2-12" class="i">+                if let Some(command) = command {
+</a><a href="#h0-2-13" id="h0-2-13" class="i">+                    debug!(&quot;Applying state machine command {}: {:?}&quot;, index, command);
+</a><a href="#h0-2-14" id="h0-2-14" class="i">+                    match tokio::task::block_in_place(|| state.mutate(index, command)) {
+</a><a href="#h0-2-15" id="h0-2-15" class="i">+                        Err(error @ Error::Internal(_)) =&gt; return Err(error),
+</a><a href="#h0-2-16" id="h0-2-16" class="i">+                        result =&gt; self.notify_applied(index, result)?,
+</a><a href="#h0-2-17" id="h0-2-17" class="i">+                    };
+</a><a href="#h0-2-18" id="h0-2-18" class="i">+                }
+</a><a href="#h0-2-19" id="h0-2-19" class="i">+                // We have to track applied_index here, separately from the state machine, because
+</a><a href="#h0-2-20" id="h0-2-20" class="i">+                // no-op log entries are significant for whether a query should be executed.
+</a><a href="#h0-2-21" id="h0-2-21" class="i">+                self.applied_index = index;
+</a><a href="#h0-2-22" id="h0-2-22" class="i">+                // Try to execute any pending queries, since they may have been submitted for a
+</a><a href="#h0-2-23" id="h0-2-23" class="i">+                // commit_index which hadn&#39;t been applied yet.
+</a>                 self.query_execute(state)?;
+             }
+ 
+<a href="#h0-2-27" id="h0-2-27" class="d">-            Instruction::Apply { entry: Entry { command: None, .. }, .. } =&gt; {}
+</a><a href="#h0-2-28" id="h0-2-28" class="d">-
+</a>             Instruction::Notify { id, address, index } =&gt; {
+                 if index &gt; state.applied_index() {
+                     self.notify.insert(index, (address, id));
+<a href="#h0-3" id="h0-3" class="h">@@ -161,7 +171,8 @@ impl Driver {
+</a> 
+     /// Executes any queries that are ready.
+     fn query_execute&lt;S: State&gt;(&amp;mut self, state: &amp;mut S) -&gt; Result&lt;(), Error&gt; {
+<a href="#h0-3-3" id="h0-3-3" class="d">-        for query in self.query_ready(state.applied_index()) {
+</a><a href="#h0-3-4" id="h0-3-4" class="i">+        for query in self.query_ready(self.applied_index) {
+</a><a href="#h0-3-5" id="h0-3-5" class="i">+            debug!(&quot;Executing query {:?}&quot;, query.command);
+</a>             let result = state.query(query.command);
+             if let Err(error @ Error::Internal(_)) = result {
+                 return Err(error);
+</pre>
+</div>
+</body>
+</html>

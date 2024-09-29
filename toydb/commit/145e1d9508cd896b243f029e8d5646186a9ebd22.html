@@ -1,0 +1,973 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>sql: added support for specifying INSERT columns - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/145e1d9508cd896b243f029e8d5646186a9ebd22.html">145e1d9508cd896b243f029e8d5646186a9ebd22</a>
+<b>parent</b> <a href="../commit/d5a98d2e631e52ad591602efc2f5cf37cfc4debe.html">d5a98d2e631e52ad591602efc2f5cf37cfc4debe</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Sun,  8 Sep 2019 18:36:12 +0200
+
+sql: added support for specifying INSERT columns
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/sql/plan/insert.rs</a></td><td> | </td><td class="num">13</td><td><span class="i">+++++++++++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/sql/plan/mod.rs</a></td><td> | </td><td class="num">20</td><td><span class="i">+++++++++</span><span class="d">-----------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/sql/schema.rs</a></td><td> | </td><td class="num">39</td><td><span class="i">++++++++++++++++++++++++++++++++++++++</span><span class="d">-</span></td></tr>
+<tr><td class="A">A</td><td><a href="#h3">src/sql/testdata/insert_default_null</a></td><td> | </td><td class="num">101</td><td><span class="i">+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d"></span></td></tr>
+<tr><td class="A">A</td><td><a href="#h4">src/sql/testdata/insert_error_columns_duplicate</a></td><td> | </td><td class="num">86</td><td><span class="i">+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d"></span></td></tr>
+<tr><td class="A">A</td><td><a href="#h5">src/sql/testdata/insert_error_columns_mismatch</a></td><td> | </td><td class="num">66</td><td><span class="i">++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h6">src/sql/testdata/insert_error_datatype_conflict</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="A">A</td><td><a href="#h7">src/sql/testdata/insert_error_default_null_disallowed</a></td><td> | </td><td class="num">45</td><td><span class="i">+++++++++++++++++++++++++++++++++++++++++++++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h8">src/sql/testdata/insert_error_null_disallowed</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h9">src/sql/testdata/insert_error_pk_exists</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h10">src/sql/testdata/insert_error_pk_null</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="A">A</td><td><a href="#h11">src/sql/testdata/insert_expression</a></td><td> | </td><td class="num">301</td><td><span class="i">+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d"></span></td></tr>
+<tr><td class="A">A</td><td><a href="#h12">src/sql/testdata/insert_partial</a></td><td> | </td><td class="num">138</td><td><span class="i">+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h13">src/sql/testdata/insert_values</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h14">src/sql/tests.rs</a></td><td> | </td><td class="num">6</td><td><span class="i">++++++</span><span class="d"></span></td></tr>
+</table></pre><pre>15 files changed, 806 insertions(+), 14 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/sql/plan/insert.rs.html">src/sql/plan/insert.rs</a> b/<a href="../file/src/sql/plan/insert.rs.html">src/sql/plan/insert.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -7,22 +7,31 @@ use crate::Error;
+</a> #[derive(Debug)]
+ pub struct Insert {
+     table: String,
+<a href="#h0-0-3" id="h0-0-3" class="i">+    columns: Vec&lt;String&gt;,
+</a>     expressions: Vec&lt;Expressions&gt;,
+ }
+ 
+ impl Insert {
+<a href="#h0-0-8" id="h0-0-8" class="d">-    pub fn new(table: String, expressions: Vec&lt;Expressions&gt;) -&gt; Self {
+</a><a href="#h0-0-9" id="h0-0-9" class="d">-        Self { table, expressions }
+</a><a href="#h0-0-10" id="h0-0-10" class="i">+    pub fn new(table: String, columns: Vec&lt;String&gt;, expressions: Vec&lt;Expressions&gt;) -&gt; Self {
+</a><a href="#h0-0-11" id="h0-0-11" class="i">+        Self { table, columns, expressions }
+</a>     }
+ }
+ 
+ impl Node for Insert {
+     fn execute(&amp;mut self, ctx: &amp;mut Context) -&gt; Result&lt;(), Error&gt; {
+<a href="#h0-0-17" id="h0-0-17" class="i">+        let table = ctx
+</a><a href="#h0-0-18" id="h0-0-18" class="i">+            .storage
+</a><a href="#h0-0-19" id="h0-0-19" class="i">+            .get_table(&amp;self.table)?
+</a><a href="#h0-0-20" id="h0-0-20" class="i">+            .ok_or_else(|| Error::Value(format!(&quot;Table {} does not exist&quot;, self.table)))?;
+</a>         for exprs in &amp;self.expressions {
+             let mut row = Row::new();
+             for expr in exprs {
+                 row.push(expr.evaluate()?);
+             }
+<a href="#h0-0-26" id="h0-0-26" class="i">+            row = table.normalize_row(
+</a><a href="#h0-0-27" id="h0-0-27" class="i">+                row,
+</a><a href="#h0-0-28" id="h0-0-28" class="i">+                if !self.columns.is_empty() { Some(self.columns.clone()) } else { None },
+</a><a href="#h0-0-29" id="h0-0-29" class="i">+            )?;
+</a>             ctx.storage.create_row(&amp;self.table, row)?;
+         }
+         Ok(())
+<b>diff --git a/<a id="h1" href="../file/src/sql/plan/mod.rs.html">src/sql/plan/mod.rs</a> b/<a href="../file/src/sql/plan/mod.rs.html">src/sql/plan/mod.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -90,17 +90,15 @@ impl Planner {
+</a>                 CreateTable::new(self.build_schema_table(name, columns)?).into()
+             }
+             ast::Statement::DropTable(name) =&gt; DropTable::new(name).into(),
+<a href="#h1-0-3" id="h1-0-3" class="d">-            ast::Statement::Insert { table, values, .. } =&gt; {
+</a><a href="#h1-0-4" id="h1-0-4" class="d">-                // FIXME Needs to handle columns
+</a><a href="#h1-0-5" id="h1-0-5" class="d">-                Insert::new(
+</a><a href="#h1-0-6" id="h1-0-6" class="d">-                    table,
+</a><a href="#h1-0-7" id="h1-0-7" class="d">-                    values
+</a><a href="#h1-0-8" id="h1-0-8" class="d">-                        .into_iter()
+</a><a href="#h1-0-9" id="h1-0-9" class="d">-                        .map(|exprs| exprs.into_iter().map(|expr| expr.into()).collect())
+</a><a href="#h1-0-10" id="h1-0-10" class="d">-                        .collect(),
+</a><a href="#h1-0-11" id="h1-0-11" class="d">-                )
+</a><a href="#h1-0-12" id="h1-0-12" class="d">-                .into()
+</a><a href="#h1-0-13" id="h1-0-13" class="d">-            }
+</a><a href="#h1-0-14" id="h1-0-14" class="i">+            ast::Statement::Insert { table, columns, values } =&gt; Insert::new(
+</a><a href="#h1-0-15" id="h1-0-15" class="i">+                table,
+</a><a href="#h1-0-16" id="h1-0-16" class="i">+                columns.unwrap_or_else(Vec::new),
+</a><a href="#h1-0-17" id="h1-0-17" class="i">+                values
+</a><a href="#h1-0-18" id="h1-0-18" class="i">+                    .into_iter()
+</a><a href="#h1-0-19" id="h1-0-19" class="i">+                    .map(|exprs| exprs.into_iter().map(|expr| expr.into()).collect())
+</a><a href="#h1-0-20" id="h1-0-20" class="i">+                    .collect(),
+</a><a href="#h1-0-21" id="h1-0-21" class="i">+            )
+</a><a href="#h1-0-22" id="h1-0-22" class="i">+            .into(),
+</a>             ast::Statement::Select { select, from } =&gt; {
+                 let mut n: Box&lt;dyn Node&gt; = match from {
+                     // FIXME Handle multiple FROM tables
+<b>diff --git a/<a id="h2" href="../file/src/sql/schema.rs.html">src/sql/schema.rs</a> b/<a href="../file/src/sql/schema.rs.html">src/sql/schema.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -1,5 +1,6 @@
+</a><a href="#h2-0-0" id="h2-0-0" class="d">-use super::types::{DataType, Value};
+</a><a href="#h2-0-1" id="h2-0-1" class="i">+use super::types::{DataType, Row, Value};
+</a> use crate::Error;
+<a href="#h2-0-3" id="h2-0-3" class="i">+use std::collections::HashMap;
+</a> 
+ /// A table
+ #[derive(Clone, Debug, Deserialize, Serialize)]
+<a href="#h2-1" id="h2-1" class="h">@@ -13,6 +14,42 @@ pub struct Table {
+</a> }
+ 
+ impl Table {
+<a href="#h2-1-3" id="h2-1-3" class="i">+    /// Returns the index of a named column, if it exists
+</a><a href="#h2-1-4" id="h2-1-4" class="i">+    pub fn column_index(&amp;self, name: &amp;str) -&gt; Option&lt;usize&gt; {
+</a><a href="#h2-1-5" id="h2-1-5" class="i">+        self.columns.iter().position(|c| c.name == name)
+</a><a href="#h2-1-6" id="h2-1-6" class="i">+    }
+</a><a href="#h2-1-7" id="h2-1-7" class="i">+
+</a><a href="#h2-1-8" id="h2-1-8" class="i">+    /// Normalizes a partial row into a full row, and reorders it
+</a><a href="#h2-1-9" id="h2-1-9" class="i">+    /// according to the column names.
+</a><a href="#h2-1-10" id="h2-1-10" class="i">+    pub fn normalize_row(&amp;self, mut row: Row, columns: Option&lt;Vec&lt;String&gt;&gt;) -&gt; Result&lt;Row, Error&gt; {
+</a><a href="#h2-1-11" id="h2-1-11" class="i">+        if let Some(cols) = columns {
+</a><a href="#h2-1-12" id="h2-1-12" class="i">+            if row.len() != cols.len() {
+</a><a href="#h2-1-13" id="h2-1-13" class="i">+                return Err(Error::Value(&quot;Column and value counts do not match&quot;.into()));
+</a><a href="#h2-1-14" id="h2-1-14" class="i">+            }
+</a><a href="#h2-1-15" id="h2-1-15" class="i">+            let mut column_values = HashMap::new();
+</a><a href="#h2-1-16" id="h2-1-16" class="i">+            for (c, v) in cols.into_iter().zip(row.into_iter()) {
+</a><a href="#h2-1-17" id="h2-1-17" class="i">+                if self.column_index(&amp;c).is_none() {
+</a><a href="#h2-1-18" id="h2-1-18" class="i">+                    return Err(Error::Value(format!(
+</a><a href="#h2-1-19" id="h2-1-19" class="i">+                        &quot;Unknown column {} in table {}&quot;,
+</a><a href="#h2-1-20" id="h2-1-20" class="i">+                        c, self.name
+</a><a href="#h2-1-21" id="h2-1-21" class="i">+                    )));
+</a><a href="#h2-1-22" id="h2-1-22" class="i">+                }
+</a><a href="#h2-1-23" id="h2-1-23" class="i">+                if column_values.insert(c.clone(), v).is_some() {
+</a><a href="#h2-1-24" id="h2-1-24" class="i">+                    return Err(Error::Value(format!(&quot;Column {} specified multiple times&quot;, c)));
+</a><a href="#h2-1-25" id="h2-1-25" class="i">+                }
+</a><a href="#h2-1-26" id="h2-1-26" class="i">+            }
+</a><a href="#h2-1-27" id="h2-1-27" class="i">+            row = self
+</a><a href="#h2-1-28" id="h2-1-28" class="i">+                .columns
+</a><a href="#h2-1-29" id="h2-1-29" class="i">+                .iter()
+</a><a href="#h2-1-30" id="h2-1-30" class="i">+                .map(|c| column_values.get(&amp;c.name).cloned().unwrap_or(Value::Null))
+</a><a href="#h2-1-31" id="h2-1-31" class="i">+                .collect();
+</a><a href="#h2-1-32" id="h2-1-32" class="i">+        }
+</a><a href="#h2-1-33" id="h2-1-33" class="i">+        while row.len() &lt; self.columns.len() {
+</a><a href="#h2-1-34" id="h2-1-34" class="i">+            row.push(Value::Null)
+</a><a href="#h2-1-35" id="h2-1-35" class="i">+        }
+</a><a href="#h2-1-36" id="h2-1-36" class="i">+        Ok(row)
+</a><a href="#h2-1-37" id="h2-1-37" class="i">+    }
+</a><a href="#h2-1-38" id="h2-1-38" class="i">+
+</a>     /// Generates an SQL DDL query for the table schema
+     pub fn to_query(&amp;self) -&gt; String {
+         let mut query = format!(&quot;CREATE TABLE {} (\n&quot;, self.name);
+<b>diff --git a/<a id="h3" href="../file/src/sql/testdata/insert_default_null.html">src/sql/testdata/insert_default_null</a> b/<a href="../file/src/sql/testdata/insert_default_null.html">src/sql/testdata/insert_default_null</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -0,0 +1,101 @@
+</a><a href="#h3-0-0" id="h3-0-0" class="i">+Query: INSERT INTO movies VALUES (9, &#39;District 9&#39;, 1, 2009)
+</a><a href="#h3-0-1" id="h3-0-1" class="i">+
+</a><a href="#h3-0-2" id="h3-0-2" class="i">+Tokens:
+</a><a href="#h3-0-3" id="h3-0-3" class="i">+  Keyword(Insert)
+</a><a href="#h3-0-4" id="h3-0-4" class="i">+  Keyword(Into)
+</a><a href="#h3-0-5" id="h3-0-5" class="i">+  Ident(&quot;movies&quot;)
+</a><a href="#h3-0-6" id="h3-0-6" class="i">+  Keyword(Values)
+</a><a href="#h3-0-7" id="h3-0-7" class="i">+  OpenParen
+</a><a href="#h3-0-8" id="h3-0-8" class="i">+  Number(&quot;9&quot;)
+</a><a href="#h3-0-9" id="h3-0-9" class="i">+  Comma
+</a><a href="#h3-0-10" id="h3-0-10" class="i">+  String(&quot;District 9&quot;)
+</a><a href="#h3-0-11" id="h3-0-11" class="i">+  Comma
+</a><a href="#h3-0-12" id="h3-0-12" class="i">+  Number(&quot;1&quot;)
+</a><a href="#h3-0-13" id="h3-0-13" class="i">+  Comma
+</a><a href="#h3-0-14" id="h3-0-14" class="i">+  Number(&quot;2009&quot;)
+</a><a href="#h3-0-15" id="h3-0-15" class="i">+  CloseParen
+</a><a href="#h3-0-16" id="h3-0-16" class="i">+
+</a><a href="#h3-0-17" id="h3-0-17" class="i">+AST: Insert {
+</a><a href="#h3-0-18" id="h3-0-18" class="i">+    table: &quot;movies&quot;,
+</a><a href="#h3-0-19" id="h3-0-19" class="i">+    columns: None,
+</a><a href="#h3-0-20" id="h3-0-20" class="i">+    values: [
+</a><a href="#h3-0-21" id="h3-0-21" class="i">+        [
+</a><a href="#h3-0-22" id="h3-0-22" class="i">+            Literal(
+</a><a href="#h3-0-23" id="h3-0-23" class="i">+                Integer(
+</a><a href="#h3-0-24" id="h3-0-24" class="i">+                    9,
+</a><a href="#h3-0-25" id="h3-0-25" class="i">+                ),
+</a><a href="#h3-0-26" id="h3-0-26" class="i">+            ),
+</a><a href="#h3-0-27" id="h3-0-27" class="i">+            Literal(
+</a><a href="#h3-0-28" id="h3-0-28" class="i">+                String(
+</a><a href="#h3-0-29" id="h3-0-29" class="i">+                    &quot;District 9&quot;,
+</a><a href="#h3-0-30" id="h3-0-30" class="i">+                ),
+</a><a href="#h3-0-31" id="h3-0-31" class="i">+            ),
+</a><a href="#h3-0-32" id="h3-0-32" class="i">+            Literal(
+</a><a href="#h3-0-33" id="h3-0-33" class="i">+                Integer(
+</a><a href="#h3-0-34" id="h3-0-34" class="i">+                    1,
+</a><a href="#h3-0-35" id="h3-0-35" class="i">+                ),
+</a><a href="#h3-0-36" id="h3-0-36" class="i">+            ),
+</a><a href="#h3-0-37" id="h3-0-37" class="i">+            Literal(
+</a><a href="#h3-0-38" id="h3-0-38" class="i">+                Integer(
+</a><a href="#h3-0-39" id="h3-0-39" class="i">+                    2009,
+</a><a href="#h3-0-40" id="h3-0-40" class="i">+                ),
+</a><a href="#h3-0-41" id="h3-0-41" class="i">+            ),
+</a><a href="#h3-0-42" id="h3-0-42" class="i">+        ],
+</a><a href="#h3-0-43" id="h3-0-43" class="i">+    ],
+</a><a href="#h3-0-44" id="h3-0-44" class="i">+}
+</a><a href="#h3-0-45" id="h3-0-45" class="i">+
+</a><a href="#h3-0-46" id="h3-0-46" class="i">+Plan: Plan {
+</a><a href="#h3-0-47" id="h3-0-47" class="i">+    root: Insert {
+</a><a href="#h3-0-48" id="h3-0-48" class="i">+        table: &quot;movies&quot;,
+</a><a href="#h3-0-49" id="h3-0-49" class="i">+        columns: [],
+</a><a href="#h3-0-50" id="h3-0-50" class="i">+        expressions: [
+</a><a href="#h3-0-51" id="h3-0-51" class="i">+            [
+</a><a href="#h3-0-52" id="h3-0-52" class="i">+                Constant(
+</a><a href="#h3-0-53" id="h3-0-53" class="i">+                    Integer(
+</a><a href="#h3-0-54" id="h3-0-54" class="i">+                        9,
+</a><a href="#h3-0-55" id="h3-0-55" class="i">+                    ),
+</a><a href="#h3-0-56" id="h3-0-56" class="i">+                ),
+</a><a href="#h3-0-57" id="h3-0-57" class="i">+                Constant(
+</a><a href="#h3-0-58" id="h3-0-58" class="i">+                    String(
+</a><a href="#h3-0-59" id="h3-0-59" class="i">+                        &quot;District 9&quot;,
+</a><a href="#h3-0-60" id="h3-0-60" class="i">+                    ),
+</a><a href="#h3-0-61" id="h3-0-61" class="i">+                ),
+</a><a href="#h3-0-62" id="h3-0-62" class="i">+                Constant(
+</a><a href="#h3-0-63" id="h3-0-63" class="i">+                    Integer(
+</a><a href="#h3-0-64" id="h3-0-64" class="i">+                        1,
+</a><a href="#h3-0-65" id="h3-0-65" class="i">+                    ),
+</a><a href="#h3-0-66" id="h3-0-66" class="i">+                ),
+</a><a href="#h3-0-67" id="h3-0-67" class="i">+                Constant(
+</a><a href="#h3-0-68" id="h3-0-68" class="i">+                    Integer(
+</a><a href="#h3-0-69" id="h3-0-69" class="i">+                        2009,
+</a><a href="#h3-0-70" id="h3-0-70" class="i">+                    ),
+</a><a href="#h3-0-71" id="h3-0-71" class="i">+                ),
+</a><a href="#h3-0-72" id="h3-0-72" class="i">+            ],
+</a><a href="#h3-0-73" id="h3-0-73" class="i">+        ],
+</a><a href="#h3-0-74" id="h3-0-74" class="i">+    },
+</a><a href="#h3-0-75" id="h3-0-75" class="i">+}
+</a><a href="#h3-0-76" id="h3-0-76" class="i">+
+</a><a href="#h3-0-77" id="h3-0-77" class="i">+Query: INSERT INTO movies VALUES (9, &#39;District 9&#39;, 1, 2009)
+</a><a href="#h3-0-78" id="h3-0-78" class="i">+
+</a><a href="#h3-0-79" id="h3-0-79" class="i">+Result:
+</a><a href="#h3-0-80" id="h3-0-80" class="i">+
+</a><a href="#h3-0-81" id="h3-0-81" class="i">+Storage:
+</a><a href="#h3-0-82" id="h3-0-82" class="i">+CREATE TABLE genres (
+</a><a href="#h3-0-83" id="h3-0-83" class="i">+  id INTEGER PRIMARY KEY NOT NULL,
+</a><a href="#h3-0-84" id="h3-0-84" class="i">+  name VARCHAR NOT NULL
+</a><a href="#h3-0-85" id="h3-0-85" class="i">+)
+</a><a href="#h3-0-86" id="h3-0-86" class="i">+[Integer(1), String(&quot;Science Fiction&quot;)]
+</a><a href="#h3-0-87" id="h3-0-87" class="i">+[Integer(2), String(&quot;Action&quot;)]
+</a><a href="#h3-0-88" id="h3-0-88" class="i">+
+</a><a href="#h3-0-89" id="h3-0-89" class="i">+CREATE TABLE movies (
+</a><a href="#h3-0-90" id="h3-0-90" class="i">+  id INTEGER PRIMARY KEY NOT NULL,
+</a><a href="#h3-0-91" id="h3-0-91" class="i">+  title VARCHAR NOT NULL,
+</a><a href="#h3-0-92" id="h3-0-92" class="i">+  genre_id INTEGER NOT NULL,
+</a><a href="#h3-0-93" id="h3-0-93" class="i">+  released INTEGER NOT NULL,
+</a><a href="#h3-0-94" id="h3-0-94" class="i">+  rating FLOAT,
+</a><a href="#h3-0-95" id="h3-0-95" class="i">+  bluray BOOLEAN
+</a><a href="#h3-0-96" id="h3-0-96" class="i">+)
+</a><a href="#h3-0-97" id="h3-0-97" class="i">+[Integer(1), String(&quot;Stalker&quot;), Integer(1), Integer(1979), Float(8.2), Boolean(false)]
+</a><a href="#h3-0-98" id="h3-0-98" class="i">+[Integer(2), String(&quot;Sicario&quot;), Integer(2), Integer(2015), Float(7.6), Boolean(true)]
+</a><a href="#h3-0-99" id="h3-0-99" class="i">+[Integer(3), String(&quot;Primer&quot;), Integer(1), Integer(2004), Float(6.9), Null]
+</a><a href="#h3-0-100" id="h3-0-100" class="i">+[Integer(9), String(&quot;District 9&quot;), Integer(1), Integer(2009), Null, Null]
+</a><b>diff --git a/<a id="h4" href="../file/src/sql/testdata/insert_error_columns_duplicate.html">src/sql/testdata/insert_error_columns_duplicate</a> b/<a href="../file/src/sql/testdata/insert_error_columns_duplicate.html">src/sql/testdata/insert_error_columns_duplicate</a></b>
+<a href="#h4-0" id="h4-0" class="h">@@ -0,0 +1,85 @@
+</a><a href="#h4-0-0" id="h4-0-0" class="i">+Query: INSERT INTO genres (id, name, id) VALUES (9, &#39;Western&#39;, 9)
+</a><a href="#h4-0-1" id="h4-0-1" class="i">+
+</a><a href="#h4-0-2" id="h4-0-2" class="i">+Tokens:
+</a><a href="#h4-0-3" id="h4-0-3" class="i">+  Keyword(Insert)
+</a><a href="#h4-0-4" id="h4-0-4" class="i">+  Keyword(Into)
+</a><a href="#h4-0-5" id="h4-0-5" class="i">+  Ident(&quot;genres&quot;)
+</a><a href="#h4-0-6" id="h4-0-6" class="i">+  OpenParen
+</a><a href="#h4-0-7" id="h4-0-7" class="i">+  Ident(&quot;id&quot;)
+</a><a href="#h4-0-8" id="h4-0-8" class="i">+  Comma
+</a><a href="#h4-0-9" id="h4-0-9" class="i">+  Ident(&quot;name&quot;)
+</a><a href="#h4-0-10" id="h4-0-10" class="i">+  Comma
+</a><a href="#h4-0-11" id="h4-0-11" class="i">+  Ident(&quot;id&quot;)
+</a><a href="#h4-0-12" id="h4-0-12" class="i">+  CloseParen
+</a><a href="#h4-0-13" id="h4-0-13" class="i">+  Keyword(Values)
+</a><a href="#h4-0-14" id="h4-0-14" class="i">+  OpenParen
+</a><a href="#h4-0-15" id="h4-0-15" class="i">+  Number(&quot;9&quot;)
+</a><a href="#h4-0-16" id="h4-0-16" class="i">+  Comma
+</a><a href="#h4-0-17" id="h4-0-17" class="i">+  String(&quot;Western&quot;)
+</a><a href="#h4-0-18" id="h4-0-18" class="i">+  Comma
+</a><a href="#h4-0-19" id="h4-0-19" class="i">+  Number(&quot;9&quot;)
+</a><a href="#h4-0-20" id="h4-0-20" class="i">+  CloseParen
+</a><a href="#h4-0-21" id="h4-0-21" class="i">+
+</a><a href="#h4-0-22" id="h4-0-22" class="i">+AST: Insert {
+</a><a href="#h4-0-23" id="h4-0-23" class="i">+    table: &quot;genres&quot;,
+</a><a href="#h4-0-24" id="h4-0-24" class="i">+    columns: Some(
+</a><a href="#h4-0-25" id="h4-0-25" class="i">+        [
+</a><a href="#h4-0-26" id="h4-0-26" class="i">+            &quot;id&quot;,
+</a><a href="#h4-0-27" id="h4-0-27" class="i">+            &quot;name&quot;,
+</a><a href="#h4-0-28" id="h4-0-28" class="i">+            &quot;id&quot;,
+</a><a href="#h4-0-29" id="h4-0-29" class="i">+        ],
+</a><a href="#h4-0-30" id="h4-0-30" class="i">+    ),
+</a><a href="#h4-0-31" id="h4-0-31" class="i">+    values: [
+</a><a href="#h4-0-32" id="h4-0-32" class="i">+        [
+</a><a href="#h4-0-33" id="h4-0-33" class="i">+            Literal(
+</a><a href="#h4-0-34" id="h4-0-34" class="i">+                Integer(
+</a><a href="#h4-0-35" id="h4-0-35" class="i">+                    9,
+</a><a href="#h4-0-36" id="h4-0-36" class="i">+                ),
+</a><a href="#h4-0-37" id="h4-0-37" class="i">+            ),
+</a><a href="#h4-0-38" id="h4-0-38" class="i">+            Literal(
+</a><a href="#h4-0-39" id="h4-0-39" class="i">+                String(
+</a><a href="#h4-0-40" id="h4-0-40" class="i">+                    &quot;Western&quot;,
+</a><a href="#h4-0-41" id="h4-0-41" class="i">+                ),
+</a><a href="#h4-0-42" id="h4-0-42" class="i">+            ),
+</a><a href="#h4-0-43" id="h4-0-43" class="i">+            Literal(
+</a><a href="#h4-0-44" id="h4-0-44" class="i">+                Integer(
+</a><a href="#h4-0-45" id="h4-0-45" class="i">+                    9,
+</a><a href="#h4-0-46" id="h4-0-46" class="i">+                ),
+</a><a href="#h4-0-47" id="h4-0-47" class="i">+            ),
+</a><a href="#h4-0-48" id="h4-0-48" class="i">+        ],
+</a><a href="#h4-0-49" id="h4-0-49" class="i">+    ],
+</a><a href="#h4-0-50" id="h4-0-50" class="i">+}
+</a><a href="#h4-0-51" id="h4-0-51" class="i">+
+</a><a href="#h4-0-52" id="h4-0-52" class="i">+Plan: Plan {
+</a><a href="#h4-0-53" id="h4-0-53" class="i">+    root: Insert {
+</a><a href="#h4-0-54" id="h4-0-54" class="i">+        table: &quot;genres&quot;,
+</a><a href="#h4-0-55" id="h4-0-55" class="i">+        columns: [
+</a><a href="#h4-0-56" id="h4-0-56" class="i">+            &quot;id&quot;,
+</a><a href="#h4-0-57" id="h4-0-57" class="i">+            &quot;name&quot;,
+</a><a href="#h4-0-58" id="h4-0-58" class="i">+            &quot;id&quot;,
+</a><a href="#h4-0-59" id="h4-0-59" class="i">+        ],
+</a><a href="#h4-0-60" id="h4-0-60" class="i">+        expressions: [
+</a><a href="#h4-0-61" id="h4-0-61" class="i">+            [
+</a><a href="#h4-0-62" id="h4-0-62" class="i">+                Constant(
+</a><a href="#h4-0-63" id="h4-0-63" class="i">+                    Integer(
+</a><a href="#h4-0-64" id="h4-0-64" class="i">+                        9,
+</a><a href="#h4-0-65" id="h4-0-65" class="i">+                    ),
+</a><a href="#h4-0-66" id="h4-0-66" class="i">+                ),
+</a><a href="#h4-0-67" id="h4-0-67" class="i">+                Constant(
+</a><a href="#h4-0-68" id="h4-0-68" class="i">+                    String(
+</a><a href="#h4-0-69" id="h4-0-69" class="i">+                        &quot;Western&quot;,
+</a><a href="#h4-0-70" id="h4-0-70" class="i">+                    ),
+</a><a href="#h4-0-71" id="h4-0-71" class="i">+                ),
+</a><a href="#h4-0-72" id="h4-0-72" class="i">+                Constant(
+</a><a href="#h4-0-73" id="h4-0-73" class="i">+                    Integer(
+</a><a href="#h4-0-74" id="h4-0-74" class="i">+                        9,
+</a><a href="#h4-0-75" id="h4-0-75" class="i">+                    ),
+</a><a href="#h4-0-76" id="h4-0-76" class="i">+                ),
+</a><a href="#h4-0-77" id="h4-0-77" class="i">+            ],
+</a><a href="#h4-0-78" id="h4-0-78" class="i">+        ],
+</a><a href="#h4-0-79" id="h4-0-79" class="i">+    },
+</a><a href="#h4-0-80" id="h4-0-80" class="i">+}
+</a><a href="#h4-0-81" id="h4-0-81" class="i">+
+</a><a href="#h4-0-82" id="h4-0-82" class="i">+Query: INSERT INTO genres (id, name, id) VALUES (9, &#39;Western&#39;, 9)
+</a><a href="#h4-0-83" id="h4-0-83" class="i">+
+</a><a href="#h4-0-84" id="h4-0-84" class="i">+Result: Value(&quot;Column id specified multiple times&quot;)
+</a><a href="#h4-0-85" id="h4-0-85" class="i">+\ No newline at end of file
+</a><b>diff --git a/<a id="h5" href="../file/src/sql/testdata/insert_error_columns_mismatch.html">src/sql/testdata/insert_error_columns_mismatch</a> b/<a href="../file/src/sql/testdata/insert_error_columns_mismatch.html">src/sql/testdata/insert_error_columns_mismatch</a></b>
+<a href="#h5-0" id="h5-0" class="h">@@ -0,0 +1,65 @@
+</a><a href="#h5-0-0" id="h5-0-0" class="i">+Query: INSERT INTO genres (id) VALUES (9, &#39;Western&#39;)
+</a><a href="#h5-0-1" id="h5-0-1" class="i">+
+</a><a href="#h5-0-2" id="h5-0-2" class="i">+Tokens:
+</a><a href="#h5-0-3" id="h5-0-3" class="i">+  Keyword(Insert)
+</a><a href="#h5-0-4" id="h5-0-4" class="i">+  Keyword(Into)
+</a><a href="#h5-0-5" id="h5-0-5" class="i">+  Ident(&quot;genres&quot;)
+</a><a href="#h5-0-6" id="h5-0-6" class="i">+  OpenParen
+</a><a href="#h5-0-7" id="h5-0-7" class="i">+  Ident(&quot;id&quot;)
+</a><a href="#h5-0-8" id="h5-0-8" class="i">+  CloseParen
+</a><a href="#h5-0-9" id="h5-0-9" class="i">+  Keyword(Values)
+</a><a href="#h5-0-10" id="h5-0-10" class="i">+  OpenParen
+</a><a href="#h5-0-11" id="h5-0-11" class="i">+  Number(&quot;9&quot;)
+</a><a href="#h5-0-12" id="h5-0-12" class="i">+  Comma
+</a><a href="#h5-0-13" id="h5-0-13" class="i">+  String(&quot;Western&quot;)
+</a><a href="#h5-0-14" id="h5-0-14" class="i">+  CloseParen
+</a><a href="#h5-0-15" id="h5-0-15" class="i">+
+</a><a href="#h5-0-16" id="h5-0-16" class="i">+AST: Insert {
+</a><a href="#h5-0-17" id="h5-0-17" class="i">+    table: &quot;genres&quot;,
+</a><a href="#h5-0-18" id="h5-0-18" class="i">+    columns: Some(
+</a><a href="#h5-0-19" id="h5-0-19" class="i">+        [
+</a><a href="#h5-0-20" id="h5-0-20" class="i">+            &quot;id&quot;,
+</a><a href="#h5-0-21" id="h5-0-21" class="i">+        ],
+</a><a href="#h5-0-22" id="h5-0-22" class="i">+    ),
+</a><a href="#h5-0-23" id="h5-0-23" class="i">+    values: [
+</a><a href="#h5-0-24" id="h5-0-24" class="i">+        [
+</a><a href="#h5-0-25" id="h5-0-25" class="i">+            Literal(
+</a><a href="#h5-0-26" id="h5-0-26" class="i">+                Integer(
+</a><a href="#h5-0-27" id="h5-0-27" class="i">+                    9,
+</a><a href="#h5-0-28" id="h5-0-28" class="i">+                ),
+</a><a href="#h5-0-29" id="h5-0-29" class="i">+            ),
+</a><a href="#h5-0-30" id="h5-0-30" class="i">+            Literal(
+</a><a href="#h5-0-31" id="h5-0-31" class="i">+                String(
+</a><a href="#h5-0-32" id="h5-0-32" class="i">+                    &quot;Western&quot;,
+</a><a href="#h5-0-33" id="h5-0-33" class="i">+                ),
+</a><a href="#h5-0-34" id="h5-0-34" class="i">+            ),
+</a><a href="#h5-0-35" id="h5-0-35" class="i">+        ],
+</a><a href="#h5-0-36" id="h5-0-36" class="i">+    ],
+</a><a href="#h5-0-37" id="h5-0-37" class="i">+}
+</a><a href="#h5-0-38" id="h5-0-38" class="i">+
+</a><a href="#h5-0-39" id="h5-0-39" class="i">+Plan: Plan {
+</a><a href="#h5-0-40" id="h5-0-40" class="i">+    root: Insert {
+</a><a href="#h5-0-41" id="h5-0-41" class="i">+        table: &quot;genres&quot;,
+</a><a href="#h5-0-42" id="h5-0-42" class="i">+        columns: [
+</a><a href="#h5-0-43" id="h5-0-43" class="i">+            &quot;id&quot;,
+</a><a href="#h5-0-44" id="h5-0-44" class="i">+        ],
+</a><a href="#h5-0-45" id="h5-0-45" class="i">+        expressions: [
+</a><a href="#h5-0-46" id="h5-0-46" class="i">+            [
+</a><a href="#h5-0-47" id="h5-0-47" class="i">+                Constant(
+</a><a href="#h5-0-48" id="h5-0-48" class="i">+                    Integer(
+</a><a href="#h5-0-49" id="h5-0-49" class="i">+                        9,
+</a><a href="#h5-0-50" id="h5-0-50" class="i">+                    ),
+</a><a href="#h5-0-51" id="h5-0-51" class="i">+                ),
+</a><a href="#h5-0-52" id="h5-0-52" class="i">+                Constant(
+</a><a href="#h5-0-53" id="h5-0-53" class="i">+                    String(
+</a><a href="#h5-0-54" id="h5-0-54" class="i">+                        &quot;Western&quot;,
+</a><a href="#h5-0-55" id="h5-0-55" class="i">+                    ),
+</a><a href="#h5-0-56" id="h5-0-56" class="i">+                ),
+</a><a href="#h5-0-57" id="h5-0-57" class="i">+            ],
+</a><a href="#h5-0-58" id="h5-0-58" class="i">+        ],
+</a><a href="#h5-0-59" id="h5-0-59" class="i">+    },
+</a><a href="#h5-0-60" id="h5-0-60" class="i">+}
+</a><a href="#h5-0-61" id="h5-0-61" class="i">+
+</a><a href="#h5-0-62" id="h5-0-62" class="i">+Query: INSERT INTO genres (id) VALUES (9, &#39;Western&#39;)
+</a><a href="#h5-0-63" id="h5-0-63" class="i">+
+</a><a href="#h5-0-64" id="h5-0-64" class="i">+Result: Value(&quot;Column and value counts do not match&quot;)
+</a><a href="#h5-0-65" id="h5-0-65" class="i">+\ No newline at end of file
+</a><b>diff --git a/<a id="h6" href="../file/src/sql/testdata/insert_error_datatype_conflict.html">src/sql/testdata/insert_error_datatype_conflict</a> b/<a href="../file/src/sql/testdata/insert_error_datatype_conflict.html">src/sql/testdata/insert_error_datatype_conflict</a></b>
+<a href="#h6-0" id="h6-0" class="h">@@ -33,6 +33,7 @@ AST: Insert {
+</a> Plan: Plan {
+     root: Insert {
+         table: &quot;genres&quot;,
+<a href="#h6-0-3" id="h6-0-3" class="i">+        columns: [],
+</a>         expressions: [
+             [
+                 Constant(
+<b>diff --git a/<a id="h7" href="../file/src/sql/testdata/insert_error_default_null_disallowed.html">src/sql/testdata/insert_error_default_null_disallowed</a> b/<a href="../file/src/sql/testdata/insert_error_default_null_disallowed.html">src/sql/testdata/insert_error_default_null_disallowed</a></b>
+<a href="#h7-0" id="h7-0" class="h">@@ -0,0 +1,44 @@
+</a><a href="#h7-0-0" id="h7-0-0" class="i">+Query: INSERT INTO movies VALUES (9)
+</a><a href="#h7-0-1" id="h7-0-1" class="i">+
+</a><a href="#h7-0-2" id="h7-0-2" class="i">+Tokens:
+</a><a href="#h7-0-3" id="h7-0-3" class="i">+  Keyword(Insert)
+</a><a href="#h7-0-4" id="h7-0-4" class="i">+  Keyword(Into)
+</a><a href="#h7-0-5" id="h7-0-5" class="i">+  Ident(&quot;movies&quot;)
+</a><a href="#h7-0-6" id="h7-0-6" class="i">+  Keyword(Values)
+</a><a href="#h7-0-7" id="h7-0-7" class="i">+  OpenParen
+</a><a href="#h7-0-8" id="h7-0-8" class="i">+  Number(&quot;9&quot;)
+</a><a href="#h7-0-9" id="h7-0-9" class="i">+  CloseParen
+</a><a href="#h7-0-10" id="h7-0-10" class="i">+
+</a><a href="#h7-0-11" id="h7-0-11" class="i">+AST: Insert {
+</a><a href="#h7-0-12" id="h7-0-12" class="i">+    table: &quot;movies&quot;,
+</a><a href="#h7-0-13" id="h7-0-13" class="i">+    columns: None,
+</a><a href="#h7-0-14" id="h7-0-14" class="i">+    values: [
+</a><a href="#h7-0-15" id="h7-0-15" class="i">+        [
+</a><a href="#h7-0-16" id="h7-0-16" class="i">+            Literal(
+</a><a href="#h7-0-17" id="h7-0-17" class="i">+                Integer(
+</a><a href="#h7-0-18" id="h7-0-18" class="i">+                    9,
+</a><a href="#h7-0-19" id="h7-0-19" class="i">+                ),
+</a><a href="#h7-0-20" id="h7-0-20" class="i">+            ),
+</a><a href="#h7-0-21" id="h7-0-21" class="i">+        ],
+</a><a href="#h7-0-22" id="h7-0-22" class="i">+    ],
+</a><a href="#h7-0-23" id="h7-0-23" class="i">+}
+</a><a href="#h7-0-24" id="h7-0-24" class="i">+
+</a><a href="#h7-0-25" id="h7-0-25" class="i">+Plan: Plan {
+</a><a href="#h7-0-26" id="h7-0-26" class="i">+    root: Insert {
+</a><a href="#h7-0-27" id="h7-0-27" class="i">+        table: &quot;movies&quot;,
+</a><a href="#h7-0-28" id="h7-0-28" class="i">+        columns: [],
+</a><a href="#h7-0-29" id="h7-0-29" class="i">+        expressions: [
+</a><a href="#h7-0-30" id="h7-0-30" class="i">+            [
+</a><a href="#h7-0-31" id="h7-0-31" class="i">+                Constant(
+</a><a href="#h7-0-32" id="h7-0-32" class="i">+                    Integer(
+</a><a href="#h7-0-33" id="h7-0-33" class="i">+                        9,
+</a><a href="#h7-0-34" id="h7-0-34" class="i">+                    ),
+</a><a href="#h7-0-35" id="h7-0-35" class="i">+                ),
+</a><a href="#h7-0-36" id="h7-0-36" class="i">+            ],
+</a><a href="#h7-0-37" id="h7-0-37" class="i">+        ],
+</a><a href="#h7-0-38" id="h7-0-38" class="i">+    },
+</a><a href="#h7-0-39" id="h7-0-39" class="i">+}
+</a><a href="#h7-0-40" id="h7-0-40" class="i">+
+</a><a href="#h7-0-41" id="h7-0-41" class="i">+Query: INSERT INTO movies VALUES (9)
+</a><a href="#h7-0-42" id="h7-0-42" class="i">+
+</a><a href="#h7-0-43" id="h7-0-43" class="i">+Result: Value(&quot;NULL value not allowed for column title&quot;)
+</a><a href="#h7-0-44" id="h7-0-44" class="i">+\ No newline at end of file
+</a><b>diff --git a/<a id="h8" href="../file/src/sql/testdata/insert_error_null_disallowed.html">src/sql/testdata/insert_error_null_disallowed</a> b/<a href="../file/src/sql/testdata/insert_error_null_disallowed.html">src/sql/testdata/insert_error_null_disallowed</a></b>
+<a href="#h8-0" id="h8-0" class="h">@@ -31,6 +31,7 @@ AST: Insert {
+</a> Plan: Plan {
+     root: Insert {
+         table: &quot;genres&quot;,
+<a href="#h8-0-3" id="h8-0-3" class="i">+        columns: [],
+</a>         expressions: [
+             [
+                 Constant(
+<b>diff --git a/<a id="h9" href="../file/src/sql/testdata/insert_error_pk_exists.html">src/sql/testdata/insert_error_pk_exists</a> b/<a href="../file/src/sql/testdata/insert_error_pk_exists.html">src/sql/testdata/insert_error_pk_exists</a></b>
+<a href="#h9-0" id="h9-0" class="h">@@ -33,6 +33,7 @@ AST: Insert {
+</a> Plan: Plan {
+     root: Insert {
+         table: &quot;genres&quot;,
+<a href="#h9-0-3" id="h9-0-3" class="i">+        columns: [],
+</a>         expressions: [
+             [
+                 Constant(
+<b>diff --git a/<a id="h10" href="../file/src/sql/testdata/insert_error_pk_null.html">src/sql/testdata/insert_error_pk_null</a> b/<a href="../file/src/sql/testdata/insert_error_pk_null.html">src/sql/testdata/insert_error_pk_null</a></b>
+<a href="#h10-0" id="h10-0" class="h">@@ -31,6 +31,7 @@ AST: Insert {
+</a> Plan: Plan {
+     root: Insert {
+         table: &quot;genres&quot;,
+<a href="#h10-0-3" id="h10-0-3" class="i">+        columns: [],
+</a>         expressions: [
+             [
+                 Constant(
+<b>diff --git a/<a id="h11" href="../file/src/sql/testdata/insert_expression.html">src/sql/testdata/insert_expression</a> b/<a href="../file/src/sql/testdata/insert_expression.html">src/sql/testdata/insert_expression</a></b>
+<a href="#h11-0" id="h11-0" class="h">@@ -0,0 +1,301 @@
+</a><a href="#h11-0-0" id="h11-0-0" class="i">+Query: INSERT INTO movies VALUES (2 * 5 - 1, &#39;District 9&#39;, 1000 ^ 0, 2 * 1000 + 1 * 10 - --1, 793 / 1e2, TRUE OR FALSE)
+</a><a href="#h11-0-1" id="h11-0-1" class="i">+
+</a><a href="#h11-0-2" id="h11-0-2" class="i">+Tokens:
+</a><a href="#h11-0-3" id="h11-0-3" class="i">+  Keyword(Insert)
+</a><a href="#h11-0-4" id="h11-0-4" class="i">+  Keyword(Into)
+</a><a href="#h11-0-5" id="h11-0-5" class="i">+  Ident(&quot;movies&quot;)
+</a><a href="#h11-0-6" id="h11-0-6" class="i">+  Keyword(Values)
+</a><a href="#h11-0-7" id="h11-0-7" class="i">+  OpenParen
+</a><a href="#h11-0-8" id="h11-0-8" class="i">+  Number(&quot;2&quot;)
+</a><a href="#h11-0-9" id="h11-0-9" class="i">+  Asterisk
+</a><a href="#h11-0-10" id="h11-0-10" class="i">+  Number(&quot;5&quot;)
+</a><a href="#h11-0-11" id="h11-0-11" class="i">+  Minus
+</a><a href="#h11-0-12" id="h11-0-12" class="i">+  Number(&quot;1&quot;)
+</a><a href="#h11-0-13" id="h11-0-13" class="i">+  Comma
+</a><a href="#h11-0-14" id="h11-0-14" class="i">+  String(&quot;District 9&quot;)
+</a><a href="#h11-0-15" id="h11-0-15" class="i">+  Comma
+</a><a href="#h11-0-16" id="h11-0-16" class="i">+  Number(&quot;1000&quot;)
+</a><a href="#h11-0-17" id="h11-0-17" class="i">+  Caret
+</a><a href="#h11-0-18" id="h11-0-18" class="i">+  Number(&quot;0&quot;)
+</a><a href="#h11-0-19" id="h11-0-19" class="i">+  Comma
+</a><a href="#h11-0-20" id="h11-0-20" class="i">+  Number(&quot;2&quot;)
+</a><a href="#h11-0-21" id="h11-0-21" class="i">+  Asterisk
+</a><a href="#h11-0-22" id="h11-0-22" class="i">+  Number(&quot;1000&quot;)
+</a><a href="#h11-0-23" id="h11-0-23" class="i">+  Plus
+</a><a href="#h11-0-24" id="h11-0-24" class="i">+  Number(&quot;1&quot;)
+</a><a href="#h11-0-25" id="h11-0-25" class="i">+  Asterisk
+</a><a href="#h11-0-26" id="h11-0-26" class="i">+  Number(&quot;10&quot;)
+</a><a href="#h11-0-27" id="h11-0-27" class="i">+  Minus
+</a><a href="#h11-0-28" id="h11-0-28" class="i">+  Minus
+</a><a href="#h11-0-29" id="h11-0-29" class="i">+  Minus
+</a><a href="#h11-0-30" id="h11-0-30" class="i">+  Number(&quot;1&quot;)
+</a><a href="#h11-0-31" id="h11-0-31" class="i">+  Comma
+</a><a href="#h11-0-32" id="h11-0-32" class="i">+  Number(&quot;793&quot;)
+</a><a href="#h11-0-33" id="h11-0-33" class="i">+  Slash
+</a><a href="#h11-0-34" id="h11-0-34" class="i">+  Number(&quot;1e2&quot;)
+</a><a href="#h11-0-35" id="h11-0-35" class="i">+  Comma
+</a><a href="#h11-0-36" id="h11-0-36" class="i">+  Keyword(True)
+</a><a href="#h11-0-37" id="h11-0-37" class="i">+  Keyword(Or)
+</a><a href="#h11-0-38" id="h11-0-38" class="i">+  Keyword(False)
+</a><a href="#h11-0-39" id="h11-0-39" class="i">+  CloseParen
+</a><a href="#h11-0-40" id="h11-0-40" class="i">+
+</a><a href="#h11-0-41" id="h11-0-41" class="i">+AST: Insert {
+</a><a href="#h11-0-42" id="h11-0-42" class="i">+    table: &quot;movies&quot;,
+</a><a href="#h11-0-43" id="h11-0-43" class="i">+    columns: None,
+</a><a href="#h11-0-44" id="h11-0-44" class="i">+    values: [
+</a><a href="#h11-0-45" id="h11-0-45" class="i">+        [
+</a><a href="#h11-0-46" id="h11-0-46" class="i">+            Operation(
+</a><a href="#h11-0-47" id="h11-0-47" class="i">+                Subtract(
+</a><a href="#h11-0-48" id="h11-0-48" class="i">+                    Operation(
+</a><a href="#h11-0-49" id="h11-0-49" class="i">+                        Multiply(
+</a><a href="#h11-0-50" id="h11-0-50" class="i">+                            Literal(
+</a><a href="#h11-0-51" id="h11-0-51" class="i">+                                Integer(
+</a><a href="#h11-0-52" id="h11-0-52" class="i">+                                    2,
+</a><a href="#h11-0-53" id="h11-0-53" class="i">+                                ),
+</a><a href="#h11-0-54" id="h11-0-54" class="i">+                            ),
+</a><a href="#h11-0-55" id="h11-0-55" class="i">+                            Literal(
+</a><a href="#h11-0-56" id="h11-0-56" class="i">+                                Integer(
+</a><a href="#h11-0-57" id="h11-0-57" class="i">+                                    5,
+</a><a href="#h11-0-58" id="h11-0-58" class="i">+                                ),
+</a><a href="#h11-0-59" id="h11-0-59" class="i">+                            ),
+</a><a href="#h11-0-60" id="h11-0-60" class="i">+                        ),
+</a><a href="#h11-0-61" id="h11-0-61" class="i">+                    ),
+</a><a href="#h11-0-62" id="h11-0-62" class="i">+                    Literal(
+</a><a href="#h11-0-63" id="h11-0-63" class="i">+                        Integer(
+</a><a href="#h11-0-64" id="h11-0-64" class="i">+                            1,
+</a><a href="#h11-0-65" id="h11-0-65" class="i">+                        ),
+</a><a href="#h11-0-66" id="h11-0-66" class="i">+                    ),
+</a><a href="#h11-0-67" id="h11-0-67" class="i">+                ),
+</a><a href="#h11-0-68" id="h11-0-68" class="i">+            ),
+</a><a href="#h11-0-69" id="h11-0-69" class="i">+            Literal(
+</a><a href="#h11-0-70" id="h11-0-70" class="i">+                String(
+</a><a href="#h11-0-71" id="h11-0-71" class="i">+                    &quot;District 9&quot;,
+</a><a href="#h11-0-72" id="h11-0-72" class="i">+                ),
+</a><a href="#h11-0-73" id="h11-0-73" class="i">+            ),
+</a><a href="#h11-0-74" id="h11-0-74" class="i">+            Operation(
+</a><a href="#h11-0-75" id="h11-0-75" class="i">+                Exponentiate(
+</a><a href="#h11-0-76" id="h11-0-76" class="i">+                    Literal(
+</a><a href="#h11-0-77" id="h11-0-77" class="i">+                        Integer(
+</a><a href="#h11-0-78" id="h11-0-78" class="i">+                            1000,
+</a><a href="#h11-0-79" id="h11-0-79" class="i">+                        ),
+</a><a href="#h11-0-80" id="h11-0-80" class="i">+                    ),
+</a><a href="#h11-0-81" id="h11-0-81" class="i">+                    Literal(
+</a><a href="#h11-0-82" id="h11-0-82" class="i">+                        Integer(
+</a><a href="#h11-0-83" id="h11-0-83" class="i">+                            0,
+</a><a href="#h11-0-84" id="h11-0-84" class="i">+                        ),
+</a><a href="#h11-0-85" id="h11-0-85" class="i">+                    ),
+</a><a href="#h11-0-86" id="h11-0-86" class="i">+                ),
+</a><a href="#h11-0-87" id="h11-0-87" class="i">+            ),
+</a><a href="#h11-0-88" id="h11-0-88" class="i">+            Operation(
+</a><a href="#h11-0-89" id="h11-0-89" class="i">+                Subtract(
+</a><a href="#h11-0-90" id="h11-0-90" class="i">+                    Operation(
+</a><a href="#h11-0-91" id="h11-0-91" class="i">+                        Add(
+</a><a href="#h11-0-92" id="h11-0-92" class="i">+                            Operation(
+</a><a href="#h11-0-93" id="h11-0-93" class="i">+                                Multiply(
+</a><a href="#h11-0-94" id="h11-0-94" class="i">+                                    Literal(
+</a><a href="#h11-0-95" id="h11-0-95" class="i">+                                        Integer(
+</a><a href="#h11-0-96" id="h11-0-96" class="i">+                                            2,
+</a><a href="#h11-0-97" id="h11-0-97" class="i">+                                        ),
+</a><a href="#h11-0-98" id="h11-0-98" class="i">+                                    ),
+</a><a href="#h11-0-99" id="h11-0-99" class="i">+                                    Literal(
+</a><a href="#h11-0-100" id="h11-0-100" class="i">+                                        Integer(
+</a><a href="#h11-0-101" id="h11-0-101" class="i">+                                            1000,
+</a><a href="#h11-0-102" id="h11-0-102" class="i">+                                        ),
+</a><a href="#h11-0-103" id="h11-0-103" class="i">+                                    ),
+</a><a href="#h11-0-104" id="h11-0-104" class="i">+                                ),
+</a><a href="#h11-0-105" id="h11-0-105" class="i">+                            ),
+</a><a href="#h11-0-106" id="h11-0-106" class="i">+                            Operation(
+</a><a href="#h11-0-107" id="h11-0-107" class="i">+                                Multiply(
+</a><a href="#h11-0-108" id="h11-0-108" class="i">+                                    Literal(
+</a><a href="#h11-0-109" id="h11-0-109" class="i">+                                        Integer(
+</a><a href="#h11-0-110" id="h11-0-110" class="i">+                                            1,
+</a><a href="#h11-0-111" id="h11-0-111" class="i">+                                        ),
+</a><a href="#h11-0-112" id="h11-0-112" class="i">+                                    ),
+</a><a href="#h11-0-113" id="h11-0-113" class="i">+                                    Literal(
+</a><a href="#h11-0-114" id="h11-0-114" class="i">+                                        Integer(
+</a><a href="#h11-0-115" id="h11-0-115" class="i">+                                            10,
+</a><a href="#h11-0-116" id="h11-0-116" class="i">+                                        ),
+</a><a href="#h11-0-117" id="h11-0-117" class="i">+                                    ),
+</a><a href="#h11-0-118" id="h11-0-118" class="i">+                                ),
+</a><a href="#h11-0-119" id="h11-0-119" class="i">+                            ),
+</a><a href="#h11-0-120" id="h11-0-120" class="i">+                        ),
+</a><a href="#h11-0-121" id="h11-0-121" class="i">+                    ),
+</a><a href="#h11-0-122" id="h11-0-122" class="i">+                    Operation(
+</a><a href="#h11-0-123" id="h11-0-123" class="i">+                        Negate(
+</a><a href="#h11-0-124" id="h11-0-124" class="i">+                            Operation(
+</a><a href="#h11-0-125" id="h11-0-125" class="i">+                                Negate(
+</a><a href="#h11-0-126" id="h11-0-126" class="i">+                                    Literal(
+</a><a href="#h11-0-127" id="h11-0-127" class="i">+                                        Integer(
+</a><a href="#h11-0-128" id="h11-0-128" class="i">+                                            1,
+</a><a href="#h11-0-129" id="h11-0-129" class="i">+                                        ),
+</a><a href="#h11-0-130" id="h11-0-130" class="i">+                                    ),
+</a><a href="#h11-0-131" id="h11-0-131" class="i">+                                ),
+</a><a href="#h11-0-132" id="h11-0-132" class="i">+                            ),
+</a><a href="#h11-0-133" id="h11-0-133" class="i">+                        ),
+</a><a href="#h11-0-134" id="h11-0-134" class="i">+                    ),
+</a><a href="#h11-0-135" id="h11-0-135" class="i">+                ),
+</a><a href="#h11-0-136" id="h11-0-136" class="i">+            ),
+</a><a href="#h11-0-137" id="h11-0-137" class="i">+            Operation(
+</a><a href="#h11-0-138" id="h11-0-138" class="i">+                Divide(
+</a><a href="#h11-0-139" id="h11-0-139" class="i">+                    Literal(
+</a><a href="#h11-0-140" id="h11-0-140" class="i">+                        Integer(
+</a><a href="#h11-0-141" id="h11-0-141" class="i">+                            793,
+</a><a href="#h11-0-142" id="h11-0-142" class="i">+                        ),
+</a><a href="#h11-0-143" id="h11-0-143" class="i">+                    ),
+</a><a href="#h11-0-144" id="h11-0-144" class="i">+                    Literal(
+</a><a href="#h11-0-145" id="h11-0-145" class="i">+                        Float(
+</a><a href="#h11-0-146" id="h11-0-146" class="i">+                            100.0,
+</a><a href="#h11-0-147" id="h11-0-147" class="i">+                        ),
+</a><a href="#h11-0-148" id="h11-0-148" class="i">+                    ),
+</a><a href="#h11-0-149" id="h11-0-149" class="i">+                ),
+</a><a href="#h11-0-150" id="h11-0-150" class="i">+            ),
+</a><a href="#h11-0-151" id="h11-0-151" class="i">+            Operation(
+</a><a href="#h11-0-152" id="h11-0-152" class="i">+                Or(
+</a><a href="#h11-0-153" id="h11-0-153" class="i">+                    Literal(
+</a><a href="#h11-0-154" id="h11-0-154" class="i">+                        Boolean(
+</a><a href="#h11-0-155" id="h11-0-155" class="i">+                            true,
+</a><a href="#h11-0-156" id="h11-0-156" class="i">+                        ),
+</a><a href="#h11-0-157" id="h11-0-157" class="i">+                    ),
+</a><a href="#h11-0-158" id="h11-0-158" class="i">+                    Literal(
+</a><a href="#h11-0-159" id="h11-0-159" class="i">+                        Boolean(
+</a><a href="#h11-0-160" id="h11-0-160" class="i">+                            false,
+</a><a href="#h11-0-161" id="h11-0-161" class="i">+                        ),
+</a><a href="#h11-0-162" id="h11-0-162" class="i">+                    ),
+</a><a href="#h11-0-163" id="h11-0-163" class="i">+                ),
+</a><a href="#h11-0-164" id="h11-0-164" class="i">+            ),
+</a><a href="#h11-0-165" id="h11-0-165" class="i">+        ],
+</a><a href="#h11-0-166" id="h11-0-166" class="i">+    ],
+</a><a href="#h11-0-167" id="h11-0-167" class="i">+}
+</a><a href="#h11-0-168" id="h11-0-168" class="i">+
+</a><a href="#h11-0-169" id="h11-0-169" class="i">+Plan: Plan {
+</a><a href="#h11-0-170" id="h11-0-170" class="i">+    root: Insert {
+</a><a href="#h11-0-171" id="h11-0-171" class="i">+        table: &quot;movies&quot;,
+</a><a href="#h11-0-172" id="h11-0-172" class="i">+        columns: [],
+</a><a href="#h11-0-173" id="h11-0-173" class="i">+        expressions: [
+</a><a href="#h11-0-174" id="h11-0-174" class="i">+            [
+</a><a href="#h11-0-175" id="h11-0-175" class="i">+                Subtract(
+</a><a href="#h11-0-176" id="h11-0-176" class="i">+                    Multiply(
+</a><a href="#h11-0-177" id="h11-0-177" class="i">+                        Constant(
+</a><a href="#h11-0-178" id="h11-0-178" class="i">+                            Integer(
+</a><a href="#h11-0-179" id="h11-0-179" class="i">+                                2,
+</a><a href="#h11-0-180" id="h11-0-180" class="i">+                            ),
+</a><a href="#h11-0-181" id="h11-0-181" class="i">+                        ),
+</a><a href="#h11-0-182" id="h11-0-182" class="i">+                        Constant(
+</a><a href="#h11-0-183" id="h11-0-183" class="i">+                            Integer(
+</a><a href="#h11-0-184" id="h11-0-184" class="i">+                                5,
+</a><a href="#h11-0-185" id="h11-0-185" class="i">+                            ),
+</a><a href="#h11-0-186" id="h11-0-186" class="i">+                        ),
+</a><a href="#h11-0-187" id="h11-0-187" class="i">+                    ),
+</a><a href="#h11-0-188" id="h11-0-188" class="i">+                    Constant(
+</a><a href="#h11-0-189" id="h11-0-189" class="i">+                        Integer(
+</a><a href="#h11-0-190" id="h11-0-190" class="i">+                            1,
+</a><a href="#h11-0-191" id="h11-0-191" class="i">+                        ),
+</a><a href="#h11-0-192" id="h11-0-192" class="i">+                    ),
+</a><a href="#h11-0-193" id="h11-0-193" class="i">+                ),
+</a><a href="#h11-0-194" id="h11-0-194" class="i">+                Constant(
+</a><a href="#h11-0-195" id="h11-0-195" class="i">+                    String(
+</a><a href="#h11-0-196" id="h11-0-196" class="i">+                        &quot;District 9&quot;,
+</a><a href="#h11-0-197" id="h11-0-197" class="i">+                    ),
+</a><a href="#h11-0-198" id="h11-0-198" class="i">+                ),
+</a><a href="#h11-0-199" id="h11-0-199" class="i">+                Exponentiate(
+</a><a href="#h11-0-200" id="h11-0-200" class="i">+                    Constant(
+</a><a href="#h11-0-201" id="h11-0-201" class="i">+                        Integer(
+</a><a href="#h11-0-202" id="h11-0-202" class="i">+                            1000,
+</a><a href="#h11-0-203" id="h11-0-203" class="i">+                        ),
+</a><a href="#h11-0-204" id="h11-0-204" class="i">+                    ),
+</a><a href="#h11-0-205" id="h11-0-205" class="i">+                    Constant(
+</a><a href="#h11-0-206" id="h11-0-206" class="i">+                        Integer(
+</a><a href="#h11-0-207" id="h11-0-207" class="i">+                            0,
+</a><a href="#h11-0-208" id="h11-0-208" class="i">+                        ),
+</a><a href="#h11-0-209" id="h11-0-209" class="i">+                    ),
+</a><a href="#h11-0-210" id="h11-0-210" class="i">+                ),
+</a><a href="#h11-0-211" id="h11-0-211" class="i">+                Subtract(
+</a><a href="#h11-0-212" id="h11-0-212" class="i">+                    Add(
+</a><a href="#h11-0-213" id="h11-0-213" class="i">+                        Multiply(
+</a><a href="#h11-0-214" id="h11-0-214" class="i">+                            Constant(
+</a><a href="#h11-0-215" id="h11-0-215" class="i">+                                Integer(
+</a><a href="#h11-0-216" id="h11-0-216" class="i">+                                    2,
+</a><a href="#h11-0-217" id="h11-0-217" class="i">+                                ),
+</a><a href="#h11-0-218" id="h11-0-218" class="i">+                            ),
+</a><a href="#h11-0-219" id="h11-0-219" class="i">+                            Constant(
+</a><a href="#h11-0-220" id="h11-0-220" class="i">+                                Integer(
+</a><a href="#h11-0-221" id="h11-0-221" class="i">+                                    1000,
+</a><a href="#h11-0-222" id="h11-0-222" class="i">+                                ),
+</a><a href="#h11-0-223" id="h11-0-223" class="i">+                            ),
+</a><a href="#h11-0-224" id="h11-0-224" class="i">+                        ),
+</a><a href="#h11-0-225" id="h11-0-225" class="i">+                        Multiply(
+</a><a href="#h11-0-226" id="h11-0-226" class="i">+                            Constant(
+</a><a href="#h11-0-227" id="h11-0-227" class="i">+                                Integer(
+</a><a href="#h11-0-228" id="h11-0-228" class="i">+                                    1,
+</a><a href="#h11-0-229" id="h11-0-229" class="i">+                                ),
+</a><a href="#h11-0-230" id="h11-0-230" class="i">+                            ),
+</a><a href="#h11-0-231" id="h11-0-231" class="i">+                            Constant(
+</a><a href="#h11-0-232" id="h11-0-232" class="i">+                                Integer(
+</a><a href="#h11-0-233" id="h11-0-233" class="i">+                                    10,
+</a><a href="#h11-0-234" id="h11-0-234" class="i">+                                ),
+</a><a href="#h11-0-235" id="h11-0-235" class="i">+                            ),
+</a><a href="#h11-0-236" id="h11-0-236" class="i">+                        ),
+</a><a href="#h11-0-237" id="h11-0-237" class="i">+                    ),
+</a><a href="#h11-0-238" id="h11-0-238" class="i">+                    Negate(
+</a><a href="#h11-0-239" id="h11-0-239" class="i">+                        Negate(
+</a><a href="#h11-0-240" id="h11-0-240" class="i">+                            Constant(
+</a><a href="#h11-0-241" id="h11-0-241" class="i">+                                Integer(
+</a><a href="#h11-0-242" id="h11-0-242" class="i">+                                    1,
+</a><a href="#h11-0-243" id="h11-0-243" class="i">+                                ),
+</a><a href="#h11-0-244" id="h11-0-244" class="i">+                            ),
+</a><a href="#h11-0-245" id="h11-0-245" class="i">+                        ),
+</a><a href="#h11-0-246" id="h11-0-246" class="i">+                    ),
+</a><a href="#h11-0-247" id="h11-0-247" class="i">+                ),
+</a><a href="#h11-0-248" id="h11-0-248" class="i">+                Divide(
+</a><a href="#h11-0-249" id="h11-0-249" class="i">+                    Constant(
+</a><a href="#h11-0-250" id="h11-0-250" class="i">+                        Integer(
+</a><a href="#h11-0-251" id="h11-0-251" class="i">+                            793,
+</a><a href="#h11-0-252" id="h11-0-252" class="i">+                        ),
+</a><a href="#h11-0-253" id="h11-0-253" class="i">+                    ),
+</a><a href="#h11-0-254" id="h11-0-254" class="i">+                    Constant(
+</a><a href="#h11-0-255" id="h11-0-255" class="i">+                        Float(
+</a><a href="#h11-0-256" id="h11-0-256" class="i">+                            100.0,
+</a><a href="#h11-0-257" id="h11-0-257" class="i">+                        ),
+</a><a href="#h11-0-258" id="h11-0-258" class="i">+                    ),
+</a><a href="#h11-0-259" id="h11-0-259" class="i">+                ),
+</a><a href="#h11-0-260" id="h11-0-260" class="i">+                Or(
+</a><a href="#h11-0-261" id="h11-0-261" class="i">+                    Constant(
+</a><a href="#h11-0-262" id="h11-0-262" class="i">+                        Boolean(
+</a><a href="#h11-0-263" id="h11-0-263" class="i">+                            true,
+</a><a href="#h11-0-264" id="h11-0-264" class="i">+                        ),
+</a><a href="#h11-0-265" id="h11-0-265" class="i">+                    ),
+</a><a href="#h11-0-266" id="h11-0-266" class="i">+                    Constant(
+</a><a href="#h11-0-267" id="h11-0-267" class="i">+                        Boolean(
+</a><a href="#h11-0-268" id="h11-0-268" class="i">+                            false,
+</a><a href="#h11-0-269" id="h11-0-269" class="i">+                        ),
+</a><a href="#h11-0-270" id="h11-0-270" class="i">+                    ),
+</a><a href="#h11-0-271" id="h11-0-271" class="i">+                ),
+</a><a href="#h11-0-272" id="h11-0-272" class="i">+            ],
+</a><a href="#h11-0-273" id="h11-0-273" class="i">+        ],
+</a><a href="#h11-0-274" id="h11-0-274" class="i">+    },
+</a><a href="#h11-0-275" id="h11-0-275" class="i">+}
+</a><a href="#h11-0-276" id="h11-0-276" class="i">+
+</a><a href="#h11-0-277" id="h11-0-277" class="i">+Query: INSERT INTO movies VALUES (2 * 5 - 1, &#39;District 9&#39;, 1000 ^ 0, 2 * 1000 + 1 * 10 - --1, 793 / 1e2, TRUE OR FALSE)
+</a><a href="#h11-0-278" id="h11-0-278" class="i">+
+</a><a href="#h11-0-279" id="h11-0-279" class="i">+Result:
+</a><a href="#h11-0-280" id="h11-0-280" class="i">+
+</a><a href="#h11-0-281" id="h11-0-281" class="i">+Storage:
+</a><a href="#h11-0-282" id="h11-0-282" class="i">+CREATE TABLE genres (
+</a><a href="#h11-0-283" id="h11-0-283" class="i">+  id INTEGER PRIMARY KEY NOT NULL,
+</a><a href="#h11-0-284" id="h11-0-284" class="i">+  name VARCHAR NOT NULL
+</a><a href="#h11-0-285" id="h11-0-285" class="i">+)
+</a><a href="#h11-0-286" id="h11-0-286" class="i">+[Integer(1), String(&quot;Science Fiction&quot;)]
+</a><a href="#h11-0-287" id="h11-0-287" class="i">+[Integer(2), String(&quot;Action&quot;)]
+</a><a href="#h11-0-288" id="h11-0-288" class="i">+
+</a><a href="#h11-0-289" id="h11-0-289" class="i">+CREATE TABLE movies (
+</a><a href="#h11-0-290" id="h11-0-290" class="i">+  id INTEGER PRIMARY KEY NOT NULL,
+</a><a href="#h11-0-291" id="h11-0-291" class="i">+  title VARCHAR NOT NULL,
+</a><a href="#h11-0-292" id="h11-0-292" class="i">+  genre_id INTEGER NOT NULL,
+</a><a href="#h11-0-293" id="h11-0-293" class="i">+  released INTEGER NOT NULL,
+</a><a href="#h11-0-294" id="h11-0-294" class="i">+  rating FLOAT,
+</a><a href="#h11-0-295" id="h11-0-295" class="i">+  bluray BOOLEAN
+</a><a href="#h11-0-296" id="h11-0-296" class="i">+)
+</a><a href="#h11-0-297" id="h11-0-297" class="i">+[Integer(1), String(&quot;Stalker&quot;), Integer(1), Integer(1979), Float(8.2), Boolean(false)]
+</a><a href="#h11-0-298" id="h11-0-298" class="i">+[Integer(2), String(&quot;Sicario&quot;), Integer(2), Integer(2015), Float(7.6), Boolean(true)]
+</a><a href="#h11-0-299" id="h11-0-299" class="i">+[Integer(3), String(&quot;Primer&quot;), Integer(1), Integer(2004), Float(6.9), Null]
+</a><a href="#h11-0-300" id="h11-0-300" class="i">+[Integer(9), String(&quot;District 9&quot;), Integer(1), Integer(2009), Float(7.93), Boolean(true)]
+</a><b>diff --git a/<a id="h12" href="../file/src/sql/testdata/insert_partial.html">src/sql/testdata/insert_partial</a> b/<a href="../file/src/sql/testdata/insert_partial.html">src/sql/testdata/insert_partial</a></b>
+<a href="#h12-0" id="h12-0" class="h">@@ -0,0 +1,138 @@
+</a><a href="#h12-0-0" id="h12-0-0" class="i">+Query: INSERT INTO movies (title, released, id, genre_id, rating) VALUES (&#39;District 9&#39;, 2009, 9, 1, 7.9)
+</a><a href="#h12-0-1" id="h12-0-1" class="i">+
+</a><a href="#h12-0-2" id="h12-0-2" class="i">+Tokens:
+</a><a href="#h12-0-3" id="h12-0-3" class="i">+  Keyword(Insert)
+</a><a href="#h12-0-4" id="h12-0-4" class="i">+  Keyword(Into)
+</a><a href="#h12-0-5" id="h12-0-5" class="i">+  Ident(&quot;movies&quot;)
+</a><a href="#h12-0-6" id="h12-0-6" class="i">+  OpenParen
+</a><a href="#h12-0-7" id="h12-0-7" class="i">+  Ident(&quot;title&quot;)
+</a><a href="#h12-0-8" id="h12-0-8" class="i">+  Comma
+</a><a href="#h12-0-9" id="h12-0-9" class="i">+  Ident(&quot;released&quot;)
+</a><a href="#h12-0-10" id="h12-0-10" class="i">+  Comma
+</a><a href="#h12-0-11" id="h12-0-11" class="i">+  Ident(&quot;id&quot;)
+</a><a href="#h12-0-12" id="h12-0-12" class="i">+  Comma
+</a><a href="#h12-0-13" id="h12-0-13" class="i">+  Ident(&quot;genre_id&quot;)
+</a><a href="#h12-0-14" id="h12-0-14" class="i">+  Comma
+</a><a href="#h12-0-15" id="h12-0-15" class="i">+  Ident(&quot;rating&quot;)
+</a><a href="#h12-0-16" id="h12-0-16" class="i">+  CloseParen
+</a><a href="#h12-0-17" id="h12-0-17" class="i">+  Keyword(Values)
+</a><a href="#h12-0-18" id="h12-0-18" class="i">+  OpenParen
+</a><a href="#h12-0-19" id="h12-0-19" class="i">+  String(&quot;District 9&quot;)
+</a><a href="#h12-0-20" id="h12-0-20" class="i">+  Comma
+</a><a href="#h12-0-21" id="h12-0-21" class="i">+  Number(&quot;2009&quot;)
+</a><a href="#h12-0-22" id="h12-0-22" class="i">+  Comma
+</a><a href="#h12-0-23" id="h12-0-23" class="i">+  Number(&quot;9&quot;)
+</a><a href="#h12-0-24" id="h12-0-24" class="i">+  Comma
+</a><a href="#h12-0-25" id="h12-0-25" class="i">+  Number(&quot;1&quot;)
+</a><a href="#h12-0-26" id="h12-0-26" class="i">+  Comma
+</a><a href="#h12-0-27" id="h12-0-27" class="i">+  Number(&quot;7.9&quot;)
+</a><a href="#h12-0-28" id="h12-0-28" class="i">+  CloseParen
+</a><a href="#h12-0-29" id="h12-0-29" class="i">+
+</a><a href="#h12-0-30" id="h12-0-30" class="i">+AST: Insert {
+</a><a href="#h12-0-31" id="h12-0-31" class="i">+    table: &quot;movies&quot;,
+</a><a href="#h12-0-32" id="h12-0-32" class="i">+    columns: Some(
+</a><a href="#h12-0-33" id="h12-0-33" class="i">+        [
+</a><a href="#h12-0-34" id="h12-0-34" class="i">+            &quot;title&quot;,
+</a><a href="#h12-0-35" id="h12-0-35" class="i">+            &quot;released&quot;,
+</a><a href="#h12-0-36" id="h12-0-36" class="i">+            &quot;id&quot;,
+</a><a href="#h12-0-37" id="h12-0-37" class="i">+            &quot;genre_id&quot;,
+</a><a href="#h12-0-38" id="h12-0-38" class="i">+            &quot;rating&quot;,
+</a><a href="#h12-0-39" id="h12-0-39" class="i">+        ],
+</a><a href="#h12-0-40" id="h12-0-40" class="i">+    ),
+</a><a href="#h12-0-41" id="h12-0-41" class="i">+    values: [
+</a><a href="#h12-0-42" id="h12-0-42" class="i">+        [
+</a><a href="#h12-0-43" id="h12-0-43" class="i">+            Literal(
+</a><a href="#h12-0-44" id="h12-0-44" class="i">+                String(
+</a><a href="#h12-0-45" id="h12-0-45" class="i">+                    &quot;District 9&quot;,
+</a><a href="#h12-0-46" id="h12-0-46" class="i">+                ),
+</a><a href="#h12-0-47" id="h12-0-47" class="i">+            ),
+</a><a href="#h12-0-48" id="h12-0-48" class="i">+            Literal(
+</a><a href="#h12-0-49" id="h12-0-49" class="i">+                Integer(
+</a><a href="#h12-0-50" id="h12-0-50" class="i">+                    2009,
+</a><a href="#h12-0-51" id="h12-0-51" class="i">+                ),
+</a><a href="#h12-0-52" id="h12-0-52" class="i">+            ),
+</a><a href="#h12-0-53" id="h12-0-53" class="i">+            Literal(
+</a><a href="#h12-0-54" id="h12-0-54" class="i">+                Integer(
+</a><a href="#h12-0-55" id="h12-0-55" class="i">+                    9,
+</a><a href="#h12-0-56" id="h12-0-56" class="i">+                ),
+</a><a href="#h12-0-57" id="h12-0-57" class="i">+            ),
+</a><a href="#h12-0-58" id="h12-0-58" class="i">+            Literal(
+</a><a href="#h12-0-59" id="h12-0-59" class="i">+                Integer(
+</a><a href="#h12-0-60" id="h12-0-60" class="i">+                    1,
+</a><a href="#h12-0-61" id="h12-0-61" class="i">+                ),
+</a><a href="#h12-0-62" id="h12-0-62" class="i">+            ),
+</a><a href="#h12-0-63" id="h12-0-63" class="i">+            Literal(
+</a><a href="#h12-0-64" id="h12-0-64" class="i">+                Float(
+</a><a href="#h12-0-65" id="h12-0-65" class="i">+                    7.9,
+</a><a href="#h12-0-66" id="h12-0-66" class="i">+                ),
+</a><a href="#h12-0-67" id="h12-0-67" class="i">+            ),
+</a><a href="#h12-0-68" id="h12-0-68" class="i">+        ],
+</a><a href="#h12-0-69" id="h12-0-69" class="i">+    ],
+</a><a href="#h12-0-70" id="h12-0-70" class="i">+}
+</a><a href="#h12-0-71" id="h12-0-71" class="i">+
+</a><a href="#h12-0-72" id="h12-0-72" class="i">+Plan: Plan {
+</a><a href="#h12-0-73" id="h12-0-73" class="i">+    root: Insert {
+</a><a href="#h12-0-74" id="h12-0-74" class="i">+        table: &quot;movies&quot;,
+</a><a href="#h12-0-75" id="h12-0-75" class="i">+        columns: [
+</a><a href="#h12-0-76" id="h12-0-76" class="i">+            &quot;title&quot;,
+</a><a href="#h12-0-77" id="h12-0-77" class="i">+            &quot;released&quot;,
+</a><a href="#h12-0-78" id="h12-0-78" class="i">+            &quot;id&quot;,
+</a><a href="#h12-0-79" id="h12-0-79" class="i">+            &quot;genre_id&quot;,
+</a><a href="#h12-0-80" id="h12-0-80" class="i">+            &quot;rating&quot;,
+</a><a href="#h12-0-81" id="h12-0-81" class="i">+        ],
+</a><a href="#h12-0-82" id="h12-0-82" class="i">+        expressions: [
+</a><a href="#h12-0-83" id="h12-0-83" class="i">+            [
+</a><a href="#h12-0-84" id="h12-0-84" class="i">+                Constant(
+</a><a href="#h12-0-85" id="h12-0-85" class="i">+                    String(
+</a><a href="#h12-0-86" id="h12-0-86" class="i">+                        &quot;District 9&quot;,
+</a><a href="#h12-0-87" id="h12-0-87" class="i">+                    ),
+</a><a href="#h12-0-88" id="h12-0-88" class="i">+                ),
+</a><a href="#h12-0-89" id="h12-0-89" class="i">+                Constant(
+</a><a href="#h12-0-90" id="h12-0-90" class="i">+                    Integer(
+</a><a href="#h12-0-91" id="h12-0-91" class="i">+                        2009,
+</a><a href="#h12-0-92" id="h12-0-92" class="i">+                    ),
+</a><a href="#h12-0-93" id="h12-0-93" class="i">+                ),
+</a><a href="#h12-0-94" id="h12-0-94" class="i">+                Constant(
+</a><a href="#h12-0-95" id="h12-0-95" class="i">+                    Integer(
+</a><a href="#h12-0-96" id="h12-0-96" class="i">+                        9,
+</a><a href="#h12-0-97" id="h12-0-97" class="i">+                    ),
+</a><a href="#h12-0-98" id="h12-0-98" class="i">+                ),
+</a><a href="#h12-0-99" id="h12-0-99" class="i">+                Constant(
+</a><a href="#h12-0-100" id="h12-0-100" class="i">+                    Integer(
+</a><a href="#h12-0-101" id="h12-0-101" class="i">+                        1,
+</a><a href="#h12-0-102" id="h12-0-102" class="i">+                    ),
+</a><a href="#h12-0-103" id="h12-0-103" class="i">+                ),
+</a><a href="#h12-0-104" id="h12-0-104" class="i">+                Constant(
+</a><a href="#h12-0-105" id="h12-0-105" class="i">+                    Float(
+</a><a href="#h12-0-106" id="h12-0-106" class="i">+                        7.9,
+</a><a href="#h12-0-107" id="h12-0-107" class="i">+                    ),
+</a><a href="#h12-0-108" id="h12-0-108" class="i">+                ),
+</a><a href="#h12-0-109" id="h12-0-109" class="i">+            ],
+</a><a href="#h12-0-110" id="h12-0-110" class="i">+        ],
+</a><a href="#h12-0-111" id="h12-0-111" class="i">+    },
+</a><a href="#h12-0-112" id="h12-0-112" class="i">+}
+</a><a href="#h12-0-113" id="h12-0-113" class="i">+
+</a><a href="#h12-0-114" id="h12-0-114" class="i">+Query: INSERT INTO movies (title, released, id, genre_id, rating) VALUES (&#39;District 9&#39;, 2009, 9, 1, 7.9)
+</a><a href="#h12-0-115" id="h12-0-115" class="i">+
+</a><a href="#h12-0-116" id="h12-0-116" class="i">+Result:
+</a><a href="#h12-0-117" id="h12-0-117" class="i">+
+</a><a href="#h12-0-118" id="h12-0-118" class="i">+Storage:
+</a><a href="#h12-0-119" id="h12-0-119" class="i">+CREATE TABLE genres (
+</a><a href="#h12-0-120" id="h12-0-120" class="i">+  id INTEGER PRIMARY KEY NOT NULL,
+</a><a href="#h12-0-121" id="h12-0-121" class="i">+  name VARCHAR NOT NULL
+</a><a href="#h12-0-122" id="h12-0-122" class="i">+)
+</a><a href="#h12-0-123" id="h12-0-123" class="i">+[Integer(1), String(&quot;Science Fiction&quot;)]
+</a><a href="#h12-0-124" id="h12-0-124" class="i">+[Integer(2), String(&quot;Action&quot;)]
+</a><a href="#h12-0-125" id="h12-0-125" class="i">+
+</a><a href="#h12-0-126" id="h12-0-126" class="i">+CREATE TABLE movies (
+</a><a href="#h12-0-127" id="h12-0-127" class="i">+  id INTEGER PRIMARY KEY NOT NULL,
+</a><a href="#h12-0-128" id="h12-0-128" class="i">+  title VARCHAR NOT NULL,
+</a><a href="#h12-0-129" id="h12-0-129" class="i">+  genre_id INTEGER NOT NULL,
+</a><a href="#h12-0-130" id="h12-0-130" class="i">+  released INTEGER NOT NULL,
+</a><a href="#h12-0-131" id="h12-0-131" class="i">+  rating FLOAT,
+</a><a href="#h12-0-132" id="h12-0-132" class="i">+  bluray BOOLEAN
+</a><a href="#h12-0-133" id="h12-0-133" class="i">+)
+</a><a href="#h12-0-134" id="h12-0-134" class="i">+[Integer(1), String(&quot;Stalker&quot;), Integer(1), Integer(1979), Float(8.2), Boolean(false)]
+</a><a href="#h12-0-135" id="h12-0-135" class="i">+[Integer(2), String(&quot;Sicario&quot;), Integer(2), Integer(2015), Float(7.6), Boolean(true)]
+</a><a href="#h12-0-136" id="h12-0-136" class="i">+[Integer(3), String(&quot;Primer&quot;), Integer(1), Integer(2004), Float(6.9), Null]
+</a><a href="#h12-0-137" id="h12-0-137" class="i">+[Integer(9), String(&quot;District 9&quot;), Integer(1), Integer(2009), Float(7.9), Null]
+</a><b>diff --git a/<a id="h13" href="../file/src/sql/testdata/insert_values.html">src/sql/testdata/insert_values</a> b/<a href="../file/src/sql/testdata/insert_values.html">src/sql/testdata/insert_values</a></b>
+<a href="#h13-0" id="h13-0" class="h">@@ -33,6 +33,7 @@ AST: Insert {
+</a> Plan: Plan {
+     root: Insert {
+         table: &quot;genres&quot;,
+<a href="#h13-0-3" id="h13-0-3" class="i">+        columns: [],
+</a>         expressions: [
+             [
+                 Constant(
+<b>diff --git a/<a id="h14" href="../file/src/sql/tests.rs.html">src/sql/tests.rs</a> b/<a href="../file/src/sql/tests.rs.html">src/sql/tests.rs</a></b>
+<a href="#h14-0" id="h14-0" class="h">@@ -195,10 +195,16 @@ test_sql! {
+</a>     expr_literal_numbers: &quot;SELECT 0, 1, -2, --3, +-4, 3.14, 293, 3.14e3, 2.718E-2&quot;,
+     expr_literal_string_quotes: r#&quot;SELECT &#39;Literal with &#39;&#39;single&#39;&#39; and &quot;double&quot; quotes&#39;&quot;#,
+ 
+<a href="#h14-0-3" id="h14-0-3" class="i">+    insert_default_null: &quot;INSERT INTO movies VALUES (9, &#39;District 9&#39;, 1, 2009)&quot;,
+</a><a href="#h14-0-4" id="h14-0-4" class="i">+    insert_expression: &quot;INSERT INTO movies VALUES (2 * 5 - 1, &#39;District 9&#39;, 1000 ^ 0, 2 * 1000 + 1 * 10 - --1, 793 / 1e2, TRUE OR FALSE)&quot;,
+</a><a href="#h14-0-5" id="h14-0-5" class="i">+    insert_error_columns_duplicate: &quot;INSERT INTO genres (id, name, id) VALUES (9, &#39;Western&#39;, 9)&quot;,
+</a><a href="#h14-0-6" id="h14-0-6" class="i">+    insert_error_columns_mismatch: &quot;INSERT INTO genres (id) VALUES (9, &#39;Western&#39;)&quot;,
+</a>     insert_error_datatype_conflict: &quot;INSERT INTO genres VALUES (9, 3.14)&quot;,
+<a href="#h14-0-8" id="h14-0-8" class="i">+    insert_error_default_null_disallowed: &quot;INSERT INTO movies VALUES (9)&quot;,
+</a>     insert_error_null_disallowed: &quot;INSERT INTO genres VALUES (9, NULL)&quot;,
+     insert_error_pk_exists: &quot;INSERT INTO genres VALUES (1, &#39;Western&#39;)&quot;,
+     insert_error_pk_null: &quot;INSERT INTO genres VALUES (NULL, &#39;Western&#39;)&quot;,
+<a href="#h14-0-12" id="h14-0-12" class="i">+    insert_partial: &quot;INSERT INTO movies (title, released, id, genre_id, rating) VALUES (&#39;District 9&#39;, 2009, 9, 1, 7.9)&quot;,
+</a>     insert_values: &quot;INSERT INTO genres VALUES (9, &#39;Western&#39;)&quot;,
+ 
+     select_all_from_table: &quot;SELECT * FROM movies&quot;,
+</pre>
+</div>
+</body>
+</html>

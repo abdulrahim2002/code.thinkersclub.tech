@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tests: add client transaction tests - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/3efecbcf09584b4571eca679ef05181ca7524839.html">3efecbcf09584b4571eca679ef05181ca7524839</a>
+<b>parent</b> <a href="../commit/cac7f00a67df893a59a1a7b983852e8a77a16dc6.html">cac7f00a67df893a59a1a7b983852e8a77a16dc6</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Sat, 11 Apr 2020 17:43:31 +0200
+
+tests: add client transaction tests
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">tests/client/mod.rs</a></td><td> | </td><td class="num">37</td><td><span class="i">+++++++++++++++++++++++++++++++++++++</span><span class="d"></span></td></tr>
+</table></pre><pre>1 file changed, 37 insertions(+), 0 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/tests/client/mod.rs.html">tests/client/mod.rs</a> b/<a href="../file/tests/client/mod.rs.html">tests/client/mod.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -372,6 +372,43 @@ fn query_txn() -&gt; Result&lt;(), Error&gt; {
+</a>     Ok(())
+ }
+ 
+<a href="#h0-0-3" id="h0-0-3" class="i">+#[test]
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+#[serial]
+</a><a href="#h0-0-5" id="h0-0-5" class="i">+fn query_txn_concurrent() -&gt; Result&lt;(), Error&gt; {
+</a><a href="#h0-0-6" id="h0-0-6" class="i">+    let (mut a, teardown) = setup_movies()?;
+</a><a href="#h0-0-7" id="h0-0-7" class="i">+    let mut b = toydb::Client::new(&quot;127.0.0.1&quot;, 9605)?;
+</a><a href="#h0-0-8" id="h0-0-8" class="i">+    defer!(teardown());
+</a><a href="#h0-0-9" id="h0-0-9" class="i">+
+</a><a href="#h0-0-10" id="h0-0-10" class="i">+    // Concurrent updates should throw a serialization failure on conflict.
+</a><a href="#h0-0-11" id="h0-0-11" class="i">+    assert_eq!(a.query(&quot;BEGIN&quot;)?, ResultSet::Begin { id: 2, mode: Mode::ReadWrite });
+</a><a href="#h0-0-12" id="h0-0-12" class="i">+    assert_eq!(b.query(&quot;BEGIN&quot;)?, ResultSet::Begin { id: 3, mode: Mode::ReadWrite });
+</a><a href="#h0-0-13" id="h0-0-13" class="i">+
+</a><a href="#h0-0-14" id="h0-0-14" class="i">+    assert_rows(
+</a><a href="#h0-0-15" id="h0-0-15" class="i">+        a.query(&quot;SELECT * FROM genres WHERE id = 1&quot;)?,
+</a><a href="#h0-0-16" id="h0-0-16" class="i">+        vec![vec![Value::Integer(1), Value::String(&quot;Science Fiction&quot;.into())]],
+</a><a href="#h0-0-17" id="h0-0-17" class="i">+    );
+</a><a href="#h0-0-18" id="h0-0-18" class="i">+    assert_rows(
+</a><a href="#h0-0-19" id="h0-0-19" class="i">+        b.query(&quot;SELECT * FROM genres WHERE id = 1&quot;)?,
+</a><a href="#h0-0-20" id="h0-0-20" class="i">+        vec![vec![Value::Integer(1), Value::String(&quot;Science Fiction&quot;.into())]],
+</a><a href="#h0-0-21" id="h0-0-21" class="i">+    );
+</a><a href="#h0-0-22" id="h0-0-22" class="i">+
+</a><a href="#h0-0-23" id="h0-0-23" class="i">+    assert_eq!(
+</a><a href="#h0-0-24" id="h0-0-24" class="i">+        a.query(&quot;UPDATE genres SET name = &#39;x&#39; WHERE id = 1&quot;),
+</a><a href="#h0-0-25" id="h0-0-25" class="i">+        Ok(ResultSet::Update { count: 1 })
+</a><a href="#h0-0-26" id="h0-0-26" class="i">+    );
+</a><a href="#h0-0-27" id="h0-0-27" class="i">+    assert_eq!(b.query(&quot;UPDATE genres SET name = &#39;y&#39; WHERE id = 1&quot;), Err(Error::Serialization));
+</a><a href="#h0-0-28" id="h0-0-28" class="i">+
+</a><a href="#h0-0-29" id="h0-0-29" class="i">+    assert_eq!(a.query(&quot;COMMIT&quot;), Ok(ResultSet::Commit { id: 2 }));
+</a><a href="#h0-0-30" id="h0-0-30" class="i">+    assert_eq!(b.query(&quot;ROLLBACK&quot;), Ok(ResultSet::Rollback { id: 3 }));
+</a><a href="#h0-0-31" id="h0-0-31" class="i">+
+</a><a href="#h0-0-32" id="h0-0-32" class="i">+    assert_rows(
+</a><a href="#h0-0-33" id="h0-0-33" class="i">+        a.query(&quot;SELECT * FROM genres WHERE id = 1&quot;)?,
+</a><a href="#h0-0-34" id="h0-0-34" class="i">+        vec![vec![Value::Integer(1), Value::String(&quot;x&quot;.into())]],
+</a><a href="#h0-0-35" id="h0-0-35" class="i">+    );
+</a><a href="#h0-0-36" id="h0-0-36" class="i">+
+</a><a href="#h0-0-37" id="h0-0-37" class="i">+    Ok(())
+</a><a href="#h0-0-38" id="h0-0-38" class="i">+}
+</a><a href="#h0-0-39" id="h0-0-39" class="i">+
+</a> fn assert_rows(result: ResultSet, expect: Vec&lt;Row&gt;) {
+     match result {
+         ResultSet::Query { relation: Relation { rows: Some(rows), .. } } =&gt; {
+</pre>
+</div>
+</body>
+</html>

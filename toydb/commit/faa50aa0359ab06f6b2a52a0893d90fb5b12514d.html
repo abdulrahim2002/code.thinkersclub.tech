@@ -1,0 +1,718 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>sql: clean up `Raft` engine - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/faa50aa0359ab06f6b2a52a0893d90fb5b12514d.html">faa50aa0359ab06f6b2a52a0893d90fb5b12514d</a>
+<b>parent</b> <a href="../commit/969c9a592a40f404e77aedb37d5de2ee5175a14a.html">969c9a592a40f404e77aedb37d5de2ee5175a14a</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Tue, 18 Jun 2024 19:42:48 +0200
+
+sql: clean up `Raft` engine
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/error.rs</a></td><td> | </td><td class="num">6</td><td><span class="i">++++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/raft/message.rs</a></td><td> | </td><td class="num">5</td><td><span class="i">+++++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/sql/engine/engine.rs</a></td><td> | </td><td class="num">8</td><td><span class="i">+++</span><span class="d">-----</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">src/sql/engine/local.rs</a></td><td> | </td><td class="num">8</td><td><span class="i">++++</span><span class="d">----</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h4">src/sql/engine/raft.rs</a></td><td> | </td><td class="num">446</td><td><span class="i">+++++++++++++++++++++++++++++++++++++++</span><span class="d">----------------------------------------</span></td></tr>
+</table></pre><pre>5 files changed, 237 insertions(+), 236 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/error.rs.html">src/error.rs</a> b/<a href="../file/src/error.rs.html">src/error.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -42,8 +42,10 @@ impl Error {
+</a>     /// panic to prevent replica divergence.
+     pub fn is_deterministic(&amp;self) -&gt; bool {
+         match self {
+<a href="#h0-0-3" id="h0-0-3" class="d">-            // Aborts don&#39;t happen during application, only leader changes.
+</a><a href="#h0-0-4" id="h0-0-4" class="d">-            Error::Abort =&gt; true,
+</a><a href="#h0-0-5" id="h0-0-5" class="i">+            // Aborts don&#39;t happen during application, only leader changes. But
+</a><a href="#h0-0-6" id="h0-0-6" class="i">+            // we consider them non-deterministic in case a abort should happen
+</a><a href="#h0-0-7" id="h0-0-7" class="i">+            // unexpectedly below Raft.
+</a><a href="#h0-0-8" id="h0-0-8" class="i">+            Error::Abort =&gt; false,
+</a>             // Possible data corruption local to this node.
+             Error::InvalidData(_) =&gt; false,
+             // Input errors are (likely) deterministic. We could employ command
+<b>diff --git a/<a id="h1" href="../file/src/raft/message.rs.html">src/raft/message.rs</a> b/<a href="../file/src/raft/message.rs.html">src/raft/message.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -27,6 +27,11 @@ impl encoding::Value for Envelope {}
+</a> /// ensuring messages are not dropped or reordered as long as the connection
+ /// remains intact. A message and its response are sent across separate TCP
+ /// connections (outbound from their respective senders).
+<a href="#h1-0-3" id="h1-0-3" class="i">+///
+</a><a href="#h1-0-4" id="h1-0-4" class="i">+/// TODO: add a Read(Response) message type for reads, to avoid sending
+</a><a href="#h1-0-5" id="h1-0-5" class="i">+/// heartbeats on every read -- these could otherwise cause spurious replication
+</a><a href="#h1-0-6" id="h1-0-6" class="i">+/// probes for behind followers. We still need the read_seq in the heartbeat for
+</a><a href="#h1-0-7" id="h1-0-7" class="i">+/// retries.
+</a> #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+ pub enum Message {
+     /// Candidates campaign for leadership by soliciting votes from peers.
+<b>diff --git a/<a id="h2" href="../file/src/sql/engine/engine.rs.html">src/sql/engine/engine.rs</a> b/<a href="../file/src/sql/engine/engine.rs.html">src/sql/engine/engine.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -20,11 +20,11 @@ pub trait Engine&lt;&#39;a&gt;: Sized {
+</a>     type Transaction: Transaction + Catalog + &#39;a;
+ 
+     /// Begins a read-write transaction.
+<a href="#h2-0-3" id="h2-0-3" class="d">-    fn begin(&amp;self) -&gt; Result&lt;Self::Transaction&gt;;
+</a><a href="#h2-0-4" id="h2-0-4" class="i">+    fn begin(&amp;&#39;a self) -&gt; Result&lt;Self::Transaction&gt;;
+</a>     /// Begins a read-only transaction.
+<a href="#h2-0-6" id="h2-0-6" class="d">-    fn begin_read_only(&amp;self) -&gt; Result&lt;Self::Transaction&gt;;
+</a><a href="#h2-0-7" id="h2-0-7" class="i">+    fn begin_read_only(&amp;&#39;a self) -&gt; Result&lt;Self::Transaction&gt;;
+</a>     /// Begins a read-only transaction as of a historical version.
+<a href="#h2-0-9" id="h2-0-9" class="d">-    fn begin_as_of(&amp;self, version: mvcc::Version) -&gt; Result&lt;Self::Transaction&gt;;
+</a><a href="#h2-0-10" id="h2-0-10" class="i">+    fn begin_as_of(&amp;&#39;a self, version: mvcc::Version) -&gt; Result&lt;Self::Transaction&gt;;
+</a> 
+     /// Creates a session for executing SQL statements. Can&#39;t outlive engine.
+     fn session(&amp;&#39;a self) -&gt; Session&lt;&#39;a, Self&gt; {
+<a href="#h2-1" id="h2-1" class="h">@@ -38,8 +38,6 @@ pub trait Engine&lt;&#39;a&gt;: Sized {
+</a> /// All methods operate on row batches rather than single rows to amortize the
+ /// cost. With the Raft engine, each call results in a Raft roundtrip, and we&#39;d
+ /// rather not have to do that for every single row that&#39;s modified.
+<a href="#h2-1-3" id="h2-1-3" class="d">-///
+</a><a href="#h2-1-4" id="h2-1-4" class="d">-/// TODO: decide whether to use borrowed, owned, or Cowed parameters.
+</a> pub trait Transaction {
+     /// The transaction&#39;s MVCC version. Unique for read/write transactions.
+     fn version(&amp;self) -&gt; mvcc::Version;
+<b>diff --git a/<a id="h3" href="../file/src/sql/engine/local.rs.html">src/sql/engine/local.rs</a> b/<a href="../file/src/sql/engine/local.rs.html">src/sql/engine/local.rs</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -31,13 +31,13 @@ impl&lt;E: storage::Engine&gt; Local&lt;E&gt; {
+</a>         Ok(&lt;Self as super::Engine&gt;::Transaction::new(self.kv.resume(state)?))
+     }
+ 
+<a href="#h3-0-3" id="h3-0-3" class="d">-    /// Fetches an unversioned metadata value
+</a><a href="#h3-0-4" id="h3-0-4" class="d">-    pub fn get_metadata(&amp;self, key: &amp;[u8]) -&gt; Result&lt;Option&lt;Vec&lt;u8&gt;&gt;&gt; {
+</a><a href="#h3-0-5" id="h3-0-5" class="i">+    /// Fetches an unversioned key.
+</a><a href="#h3-0-6" id="h3-0-6" class="i">+    pub fn get_unversioned(&amp;self, key: &amp;[u8]) -&gt; Result&lt;Option&lt;Vec&lt;u8&gt;&gt;&gt; {
+</a>         self.kv.get_unversioned(key)
+     }
+ 
+<a href="#h3-0-10" id="h3-0-10" class="d">-    /// Sets an unversioned metadata value
+</a><a href="#h3-0-11" id="h3-0-11" class="d">-    pub fn set_metadata(&amp;self, key: &amp;[u8], value: Vec&lt;u8&gt;) -&gt; Result&lt;()&gt; {
+</a><a href="#h3-0-12" id="h3-0-12" class="i">+    /// Sets an unversioned key.
+</a><a href="#h3-0-13" id="h3-0-13" class="i">+    pub fn set_unversioned(&amp;self, key: &amp;[u8], value: Vec&lt;u8&gt;) -&gt; Result&lt;()&gt; {
+</a>         self.kv.set_unversioned(key, value)
+     }
+ }
+<b>diff --git a/<a id="h4" href="../file/src/sql/engine/raft.rs.html">src/sql/engine/raft.rs</a> b/<a href="../file/src/sql/engine/raft.rs.html">src/sql/engine/raft.rs</a></b>
+<a href="#h4-0" id="h4-0" class="h">@@ -1,180 +1,132 @@
+</a><a href="#h4-0-0" id="h4-0-0" class="d">-use super::super::types::schema::Table;
+</a><a href="#h4-0-1" id="h4-0-1" class="d">-use super::super::types::{Expression, Row, Rows, Value};
+</a> use super::{Catalog, Engine as _, IndexScan, Transaction as _};
+ use crate::encoding::{self, bincode, Value as _};
+ use crate::errdata;
+ use crate::error::Result;
+<a href="#h4-0-6" id="h4-0-6" class="d">-use crate::raft::{self, Entry};
+</a><a href="#h4-0-7" id="h4-0-7" class="d">-use crate::storage::{self, mvcc, mvcc::TransactionState};
+</a><a href="#h4-0-8" id="h4-0-8" class="i">+use crate::raft;
+</a><a href="#h4-0-9" id="h4-0-9" class="i">+use crate::sql::types::schema::Table;
+</a><a href="#h4-0-10" id="h4-0-10" class="i">+use crate::sql::types::{Expression, Row, Rows, Value};
+</a><a href="#h4-0-11" id="h4-0-11" class="i">+use crate::storage::{self, mvcc};
+</a> 
+ use crossbeam::channel::Sender;
+ use serde::{de::DeserializeOwned, Deserialize, Serialize};
+ use std::collections::{HashMap, HashSet};
+ 
+<a href="#h4-0-17" id="h4-0-17" class="d">-/// A Raft state machine mutation.
+</a><a href="#h4-0-18" id="h4-0-18" class="i">+/// A Raft-based SQL engine. This dispatches to the `Local` engine for local
+</a><a href="#h4-0-19" id="h4-0-19" class="i">+/// processing and storage on each node, but plumbs read/write commands through
+</a><a href="#h4-0-20" id="h4-0-20" class="i">+/// Raft for distributed consensus.
+</a> ///
+<a href="#h4-0-22" id="h4-0-22" class="d">-/// TODO: use Cows for these.
+</a><a href="#h4-0-23" id="h4-0-23" class="d">-#[derive(Clone, Serialize, Deserialize)]
+</a><a href="#h4-0-24" id="h4-0-24" class="d">-enum Mutation {
+</a><a href="#h4-0-25" id="h4-0-25" class="d">-    /// Begins a read-write transaction
+</a><a href="#h4-0-26" id="h4-0-26" class="d">-    Begin,
+</a><a href="#h4-0-27" id="h4-0-27" class="d">-    /// Commits the given transaction
+</a><a href="#h4-0-28" id="h4-0-28" class="d">-    Commit(TransactionState),
+</a><a href="#h4-0-29" id="h4-0-29" class="d">-    /// Rolls back the given transaction
+</a><a href="#h4-0-30" id="h4-0-30" class="d">-    Rollback(TransactionState),
+</a><a href="#h4-0-31" id="h4-0-31" class="d">-
+</a><a href="#h4-0-32" id="h4-0-32" class="d">-    /// Creates a new row
+</a><a href="#h4-0-33" id="h4-0-33" class="d">-    Create { txn: TransactionState, table: String, rows: Vec&lt;Row&gt; },
+</a><a href="#h4-0-34" id="h4-0-34" class="d">-    /// Deletes a row
+</a><a href="#h4-0-35" id="h4-0-35" class="d">-    Delete { txn: TransactionState, table: String, ids: Vec&lt;Value&gt; },
+</a><a href="#h4-0-36" id="h4-0-36" class="d">-    /// Updates a row
+</a><a href="#h4-0-37" id="h4-0-37" class="d">-    Update { txn: TransactionState, table: String, rows: HashMap&lt;Value, Row&gt; },
+</a><a href="#h4-0-38" id="h4-0-38" class="d">-
+</a><a href="#h4-0-39" id="h4-0-39" class="d">-    /// Creates a table
+</a><a href="#h4-0-40" id="h4-0-40" class="d">-    CreateTable { txn: TransactionState, schema: Table },
+</a><a href="#h4-0-41" id="h4-0-41" class="d">-    /// Deletes a table
+</a><a href="#h4-0-42" id="h4-0-42" class="d">-    DeleteTable { txn: TransactionState, table: String, if_exists: bool },
+</a><a href="#h4-0-43" id="h4-0-43" class="d">-}
+</a><a href="#h4-0-44" id="h4-0-44" class="d">-
+</a><a href="#h4-0-45" id="h4-0-45" class="d">-impl encoding::Value for Mutation {}
+</a><a href="#h4-0-46" id="h4-0-46" class="d">-
+</a><a href="#h4-0-47" id="h4-0-47" class="d">-/// A Raft state machine query.
+</a><a href="#h4-0-48" id="h4-0-48" class="i">+/// The `Raft` engine itself is simply a Raft client which sends `raft::Request`
+</a><a href="#h4-0-49" id="h4-0-49" class="i">+/// requests to the local Raft node for processing. These requests are received
+</a><a href="#h4-0-50" id="h4-0-50" class="i">+/// and processed by the Raft engine&#39;s `State` state machine running below Raft
+</a><a href="#h4-0-51" id="h4-0-51" class="i">+/// on each node, which forwards the commands to a `Local` SQL engine which
+</a><a href="#h4-0-52" id="h4-0-52" class="i">+/// actually executes them using a `storage::Engine` for local storage. I.e.:
+</a> ///
+<a href="#h4-0-54" id="h4-0-54" class="d">-/// TODO: use Cows for these.
+</a><a href="#h4-0-55" id="h4-0-55" class="d">-#[derive(Clone, Serialize, Deserialize)]
+</a><a href="#h4-0-56" id="h4-0-56" class="d">-enum Query {
+</a><a href="#h4-0-57" id="h4-0-57" class="d">-    /// Begins a read-only transaction
+</a><a href="#h4-0-58" id="h4-0-58" class="d">-    BeginReadOnly { as_of: Option&lt;u64&gt; },
+</a><a href="#h4-0-59" id="h4-0-59" class="d">-    /// Fetches engine status
+</a><a href="#h4-0-60" id="h4-0-60" class="d">-    Status,
+</a><a href="#h4-0-61" id="h4-0-61" class="d">-
+</a><a href="#h4-0-62" id="h4-0-62" class="d">-    /// Reads a row
+</a><a href="#h4-0-63" id="h4-0-63" class="d">-    Read { txn: TransactionState, table: String, ids: Vec&lt;Value&gt; },
+</a><a href="#h4-0-64" id="h4-0-64" class="d">-    /// Reads an index entry
+</a><a href="#h4-0-65" id="h4-0-65" class="d">-    ReadIndex { txn: TransactionState, table: String, column: String, values: Vec&lt;Value&gt; },
+</a><a href="#h4-0-66" id="h4-0-66" class="d">-    /// Scans a table&#39;s rows
+</a><a href="#h4-0-67" id="h4-0-67" class="d">-    Scan { txn: TransactionState, table: String, filter: Option&lt;Expression&gt; },
+</a><a href="#h4-0-68" id="h4-0-68" class="d">-    /// Scans an index
+</a><a href="#h4-0-69" id="h4-0-69" class="d">-    ScanIndex { txn: TransactionState, table: String, column: String },
+</a><a href="#h4-0-70" id="h4-0-70" class="d">-
+</a><a href="#h4-0-71" id="h4-0-71" class="d">-    /// Scans the tables
+</a><a href="#h4-0-72" id="h4-0-72" class="d">-    ScanTables { txn: TransactionState },
+</a><a href="#h4-0-73" id="h4-0-73" class="d">-    /// Reads a table
+</a><a href="#h4-0-74" id="h4-0-74" class="d">-    ReadTable { txn: TransactionState, table: String },
+</a><a href="#h4-0-75" id="h4-0-75" class="d">-}
+</a><a href="#h4-0-76" id="h4-0-76" class="d">-
+</a><a href="#h4-0-77" id="h4-0-77" class="d">-impl encoding::Value for Query {}
+</a><a href="#h4-0-78" id="h4-0-78" class="d">-
+</a><a href="#h4-0-79" id="h4-0-79" class="d">-/// Status for the Raft SQL engine.
+</a><a href="#h4-0-80" id="h4-0-80" class="d">-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+</a><a href="#h4-0-81" id="h4-0-81" class="d">-pub struct Status {
+</a><a href="#h4-0-82" id="h4-0-82" class="d">-    pub raft: raft::Status,
+</a><a href="#h4-0-83" id="h4-0-83" class="d">-    pub mvcc: mvcc::Status,
+</a><a href="#h4-0-84" id="h4-0-84" class="d">-}
+</a><a href="#h4-0-85" id="h4-0-85" class="d">-
+</a><a href="#h4-0-86" id="h4-0-86" class="d">-/// A client for the local Raft node.
+</a><a href="#h4-0-87" id="h4-0-87" class="d">-struct Client {
+</a><a href="#h4-0-88" id="h4-0-88" class="i">+/// 1. `sql::engine::Session`: plans and executes a SQL statement.
+</a><a href="#h4-0-89" id="h4-0-89" class="i">+/// 2. `sql::engine::Raft`: sends row CRUD commands as `raft::Request`.
+</a><a href="#h4-0-90" id="h4-0-90" class="i">+/// 3. `raft::Node`: performs Raft distributed consensus.
+</a><a href="#h4-0-91" id="h4-0-91" class="i">+/// 4. `sql::engine::raft::State`: receives CRUD commands.
+</a><a href="#h4-0-92" id="h4-0-92" class="i">+/// 5. `sql::engine::Local`: executes CRUD commands on each node.
+</a><a href="#h4-0-93" id="h4-0-93" class="i">+/// 6. `storage::Engine`: reads/writes data on disk.
+</a><a href="#h4-0-94" id="h4-0-94" class="i">+pub struct Raft {
+</a><a href="#h4-0-95" id="h4-0-95" class="i">+    /// Sends requests to the local Raft node, along with a response channel.
+</a>     tx: Sender&lt;(raft::Request, Sender&lt;Result&lt;raft::Response&gt;&gt;)&gt;,
+ }
+ 
+<a href="#h4-0-99" id="h4-0-99" class="d">-impl Client {
+</a><a href="#h4-0-100" id="h4-0-100" class="d">-    /// Creates a new Raft client.
+</a><a href="#h4-0-101" id="h4-0-101" class="d">-    fn new(tx: Sender&lt;(raft::Request, Sender&lt;Result&lt;raft::Response&gt;&gt;)&gt;) -&gt; Self {
+</a><a href="#h4-0-102" id="h4-0-102" class="i">+impl Raft {
+</a><a href="#h4-0-103" id="h4-0-103" class="i">+    /// Creates a new Raft-based SQL engine, given a Raft request channel to the
+</a><a href="#h4-0-104" id="h4-0-104" class="i">+    /// local Raft node.
+</a><a href="#h4-0-105" id="h4-0-105" class="i">+    pub fn new(tx: Sender&lt;(raft::Request, Sender&lt;Result&lt;raft::Response&gt;&gt;)&gt;) -&gt; Self {
+</a>         Self { tx }
+     }
+ 
+<a href="#h4-0-109" id="h4-0-109" class="d">-    /// Executes a request against the Raft cluster.
+</a><a href="#h4-0-110" id="h4-0-110" class="i">+    /// Creates the Raft-managed state machine for the Raft engine. Receives
+</a><a href="#h4-0-111" id="h4-0-111" class="i">+    /// commands from the Raft engine and executes them on a `Local` engine.
+</a><a href="#h4-0-112" id="h4-0-112" class="i">+    pub fn new_state&lt;E: storage::Engine&gt;(engine: E) -&gt; Result&lt;State&lt;E&gt;&gt; {
+</a><a href="#h4-0-113" id="h4-0-113" class="i">+        State::new(engine)
+</a><a href="#h4-0-114" id="h4-0-114" class="i">+    }
+</a><a href="#h4-0-115" id="h4-0-115" class="i">+
+</a><a href="#h4-0-116" id="h4-0-116" class="i">+    /// Executes a request against the Raft cluster, waiting for the response.
+</a>     fn execute(&amp;self, request: raft::Request) -&gt; Result&lt;raft::Response&gt; {
+         let (response_tx, response_rx) = crossbeam::channel::bounded(1);
+         self.tx.send((request, response_tx))?;
+         response_rx.recv()?
+     }
+ 
+<a href="#h4-0-123" id="h4-0-123" class="d">-    /// Mutates the Raft state machine, deserializing the response into the
+</a><a href="#h4-0-124" id="h4-0-124" class="d">-    /// return type.
+</a><a href="#h4-0-125" id="h4-0-125" class="d">-    fn mutate&lt;V: DeserializeOwned&gt;(&amp;self, mutation: Mutation) -&gt; Result&lt;V&gt; {
+</a><a href="#h4-0-126" id="h4-0-126" class="i">+    /// Writes through Raft, deserializing the response into the return type.
+</a><a href="#h4-0-127" id="h4-0-127" class="i">+    fn write&lt;V: DeserializeOwned&gt;(&amp;self, mutation: Write) -&gt; Result&lt;V&gt; {
+</a>         match self.execute(raft::Request::Write(mutation.encode()))? {
+             raft::Response::Write(response) =&gt; Ok(bincode::deserialize(&amp;response)?),
+<a href="#h4-0-130" id="h4-0-130" class="d">-            resp =&gt; errdata!(&quot;unexpected Raft mutation response {resp:?}&quot;),
+</a><a href="#h4-0-131" id="h4-0-131" class="i">+            resp =&gt; errdata!(&quot;unexpected Raft write response {resp:?}&quot;),
+</a>         }
+     }
+ 
+<a href="#h4-0-135" id="h4-0-135" class="d">-    /// Queries the Raft state machine, deserializing the response into the
+</a><a href="#h4-0-136" id="h4-0-136" class="d">-    /// return type.
+</a><a href="#h4-0-137" id="h4-0-137" class="d">-    fn query&lt;V: DeserializeOwned&gt;(&amp;self, query: Query) -&gt; Result&lt;V&gt; {
+</a><a href="#h4-0-138" id="h4-0-138" class="i">+    /// Reads from Raft, deserializing the response into the return type.
+</a><a href="#h4-0-139" id="h4-0-139" class="i">+    fn read&lt;V: DeserializeOwned&gt;(&amp;self, query: Read) -&gt; Result&lt;V&gt; {
+</a>         match self.execute(raft::Request::Read(query.encode()))? {
+             raft::Response::Read(response) =&gt; Ok(bincode::deserialize(&amp;response)?),
+<a href="#h4-0-142" id="h4-0-142" class="d">-            resp =&gt; errdata!(&quot;unexpected Raft query response {resp:?}&quot;),
+</a><a href="#h4-0-143" id="h4-0-143" class="i">+            resp =&gt; errdata!(&quot;unexpected Raft read response {resp:?}&quot;),
+</a>         }
+     }
+ 
+<a href="#h4-0-147" id="h4-0-147" class="d">-    /// Fetches Raft node status.
+</a><a href="#h4-0-148" id="h4-0-148" class="d">-    fn status(&amp;self) -&gt; Result&lt;raft::Status&gt; {
+</a><a href="#h4-0-149" id="h4-0-149" class="d">-        match self.execute(raft::Request::Status)? {
+</a><a href="#h4-0-150" id="h4-0-150" class="d">-            raft::Response::Status(status) =&gt; Ok(status),
+</a><a href="#h4-0-151" id="h4-0-151" class="d">-            resp =&gt; errdata!(&quot;unexpected Raft status response {resp:?}&quot;),
+</a><a href="#h4-0-152" id="h4-0-152" class="d">-        }
+</a><a href="#h4-0-153" id="h4-0-153" class="d">-    }
+</a><a href="#h4-0-154" id="h4-0-154" class="d">-}
+</a><a href="#h4-0-155" id="h4-0-155" class="d">-
+</a><a href="#h4-0-156" id="h4-0-156" class="d">-/// A SQL engine using a Raft state machine.
+</a><a href="#h4-0-157" id="h4-0-157" class="d">-pub struct Raft {
+</a><a href="#h4-0-158" id="h4-0-158" class="d">-    tx: Sender&lt;(raft::Request, Sender&lt;Result&lt;raft::Response&gt;&gt;)&gt;,
+</a><a href="#h4-0-159" id="h4-0-159" class="d">-}
+</a><a href="#h4-0-160" id="h4-0-160" class="d">-
+</a><a href="#h4-0-161" id="h4-0-161" class="d">-impl Raft {
+</a><a href="#h4-0-162" id="h4-0-162" class="d">-    /// Creates a new Raft-based SQL engine.
+</a><a href="#h4-0-163" id="h4-0-163" class="d">-    pub fn new(tx: Sender&lt;(raft::Request, Sender&lt;Result&lt;raft::Response&gt;&gt;)&gt;) -&gt; Self {
+</a><a href="#h4-0-164" id="h4-0-164" class="d">-        Self { tx }
+</a><a href="#h4-0-165" id="h4-0-165" class="d">-    }
+</a><a href="#h4-0-166" id="h4-0-166" class="d">-
+</a><a href="#h4-0-167" id="h4-0-167" class="d">-    /// Creates an underlying state machine for a Raft engine.
+</a><a href="#h4-0-168" id="h4-0-168" class="d">-    pub fn new_state&lt;E: storage::Engine&gt;(engine: E) -&gt; Result&lt;State&lt;E&gt;&gt; {
+</a><a href="#h4-0-169" id="h4-0-169" class="d">-        State::new(engine)
+</a><a href="#h4-0-170" id="h4-0-170" class="d">-    }
+</a><a href="#h4-0-171" id="h4-0-171" class="d">-
+</a><a href="#h4-0-172" id="h4-0-172" class="d">-    /// Returns Raft SQL engine status.
+</a><a href="#h4-0-173" id="h4-0-173" class="i">+    /// Raft SQL engine status.
+</a>     pub fn status(&amp;self) -&gt; Result&lt;Status&gt; {
+<a href="#h4-0-175" id="h4-0-175" class="d">-        let client = Client::new(self.tx.clone());
+</a><a href="#h4-0-176" id="h4-0-176" class="d">-        Ok(Status { raft: client.status()?, mvcc: client.query(Query::Status)? })
+</a><a href="#h4-0-177" id="h4-0-177" class="i">+        let raft = match self.execute(raft::Request::Status)? {
+</a><a href="#h4-0-178" id="h4-0-178" class="i">+            raft::Response::Status(status) =&gt; status,
+</a><a href="#h4-0-179" id="h4-0-179" class="i">+            resp =&gt; return errdata!(&quot;unexpected Raft status response {resp:?}&quot;),
+</a><a href="#h4-0-180" id="h4-0-180" class="i">+        };
+</a><a href="#h4-0-181" id="h4-0-181" class="i">+        let mvcc = self.read(Read::Status)?;
+</a><a href="#h4-0-182" id="h4-0-182" class="i">+        Ok(Status { raft, mvcc })
+</a>     }
+ }
+ 
+ impl&lt;&#39;a&gt; super::Engine&lt;&#39;a&gt; for Raft {
+<a href="#h4-0-187" id="h4-0-187" class="d">-    type Transaction = Transaction;
+</a><a href="#h4-0-188" id="h4-0-188" class="i">+    type Transaction = Transaction&lt;&#39;a&gt;;
+</a> 
+<a href="#h4-0-190" id="h4-0-190" class="d">-    fn begin(&amp;self) -&gt; Result&lt;Self::Transaction&gt; {
+</a><a href="#h4-0-191" id="h4-0-191" class="d">-        Transaction::begin(Client::new(self.tx.clone()), false, None)
+</a><a href="#h4-0-192" id="h4-0-192" class="i">+    fn begin(&amp;&#39;a self) -&gt; Result&lt;Self::Transaction&gt; {
+</a><a href="#h4-0-193" id="h4-0-193" class="i">+        Transaction::begin(self, false, None)
+</a>     }
+ 
+<a href="#h4-0-196" id="h4-0-196" class="d">-    fn begin_read_only(&amp;self) -&gt; Result&lt;Self::Transaction&gt; {
+</a><a href="#h4-0-197" id="h4-0-197" class="d">-        Transaction::begin(Client::new(self.tx.clone()), true, None)
+</a><a href="#h4-0-198" id="h4-0-198" class="i">+    fn begin_read_only(&amp;&#39;a self) -&gt; Result&lt;Self::Transaction&gt; {
+</a><a href="#h4-0-199" id="h4-0-199" class="i">+        Transaction::begin(self, true, None)
+</a>     }
+ 
+<a href="#h4-0-202" id="h4-0-202" class="d">-    fn begin_as_of(&amp;self, version: u64) -&gt; Result&lt;Self::Transaction&gt; {
+</a><a href="#h4-0-203" id="h4-0-203" class="d">-        Transaction::begin(Client::new(self.tx.clone()), true, Some(version))
+</a><a href="#h4-0-204" id="h4-0-204" class="i">+    fn begin_as_of(&amp;&#39;a self, version: mvcc::Version) -&gt; Result&lt;Self::Transaction&gt; {
+</a><a href="#h4-0-205" id="h4-0-205" class="i">+        Transaction::begin(self, true, Some(version))
+</a>     }
+ }
+ 
+<a href="#h4-0-209" id="h4-0-209" class="d">-/// A Raft-based SQL transaction.
+</a><a href="#h4-0-210" id="h4-0-210" class="d">-pub struct Transaction {
+</a><a href="#h4-0-211" id="h4-0-211" class="d">-    client: Client,
+</a><a href="#h4-0-212" id="h4-0-212" class="d">-    state: TransactionState,
+</a><a href="#h4-0-213" id="h4-0-213" class="i">+/// A Raft SQL engine transaction.
+</a><a href="#h4-0-214" id="h4-0-214" class="i">+///
+</a><a href="#h4-0-215" id="h4-0-215" class="i">+/// This keeps track of the transaction state in memory, for the benefit of
+</a><a href="#h4-0-216" id="h4-0-216" class="i">+/// read-only transactions. An `mvcc::Transaction` normally encapsulates this
+</a><a href="#h4-0-217" id="h4-0-217" class="i">+/// and manages it in memory, but since `mvcc::Transaction` runs below Raft, it
+</a><a href="#h4-0-218" id="h4-0-218" class="i">+/// can&#39;t maintain this state between individual requests (which could execute
+</a><a href="#h4-0-219" id="h4-0-219" class="i">+/// on different leaders). Instead, we use `mvcc::Transaction::resume` to resume
+</a><a href="#h4-0-220" id="h4-0-220" class="i">+/// the transaction using the provided transaction state for each request.
+</a><a href="#h4-0-221" id="h4-0-221" class="i">+pub struct Transaction&lt;&#39;a&gt; {
+</a><a href="#h4-0-222" id="h4-0-222" class="i">+    /// The Raft SQL engine, used to communicate with Raft.
+</a><a href="#h4-0-223" id="h4-0-223" class="i">+    engine: &amp;&#39;a Raft,
+</a><a href="#h4-0-224" id="h4-0-224" class="i">+    /// The MVCC transaction state.
+</a><a href="#h4-0-225" id="h4-0-225" class="i">+    state: mvcc::TransactionState,
+</a> }
+ 
+<a href="#h4-0-228" id="h4-0-228" class="d">-impl Transaction {
+</a><a href="#h4-0-229" id="h4-0-229" class="i">+impl&lt;&#39;a&gt; Transaction&lt;&#39;a&gt; {
+</a>     /// Starts a transaction in the given mode.
+<a href="#h4-0-231" id="h4-0-231" class="d">-    fn begin(client: Client, read_only: bool, as_of: Option&lt;u64&gt;) -&gt; Result&lt;Self&gt; {
+</a><a href="#h4-0-232" id="h4-0-232" class="i">+    fn begin(engine: &amp;&#39;a Raft, read_only: bool, as_of: Option&lt;mvcc::Version&gt;) -&gt; Result&lt;Self&gt; {
+</a><a href="#h4-0-233" id="h4-0-233" class="i">+        assert!(as_of.is_none() || read_only, &quot;can&#39;t use as_of without read_only&quot;);
+</a><a href="#h4-0-234" id="h4-0-234" class="i">+        // Read-only transactions don&#39;t need to persist anything, they just need
+</a><a href="#h4-0-235" id="h4-0-235" class="i">+        // to grab the current transaction state, so submit them as reads to
+</a><a href="#h4-0-236" id="h4-0-236" class="i">+        // avoid a replication roundtrip (which would also require fsyncs).
+</a>         let state = if read_only || as_of.is_some() {
+<a href="#h4-0-238" id="h4-0-238" class="d">-            client.query(Query::BeginReadOnly { as_of })?
+</a><a href="#h4-0-239" id="h4-0-239" class="i">+            engine.read(Read::BeginReadOnly { as_of })?
+</a>         } else {
+<a href="#h4-0-241" id="h4-0-241" class="d">-            client.mutate(Mutation::Begin)?
+</a><a href="#h4-0-242" id="h4-0-242" class="i">+            engine.write(Write::Begin)?
+</a>         };
+<a href="#h4-0-244" id="h4-0-244" class="d">-        Ok(Self { client, state })
+</a><a href="#h4-0-245" id="h4-0-245" class="i">+        Ok(Self { engine, state })
+</a>     }
+ }
+ 
+<a href="#h4-0-249" id="h4-0-249" class="d">-impl super::Transaction for Transaction {
+</a><a href="#h4-0-250" id="h4-0-250" class="i">+impl&lt;&#39;a&gt; super::Transaction for Transaction&lt;&#39;a&gt; {
+</a>     fn version(&amp;self) -&gt; mvcc::Version {
+         self.state.version
+     }
+<a href="#h4-1" id="h4-1" class="h">@@ -184,29 +136,21 @@ impl super::Transaction for Transaction {
+</a>     }
+ 
+     fn commit(self) -&gt; Result&lt;()&gt; {
+<a href="#h4-1-3" id="h4-1-3" class="d">-        if !self.read_only() {
+</a><a href="#h4-1-4" id="h4-1-4" class="d">-            self.client.mutate(Mutation::Commit(self.state.clone()))?
+</a><a href="#h4-1-5" id="h4-1-5" class="i">+        if self.state.read_only {
+</a><a href="#h4-1-6" id="h4-1-6" class="i">+            return Ok(()); // noop
+</a>         }
+<a href="#h4-1-8" id="h4-1-8" class="d">-        Ok(())
+</a><a href="#h4-1-9" id="h4-1-9" class="i">+        self.engine.write(Write::Commit(self.state.clone()))
+</a>     }
+ 
+     fn rollback(self) -&gt; Result&lt;()&gt; {
+<a href="#h4-1-13" id="h4-1-13" class="d">-        if !self.read_only() {
+</a><a href="#h4-1-14" id="h4-1-14" class="d">-            self.client.mutate(Mutation::Rollback(self.state.clone()))?;
+</a><a href="#h4-1-15" id="h4-1-15" class="i">+        if self.state.read_only {
+</a><a href="#h4-1-16" id="h4-1-16" class="i">+            return Ok(()); // noop
+</a>         }
+<a href="#h4-1-18" id="h4-1-18" class="d">-        Ok(())
+</a><a href="#h4-1-19" id="h4-1-19" class="d">-    }
+</a><a href="#h4-1-20" id="h4-1-20" class="d">-
+</a><a href="#h4-1-21" id="h4-1-21" class="d">-    fn insert(&amp;self, table: &amp;str, rows: Vec&lt;Row&gt;) -&gt; Result&lt;()&gt; {
+</a><a href="#h4-1-22" id="h4-1-22" class="d">-        self.client.mutate(Mutation::Create {
+</a><a href="#h4-1-23" id="h4-1-23" class="d">-            txn: self.state.clone(),
+</a><a href="#h4-1-24" id="h4-1-24" class="d">-            table: table.to_string(),
+</a><a href="#h4-1-25" id="h4-1-25" class="d">-            rows,
+</a><a href="#h4-1-26" id="h4-1-26" class="d">-        })
+</a><a href="#h4-1-27" id="h4-1-27" class="i">+        self.engine.write(Write::Rollback(self.state.clone()))
+</a>     }
+ 
+     fn delete(&amp;self, table: &amp;str, ids: &amp;[Value]) -&gt; Result&lt;()&gt; {
+<a href="#h4-1-31" id="h4-1-31" class="d">-        self.client.mutate(Mutation::Delete {
+</a><a href="#h4-1-32" id="h4-1-32" class="i">+        self.engine.write(Write::Delete {
+</a>             txn: self.state.clone(),
+             table: table.to_string(),
+             ids: ids.to_vec(),
+<a href="#h4-2" id="h4-2" class="h">@@ -214,15 +158,19 @@ impl super::Transaction for Transaction {
+</a>     }
+ 
+     fn get(&amp;self, table: &amp;str, ids: &amp;[Value]) -&gt; Result&lt;Vec&lt;Row&gt;&gt; {
+<a href="#h4-2-3" id="h4-2-3" class="d">-        self.client.query(Query::Read {
+</a><a href="#h4-2-4" id="h4-2-4" class="i">+        self.engine.read(Read::Get {
+</a>             txn: self.state.clone(),
+             table: table.to_string(),
+             ids: ids.to_vec(),
+         })
+     }
+ 
+<a href="#h4-2-11" id="h4-2-11" class="i">+    fn insert(&amp;self, table: &amp;str, rows: Vec&lt;Row&gt;) -&gt; Result&lt;()&gt; {
+</a><a href="#h4-2-12" id="h4-2-12" class="i">+        self.engine.write(Write::Insert { txn: self.state.clone(), table: table.to_string(), rows })
+</a><a href="#h4-2-13" id="h4-2-13" class="i">+    }
+</a><a href="#h4-2-14" id="h4-2-14" class="i">+
+</a>     fn lookup_index(&amp;self, table: &amp;str, column: &amp;str, values: &amp;[Value]) -&gt; Result&lt;HashSet&lt;Value&gt;&gt; {
+<a href="#h4-2-16" id="h4-2-16" class="d">-        self.client.query(Query::ReadIndex {
+</a><a href="#h4-2-17" id="h4-2-17" class="i">+        self.engine.read(Read::LookupIndex {
+</a>             txn: self.state.clone(),
+             table: table.to_string(),
+             column: column.to_string(),
+<a href="#h4-3" id="h4-3" class="h">@@ -231,47 +179,35 @@ impl super::Transaction for Transaction {
+</a>     }
+ 
+     fn scan(&amp;self, table: &amp;str, filter: Option&lt;Expression&gt;) -&gt; Result&lt;Rows&gt; {
+<a href="#h4-3-3" id="h4-3-3" class="d">-        Ok(Box::new(
+</a><a href="#h4-3-4" id="h4-3-4" class="d">-            self.client
+</a><a href="#h4-3-5" id="h4-3-5" class="d">-                .query::&lt;Vec&lt;_&gt;&gt;(Query::Scan {
+</a><a href="#h4-3-6" id="h4-3-6" class="d">-                    txn: self.state.clone(),
+</a><a href="#h4-3-7" id="h4-3-7" class="d">-                    table: table.to_string(),
+</a><a href="#h4-3-8" id="h4-3-8" class="d">-                    filter,
+</a><a href="#h4-3-9" id="h4-3-9" class="d">-                })?
+</a><a href="#h4-3-10" id="h4-3-10" class="d">-                .into_iter()
+</a><a href="#h4-3-11" id="h4-3-11" class="d">-                .map(Ok),
+</a><a href="#h4-3-12" id="h4-3-12" class="d">-        ))
+</a><a href="#h4-3-13" id="h4-3-13" class="i">+        let scan: Vec&lt;_&gt; = self.engine.read(Read::Scan {
+</a><a href="#h4-3-14" id="h4-3-14" class="i">+            txn: self.state.clone(),
+</a><a href="#h4-3-15" id="h4-3-15" class="i">+            table: table.to_string(),
+</a><a href="#h4-3-16" id="h4-3-16" class="i">+            filter,
+</a><a href="#h4-3-17" id="h4-3-17" class="i">+        })?;
+</a><a href="#h4-3-18" id="h4-3-18" class="i">+        Ok(Box::new(scan.into_iter().map(Ok)))
+</a>     }
+ 
+     fn scan_index(&amp;self, table: &amp;str, column: &amp;str) -&gt; Result&lt;IndexScan&gt; {
+<a href="#h4-3-22" id="h4-3-22" class="d">-        Ok(Box::new(
+</a><a href="#h4-3-23" id="h4-3-23" class="d">-            self.client
+</a><a href="#h4-3-24" id="h4-3-24" class="d">-                .query::&lt;Vec&lt;_&gt;&gt;(Query::ScanIndex {
+</a><a href="#h4-3-25" id="h4-3-25" class="d">-                    txn: self.state.clone(),
+</a><a href="#h4-3-26" id="h4-3-26" class="d">-                    table: table.to_string(),
+</a><a href="#h4-3-27" id="h4-3-27" class="d">-                    column: column.to_string(),
+</a><a href="#h4-3-28" id="h4-3-28" class="d">-                })?
+</a><a href="#h4-3-29" id="h4-3-29" class="d">-                .into_iter()
+</a><a href="#h4-3-30" id="h4-3-30" class="d">-                .map(Ok),
+</a><a href="#h4-3-31" id="h4-3-31" class="d">-        ))
+</a><a href="#h4-3-32" id="h4-3-32" class="i">+        let scan: Vec&lt;_&gt; = self.engine.read(Read::ScanIndex {
+</a><a href="#h4-3-33" id="h4-3-33" class="i">+            txn: self.state.clone(),
+</a><a href="#h4-3-34" id="h4-3-34" class="i">+            table: table.to_string(),
+</a><a href="#h4-3-35" id="h4-3-35" class="i">+            column: column.to_string(),
+</a><a href="#h4-3-36" id="h4-3-36" class="i">+        })?;
+</a><a href="#h4-3-37" id="h4-3-37" class="i">+        Ok(Box::new(scan.into_iter().map(Ok)))
+</a>     }
+ 
+     fn update(&amp;self, table: &amp;str, rows: HashMap&lt;Value, Row&gt;) -&gt; Result&lt;()&gt; {
+<a href="#h4-3-41" id="h4-3-41" class="d">-        self.client.mutate(Mutation::Update {
+</a><a href="#h4-3-42" id="h4-3-42" class="d">-            txn: self.state.clone(),
+</a><a href="#h4-3-43" id="h4-3-43" class="d">-            table: table.to_string(),
+</a><a href="#h4-3-44" id="h4-3-44" class="d">-            rows,
+</a><a href="#h4-3-45" id="h4-3-45" class="d">-        })
+</a><a href="#h4-3-46" id="h4-3-46" class="i">+        self.engine.write(Write::Update { txn: self.state.clone(), table: table.to_string(), rows })
+</a>     }
+ }
+ 
+<a href="#h4-3-50" id="h4-3-50" class="d">-impl Catalog for Transaction {
+</a><a href="#h4-3-51" id="h4-3-51" class="d">-    fn create_table(&amp;self, table: Table) -&gt; Result&lt;()&gt; {
+</a><a href="#h4-3-52" id="h4-3-52" class="d">-        self.client.mutate(Mutation::CreateTable { txn: self.state.clone(), schema: table })
+</a><a href="#h4-3-53" id="h4-3-53" class="i">+impl&lt;&#39;a&gt; Catalog for Transaction&lt;&#39;a&gt; {
+</a><a href="#h4-3-54" id="h4-3-54" class="i">+    fn create_table(&amp;self, schema: Table) -&gt; Result&lt;()&gt; {
+</a><a href="#h4-3-55" id="h4-3-55" class="i">+        self.engine.write(Write::CreateTable { txn: self.state.clone(), schema })
+</a>     }
+ 
+     fn drop_table(&amp;self, table: &amp;str, if_exists: bool) -&gt; Result&lt;bool&gt; {
+<a href="#h4-3-59" id="h4-3-59" class="d">-        self.client.mutate(Mutation::DeleteTable {
+</a><a href="#h4-3-60" id="h4-3-60" class="i">+        self.engine.write(Write::DeleteTable {
+</a>             txn: self.state.clone(),
+             table: table.to_string(),
+             if_exists,
+<a href="#h4-4" id="h4-4" class="h">@@ -279,113 +215,173 @@ impl Catalog for Transaction {
+</a>     }
+ 
+     fn get_table(&amp;self, table: &amp;str) -&gt; Result&lt;Option&lt;Table&gt;&gt; {
+<a href="#h4-4-3" id="h4-4-3" class="d">-        self.client.query(Query::ReadTable { txn: self.state.clone(), table: table.to_string() })
+</a><a href="#h4-4-4" id="h4-4-4" class="i">+        self.engine.read(Read::GetTable { txn: self.state.clone(), table: table.to_string() })
+</a>     }
+ 
+     fn list_tables(&amp;self) -&gt; Result&lt;Vec&lt;Table&gt;&gt; {
+<a href="#h4-4-8" id="h4-4-8" class="d">-        self.client.query(Query::ScanTables { txn: self.state.clone() })
+</a><a href="#h4-4-9" id="h4-4-9" class="i">+        self.engine.read(Read::ListTables { txn: self.state.clone() })
+</a>     }
+ }
+ 
+<a href="#h4-4-13" id="h4-4-13" class="d">-/// The Raft state machine for the Raft-based SQL engine, using a KV SQL engine
+</a><a href="#h4-4-14" id="h4-4-14" class="i">+/// The state machine for the Raft SQL engine. Receives commands from the Raft
+</a><a href="#h4-4-15" id="h4-4-15" class="i">+/// SQL engine and dispatches to a `Local` SQL engine which does the actual
+</a><a href="#h4-4-16" id="h4-4-16" class="i">+/// work, using a `storage::Engine` for storage.
+</a><a href="#h4-4-17" id="h4-4-17" class="i">+///
+</a><a href="#h4-4-18" id="h4-4-18" class="i">+/// For simplicity, we don&#39;t attempt to stream large requests or responses,
+</a><a href="#h4-4-19" id="h4-4-19" class="i">+/// instead simply delivering them as one large chunk. This means that e.g. a
+</a><a href="#h4-4-20" id="h4-4-20" class="i">+/// full table scan will pull the entire table into memory, serialize it, and
+</a><a href="#h4-4-21" id="h4-4-21" class="i">+/// send it across the network as one message. The simplest way to address this
+</a><a href="#h4-4-22" id="h4-4-22" class="i">+/// would likely be to send batches of e.g. 1000 rows at a time.
+</a> pub struct State&lt;E: storage::Engine&gt; {
+<a href="#h4-4-24" id="h4-4-24" class="d">-    /// The underlying local SQL engine.
+</a><a href="#h4-4-25" id="h4-4-25" class="d">-    engine: super::Local&lt;E&gt;,
+</a><a href="#h4-4-26" id="h4-4-26" class="d">-    /// The last applied index
+</a><a href="#h4-4-27" id="h4-4-27" class="d">-    applied_index: u64,
+</a><a href="#h4-4-28" id="h4-4-28" class="i">+    /// The local SQL engine.
+</a><a href="#h4-4-29" id="h4-4-29" class="i">+    local: super::Local&lt;E&gt;,
+</a><a href="#h4-4-30" id="h4-4-30" class="i">+    /// The last applied index. This tells Raft which command to apply next.
+</a><a href="#h4-4-31" id="h4-4-31" class="i">+    applied_index: raft::Index,
+</a> }
+ 
+ impl&lt;E: storage::Engine&gt; State&lt;E&gt; {
+<a href="#h4-4-35" id="h4-4-35" class="d">-    /// Creates a new Raft state maching using the given storage engine.
+</a><a href="#h4-4-36" id="h4-4-36" class="i">+    /// Creates a new Raft state maching using the given storage engine for
+</a><a href="#h4-4-37" id="h4-4-37" class="i">+    /// local storage.
+</a>     pub fn new(engine: E) -&gt; Result&lt;Self&gt; {
+<a href="#h4-4-39" id="h4-4-39" class="d">-        let engine = super::Local::new(engine);
+</a><a href="#h4-4-40" id="h4-4-40" class="d">-        let applied_index = engine
+</a><a href="#h4-4-41" id="h4-4-41" class="d">-            .get_metadata(b&quot;applied_index&quot;)?
+</a><a href="#h4-4-42" id="h4-4-42" class="i">+        let local = super::Local::new(engine);
+</a><a href="#h4-4-43" id="h4-4-43" class="i">+        let applied_index = local
+</a><a href="#h4-4-44" id="h4-4-44" class="i">+            .get_unversioned(b&quot;applied_index&quot;)?
+</a>             .map(|b| bincode::deserialize(&amp;b))
+<a href="#h4-4-46" id="h4-4-46" class="d">-            .unwrap_or(Ok(0))?;
+</a><a href="#h4-4-47" id="h4-4-47" class="d">-        Ok(State { engine, applied_index })
+</a><a href="#h4-4-48" id="h4-4-48" class="i">+            .transpose()?
+</a><a href="#h4-4-49" id="h4-4-49" class="i">+            .unwrap_or(0);
+</a><a href="#h4-4-50" id="h4-4-50" class="i">+        Ok(State { local, applied_index })
+</a>     }
+ 
+<a href="#h4-4-53" id="h4-4-53" class="d">-    /// Mutates the state machine.
+</a><a href="#h4-4-54" id="h4-4-54" class="d">-    fn mutate(&amp;mut self, mutation: Mutation) -&gt; Result&lt;Vec&lt;u8&gt;&gt; {
+</a><a href="#h4-4-55" id="h4-4-55" class="d">-        let response = match mutation {
+</a><a href="#h4-4-56" id="h4-4-56" class="d">-            Mutation::Begin =&gt; self.engine.begin()?.state().encode(),
+</a><a href="#h4-4-57" id="h4-4-57" class="d">-            Mutation::Commit(txn) =&gt; bincode::serialize(&amp;self.engine.resume(txn)?.commit()?),
+</a><a href="#h4-4-58" id="h4-4-58" class="d">-            Mutation::Rollback(txn) =&gt; bincode::serialize(&amp;self.engine.resume(txn)?.rollback()?),
+</a><a href="#h4-4-59" id="h4-4-59" class="i">+    /// Executes a write command.
+</a><a href="#h4-4-60" id="h4-4-60" class="i">+    fn write(&amp;self, command: Write) -&gt; Result&lt;Vec&lt;u8&gt;&gt; {
+</a><a href="#h4-4-61" id="h4-4-61" class="i">+        Ok(match command {
+</a><a href="#h4-4-62" id="h4-4-62" class="i">+            Write::Begin =&gt; self.local.begin()?.state().encode(),
+</a><a href="#h4-4-63" id="h4-4-63" class="i">+            Write::Commit(txn) =&gt; bincode::serialize(&amp;self.local.resume(txn)?.commit()?),
+</a><a href="#h4-4-64" id="h4-4-64" class="i">+            Write::Rollback(txn) =&gt; bincode::serialize(&amp;self.local.resume(txn)?.rollback()?),
+</a> 
+<a href="#h4-4-66" id="h4-4-66" class="d">-            Mutation::Create { txn, table, rows } =&gt; {
+</a><a href="#h4-4-67" id="h4-4-67" class="d">-                bincode::serialize(&amp;self.engine.resume(txn)?.insert(&amp;table, rows)?)
+</a><a href="#h4-4-68" id="h4-4-68" class="i">+            Write::Delete { txn, table, ids } =&gt; {
+</a><a href="#h4-4-69" id="h4-4-69" class="i">+                bincode::serialize(&amp;self.local.resume(txn)?.delete(&amp;table, &amp;ids)?)
+</a>             }
+<a href="#h4-4-71" id="h4-4-71" class="d">-            Mutation::Delete { txn, table, ids } =&gt; {
+</a><a href="#h4-4-72" id="h4-4-72" class="d">-                bincode::serialize(&amp;self.engine.resume(txn)?.delete(&amp;table, &amp;ids)?)
+</a><a href="#h4-4-73" id="h4-4-73" class="i">+            Write::Insert { txn, table, rows } =&gt; {
+</a><a href="#h4-4-74" id="h4-4-74" class="i">+                bincode::serialize(&amp;self.local.resume(txn)?.insert(&amp;table, rows)?)
+</a>             }
+<a href="#h4-4-76" id="h4-4-76" class="d">-            Mutation::Update { txn, table, rows } =&gt; {
+</a><a href="#h4-4-77" id="h4-4-77" class="d">-                bincode::serialize(&amp;self.engine.resume(txn)?.update(&amp;table, rows)?)
+</a><a href="#h4-4-78" id="h4-4-78" class="i">+            Write::Update { txn, table, rows } =&gt; {
+</a><a href="#h4-4-79" id="h4-4-79" class="i">+                bincode::serialize(&amp;self.local.resume(txn)?.update(&amp;table, rows)?)
+</a>             }
+ 
+<a href="#h4-4-82" id="h4-4-82" class="d">-            Mutation::CreateTable { txn, schema } =&gt; {
+</a><a href="#h4-4-83" id="h4-4-83" class="d">-                bincode::serialize(&amp;self.engine.resume(txn)?.create_table(schema)?)
+</a><a href="#h4-4-84" id="h4-4-84" class="i">+            Write::CreateTable { txn, schema } =&gt; {
+</a><a href="#h4-4-85" id="h4-4-85" class="i">+                bincode::serialize(&amp;self.local.resume(txn)?.create_table(schema)?)
+</a>             }
+<a href="#h4-4-87" id="h4-4-87" class="d">-            Mutation::DeleteTable { txn, table, if_exists } =&gt; {
+</a><a href="#h4-4-88" id="h4-4-88" class="d">-                bincode::serialize(&amp;self.engine.resume(txn)?.drop_table(&amp;table, if_exists)?)
+</a><a href="#h4-4-89" id="h4-4-89" class="i">+            Write::DeleteTable { txn, table, if_exists } =&gt; {
+</a><a href="#h4-4-90" id="h4-4-90" class="i">+                bincode::serialize(&amp;self.local.resume(txn)?.drop_table(&amp;table, if_exists)?)
+</a>             }
+<a href="#h4-4-92" id="h4-4-92" class="d">-        };
+</a><a href="#h4-4-93" id="h4-4-93" class="d">-        Ok(response)
+</a><a href="#h4-4-94" id="h4-4-94" class="i">+        })
+</a>     }
+ }
+ 
+ impl&lt;E: storage::Engine&gt; raft::State for State&lt;E&gt; {
+<a href="#h4-4-99" id="h4-4-99" class="d">-    fn get_applied_index(&amp;self) -&gt; u64 {
+</a><a href="#h4-4-100" id="h4-4-100" class="i">+    fn get_applied_index(&amp;self) -&gt; raft::Index {
+</a>         self.applied_index
+     }
+ 
+<a href="#h4-4-104" id="h4-4-104" class="d">-    fn apply(&amp;mut self, entry: Entry) -&gt; Result&lt;Vec&lt;u8&gt;&gt; {
+</a><a href="#h4-4-105" id="h4-4-105" class="i">+    fn apply(&amp;mut self, entry: raft::Entry) -&gt; Result&lt;Vec&lt;u8&gt;&gt; {
+</a>         assert_eq!(entry.index, self.applied_index + 1, &quot;entry index not after applied index&quot;);
+ 
+         let result = match &amp;entry.command {
+<a href="#h4-4-109" id="h4-4-109" class="d">-            Some(command) =&gt; match self.mutate(Mutation::decode(command)?) {
+</a><a href="#h4-4-110" id="h4-4-110" class="d">-                // We must panic on non-deterministic apply failures to prevent
+</a><a href="#h4-4-111" id="h4-4-111" class="d">-                // replica divergence. See [`raft::State`] documentation for
+</a><a href="#h4-4-112" id="h4-4-112" class="d">-                // details.
+</a><a href="#h4-4-113" id="h4-4-113" class="i">+            Some(command) =&gt; match self.write(Write::decode(command)?) {
+</a><a href="#h4-4-114" id="h4-4-114" class="i">+                // Panic on non-deterministic apply failures, to prevent replica
+</a><a href="#h4-4-115" id="h4-4-115" class="i">+                // divergence. See [`raft::State`] docs for details.
+</a>                 Err(e) if !e.is_deterministic() =&gt; panic!(&quot;non-deterministic apply failure: {e}&quot;),
+                 result =&gt; result,
+             },
+<a href="#h4-4-119" id="h4-4-119" class="i">+            // Raft submits noop commands on leader changes. Ignore them, but
+</a><a href="#h4-4-120" id="h4-4-120" class="i">+            // record the applied index below.
+</a>             None =&gt; Ok(Vec::new()),
+         };
+<a href="#h4-4-123" id="h4-4-123" class="i">+
+</a><a href="#h4-4-124" id="h4-4-124" class="i">+        // Persist the applied index. We don&#39;t have to flush, because it&#39;s ok to
+</a><a href="#h4-4-125" id="h4-4-125" class="i">+        // lose a tail of the state machine writes (e.g. if the machine
+</a><a href="#h4-4-126" id="h4-4-126" class="i">+        // crashes). Raft will replay the log from the last known applied index.
+</a>         self.applied_index = entry.index;
+<a href="#h4-4-128" id="h4-4-128" class="d">-        self.engine.set_metadata(b&quot;applied_index&quot;, bincode::serialize(&amp;entry.index))?;
+</a><a href="#h4-4-129" id="h4-4-129" class="i">+        self.local.set_unversioned(b&quot;applied_index&quot;, bincode::serialize(&amp;entry.index))?;
+</a>         result
+     }
+ 
+     fn read(&amp;self, command: Vec&lt;u8&gt;) -&gt; Result&lt;Vec&lt;u8&gt;&gt; {
+<a href="#h4-4-134" id="h4-4-134" class="d">-        let response = match Query::decode(&amp;command)? {
+</a><a href="#h4-4-135" id="h4-4-135" class="d">-            Query::BeginReadOnly { as_of } =&gt; {
+</a><a href="#h4-4-136" id="h4-4-136" class="d">-                let txn = if let Some(version) = as_of {
+</a><a href="#h4-4-137" id="h4-4-137" class="d">-                    self.engine.begin_as_of(version)?
+</a><a href="#h4-4-138" id="h4-4-138" class="d">-                } else {
+</a><a href="#h4-4-139" id="h4-4-139" class="d">-                    self.engine.begin_read_only()?
+</a><a href="#h4-4-140" id="h4-4-140" class="i">+        Ok(match Read::decode(&amp;command)? {
+</a><a href="#h4-4-141" id="h4-4-141" class="i">+            Read::BeginReadOnly { as_of } =&gt; {
+</a><a href="#h4-4-142" id="h4-4-142" class="i">+                let txn = match as_of {
+</a><a href="#h4-4-143" id="h4-4-143" class="i">+                    Some(version) =&gt; self.local.begin_as_of(version)?,
+</a><a href="#h4-4-144" id="h4-4-144" class="i">+                    None =&gt; self.local.begin_read_only()?,
+</a>                 };
+                 txn.state().encode()
+             }
+<a href="#h4-4-148" id="h4-4-148" class="d">-            Query::Read { txn, table, ids } =&gt; self.engine.resume(txn)?.get(&amp;table, &amp;ids)?.encode(),
+</a><a href="#h4-4-149" id="h4-4-149" class="d">-            Query::ReadIndex { txn, table, column, values } =&gt; {
+</a><a href="#h4-4-150" id="h4-4-150" class="d">-                self.engine.resume(txn)?.lookup_index(&amp;table, &amp;column, &amp;values)?.encode()
+</a><a href="#h4-4-151" id="h4-4-151" class="i">+            Read::Status =&gt; self.local.mvcc.status()?.encode(),
+</a><a href="#h4-4-152" id="h4-4-152" class="i">+
+</a><a href="#h4-4-153" id="h4-4-153" class="i">+            Read::Get { txn, table, ids } =&gt; self.local.resume(txn)?.get(&amp;table, &amp;ids)?.encode(),
+</a><a href="#h4-4-154" id="h4-4-154" class="i">+            Read::LookupIndex { txn, table, column, values } =&gt; {
+</a><a href="#h4-4-155" id="h4-4-155" class="i">+                self.local.resume(txn)?.lookup_index(&amp;table, &amp;column, &amp;values)?.encode()
+</a>             }
+<a href="#h4-4-157" id="h4-4-157" class="d">-            // FIXME These need to stream rows somehow
+</a><a href="#h4-4-158" id="h4-4-158" class="d">-            Query::Scan { txn, table, filter } =&gt; {
+</a><a href="#h4-4-159" id="h4-4-159" class="d">-                self.engine.resume(txn)?.scan(&amp;table, filter)?.collect::&lt;Result&lt;Vec&lt;_&gt;&gt;&gt;()?.encode()
+</a><a href="#h4-4-160" id="h4-4-160" class="i">+            Read::Scan { txn, table, filter } =&gt; {
+</a><a href="#h4-4-161" id="h4-4-161" class="i">+                // For simplicity, buffer the entire scan. See `State` comment.
+</a><a href="#h4-4-162" id="h4-4-162" class="i">+                self.local.resume(txn)?.scan(&amp;table, filter)?.collect::&lt;Result&lt;Vec&lt;_&gt;&gt;&gt;()?.encode()
+</a>             }
+<a href="#h4-4-164" id="h4-4-164" class="d">-            Query::ScanIndex { txn, table, column } =&gt; self
+</a><a href="#h4-4-165" id="h4-4-165" class="d">-                .engine
+</a><a href="#h4-4-166" id="h4-4-166" class="i">+            Read::ScanIndex { txn, table, column } =&gt; self
+</a><a href="#h4-4-167" id="h4-4-167" class="i">+                .local
+</a>                 .resume(txn)?
+                 .scan_index(&amp;table, &amp;column)?
+                 .collect::&lt;Result&lt;Vec&lt;_&gt;&gt;&gt;()?
+                 .encode(),
+<a href="#h4-4-172" id="h4-4-172" class="d">-            Query::Status =&gt; self.engine.kv.status()?.encode(),
+</a> 
+<a href="#h4-4-174" id="h4-4-174" class="d">-            Query::ReadTable { txn, table } =&gt; self.engine.resume(txn)?.get_table(&amp;table)?.encode(),
+</a><a href="#h4-4-175" id="h4-4-175" class="d">-            Query::ScanTables { txn } =&gt; self.engine.resume(txn)?.list_tables()?.encode(),
+</a><a href="#h4-4-176" id="h4-4-176" class="d">-        };
+</a><a href="#h4-4-177" id="h4-4-177" class="d">-        Ok(response)
+</a><a href="#h4-4-178" id="h4-4-178" class="i">+            Read::GetTable { txn, table } =&gt; self.local.resume(txn)?.get_table(&amp;table)?.encode(),
+</a><a href="#h4-4-179" id="h4-4-179" class="i">+            Read::ListTables { txn } =&gt; self.local.resume(txn)?.list_tables()?.encode(),
+</a><a href="#h4-4-180" id="h4-4-180" class="i">+        })
+</a>     }
+ }
+<a href="#h4-4-183" id="h4-4-183" class="i">+
+</a><a href="#h4-4-184" id="h4-4-184" class="i">+/// A Raft engine read. Values correspond to engine method parameters.
+</a><a href="#h4-4-185" id="h4-4-185" class="i">+///
+</a><a href="#h4-4-186" id="h4-4-186" class="i">+/// The values must be owned to allow decoding into the struct. This incurs a
+</a><a href="#h4-4-187" id="h4-4-187" class="i">+/// clone on the encode path. We could avoid this by using Cows, but we&#39;ll keep
+</a><a href="#h4-4-188" id="h4-4-188" class="i">+/// it simple.
+</a><a href="#h4-4-189" id="h4-4-189" class="i">+#[derive(Serialize, Deserialize)]
+</a><a href="#h4-4-190" id="h4-4-190" class="i">+enum Read {
+</a><a href="#h4-4-191" id="h4-4-191" class="i">+    BeginReadOnly { as_of: Option&lt;mvcc::Version&gt; },
+</a><a href="#h4-4-192" id="h4-4-192" class="i">+    Status,
+</a><a href="#h4-4-193" id="h4-4-193" class="i">+
+</a><a href="#h4-4-194" id="h4-4-194" class="i">+    Get { txn: mvcc::TransactionState, table: String, ids: Vec&lt;Value&gt; },
+</a><a href="#h4-4-195" id="h4-4-195" class="i">+    LookupIndex { txn: mvcc::TransactionState, table: String, column: String, values: Vec&lt;Value&gt; },
+</a><a href="#h4-4-196" id="h4-4-196" class="i">+    Scan { txn: mvcc::TransactionState, table: String, filter: Option&lt;Expression&gt; },
+</a><a href="#h4-4-197" id="h4-4-197" class="i">+    ScanIndex { txn: mvcc::TransactionState, table: String, column: String },
+</a><a href="#h4-4-198" id="h4-4-198" class="i">+
+</a><a href="#h4-4-199" id="h4-4-199" class="i">+    GetTable { txn: mvcc::TransactionState, table: String },
+</a><a href="#h4-4-200" id="h4-4-200" class="i">+    ListTables { txn: mvcc::TransactionState },
+</a><a href="#h4-4-201" id="h4-4-201" class="i">+}
+</a><a href="#h4-4-202" id="h4-4-202" class="i">+
+</a><a href="#h4-4-203" id="h4-4-203" class="i">+impl encoding::Value for Read {}
+</a><a href="#h4-4-204" id="h4-4-204" class="i">+
+</a><a href="#h4-4-205" id="h4-4-205" class="i">+/// A Raft engine write. Values correspond to engine method parameters.
+</a><a href="#h4-4-206" id="h4-4-206" class="i">+///
+</a><a href="#h4-4-207" id="h4-4-207" class="i">+/// TODO: consider using Cows here.
+</a><a href="#h4-4-208" id="h4-4-208" class="i">+#[derive(Serialize, Deserialize)]
+</a><a href="#h4-4-209" id="h4-4-209" class="i">+enum Write {
+</a><a href="#h4-4-210" id="h4-4-210" class="i">+    Begin,
+</a><a href="#h4-4-211" id="h4-4-211" class="i">+    Commit(mvcc::TransactionState),
+</a><a href="#h4-4-212" id="h4-4-212" class="i">+    Rollback(mvcc::TransactionState),
+</a><a href="#h4-4-213" id="h4-4-213" class="i">+
+</a><a href="#h4-4-214" id="h4-4-214" class="i">+    Delete { txn: mvcc::TransactionState, table: String, ids: Vec&lt;Value&gt; },
+</a><a href="#h4-4-215" id="h4-4-215" class="i">+    Insert { txn: mvcc::TransactionState, table: String, rows: Vec&lt;Row&gt; },
+</a><a href="#h4-4-216" id="h4-4-216" class="i">+    Update { txn: mvcc::TransactionState, table: String, rows: HashMap&lt;Value, Row&gt; },
+</a><a href="#h4-4-217" id="h4-4-217" class="i">+
+</a><a href="#h4-4-218" id="h4-4-218" class="i">+    CreateTable { txn: mvcc::TransactionState, schema: Table },
+</a><a href="#h4-4-219" id="h4-4-219" class="i">+    DeleteTable { txn: mvcc::TransactionState, table: String, if_exists: bool },
+</a><a href="#h4-4-220" id="h4-4-220" class="i">+}
+</a><a href="#h4-4-221" id="h4-4-221" class="i">+
+</a><a href="#h4-4-222" id="h4-4-222" class="i">+impl encoding::Value for Write {}
+</a><a href="#h4-4-223" id="h4-4-223" class="i">+
+</a><a href="#h4-4-224" id="h4-4-224" class="i">+/// Raft SQL engine status.
+</a><a href="#h4-4-225" id="h4-4-225" class="i">+#[derive(Serialize, Deserialize)]
+</a><a href="#h4-4-226" id="h4-4-226" class="i">+pub struct Status {
+</a><a href="#h4-4-227" id="h4-4-227" class="i">+    pub raft: raft::Status,
+</a><a href="#h4-4-228" id="h4-4-228" class="i">+    pub mvcc: mvcc::Status,
+</a><a href="#h4-4-229" id="h4-4-229" class="i">+}
+</a></pre>
+</div>
+</body>
+</html>

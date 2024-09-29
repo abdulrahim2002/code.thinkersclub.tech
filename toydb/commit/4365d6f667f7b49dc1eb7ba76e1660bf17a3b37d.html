@@ -1,0 +1,589 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>sql: fix ungrouped aggregates with no input rows - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/4365d6f667f7b49dc1eb7ba76e1660bf17a3b37d.html">4365d6f667f7b49dc1eb7ba76e1660bf17a3b37d</a>
+<b>parent</b> <a href="../commit/741db115f311fc79478dc605622de91bc4fdf4e1.html">741db115f311fc79478dc605622de91bc4fdf4e1</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Thu,  9 Apr 2020 14:28:41 +0200
+
+sql: fix ungrouped aggregates with no input rows
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/sql/executor/aggregation.rs</a></td><td> | </td><td class="num">8</td><td><span class="i">++++++++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/sql/tests/query.rs</a></td><td> | </td><td class="num">3</td><td><span class="i">++</span><span class="d">-</span></td></tr>
+<tr><td class="A">A</td><td><a href="#h2">src/sql/tests/query/agg_norows</a></td><td> | </td><td class="num">249</td><td><span class="i">+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d"></span></td></tr>
+<tr><td class="A">A</td><td><a href="#h3">src/sql/tests/query/agg_norows_group</a></td><td> | </td><td class="num">267</td><td><span class="i">+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d"></span></td></tr>
+</table></pre><pre>4 files changed, 526 insertions(+), 1 deletion(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/sql/executor/aggregation.rs.html">src/sql/executor/aggregation.rs</a> b/<a href="../file/src/sql/executor/aggregation.rs.html">src/sql/executor/aggregation.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -37,6 +37,14 @@ impl&lt;T: Transaction&gt; Executor&lt;T&gt; for Aggregation&lt;T&gt; {
+</a>                     .zip(row)
+                     .try_for_each(|(acc, value)| acc.accumulate(&amp;value))?
+             }
+<a href="#h0-0-3" id="h0-0-3" class="i">+            // If there were no rows and no group-by columns, return a row of empty accumulators:
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+            // SELECT COUNT(*) FROM t WHERE FALSE
+</a><a href="#h0-0-5" id="h0-0-5" class="i">+            if self.accumulators.is_empty() &amp;&amp; self.aggregates.len() == result.columns.len() {
+</a><a href="#h0-0-6" id="h0-0-6" class="i">+                self.accumulators.insert(
+</a><a href="#h0-0-7" id="h0-0-7" class="i">+                    Vec::new(),
+</a><a href="#h0-0-8" id="h0-0-8" class="i">+                    self.aggregates.iter().map(|agg| Accumulator::from(agg)).collect(),
+</a><a href="#h0-0-9" id="h0-0-9" class="i">+                );
+</a><a href="#h0-0-10" id="h0-0-10" class="i">+            }
+</a>             result = ResultSet::from_rows(
+                 ResultColumns::new(
+                     result
+<b>diff --git a/<a id="h1" href="../file/src/sql/tests/query.rs.html">src/sql/tests/query.rs</a> b/<a href="../file/src/sql/tests/query.rs.html">src/sql/tests/query.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -301,6 +301,8 @@ test_query! {
+</a>     agg_expr: &quot;SELECT SUM(rating * 10) / COUNT(*) FROM movies&quot;,
+     agg_nested: &quot;SELECT MAX(MIN(rating)) FROM movies&quot;,
+     agg_ungrouped: &quot;SELECT studio_id, COUNT(*) FROM movies&quot;,
+<a href="#h1-0-3" id="h1-0-3" class="i">+    agg_norows: &quot;SELECT MIN(id), MAX(id), SUM(id), COUNT(id), AVG(id) FROM movies WHERE FALSE&quot;,
+</a><a href="#h1-0-4" id="h1-0-4" class="i">+    agg_norows_group: &quot;SELECT MIN(id), MAX(id), SUM(id), COUNT(id), AVG(id) FROM movies WHERE FALSE GROUP BY id&quot;,
+</a>     agg_const: &quot;SELECT MIN(3), MAX(3), SUM(3), COUNT(3), AVG(3)&quot;,
+     agg_const_from: &quot;SELECT MIN(3), MAX(3), SUM(3), COUNT(3), AVG(3) FROM genres&quot;,
+ }
+<a href="#h1-1" id="h1-1" class="h">@@ -358,7 +360,6 @@ test_query! {
+</a>     group_expr_aggr_nogroupref: &quot;SELECT studio_id, SUM(rating * 10) / COUNT(*) + id FROM movies GROUP BY studio_id ORDER BY studio_id&quot;,
+     group_expr_multigroup: &quot;SELECT studio_id + genre_id AS multi, MAX(rating) AS rating FROM movies GROUP BY studio_id, genre_id ORDER BY rating, multi&quot;,
+ 
+<a href="#h1-1-3" id="h1-1-3" class="d">-
+</a>     having: &quot;SELECT studio_id, MAX(rating) AS rating FROM movies GROUP BY studio_id HAVING rating &gt; 8 ORDER BY studio_id&quot;,
+     having_nogroup: &quot;SELECT id, rating FROM movies HAVING rating &gt; 8 ORDER BY id&quot;,
+ }
+<b>diff --git a/<a id="h2" href="../file/src/sql/tests/query/agg_norows.html">src/sql/tests/query/agg_norows</a> b/<a href="../file/src/sql/tests/query/agg_norows.html">src/sql/tests/query/agg_norows</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -0,0 +1,249 @@
+</a><a href="#h2-0-0" id="h2-0-0" class="i">+Query: SELECT MIN(id), MAX(id), SUM(id), COUNT(id), AVG(id) FROM movies WHERE FALSE
+</a><a href="#h2-0-1" id="h2-0-1" class="i">+
+</a><a href="#h2-0-2" id="h2-0-2" class="i">+AST: Select {
+</a><a href="#h2-0-3" id="h2-0-3" class="i">+    select: SelectClause {
+</a><a href="#h2-0-4" id="h2-0-4" class="i">+        expressions: [
+</a><a href="#h2-0-5" id="h2-0-5" class="i">+            Function(
+</a><a href="#h2-0-6" id="h2-0-6" class="i">+                &quot;min&quot;,
+</a><a href="#h2-0-7" id="h2-0-7" class="i">+                [
+</a><a href="#h2-0-8" id="h2-0-8" class="i">+                    Field(
+</a><a href="#h2-0-9" id="h2-0-9" class="i">+                        None,
+</a><a href="#h2-0-10" id="h2-0-10" class="i">+                        &quot;id&quot;,
+</a><a href="#h2-0-11" id="h2-0-11" class="i">+                    ),
+</a><a href="#h2-0-12" id="h2-0-12" class="i">+                ],
+</a><a href="#h2-0-13" id="h2-0-13" class="i">+            ),
+</a><a href="#h2-0-14" id="h2-0-14" class="i">+            Function(
+</a><a href="#h2-0-15" id="h2-0-15" class="i">+                &quot;max&quot;,
+</a><a href="#h2-0-16" id="h2-0-16" class="i">+                [
+</a><a href="#h2-0-17" id="h2-0-17" class="i">+                    Field(
+</a><a href="#h2-0-18" id="h2-0-18" class="i">+                        None,
+</a><a href="#h2-0-19" id="h2-0-19" class="i">+                        &quot;id&quot;,
+</a><a href="#h2-0-20" id="h2-0-20" class="i">+                    ),
+</a><a href="#h2-0-21" id="h2-0-21" class="i">+                ],
+</a><a href="#h2-0-22" id="h2-0-22" class="i">+            ),
+</a><a href="#h2-0-23" id="h2-0-23" class="i">+            Function(
+</a><a href="#h2-0-24" id="h2-0-24" class="i">+                &quot;sum&quot;,
+</a><a href="#h2-0-25" id="h2-0-25" class="i">+                [
+</a><a href="#h2-0-26" id="h2-0-26" class="i">+                    Field(
+</a><a href="#h2-0-27" id="h2-0-27" class="i">+                        None,
+</a><a href="#h2-0-28" id="h2-0-28" class="i">+                        &quot;id&quot;,
+</a><a href="#h2-0-29" id="h2-0-29" class="i">+                    ),
+</a><a href="#h2-0-30" id="h2-0-30" class="i">+                ],
+</a><a href="#h2-0-31" id="h2-0-31" class="i">+            ),
+</a><a href="#h2-0-32" id="h2-0-32" class="i">+            Function(
+</a><a href="#h2-0-33" id="h2-0-33" class="i">+                &quot;count&quot;,
+</a><a href="#h2-0-34" id="h2-0-34" class="i">+                [
+</a><a href="#h2-0-35" id="h2-0-35" class="i">+                    Field(
+</a><a href="#h2-0-36" id="h2-0-36" class="i">+                        None,
+</a><a href="#h2-0-37" id="h2-0-37" class="i">+                        &quot;id&quot;,
+</a><a href="#h2-0-38" id="h2-0-38" class="i">+                    ),
+</a><a href="#h2-0-39" id="h2-0-39" class="i">+                ],
+</a><a href="#h2-0-40" id="h2-0-40" class="i">+            ),
+</a><a href="#h2-0-41" id="h2-0-41" class="i">+            Function(
+</a><a href="#h2-0-42" id="h2-0-42" class="i">+                &quot;avg&quot;,
+</a><a href="#h2-0-43" id="h2-0-43" class="i">+                [
+</a><a href="#h2-0-44" id="h2-0-44" class="i">+                    Field(
+</a><a href="#h2-0-45" id="h2-0-45" class="i">+                        None,
+</a><a href="#h2-0-46" id="h2-0-46" class="i">+                        &quot;id&quot;,
+</a><a href="#h2-0-47" id="h2-0-47" class="i">+                    ),
+</a><a href="#h2-0-48" id="h2-0-48" class="i">+                ],
+</a><a href="#h2-0-49" id="h2-0-49" class="i">+            ),
+</a><a href="#h2-0-50" id="h2-0-50" class="i">+        ],
+</a><a href="#h2-0-51" id="h2-0-51" class="i">+        labels: [
+</a><a href="#h2-0-52" id="h2-0-52" class="i">+            None,
+</a><a href="#h2-0-53" id="h2-0-53" class="i">+            None,
+</a><a href="#h2-0-54" id="h2-0-54" class="i">+            None,
+</a><a href="#h2-0-55" id="h2-0-55" class="i">+            None,
+</a><a href="#h2-0-56" id="h2-0-56" class="i">+            None,
+</a><a href="#h2-0-57" id="h2-0-57" class="i">+        ],
+</a><a href="#h2-0-58" id="h2-0-58" class="i">+    },
+</a><a href="#h2-0-59" id="h2-0-59" class="i">+    from: Some(
+</a><a href="#h2-0-60" id="h2-0-60" class="i">+        FromClause {
+</a><a href="#h2-0-61" id="h2-0-61" class="i">+            items: [
+</a><a href="#h2-0-62" id="h2-0-62" class="i">+                Table {
+</a><a href="#h2-0-63" id="h2-0-63" class="i">+                    name: &quot;movies&quot;,
+</a><a href="#h2-0-64" id="h2-0-64" class="i">+                    alias: None,
+</a><a href="#h2-0-65" id="h2-0-65" class="i">+                },
+</a><a href="#h2-0-66" id="h2-0-66" class="i">+            ],
+</a><a href="#h2-0-67" id="h2-0-67" class="i">+        },
+</a><a href="#h2-0-68" id="h2-0-68" class="i">+    ),
+</a><a href="#h2-0-69" id="h2-0-69" class="i">+    where: Some(
+</a><a href="#h2-0-70" id="h2-0-70" class="i">+        WhereClause(
+</a><a href="#h2-0-71" id="h2-0-71" class="i">+            Literal(
+</a><a href="#h2-0-72" id="h2-0-72" class="i">+                Boolean(
+</a><a href="#h2-0-73" id="h2-0-73" class="i">+                    false,
+</a><a href="#h2-0-74" id="h2-0-74" class="i">+                ),
+</a><a href="#h2-0-75" id="h2-0-75" class="i">+            ),
+</a><a href="#h2-0-76" id="h2-0-76" class="i">+        ),
+</a><a href="#h2-0-77" id="h2-0-77" class="i">+    ),
+</a><a href="#h2-0-78" id="h2-0-78" class="i">+    group_by: None,
+</a><a href="#h2-0-79" id="h2-0-79" class="i">+    having: None,
+</a><a href="#h2-0-80" id="h2-0-80" class="i">+    order: [],
+</a><a href="#h2-0-81" id="h2-0-81" class="i">+    limit: None,
+</a><a href="#h2-0-82" id="h2-0-82" class="i">+    offset: None,
+</a><a href="#h2-0-83" id="h2-0-83" class="i">+}
+</a><a href="#h2-0-84" id="h2-0-84" class="i">+
+</a><a href="#h2-0-85" id="h2-0-85" class="i">+Plan: Plan {
+</a><a href="#h2-0-86" id="h2-0-86" class="i">+    root: Projection {
+</a><a href="#h2-0-87" id="h2-0-87" class="i">+        source: Aggregation {
+</a><a href="#h2-0-88" id="h2-0-88" class="i">+            source: Projection {
+</a><a href="#h2-0-89" id="h2-0-89" class="i">+                source: Filter {
+</a><a href="#h2-0-90" id="h2-0-90" class="i">+                    source: Scan {
+</a><a href="#h2-0-91" id="h2-0-91" class="i">+                        table: &quot;movies&quot;,
+</a><a href="#h2-0-92" id="h2-0-92" class="i">+                        alias: None,
+</a><a href="#h2-0-93" id="h2-0-93" class="i">+                    },
+</a><a href="#h2-0-94" id="h2-0-94" class="i">+                    predicate: Constant(
+</a><a href="#h2-0-95" id="h2-0-95" class="i">+                        Boolean(
+</a><a href="#h2-0-96" id="h2-0-96" class="i">+                            false,
+</a><a href="#h2-0-97" id="h2-0-97" class="i">+                        ),
+</a><a href="#h2-0-98" id="h2-0-98" class="i">+                    ),
+</a><a href="#h2-0-99" id="h2-0-99" class="i">+                },
+</a><a href="#h2-0-100" id="h2-0-100" class="i">+                labels: [
+</a><a href="#h2-0-101" id="h2-0-101" class="i">+                    None,
+</a><a href="#h2-0-102" id="h2-0-102" class="i">+                    None,
+</a><a href="#h2-0-103" id="h2-0-103" class="i">+                    None,
+</a><a href="#h2-0-104" id="h2-0-104" class="i">+                    None,
+</a><a href="#h2-0-105" id="h2-0-105" class="i">+                    None,
+</a><a href="#h2-0-106" id="h2-0-106" class="i">+                ],
+</a><a href="#h2-0-107" id="h2-0-107" class="i">+                expressions: [
+</a><a href="#h2-0-108" id="h2-0-108" class="i">+                    Field(
+</a><a href="#h2-0-109" id="h2-0-109" class="i">+                        None,
+</a><a href="#h2-0-110" id="h2-0-110" class="i">+                        &quot;id&quot;,
+</a><a href="#h2-0-111" id="h2-0-111" class="i">+                    ),
+</a><a href="#h2-0-112" id="h2-0-112" class="i">+                    Field(
+</a><a href="#h2-0-113" id="h2-0-113" class="i">+                        None,
+</a><a href="#h2-0-114" id="h2-0-114" class="i">+                        &quot;id&quot;,
+</a><a href="#h2-0-115" id="h2-0-115" class="i">+                    ),
+</a><a href="#h2-0-116" id="h2-0-116" class="i">+                    Field(
+</a><a href="#h2-0-117" id="h2-0-117" class="i">+                        None,
+</a><a href="#h2-0-118" id="h2-0-118" class="i">+                        &quot;id&quot;,
+</a><a href="#h2-0-119" id="h2-0-119" class="i">+                    ),
+</a><a href="#h2-0-120" id="h2-0-120" class="i">+                    Field(
+</a><a href="#h2-0-121" id="h2-0-121" class="i">+                        None,
+</a><a href="#h2-0-122" id="h2-0-122" class="i">+                        &quot;id&quot;,
+</a><a href="#h2-0-123" id="h2-0-123" class="i">+                    ),
+</a><a href="#h2-0-124" id="h2-0-124" class="i">+                    Field(
+</a><a href="#h2-0-125" id="h2-0-125" class="i">+                        None,
+</a><a href="#h2-0-126" id="h2-0-126" class="i">+                        &quot;id&quot;,
+</a><a href="#h2-0-127" id="h2-0-127" class="i">+                    ),
+</a><a href="#h2-0-128" id="h2-0-128" class="i">+                ],
+</a><a href="#h2-0-129" id="h2-0-129" class="i">+            },
+</a><a href="#h2-0-130" id="h2-0-130" class="i">+            aggregates: [
+</a><a href="#h2-0-131" id="h2-0-131" class="i">+                Min,
+</a><a href="#h2-0-132" id="h2-0-132" class="i">+                Max,
+</a><a href="#h2-0-133" id="h2-0-133" class="i">+                Sum,
+</a><a href="#h2-0-134" id="h2-0-134" class="i">+                Count,
+</a><a href="#h2-0-135" id="h2-0-135" class="i">+                Average,
+</a><a href="#h2-0-136" id="h2-0-136" class="i">+            ],
+</a><a href="#h2-0-137" id="h2-0-137" class="i">+        },
+</a><a href="#h2-0-138" id="h2-0-138" class="i">+        labels: [
+</a><a href="#h2-0-139" id="h2-0-139" class="i">+            None,
+</a><a href="#h2-0-140" id="h2-0-140" class="i">+            None,
+</a><a href="#h2-0-141" id="h2-0-141" class="i">+            None,
+</a><a href="#h2-0-142" id="h2-0-142" class="i">+            None,
+</a><a href="#h2-0-143" id="h2-0-143" class="i">+            None,
+</a><a href="#h2-0-144" id="h2-0-144" class="i">+        ],
+</a><a href="#h2-0-145" id="h2-0-145" class="i">+        expressions: [
+</a><a href="#h2-0-146" id="h2-0-146" class="i">+            Column(
+</a><a href="#h2-0-147" id="h2-0-147" class="i">+                0,
+</a><a href="#h2-0-148" id="h2-0-148" class="i">+            ),
+</a><a href="#h2-0-149" id="h2-0-149" class="i">+            Column(
+</a><a href="#h2-0-150" id="h2-0-150" class="i">+                1,
+</a><a href="#h2-0-151" id="h2-0-151" class="i">+            ),
+</a><a href="#h2-0-152" id="h2-0-152" class="i">+            Column(
+</a><a href="#h2-0-153" id="h2-0-153" class="i">+                2,
+</a><a href="#h2-0-154" id="h2-0-154" class="i">+            ),
+</a><a href="#h2-0-155" id="h2-0-155" class="i">+            Column(
+</a><a href="#h2-0-156" id="h2-0-156" class="i">+                3,
+</a><a href="#h2-0-157" id="h2-0-157" class="i">+            ),
+</a><a href="#h2-0-158" id="h2-0-158" class="i">+            Column(
+</a><a href="#h2-0-159" id="h2-0-159" class="i">+                4,
+</a><a href="#h2-0-160" id="h2-0-160" class="i">+            ),
+</a><a href="#h2-0-161" id="h2-0-161" class="i">+        ],
+</a><a href="#h2-0-162" id="h2-0-162" class="i">+    },
+</a><a href="#h2-0-163" id="h2-0-163" class="i">+}
+</a><a href="#h2-0-164" id="h2-0-164" class="i">+
+</a><a href="#h2-0-165" id="h2-0-165" class="i">+Optimized plan: Plan {
+</a><a href="#h2-0-166" id="h2-0-166" class="i">+    root: Projection {
+</a><a href="#h2-0-167" id="h2-0-167" class="i">+        source: Aggregation {
+</a><a href="#h2-0-168" id="h2-0-168" class="i">+            source: Projection {
+</a><a href="#h2-0-169" id="h2-0-169" class="i">+                source: Filter {
+</a><a href="#h2-0-170" id="h2-0-170" class="i">+                    source: Scan {
+</a><a href="#h2-0-171" id="h2-0-171" class="i">+                        table: &quot;movies&quot;,
+</a><a href="#h2-0-172" id="h2-0-172" class="i">+                        alias: None,
+</a><a href="#h2-0-173" id="h2-0-173" class="i">+                    },
+</a><a href="#h2-0-174" id="h2-0-174" class="i">+                    predicate: Constant(
+</a><a href="#h2-0-175" id="h2-0-175" class="i">+                        Boolean(
+</a><a href="#h2-0-176" id="h2-0-176" class="i">+                            false,
+</a><a href="#h2-0-177" id="h2-0-177" class="i">+                        ),
+</a><a href="#h2-0-178" id="h2-0-178" class="i">+                    ),
+</a><a href="#h2-0-179" id="h2-0-179" class="i">+                },
+</a><a href="#h2-0-180" id="h2-0-180" class="i">+                labels: [
+</a><a href="#h2-0-181" id="h2-0-181" class="i">+                    None,
+</a><a href="#h2-0-182" id="h2-0-182" class="i">+                    None,
+</a><a href="#h2-0-183" id="h2-0-183" class="i">+                    None,
+</a><a href="#h2-0-184" id="h2-0-184" class="i">+                    None,
+</a><a href="#h2-0-185" id="h2-0-185" class="i">+                    None,
+</a><a href="#h2-0-186" id="h2-0-186" class="i">+                ],
+</a><a href="#h2-0-187" id="h2-0-187" class="i">+                expressions: [
+</a><a href="#h2-0-188" id="h2-0-188" class="i">+                    Field(
+</a><a href="#h2-0-189" id="h2-0-189" class="i">+                        None,
+</a><a href="#h2-0-190" id="h2-0-190" class="i">+                        &quot;id&quot;,
+</a><a href="#h2-0-191" id="h2-0-191" class="i">+                    ),
+</a><a href="#h2-0-192" id="h2-0-192" class="i">+                    Field(
+</a><a href="#h2-0-193" id="h2-0-193" class="i">+                        None,
+</a><a href="#h2-0-194" id="h2-0-194" class="i">+                        &quot;id&quot;,
+</a><a href="#h2-0-195" id="h2-0-195" class="i">+                    ),
+</a><a href="#h2-0-196" id="h2-0-196" class="i">+                    Field(
+</a><a href="#h2-0-197" id="h2-0-197" class="i">+                        None,
+</a><a href="#h2-0-198" id="h2-0-198" class="i">+                        &quot;id&quot;,
+</a><a href="#h2-0-199" id="h2-0-199" class="i">+                    ),
+</a><a href="#h2-0-200" id="h2-0-200" class="i">+                    Field(
+</a><a href="#h2-0-201" id="h2-0-201" class="i">+                        None,
+</a><a href="#h2-0-202" id="h2-0-202" class="i">+                        &quot;id&quot;,
+</a><a href="#h2-0-203" id="h2-0-203" class="i">+                    ),
+</a><a href="#h2-0-204" id="h2-0-204" class="i">+                    Field(
+</a><a href="#h2-0-205" id="h2-0-205" class="i">+                        None,
+</a><a href="#h2-0-206" id="h2-0-206" class="i">+                        &quot;id&quot;,
+</a><a href="#h2-0-207" id="h2-0-207" class="i">+                    ),
+</a><a href="#h2-0-208" id="h2-0-208" class="i">+                ],
+</a><a href="#h2-0-209" id="h2-0-209" class="i">+            },
+</a><a href="#h2-0-210" id="h2-0-210" class="i">+            aggregates: [
+</a><a href="#h2-0-211" id="h2-0-211" class="i">+                Min,
+</a><a href="#h2-0-212" id="h2-0-212" class="i">+                Max,
+</a><a href="#h2-0-213" id="h2-0-213" class="i">+                Sum,
+</a><a href="#h2-0-214" id="h2-0-214" class="i">+                Count,
+</a><a href="#h2-0-215" id="h2-0-215" class="i">+                Average,
+</a><a href="#h2-0-216" id="h2-0-216" class="i">+            ],
+</a><a href="#h2-0-217" id="h2-0-217" class="i">+        },
+</a><a href="#h2-0-218" id="h2-0-218" class="i">+        labels: [
+</a><a href="#h2-0-219" id="h2-0-219" class="i">+            None,
+</a><a href="#h2-0-220" id="h2-0-220" class="i">+            None,
+</a><a href="#h2-0-221" id="h2-0-221" class="i">+            None,
+</a><a href="#h2-0-222" id="h2-0-222" class="i">+            None,
+</a><a href="#h2-0-223" id="h2-0-223" class="i">+            None,
+</a><a href="#h2-0-224" id="h2-0-224" class="i">+        ],
+</a><a href="#h2-0-225" id="h2-0-225" class="i">+        expressions: [
+</a><a href="#h2-0-226" id="h2-0-226" class="i">+            Column(
+</a><a href="#h2-0-227" id="h2-0-227" class="i">+                0,
+</a><a href="#h2-0-228" id="h2-0-228" class="i">+            ),
+</a><a href="#h2-0-229" id="h2-0-229" class="i">+            Column(
+</a><a href="#h2-0-230" id="h2-0-230" class="i">+                1,
+</a><a href="#h2-0-231" id="h2-0-231" class="i">+            ),
+</a><a href="#h2-0-232" id="h2-0-232" class="i">+            Column(
+</a><a href="#h2-0-233" id="h2-0-233" class="i">+                2,
+</a><a href="#h2-0-234" id="h2-0-234" class="i">+            ),
+</a><a href="#h2-0-235" id="h2-0-235" class="i">+            Column(
+</a><a href="#h2-0-236" id="h2-0-236" class="i">+                3,
+</a><a href="#h2-0-237" id="h2-0-237" class="i">+            ),
+</a><a href="#h2-0-238" id="h2-0-238" class="i">+            Column(
+</a><a href="#h2-0-239" id="h2-0-239" class="i">+                4,
+</a><a href="#h2-0-240" id="h2-0-240" class="i">+            ),
+</a><a href="#h2-0-241" id="h2-0-241" class="i">+        ],
+</a><a href="#h2-0-242" id="h2-0-242" class="i">+    },
+</a><a href="#h2-0-243" id="h2-0-243" class="i">+}
+</a><a href="#h2-0-244" id="h2-0-244" class="i">+
+</a><a href="#h2-0-245" id="h2-0-245" class="i">+Query: SELECT MIN(id), MAX(id), SUM(id), COUNT(id), AVG(id) FROM movies WHERE FALSE
+</a><a href="#h2-0-246" id="h2-0-246" class="i">+
+</a><a href="#h2-0-247" id="h2-0-247" class="i">+Result: [&quot;?&quot;, &quot;?&quot;, &quot;?&quot;, &quot;?&quot;, &quot;?&quot;]
+</a><a href="#h2-0-248" id="h2-0-248" class="i">+[Null, Null, Null, Integer(0), Null]
+</a><b>diff --git a/<a id="h3" href="../file/src/sql/tests/query/agg_norows_group.html">src/sql/tests/query/agg_norows_group</a> b/<a href="../file/src/sql/tests/query/agg_norows_group.html">src/sql/tests/query/agg_norows_group</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -0,0 +1,267 @@
+</a><a href="#h3-0-0" id="h3-0-0" class="i">+Query: SELECT MIN(id), MAX(id), SUM(id), COUNT(id), AVG(id) FROM movies WHERE FALSE GROUP BY id
+</a><a href="#h3-0-1" id="h3-0-1" class="i">+
+</a><a href="#h3-0-2" id="h3-0-2" class="i">+AST: Select {
+</a><a href="#h3-0-3" id="h3-0-3" class="i">+    select: SelectClause {
+</a><a href="#h3-0-4" id="h3-0-4" class="i">+        expressions: [
+</a><a href="#h3-0-5" id="h3-0-5" class="i">+            Function(
+</a><a href="#h3-0-6" id="h3-0-6" class="i">+                &quot;min&quot;,
+</a><a href="#h3-0-7" id="h3-0-7" class="i">+                [
+</a><a href="#h3-0-8" id="h3-0-8" class="i">+                    Field(
+</a><a href="#h3-0-9" id="h3-0-9" class="i">+                        None,
+</a><a href="#h3-0-10" id="h3-0-10" class="i">+                        &quot;id&quot;,
+</a><a href="#h3-0-11" id="h3-0-11" class="i">+                    ),
+</a><a href="#h3-0-12" id="h3-0-12" class="i">+                ],
+</a><a href="#h3-0-13" id="h3-0-13" class="i">+            ),
+</a><a href="#h3-0-14" id="h3-0-14" class="i">+            Function(
+</a><a href="#h3-0-15" id="h3-0-15" class="i">+                &quot;max&quot;,
+</a><a href="#h3-0-16" id="h3-0-16" class="i">+                [
+</a><a href="#h3-0-17" id="h3-0-17" class="i">+                    Field(
+</a><a href="#h3-0-18" id="h3-0-18" class="i">+                        None,
+</a><a href="#h3-0-19" id="h3-0-19" class="i">+                        &quot;id&quot;,
+</a><a href="#h3-0-20" id="h3-0-20" class="i">+                    ),
+</a><a href="#h3-0-21" id="h3-0-21" class="i">+                ],
+</a><a href="#h3-0-22" id="h3-0-22" class="i">+            ),
+</a><a href="#h3-0-23" id="h3-0-23" class="i">+            Function(
+</a><a href="#h3-0-24" id="h3-0-24" class="i">+                &quot;sum&quot;,
+</a><a href="#h3-0-25" id="h3-0-25" class="i">+                [
+</a><a href="#h3-0-26" id="h3-0-26" class="i">+                    Field(
+</a><a href="#h3-0-27" id="h3-0-27" class="i">+                        None,
+</a><a href="#h3-0-28" id="h3-0-28" class="i">+                        &quot;id&quot;,
+</a><a href="#h3-0-29" id="h3-0-29" class="i">+                    ),
+</a><a href="#h3-0-30" id="h3-0-30" class="i">+                ],
+</a><a href="#h3-0-31" id="h3-0-31" class="i">+            ),
+</a><a href="#h3-0-32" id="h3-0-32" class="i">+            Function(
+</a><a href="#h3-0-33" id="h3-0-33" class="i">+                &quot;count&quot;,
+</a><a href="#h3-0-34" id="h3-0-34" class="i">+                [
+</a><a href="#h3-0-35" id="h3-0-35" class="i">+                    Field(
+</a><a href="#h3-0-36" id="h3-0-36" class="i">+                        None,
+</a><a href="#h3-0-37" id="h3-0-37" class="i">+                        &quot;id&quot;,
+</a><a href="#h3-0-38" id="h3-0-38" class="i">+                    ),
+</a><a href="#h3-0-39" id="h3-0-39" class="i">+                ],
+</a><a href="#h3-0-40" id="h3-0-40" class="i">+            ),
+</a><a href="#h3-0-41" id="h3-0-41" class="i">+            Function(
+</a><a href="#h3-0-42" id="h3-0-42" class="i">+                &quot;avg&quot;,
+</a><a href="#h3-0-43" id="h3-0-43" class="i">+                [
+</a><a href="#h3-0-44" id="h3-0-44" class="i">+                    Field(
+</a><a href="#h3-0-45" id="h3-0-45" class="i">+                        None,
+</a><a href="#h3-0-46" id="h3-0-46" class="i">+                        &quot;id&quot;,
+</a><a href="#h3-0-47" id="h3-0-47" class="i">+                    ),
+</a><a href="#h3-0-48" id="h3-0-48" class="i">+                ],
+</a><a href="#h3-0-49" id="h3-0-49" class="i">+            ),
+</a><a href="#h3-0-50" id="h3-0-50" class="i">+        ],
+</a><a href="#h3-0-51" id="h3-0-51" class="i">+        labels: [
+</a><a href="#h3-0-52" id="h3-0-52" class="i">+            None,
+</a><a href="#h3-0-53" id="h3-0-53" class="i">+            None,
+</a><a href="#h3-0-54" id="h3-0-54" class="i">+            None,
+</a><a href="#h3-0-55" id="h3-0-55" class="i">+            None,
+</a><a href="#h3-0-56" id="h3-0-56" class="i">+            None,
+</a><a href="#h3-0-57" id="h3-0-57" class="i">+        ],
+</a><a href="#h3-0-58" id="h3-0-58" class="i">+    },
+</a><a href="#h3-0-59" id="h3-0-59" class="i">+    from: Some(
+</a><a href="#h3-0-60" id="h3-0-60" class="i">+        FromClause {
+</a><a href="#h3-0-61" id="h3-0-61" class="i">+            items: [
+</a><a href="#h3-0-62" id="h3-0-62" class="i">+                Table {
+</a><a href="#h3-0-63" id="h3-0-63" class="i">+                    name: &quot;movies&quot;,
+</a><a href="#h3-0-64" id="h3-0-64" class="i">+                    alias: None,
+</a><a href="#h3-0-65" id="h3-0-65" class="i">+                },
+</a><a href="#h3-0-66" id="h3-0-66" class="i">+            ],
+</a><a href="#h3-0-67" id="h3-0-67" class="i">+        },
+</a><a href="#h3-0-68" id="h3-0-68" class="i">+    ),
+</a><a href="#h3-0-69" id="h3-0-69" class="i">+    where: Some(
+</a><a href="#h3-0-70" id="h3-0-70" class="i">+        WhereClause(
+</a><a href="#h3-0-71" id="h3-0-71" class="i">+            Literal(
+</a><a href="#h3-0-72" id="h3-0-72" class="i">+                Boolean(
+</a><a href="#h3-0-73" id="h3-0-73" class="i">+                    false,
+</a><a href="#h3-0-74" id="h3-0-74" class="i">+                ),
+</a><a href="#h3-0-75" id="h3-0-75" class="i">+            ),
+</a><a href="#h3-0-76" id="h3-0-76" class="i">+        ),
+</a><a href="#h3-0-77" id="h3-0-77" class="i">+    ),
+</a><a href="#h3-0-78" id="h3-0-78" class="i">+    group_by: Some(
+</a><a href="#h3-0-79" id="h3-0-79" class="i">+        GroupByClause(
+</a><a href="#h3-0-80" id="h3-0-80" class="i">+            [
+</a><a href="#h3-0-81" id="h3-0-81" class="i">+                Field(
+</a><a href="#h3-0-82" id="h3-0-82" class="i">+                    None,
+</a><a href="#h3-0-83" id="h3-0-83" class="i">+                    &quot;id&quot;,
+</a><a href="#h3-0-84" id="h3-0-84" class="i">+                ),
+</a><a href="#h3-0-85" id="h3-0-85" class="i">+            ],
+</a><a href="#h3-0-86" id="h3-0-86" class="i">+        ),
+</a><a href="#h3-0-87" id="h3-0-87" class="i">+    ),
+</a><a href="#h3-0-88" id="h3-0-88" class="i">+    having: None,
+</a><a href="#h3-0-89" id="h3-0-89" class="i">+    order: [],
+</a><a href="#h3-0-90" id="h3-0-90" class="i">+    limit: None,
+</a><a href="#h3-0-91" id="h3-0-91" class="i">+    offset: None,
+</a><a href="#h3-0-92" id="h3-0-92" class="i">+}
+</a><a href="#h3-0-93" id="h3-0-93" class="i">+
+</a><a href="#h3-0-94" id="h3-0-94" class="i">+Plan: Plan {
+</a><a href="#h3-0-95" id="h3-0-95" class="i">+    root: Projection {
+</a><a href="#h3-0-96" id="h3-0-96" class="i">+        source: Aggregation {
+</a><a href="#h3-0-97" id="h3-0-97" class="i">+            source: Projection {
+</a><a href="#h3-0-98" id="h3-0-98" class="i">+                source: Filter {
+</a><a href="#h3-0-99" id="h3-0-99" class="i">+                    source: Scan {
+</a><a href="#h3-0-100" id="h3-0-100" class="i">+                        table: &quot;movies&quot;,
+</a><a href="#h3-0-101" id="h3-0-101" class="i">+                        alias: None,
+</a><a href="#h3-0-102" id="h3-0-102" class="i">+                    },
+</a><a href="#h3-0-103" id="h3-0-103" class="i">+                    predicate: Constant(
+</a><a href="#h3-0-104" id="h3-0-104" class="i">+                        Boolean(
+</a><a href="#h3-0-105" id="h3-0-105" class="i">+                            false,
+</a><a href="#h3-0-106" id="h3-0-106" class="i">+                        ),
+</a><a href="#h3-0-107" id="h3-0-107" class="i">+                    ),
+</a><a href="#h3-0-108" id="h3-0-108" class="i">+                },
+</a><a href="#h3-0-109" id="h3-0-109" class="i">+                labels: [
+</a><a href="#h3-0-110" id="h3-0-110" class="i">+                    None,
+</a><a href="#h3-0-111" id="h3-0-111" class="i">+                    None,
+</a><a href="#h3-0-112" id="h3-0-112" class="i">+                    None,
+</a><a href="#h3-0-113" id="h3-0-113" class="i">+                    None,
+</a><a href="#h3-0-114" id="h3-0-114" class="i">+                    None,
+</a><a href="#h3-0-115" id="h3-0-115" class="i">+                    None,
+</a><a href="#h3-0-116" id="h3-0-116" class="i">+                ],
+</a><a href="#h3-0-117" id="h3-0-117" class="i">+                expressions: [
+</a><a href="#h3-0-118" id="h3-0-118" class="i">+                    Field(
+</a><a href="#h3-0-119" id="h3-0-119" class="i">+                        None,
+</a><a href="#h3-0-120" id="h3-0-120" class="i">+                        &quot;id&quot;,
+</a><a href="#h3-0-121" id="h3-0-121" class="i">+                    ),
+</a><a href="#h3-0-122" id="h3-0-122" class="i">+                    Field(
+</a><a href="#h3-0-123" id="h3-0-123" class="i">+                        None,
+</a><a href="#h3-0-124" id="h3-0-124" class="i">+                        &quot;id&quot;,
+</a><a href="#h3-0-125" id="h3-0-125" class="i">+                    ),
+</a><a href="#h3-0-126" id="h3-0-126" class="i">+                    Field(
+</a><a href="#h3-0-127" id="h3-0-127" class="i">+                        None,
+</a><a href="#h3-0-128" id="h3-0-128" class="i">+                        &quot;id&quot;,
+</a><a href="#h3-0-129" id="h3-0-129" class="i">+                    ),
+</a><a href="#h3-0-130" id="h3-0-130" class="i">+                    Field(
+</a><a href="#h3-0-131" id="h3-0-131" class="i">+                        None,
+</a><a href="#h3-0-132" id="h3-0-132" class="i">+                        &quot;id&quot;,
+</a><a href="#h3-0-133" id="h3-0-133" class="i">+                    ),
+</a><a href="#h3-0-134" id="h3-0-134" class="i">+                    Field(
+</a><a href="#h3-0-135" id="h3-0-135" class="i">+                        None,
+</a><a href="#h3-0-136" id="h3-0-136" class="i">+                        &quot;id&quot;,
+</a><a href="#h3-0-137" id="h3-0-137" class="i">+                    ),
+</a><a href="#h3-0-138" id="h3-0-138" class="i">+                    Field(
+</a><a href="#h3-0-139" id="h3-0-139" class="i">+                        None,
+</a><a href="#h3-0-140" id="h3-0-140" class="i">+                        &quot;id&quot;,
+</a><a href="#h3-0-141" id="h3-0-141" class="i">+                    ),
+</a><a href="#h3-0-142" id="h3-0-142" class="i">+                ],
+</a><a href="#h3-0-143" id="h3-0-143" class="i">+            },
+</a><a href="#h3-0-144" id="h3-0-144" class="i">+            aggregates: [
+</a><a href="#h3-0-145" id="h3-0-145" class="i">+                Min,
+</a><a href="#h3-0-146" id="h3-0-146" class="i">+                Max,
+</a><a href="#h3-0-147" id="h3-0-147" class="i">+                Sum,
+</a><a href="#h3-0-148" id="h3-0-148" class="i">+                Count,
+</a><a href="#h3-0-149" id="h3-0-149" class="i">+                Average,
+</a><a href="#h3-0-150" id="h3-0-150" class="i">+            ],
+</a><a href="#h3-0-151" id="h3-0-151" class="i">+        },
+</a><a href="#h3-0-152" id="h3-0-152" class="i">+        labels: [
+</a><a href="#h3-0-153" id="h3-0-153" class="i">+            None,
+</a><a href="#h3-0-154" id="h3-0-154" class="i">+            None,
+</a><a href="#h3-0-155" id="h3-0-155" class="i">+            None,
+</a><a href="#h3-0-156" id="h3-0-156" class="i">+            None,
+</a><a href="#h3-0-157" id="h3-0-157" class="i">+            None,
+</a><a href="#h3-0-158" id="h3-0-158" class="i">+        ],
+</a><a href="#h3-0-159" id="h3-0-159" class="i">+        expressions: [
+</a><a href="#h3-0-160" id="h3-0-160" class="i">+            Column(
+</a><a href="#h3-0-161" id="h3-0-161" class="i">+                0,
+</a><a href="#h3-0-162" id="h3-0-162" class="i">+            ),
+</a><a href="#h3-0-163" id="h3-0-163" class="i">+            Column(
+</a><a href="#h3-0-164" id="h3-0-164" class="i">+                1,
+</a><a href="#h3-0-165" id="h3-0-165" class="i">+            ),
+</a><a href="#h3-0-166" id="h3-0-166" class="i">+            Column(
+</a><a href="#h3-0-167" id="h3-0-167" class="i">+                2,
+</a><a href="#h3-0-168" id="h3-0-168" class="i">+            ),
+</a><a href="#h3-0-169" id="h3-0-169" class="i">+            Column(
+</a><a href="#h3-0-170" id="h3-0-170" class="i">+                3,
+</a><a href="#h3-0-171" id="h3-0-171" class="i">+            ),
+</a><a href="#h3-0-172" id="h3-0-172" class="i">+            Column(
+</a><a href="#h3-0-173" id="h3-0-173" class="i">+                4,
+</a><a href="#h3-0-174" id="h3-0-174" class="i">+            ),
+</a><a href="#h3-0-175" id="h3-0-175" class="i">+        ],
+</a><a href="#h3-0-176" id="h3-0-176" class="i">+    },
+</a><a href="#h3-0-177" id="h3-0-177" class="i">+}
+</a><a href="#h3-0-178" id="h3-0-178" class="i">+
+</a><a href="#h3-0-179" id="h3-0-179" class="i">+Optimized plan: Plan {
+</a><a href="#h3-0-180" id="h3-0-180" class="i">+    root: Projection {
+</a><a href="#h3-0-181" id="h3-0-181" class="i">+        source: Aggregation {
+</a><a href="#h3-0-182" id="h3-0-182" class="i">+            source: Projection {
+</a><a href="#h3-0-183" id="h3-0-183" class="i">+                source: Filter {
+</a><a href="#h3-0-184" id="h3-0-184" class="i">+                    source: Scan {
+</a><a href="#h3-0-185" id="h3-0-185" class="i">+                        table: &quot;movies&quot;,
+</a><a href="#h3-0-186" id="h3-0-186" class="i">+                        alias: None,
+</a><a href="#h3-0-187" id="h3-0-187" class="i">+                    },
+</a><a href="#h3-0-188" id="h3-0-188" class="i">+                    predicate: Constant(
+</a><a href="#h3-0-189" id="h3-0-189" class="i">+                        Boolean(
+</a><a href="#h3-0-190" id="h3-0-190" class="i">+                            false,
+</a><a href="#h3-0-191" id="h3-0-191" class="i">+                        ),
+</a><a href="#h3-0-192" id="h3-0-192" class="i">+                    ),
+</a><a href="#h3-0-193" id="h3-0-193" class="i">+                },
+</a><a href="#h3-0-194" id="h3-0-194" class="i">+                labels: [
+</a><a href="#h3-0-195" id="h3-0-195" class="i">+                    None,
+</a><a href="#h3-0-196" id="h3-0-196" class="i">+                    None,
+</a><a href="#h3-0-197" id="h3-0-197" class="i">+                    None,
+</a><a href="#h3-0-198" id="h3-0-198" class="i">+                    None,
+</a><a href="#h3-0-199" id="h3-0-199" class="i">+                    None,
+</a><a href="#h3-0-200" id="h3-0-200" class="i">+                    None,
+</a><a href="#h3-0-201" id="h3-0-201" class="i">+                ],
+</a><a href="#h3-0-202" id="h3-0-202" class="i">+                expressions: [
+</a><a href="#h3-0-203" id="h3-0-203" class="i">+                    Field(
+</a><a href="#h3-0-204" id="h3-0-204" class="i">+                        None,
+</a><a href="#h3-0-205" id="h3-0-205" class="i">+                        &quot;id&quot;,
+</a><a href="#h3-0-206" id="h3-0-206" class="i">+                    ),
+</a><a href="#h3-0-207" id="h3-0-207" class="i">+                    Field(
+</a><a href="#h3-0-208" id="h3-0-208" class="i">+                        None,
+</a><a href="#h3-0-209" id="h3-0-209" class="i">+                        &quot;id&quot;,
+</a><a href="#h3-0-210" id="h3-0-210" class="i">+                    ),
+</a><a href="#h3-0-211" id="h3-0-211" class="i">+                    Field(
+</a><a href="#h3-0-212" id="h3-0-212" class="i">+                        None,
+</a><a href="#h3-0-213" id="h3-0-213" class="i">+                        &quot;id&quot;,
+</a><a href="#h3-0-214" id="h3-0-214" class="i">+                    ),
+</a><a href="#h3-0-215" id="h3-0-215" class="i">+                    Field(
+</a><a href="#h3-0-216" id="h3-0-216" class="i">+                        None,
+</a><a href="#h3-0-217" id="h3-0-217" class="i">+                        &quot;id&quot;,
+</a><a href="#h3-0-218" id="h3-0-218" class="i">+                    ),
+</a><a href="#h3-0-219" id="h3-0-219" class="i">+                    Field(
+</a><a href="#h3-0-220" id="h3-0-220" class="i">+                        None,
+</a><a href="#h3-0-221" id="h3-0-221" class="i">+                        &quot;id&quot;,
+</a><a href="#h3-0-222" id="h3-0-222" class="i">+                    ),
+</a><a href="#h3-0-223" id="h3-0-223" class="i">+                    Field(
+</a><a href="#h3-0-224" id="h3-0-224" class="i">+                        None,
+</a><a href="#h3-0-225" id="h3-0-225" class="i">+                        &quot;id&quot;,
+</a><a href="#h3-0-226" id="h3-0-226" class="i">+                    ),
+</a><a href="#h3-0-227" id="h3-0-227" class="i">+                ],
+</a><a href="#h3-0-228" id="h3-0-228" class="i">+            },
+</a><a href="#h3-0-229" id="h3-0-229" class="i">+            aggregates: [
+</a><a href="#h3-0-230" id="h3-0-230" class="i">+                Min,
+</a><a href="#h3-0-231" id="h3-0-231" class="i">+                Max,
+</a><a href="#h3-0-232" id="h3-0-232" class="i">+                Sum,
+</a><a href="#h3-0-233" id="h3-0-233" class="i">+                Count,
+</a><a href="#h3-0-234" id="h3-0-234" class="i">+                Average,
+</a><a href="#h3-0-235" id="h3-0-235" class="i">+            ],
+</a><a href="#h3-0-236" id="h3-0-236" class="i">+        },
+</a><a href="#h3-0-237" id="h3-0-237" class="i">+        labels: [
+</a><a href="#h3-0-238" id="h3-0-238" class="i">+            None,
+</a><a href="#h3-0-239" id="h3-0-239" class="i">+            None,
+</a><a href="#h3-0-240" id="h3-0-240" class="i">+            None,
+</a><a href="#h3-0-241" id="h3-0-241" class="i">+            None,
+</a><a href="#h3-0-242" id="h3-0-242" class="i">+            None,
+</a><a href="#h3-0-243" id="h3-0-243" class="i">+        ],
+</a><a href="#h3-0-244" id="h3-0-244" class="i">+        expressions: [
+</a><a href="#h3-0-245" id="h3-0-245" class="i">+            Column(
+</a><a href="#h3-0-246" id="h3-0-246" class="i">+                0,
+</a><a href="#h3-0-247" id="h3-0-247" class="i">+            ),
+</a><a href="#h3-0-248" id="h3-0-248" class="i">+            Column(
+</a><a href="#h3-0-249" id="h3-0-249" class="i">+                1,
+</a><a href="#h3-0-250" id="h3-0-250" class="i">+            ),
+</a><a href="#h3-0-251" id="h3-0-251" class="i">+            Column(
+</a><a href="#h3-0-252" id="h3-0-252" class="i">+                2,
+</a><a href="#h3-0-253" id="h3-0-253" class="i">+            ),
+</a><a href="#h3-0-254" id="h3-0-254" class="i">+            Column(
+</a><a href="#h3-0-255" id="h3-0-255" class="i">+                3,
+</a><a href="#h3-0-256" id="h3-0-256" class="i">+            ),
+</a><a href="#h3-0-257" id="h3-0-257" class="i">+            Column(
+</a><a href="#h3-0-258" id="h3-0-258" class="i">+                4,
+</a><a href="#h3-0-259" id="h3-0-259" class="i">+            ),
+</a><a href="#h3-0-260" id="h3-0-260" class="i">+        ],
+</a><a href="#h3-0-261" id="h3-0-261" class="i">+    },
+</a><a href="#h3-0-262" id="h3-0-262" class="i">+}
+</a><a href="#h3-0-263" id="h3-0-263" class="i">+
+</a><a href="#h3-0-264" id="h3-0-264" class="i">+Query: SELECT MIN(id), MAX(id), SUM(id), COUNT(id), AVG(id) FROM movies WHERE FALSE GROUP BY id
+</a><a href="#h3-0-265" id="h3-0-265" class="i">+
+</a><a href="#h3-0-266" id="h3-0-266" class="i">+Result: [&quot;?&quot;, &quot;?&quot;, &quot;?&quot;, &quot;?&quot;, &quot;?&quot;]
+</a></pre>
+</div>
+</body>
+</html>

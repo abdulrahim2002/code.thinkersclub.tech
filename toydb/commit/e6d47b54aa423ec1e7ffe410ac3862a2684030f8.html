@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Add storage::Engine status. - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/e6d47b54aa423ec1e7ffe410ac3862a2684030f8.html">e6d47b54aa423ec1e7ffe410ac3862a2684030f8</a>
+<b>parent</b> <a href="../commit/0b09ad98929e64405497498a8ee3d0f2cba42076.html">0b09ad98929e64405497498a8ee3d0f2cba42076</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Fri,  8 Sep 2023 21:55:07 +0200
+
+Add storage::Engine status.
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/bin/toysql.rs</a></td><td> | </td><td class="num">22</td><td><span class="i">++++++++++++++++++++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/storage/engine/bitcask.rs</a></td><td> | </td><td class="num">106</td><td><span class="i">++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d">---------------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/storage/engine/memory.rs</a></td><td> | </td><td class="num">13</td><td><span class="i">++++++++++++</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">src/storage/engine/mod.rs</a></td><td> | </td><td class="num">42</td><td><span class="i">++++++++++++++++++++++++++++++++++++++++++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h4">src/storage/mvcc.rs</a></td><td> | </td><td class="num">6</td><td><span class="i">++</span><span class="d">----</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h5">tests/client/mod.rs</a></td><td> | </td><td class="num">17</td><td><span class="i">++++++++++++++</span><span class="d">---</span></td></tr>
+</table></pre><pre>6 files changed, 152 insertions(+), 54 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/bin/toysql.rs.html">src/bin/toysql.rs</a> b/<a href="../file/src/bin/toysql.rs.html">src/bin/toysql.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -129,7 +129,8 @@ The following commands are also available:
+</a> Server:    {server} (leader {leader} in term {term} with {nodes} nodes)
+ Raft log:  {committed} committed, {applied} applied, {raft_size} MB ({raft_storage} storage)
+ Node logs: {logs}
+<a href="#h0-0-3" id="h0-0-3" class="d">-SQL txns:  {active_txns} active, {versions} total ({sql_storage} storage)
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+MVCC:      {active_txns} active txns, {versions} versions
+</a><a href="#h0-0-5" id="h0-0-5" class="i">+Storage:   {keys} keys, {logical_size} MB logical, {nodes}x {disk_size} MB disk, {garbage_percent}% garbage ({sql_storage} engine)
+</a> &quot;#,
+                     server = status.raft.server,
+                     leader = status.raft.leader,
+<a href="#h0-1" id="h0-1" class="h">@@ -143,7 +144,24 @@ SQL txns:  {active_txns} active, {versions} total ({sql_storage} storage)
+</a>                     logs = node_logs.join(&quot; &quot;),
+                     versions = status.mvcc.versions,
+                     active_txns = status.mvcc.active_txns,
+<a href="#h0-1-3" id="h0-1-3" class="d">-                    sql_storage = status.mvcc.storage
+</a><a href="#h0-1-4" id="h0-1-4" class="i">+                    keys = status.mvcc.storage.keys,
+</a><a href="#h0-1-5" id="h0-1-5" class="i">+                    logical_size =
+</a><a href="#h0-1-6" id="h0-1-6" class="i">+                        format_args!(&quot;{:.3}&quot;, status.mvcc.storage.size as f64 / 1000.0 / 1000.0),
+</a><a href="#h0-1-7" id="h0-1-7" class="i">+                    garbage_percent = format_args!(
+</a><a href="#h0-1-8" id="h0-1-8" class="i">+                        &quot;{:.0}&quot;,
+</a><a href="#h0-1-9" id="h0-1-9" class="i">+                        if status.mvcc.storage.total_disk_size &gt; 0 {
+</a><a href="#h0-1-10" id="h0-1-10" class="i">+                            status.mvcc.storage.garbage_disk_size as f64
+</a><a href="#h0-1-11" id="h0-1-11" class="i">+                                / status.mvcc.storage.total_disk_size as f64
+</a><a href="#h0-1-12" id="h0-1-12" class="i">+                                * 100.0
+</a><a href="#h0-1-13" id="h0-1-13" class="i">+                        } else {
+</a><a href="#h0-1-14" id="h0-1-14" class="i">+                            0.0
+</a><a href="#h0-1-15" id="h0-1-15" class="i">+                        }
+</a><a href="#h0-1-16" id="h0-1-16" class="i">+                    ),
+</a><a href="#h0-1-17" id="h0-1-17" class="i">+                    disk_size = format_args!(
+</a><a href="#h0-1-18" id="h0-1-18" class="i">+                        &quot;{:.3}&quot;,
+</a><a href="#h0-1-19" id="h0-1-19" class="i">+                        status.mvcc.storage.total_disk_size as f64 / 1000.0 / 1000.0
+</a><a href="#h0-1-20" id="h0-1-20" class="i">+                    ),
+</a><a href="#h0-1-21" id="h0-1-21" class="i">+                    sql_storage = status.mvcc.storage.name,
+</a>                 )
+             }
+             &quot;!table&quot; =&gt; {
+<b>diff --git a/<a id="h1" href="../file/src/storage/engine/bitcask.rs.html">src/storage/engine/bitcask.rs</a> b/<a href="../file/src/storage/engine/bitcask.rs.html">src/storage/engine/bitcask.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -1,4 +1,4 @@
+</a><a href="#h1-0-0" id="h1-0-0" class="d">-use super::Engine;
+</a><a href="#h1-0-1" id="h1-0-1" class="i">+use super::{Engine, Status};
+</a> use crate::error::Result;
+ 
+ use fs4::FileExt;
+<a href="#h1-1" id="h1-1" class="h">@@ -64,22 +64,21 @@ impl BitCask {
+</a>     pub fn new_compact(path: PathBuf, garbage_ratio_threshold: f64) -&gt; Result&lt;Self&gt; {
+         let mut s = Self::new(path)?;
+ 
+<a href="#h1-1-3" id="h1-1-3" class="d">-        let (live_bytes, total_bytes) = s.compute_sizes()?;
+</a><a href="#h1-1-4" id="h1-1-4" class="d">-        let garbage_bytes = total_bytes - live_bytes;
+</a><a href="#h1-1-5" id="h1-1-5" class="d">-        let garbage_ratio = garbage_bytes as f64 / total_bytes as f64;
+</a><a href="#h1-1-6" id="h1-1-6" class="d">-        if garbage_bytes &gt; 0 &amp;&amp; garbage_ratio &gt;= garbage_ratio_threshold {
+</a><a href="#h1-1-7" id="h1-1-7" class="i">+        let status = s.status()?;
+</a><a href="#h1-1-8" id="h1-1-8" class="i">+        let garbage_ratio = status.garbage_disk_size as f64 / status.total_disk_size as f64;
+</a><a href="#h1-1-9" id="h1-1-9" class="i">+        if status.garbage_disk_size &gt; 0 &amp;&amp; garbage_ratio &gt;= garbage_ratio_threshold {
+</a>             log::info!(
+<a href="#h1-1-11" id="h1-1-11" class="d">-                &quot;Compacting {} to remove {:.1}MB garbage ({:.0}% of {:.1}MB)&quot;,
+</a><a href="#h1-1-12" id="h1-1-12" class="i">+                &quot;Compacting {} to remove {:.3}MB garbage ({:.0}% of {:.3}MB)&quot;,
+</a>                 s.log.path.display(),
+<a href="#h1-1-14" id="h1-1-14" class="d">-                garbage_bytes / 1024 / 1024,
+</a><a href="#h1-1-15" id="h1-1-15" class="i">+                status.garbage_disk_size / 1024 / 1024,
+</a>                 garbage_ratio * 100.0,
+<a href="#h1-1-17" id="h1-1-17" class="d">-                total_bytes / 1024 / 1024
+</a><a href="#h1-1-18" id="h1-1-18" class="i">+                status.total_disk_size / 1024 / 1024
+</a>             );
+             s.compact()?;
+             log::info!(
+<a href="#h1-1-22" id="h1-1-22" class="d">-                &quot;Compacted {} to size {:.1}MB&quot;,
+</a><a href="#h1-1-23" id="h1-1-23" class="i">+                &quot;Compacted {} to size {:.3}MB&quot;,
+</a>                 s.log.path.display(),
+<a href="#h1-1-25" id="h1-1-25" class="d">-                live_bytes / 1024 / 1024
+</a><a href="#h1-1-26" id="h1-1-26" class="i">+                (status.total_disk_size - status.garbage_disk_size) / 1024 / 1024
+</a>             );
+         }
+ 
+<a href="#h1-2" id="h1-2" class="h">@@ -124,6 +123,25 @@ impl Engine for BitCask {
+</a>         self.keydir.insert(key.to_vec(), (pos + len as u64 - value_len as u64, value_len));
+         Ok(())
+     }
+<a href="#h1-2-3" id="h1-2-3" class="i">+
+</a><a href="#h1-2-4" id="h1-2-4" class="i">+    fn status(&amp;mut self) -&gt; Result&lt;Status&gt; {
+</a><a href="#h1-2-5" id="h1-2-5" class="i">+        let keys = self.keydir.len() as u64;
+</a><a href="#h1-2-6" id="h1-2-6" class="i">+        let size = self
+</a><a href="#h1-2-7" id="h1-2-7" class="i">+            .keydir
+</a><a href="#h1-2-8" id="h1-2-8" class="i">+            .iter()
+</a><a href="#h1-2-9" id="h1-2-9" class="i">+            .fold(0, |size, (key, (_, value_len))| size + key.len() as u64 + *value_len as u64);
+</a><a href="#h1-2-10" id="h1-2-10" class="i">+        let total_disk_size = self.log.file.metadata()?.len();
+</a><a href="#h1-2-11" id="h1-2-11" class="i">+        let live_disk_size = size + 8 * keys; // account for length prefixes
+</a><a href="#h1-2-12" id="h1-2-12" class="i">+        let garbage_disk_size = total_disk_size - live_disk_size;
+</a><a href="#h1-2-13" id="h1-2-13" class="i">+        Ok(Status {
+</a><a href="#h1-2-14" id="h1-2-14" class="i">+            name: self.to_string(),
+</a><a href="#h1-2-15" id="h1-2-15" class="i">+            keys,
+</a><a href="#h1-2-16" id="h1-2-16" class="i">+            size,
+</a><a href="#h1-2-17" id="h1-2-17" class="i">+            total_disk_size,
+</a><a href="#h1-2-18" id="h1-2-18" class="i">+            live_disk_size,
+</a><a href="#h1-2-19" id="h1-2-19" class="i">+            garbage_disk_size,
+</a><a href="#h1-2-20" id="h1-2-20" class="i">+        })
+</a><a href="#h1-2-21" id="h1-2-21" class="i">+    }
+</a> }
+ 
+ pub struct ScanIterator&lt;&#39;a&gt; {
+<a href="#h1-3" id="h1-3" class="h">@@ -168,23 +186,6 @@ impl BitCask {
+</a>         Ok(())
+     }
+ 
+<a href="#h1-3-3" id="h1-3-3" class="d">-    /// Computes the live and total sizes of the log file, by iterating over the
+</a><a href="#h1-3-4" id="h1-3-4" class="d">-    /// keydir and fetching the file&#39;s size from the filesystem metadata. The
+</a><a href="#h1-3-5" id="h1-3-5" class="d">-    /// garbage size (i.e. old, replaced entries and tombstones) is the
+</a><a href="#h1-3-6" id="h1-3-6" class="d">-    /// difference between these values.
+</a><a href="#h1-3-7" id="h1-3-7" class="d">-    ///
+</a><a href="#h1-3-8" id="h1-3-8" class="d">-    /// We could keep track of these values during mutations, but it&#39;s not
+</a><a href="#h1-3-9" id="h1-3-9" class="d">-    /// currently needed -- we only use this to determine whether to compact the
+</a><a href="#h1-3-10" id="h1-3-10" class="d">-    /// database when it&#39;s initially opened, so we&#39;d need to run basically the
+</a><a href="#h1-3-11" id="h1-3-11" class="d">-    /// same computations anyway.
+</a><a href="#h1-3-12" id="h1-3-12" class="d">-    pub fn compute_sizes(&amp;mut self) -&gt; Result&lt;(u64, u64)&gt; {
+</a><a href="#h1-3-13" id="h1-3-13" class="d">-        let total_size = self.log.file.metadata()?.len();
+</a><a href="#h1-3-14" id="h1-3-14" class="d">-        let live_size = self.keydir.iter().fold(0, |size, (key, (_, value_len))| {
+</a><a href="#h1-3-15" id="h1-3-15" class="d">-            size + 4 + 4 + key.len() as u64 + *value_len as u64
+</a><a href="#h1-3-16" id="h1-3-16" class="d">-        });
+</a><a href="#h1-3-17" id="h1-3-17" class="d">-        Ok((live_size, total_size))
+</a><a href="#h1-3-18" id="h1-3-18" class="d">-    }
+</a><a href="#h1-3-19" id="h1-3-19" class="d">-
+</a>     /// Writes out a new log file with the live entries of the current log file
+     /// and returns it along with its keydir. Entries are written in key order.
+     fn write_log(&amp;mut self, path: PathBuf) -&gt; Result&lt;(Log, KeyDir)&gt; {
+<a href="#h1-4" id="h1-4" class="h">@@ -504,8 +505,8 @@ mod tests {
+</a> 
+         let mut s = BitCask::new_compact(path.clone(), 0.2)?;
+         setup_log(&amp;mut s)?;
+<a href="#h1-4-3" id="h1-4-3" class="d">-        let (live_bytes, total_bytes) = s.compute_sizes()?;
+</a><a href="#h1-4-4" id="h1-4-4" class="d">-        let garbage_ratio = (total_bytes - live_bytes) as f64 / total_bytes as f64;
+</a><a href="#h1-4-5" id="h1-4-5" class="i">+        let status = s.status()?;
+</a><a href="#h1-4-6" id="h1-4-6" class="i">+        let garbage_ratio = status.garbage_disk_size as f64 / status.total_disk_size as f64;
+</a>         drop(s);
+ 
+         // Test a few threshold value and assert whether it should trigger compaction.
+<a href="#h1-5" id="h1-5" class="h">@@ -521,12 +522,13 @@ mod tests {
+</a>         for (threshold, expect_compact) in cases.into_iter() {
+             std::fs::copy(&amp;path, &amp;compactpath)?;
+             let mut s = BitCask::new_compact(compactpath.clone(), threshold)?;
+<a href="#h1-5-3" id="h1-5-3" class="d">-            let (new_live, new_total) = s.compute_sizes()?;
+</a><a href="#h1-5-4" id="h1-5-4" class="d">-            assert_eq!(new_live, live_bytes);
+</a><a href="#h1-5-5" id="h1-5-5" class="i">+            let new_status = s.status()?;
+</a><a href="#h1-5-6" id="h1-5-6" class="i">+            assert_eq!(new_status.live_disk_size, status.live_disk_size);
+</a>             if expect_compact {
+<a href="#h1-5-8" id="h1-5-8" class="d">-                assert_eq!(new_total, live_bytes);
+</a><a href="#h1-5-9" id="h1-5-9" class="i">+                assert_eq!(new_status.total_disk_size, status.live_disk_size);
+</a><a href="#h1-5-10" id="h1-5-10" class="i">+                assert_eq!(new_status.garbage_disk_size, 0);
+</a>             } else {
+<a href="#h1-5-12" id="h1-5-12" class="d">-                assert_eq!(new_total, total_bytes);
+</a><a href="#h1-5-13" id="h1-5-13" class="i">+                assert_eq!(new_status, status);
+</a>             }
+         }
+ 
+<a href="#h1-6" id="h1-6" class="h">@@ -605,23 +607,39 @@ mod tests {
+</a>     }
+ 
+     #[test]
+<a href="#h1-6-3" id="h1-6-3" class="d">-    /// Tests compute_sizes(), both for a log file with known garbage, and
+</a><a href="#h1-6-4" id="h1-6-4" class="i">+    /// Tests status(), both for a log file with known garbage, and
+</a>     /// after compacting it when the live size must equal the file size.
+<a href="#h1-6-6" id="h1-6-6" class="d">-    fn compute_sizes() -&gt; Result&lt;()&gt; {
+</a><a href="#h1-6-7" id="h1-6-7" class="i">+    fn status_full() -&gt; Result&lt;()&gt; {
+</a>         let mut s = setup()?;
+         setup_log(&amp;mut s)?;
+ 
+<a href="#h1-6-11" id="h1-6-11" class="d">-        // Before compaction, the log contains garbage, so the live size must be
+</a><a href="#h1-6-12" id="h1-6-12" class="d">-        // less than the log size.
+</a><a href="#h1-6-13" id="h1-6-13" class="d">-        let (live_size, total_size) = s.compute_sizes()?;
+</a><a href="#h1-6-14" id="h1-6-14" class="d">-        assert_eq!(total_size, s.log.file.metadata()?.len());
+</a><a href="#h1-6-15" id="h1-6-15" class="d">-        assert!(live_size &lt; total_size);
+</a><a href="#h1-6-16" id="h1-6-16" class="i">+        // Before compaction.
+</a><a href="#h1-6-17" id="h1-6-17" class="i">+        assert_eq!(
+</a><a href="#h1-6-18" id="h1-6-18" class="i">+            s.status()?,
+</a><a href="#h1-6-19" id="h1-6-19" class="i">+            Status {
+</a><a href="#h1-6-20" id="h1-6-20" class="i">+                name: &quot;bitcask&quot;.to_string(),
+</a><a href="#h1-6-21" id="h1-6-21" class="i">+                keys: 5,
+</a><a href="#h1-6-22" id="h1-6-22" class="i">+                size: 8,
+</a><a href="#h1-6-23" id="h1-6-23" class="i">+                total_disk_size: 114,
+</a><a href="#h1-6-24" id="h1-6-24" class="i">+                live_disk_size: 48,
+</a><a href="#h1-6-25" id="h1-6-25" class="i">+                garbage_disk_size: 66
+</a><a href="#h1-6-26" id="h1-6-26" class="i">+            }
+</a><a href="#h1-6-27" id="h1-6-27" class="i">+        );
+</a> 
+<a href="#h1-6-29" id="h1-6-29" class="d">-        // After compaction, the live size should not have changed. Furthermore,
+</a><a href="#h1-6-30" id="h1-6-30" class="d">-        // the log now only contains live data, so the live size must equal the
+</a><a href="#h1-6-31" id="h1-6-31" class="d">-        // log file size.
+</a><a href="#h1-6-32" id="h1-6-32" class="i">+        // After compaction.
+</a>         s.compact()?;
+<a href="#h1-6-34" id="h1-6-34" class="d">-        assert_eq!((live_size, live_size), s.compute_sizes()?);
+</a><a href="#h1-6-35" id="h1-6-35" class="i">+        assert_eq!(
+</a><a href="#h1-6-36" id="h1-6-36" class="i">+            s.status()?,
+</a><a href="#h1-6-37" id="h1-6-37" class="i">+            Status {
+</a><a href="#h1-6-38" id="h1-6-38" class="i">+                name: &quot;bitcask&quot;.to_string(),
+</a><a href="#h1-6-39" id="h1-6-39" class="i">+                keys: 5,
+</a><a href="#h1-6-40" id="h1-6-40" class="i">+                size: 8,
+</a><a href="#h1-6-41" id="h1-6-41" class="i">+                total_disk_size: 48,
+</a><a href="#h1-6-42" id="h1-6-42" class="i">+                live_disk_size: 48,
+</a><a href="#h1-6-43" id="h1-6-43" class="i">+                garbage_disk_size: 0,
+</a><a href="#h1-6-44" id="h1-6-44" class="i">+            }
+</a><a href="#h1-6-45" id="h1-6-45" class="i">+        );
+</a><a href="#h1-6-46" id="h1-6-46" class="i">+
+</a>         Ok(())
+     }
+ }
+<b>diff --git a/<a id="h2" href="../file/src/storage/engine/memory.rs.html">src/storage/engine/memory.rs</a> b/<a href="../file/src/storage/engine/memory.rs.html">src/storage/engine/memory.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -1,4 +1,4 @@
+</a><a href="#h2-0-0" id="h2-0-0" class="d">-use super::Engine;
+</a><a href="#h2-0-1" id="h2-0-1" class="i">+use super::{Engine, Status};
+</a> use crate::error::Result;
+ 
+ /// An in-memory key/value storage engine using the Rust standard library B-tree
+<a href="#h2-1" id="h2-1" class="h">@@ -44,6 +44,17 @@ impl Engine for Memory {
+</a>         self.data.insert(key.to_vec(), value);
+         Ok(())
+     }
+<a href="#h2-1-3" id="h2-1-3" class="i">+
+</a><a href="#h2-1-4" id="h2-1-4" class="i">+    fn status(&amp;mut self) -&gt; Result&lt;Status&gt; {
+</a><a href="#h2-1-5" id="h2-1-5" class="i">+        Ok(Status {
+</a><a href="#h2-1-6" id="h2-1-6" class="i">+            name: self.to_string(),
+</a><a href="#h2-1-7" id="h2-1-7" class="i">+            keys: self.data.len() as u64,
+</a><a href="#h2-1-8" id="h2-1-8" class="i">+            size: self.data.iter().fold(0, |size, (k, v)| size + k.len() as u64 + v.len() as u64),
+</a><a href="#h2-1-9" id="h2-1-9" class="i">+            total_disk_size: 0,
+</a><a href="#h2-1-10" id="h2-1-10" class="i">+            live_disk_size: 0,
+</a><a href="#h2-1-11" id="h2-1-11" class="i">+            garbage_disk_size: 0,
+</a><a href="#h2-1-12" id="h2-1-12" class="i">+        })
+</a><a href="#h2-1-13" id="h2-1-13" class="i">+    }
+</a> }
+ 
+ pub struct ScanIterator&lt;&#39;a&gt; {
+<b>diff --git a/<a id="h3" href="../file/src/storage/engine/mod.rs.html">src/storage/engine/mod.rs</a> b/<a href="../file/src/storage/engine/mod.rs.html">src/storage/engine/mod.rs</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -6,6 +6,8 @@ pub use memory::Memory;
+</a> 
+ use crate::error::Result;
+ 
+<a href="#h3-0-3" id="h3-0-3" class="i">+use serde::{Deserialize, Serialize};
+</a><a href="#h3-0-4" id="h3-0-4" class="i">+
+</a> /// A key/value storage engine, where both keys and values are arbitrary byte
+ /// strings between 0 B and 2 GB, stored in lexicographical key order. Writes
+ /// are only guaranteed durable after calling flush().
+<a href="#h3-1" id="h3-1" class="h">@@ -35,6 +37,9 @@ pub trait Engine: std::fmt::Display + Send + Sync {
+</a>     /// Sets a value for a key, replacing the existing value if any.
+     fn set(&amp;mut self, key: &amp;[u8], value: Vec&lt;u8&gt;) -&gt; Result&lt;()&gt;;
+ 
+<a href="#h3-1-3" id="h3-1-3" class="i">+    /// Returns engine status.
+</a><a href="#h3-1-4" id="h3-1-4" class="i">+    fn status(&amp;mut self) -&gt; Result&lt;Status&gt;;
+</a><a href="#h3-1-5" id="h3-1-5" class="i">+
+</a>     /// Iterates over all key/value pairs starting with prefix.
+     fn scan_prefix(&amp;mut self, prefix: &amp;[u8]) -&gt; Self::ScanIterator&lt;&#39;_&gt; {
+         let start = std::ops::Bound::Included(prefix.to_vec());
+<a href="#h3-2" id="h3-2" class="h">@@ -48,6 +53,23 @@ pub trait Engine: std::fmt::Display + Send + Sync {
+</a>     }
+ }
+ 
+<a href="#h3-2-3" id="h3-2-3" class="i">+/// Engine status.
+</a><a href="#h3-2-4" id="h3-2-4" class="i">+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+</a><a href="#h3-2-5" id="h3-2-5" class="i">+pub struct Status {
+</a><a href="#h3-2-6" id="h3-2-6" class="i">+    /// The name of the storage engine.
+</a><a href="#h3-2-7" id="h3-2-7" class="i">+    pub name: String,
+</a><a href="#h3-2-8" id="h3-2-8" class="i">+    /// The number of live keys in the engine.
+</a><a href="#h3-2-9" id="h3-2-9" class="i">+    pub keys: u64,
+</a><a href="#h3-2-10" id="h3-2-10" class="i">+    /// The logical size of live key/value pairs.
+</a><a href="#h3-2-11" id="h3-2-11" class="i">+    pub size: u64,
+</a><a href="#h3-2-12" id="h3-2-12" class="i">+    /// The on-disk size of all data, live and garbage.
+</a><a href="#h3-2-13" id="h3-2-13" class="i">+    pub total_disk_size: u64,
+</a><a href="#h3-2-14" id="h3-2-14" class="i">+    /// The on-disk size of live data.
+</a><a href="#h3-2-15" id="h3-2-15" class="i">+    pub live_disk_size: u64,
+</a><a href="#h3-2-16" id="h3-2-16" class="i">+    /// The on-disk size of garbage data.
+</a><a href="#h3-2-17" id="h3-2-17" class="i">+    pub garbage_disk_size: u64,
+</a><a href="#h3-2-18" id="h3-2-18" class="i">+}
+</a><a href="#h3-2-19" id="h3-2-19" class="i">+
+</a> #[cfg(test)]
+ mod tests {
+     /// Generates common tests for any Engine implementation.
+<a href="#h3-3" id="h3-3" class="h">@@ -411,6 +433,26 @@ mod tests {
+</a> 
+                 Ok(())
+             }
+<a href="#h3-3-3" id="h3-3-3" class="i">+
+</a><a href="#h3-3-4" id="h3-3-4" class="i">+            #[test]
+</a><a href="#h3-3-5" id="h3-3-5" class="i">+            /// Tests implementation-independent aspects of Status.
+</a><a href="#h3-3-6" id="h3-3-6" class="i">+            fn status() -&gt; Result&lt;()&gt; {
+</a><a href="#h3-3-7" id="h3-3-7" class="i">+                let mut s = $setup;
+</a><a href="#h3-3-8" id="h3-3-8" class="i">+                s.set(b&quot;foo&quot;, vec![1, 2, 3])?;
+</a><a href="#h3-3-9" id="h3-3-9" class="i">+                s.set(b&quot;bar&quot;, vec![1])?;
+</a><a href="#h3-3-10" id="h3-3-10" class="i">+                s.delete(b&quot;bar&quot;)?;
+</a><a href="#h3-3-11" id="h3-3-11" class="i">+                s.set(b&quot;baz&quot;, vec![1])?;
+</a><a href="#h3-3-12" id="h3-3-12" class="i">+                s.set(b&quot;baz&quot;, vec![2])?;
+</a><a href="#h3-3-13" id="h3-3-13" class="i">+                s.set(b&quot;baz&quot;, vec![3])?;
+</a><a href="#h3-3-14" id="h3-3-14" class="i">+                s.delete(b&quot;qux&quot;)?;
+</a><a href="#h3-3-15" id="h3-3-15" class="i">+
+</a><a href="#h3-3-16" id="h3-3-16" class="i">+                let status = s.status()?;
+</a><a href="#h3-3-17" id="h3-3-17" class="i">+                assert!(status.name.len() &gt; 0);
+</a><a href="#h3-3-18" id="h3-3-18" class="i">+                assert_eq!(status.keys, 2);
+</a><a href="#h3-3-19" id="h3-3-19" class="i">+                assert_eq!(status.size, 10);
+</a><a href="#h3-3-20" id="h3-3-20" class="i">+
+</a><a href="#h3-3-21" id="h3-3-21" class="i">+                Ok(())
+</a><a href="#h3-3-22" id="h3-3-22" class="i">+            }
+</a>         };
+     }
+ 
+<b>diff --git a/<a id="h4" href="../file/src/storage/mvcc.rs.html">src/storage/mvcc.rs</a> b/<a href="../file/src/storage/mvcc.rs.html">src/storage/mvcc.rs</a></b>
+<a href="#h4-0" id="h4-0" class="h">@@ -280,13 +280,12 @@ impl&lt;E: Engine&gt; MVCC&lt;E&gt; {
+</a>     /// Returns the status of the MVCC and storage engines.
+     pub fn status(&amp;self) -&gt; Result&lt;Status&gt; {
+         let mut engine = self.engine.lock()?;
+<a href="#h4-0-3" id="h4-0-3" class="d">-        let storage = engine.to_string();
+</a>         let versions = match engine.get(&amp;Key::NextVersion.encode()?)? {
+             Some(ref v) =&gt; bincode::deserialize::&lt;u64&gt;(v)? - 1,
+             None =&gt; 0,
+         };
+         let active_txns = engine.scan_prefix(&amp;KeyPrefix::TxnActive.encode()?).count() as u64;
+<a href="#h4-0-9" id="h4-0-9" class="d">-        Ok(Status { storage, versions, active_txns })
+</a><a href="#h4-0-10" id="h4-0-10" class="i">+        Ok(Status { versions, active_txns, storage: engine.status()? })
+</a>     }
+ }
+ 
+<a href="#h4-1" id="h4-1" class="h">@@ -298,8 +297,7 @@ pub struct Status {
+</a>     /// Number of currently active transactions.
+     pub active_txns: u64,
+     /// The storage engine.
+<a href="#h4-1-3" id="h4-1-3" class="d">-    /// TODO: export engine status instead.
+</a><a href="#h4-1-4" id="h4-1-4" class="d">-    pub storage: String,
+</a><a href="#h4-1-5" id="h4-1-5" class="i">+    pub storage: super::engine::Status,
+</a> }
+ 
+ /// An MVCC transaction.
+<b>diff --git a/<a id="h5" href="../file/tests/client/mod.rs.html">tests/client/mod.rs</a> b/<a href="../file/tests/client/mod.rs.html">tests/client/mod.rs</a></b>
+<a href="#h5-0" id="h5-0" class="h">@@ -8,7 +8,7 @@ use toydb::sql::engine::Status;
+</a> use toydb::sql::execution::ResultSet;
+ use toydb::sql::schema;
+ use toydb::sql::types::{Column, DataType, Value};
+<a href="#h5-0-3" id="h5-0-3" class="d">-use toydb::storage::mvcc;
+</a><a href="#h5-0-4" id="h5-0-4" class="i">+use toydb::storage::{engine, mvcc};
+</a> use toydb::Client;
+ 
+ use pretty_assertions::assert_eq;
+<a href="#h5-1" id="h5-1" class="h">@@ -131,8 +131,19 @@ async fn status() -&gt; Result&lt;()&gt; {
+</a>                 storage: &quot;hybrid&quot;.into(),
+                 storage_size: 3462,
+             },
+<a href="#h5-1-3" id="h5-1-3" class="d">-            mvcc: mvcc::Status { versions: 1, active_txns: 0, storage: &quot;memory&quot;.into() },
+</a><a href="#h5-1-4" id="h5-1-4" class="d">-        }
+</a><a href="#h5-1-5" id="h5-1-5" class="i">+            mvcc: mvcc::Status {
+</a><a href="#h5-1-6" id="h5-1-6" class="i">+                versions: 1,
+</a><a href="#h5-1-7" id="h5-1-7" class="i">+                active_txns: 0,
+</a><a href="#h5-1-8" id="h5-1-8" class="i">+                storage: engine::Status {
+</a><a href="#h5-1-9" id="h5-1-9" class="i">+                    name: &quot;memory&quot;.to_string(),
+</a><a href="#h5-1-10" id="h5-1-10" class="i">+                    keys: 50,
+</a><a href="#h5-1-11" id="h5-1-11" class="i">+                    size: 3783,
+</a><a href="#h5-1-12" id="h5-1-12" class="i">+                    total_disk_size: 0,
+</a><a href="#h5-1-13" id="h5-1-13" class="i">+                    live_disk_size: 0,
+</a><a href="#h5-1-14" id="h5-1-14" class="i">+                    garbage_disk_size: 0
+</a><a href="#h5-1-15" id="h5-1-15" class="i">+                },
+</a><a href="#h5-1-16" id="h5-1-16" class="i">+            }
+</a><a href="#h5-1-17" id="h5-1-17" class="i">+        },
+</a>     );
+     Ok(())
+ }
+</pre>
+</div>
+</body>
+</html>

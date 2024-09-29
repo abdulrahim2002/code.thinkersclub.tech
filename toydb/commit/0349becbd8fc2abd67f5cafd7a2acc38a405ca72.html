@@ -1,0 +1,531 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Abort Raft requests when no leader - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/0349becbd8fc2abd67f5cafd7a2acc38a405ca72.html">0349becbd8fc2abd67f5cafd7a2acc38a405ca72</a>
+<b>parent</b> <a href="../commit/22b2ae04ca09c5a940ce8ba89b5208bdb71a09dd.html">22b2ae04ca09c5a940ce8ba89b5208bdb71a09dd</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Sat, 18 Nov 2023 19:17:33 +0100
+
+Abort Raft requests when no leader
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/raft/node/candidate.rs</a></td><td> | </td><td class="num">121</td><td><span class="i">+++++++++++++++++++++++++++++</span><span class="d">--------------------------------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/raft/node/follower.rs</a></td><td> | </td><td class="num">74</td><td><span class="i">++++++++++++++++++</span><span class="d">--------------------------------------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/raft/node/leader.rs</a></td><td> | </td><td class="num">1</td><td><span class="i"></span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">src/raft/node/mod.rs</a></td><td> | </td><td class="num">36</td><td><span class="i"></span><span class="d">------------------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h4">tests/setup.rs</a></td><td> | </td><td class="num">19</td><td><span class="i">++++++++++++++++++</span><span class="d">-</span></td></tr>
+</table></pre><pre>5 files changed, 80 insertions(+), 171 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/raft/node/candidate.rs.html">src/raft/node/candidate.rs</a> b/<a href="../file/src/raft/node/candidate.rs.html">src/raft/node/candidate.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -2,7 +2,7 @@ use super::super::{Address, Event, Message, Response};
+</a> use super::{
+     Follower, Leader, Node, NodeID, RoleNode, Term, ELECTION_TIMEOUT_MAX, ELECTION_TIMEOUT_MIN,
+ };
+<a href="#h0-0-3" id="h0-0-3" class="d">-use crate::error::Result;
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+use crate::error::{Error, Result};
+</a> 
+ use ::log::{debug, info, warn};
+ use rand::Rng as _;
+<a href="#h0-1" id="h0-1" class="h">@@ -38,7 +38,6 @@ impl RoleNode&lt;Candidate&gt; {
+</a>         self.log.set_term(term, None)?;
+         let mut node = self.become_role(Follower::new(Some(leader), None))?;
+         node.abort_proxied()?;
+<a href="#h0-1-3" id="h0-1-3" class="d">-        node.forward_queued(Address::Node(leader))?;
+</a>         Ok(node)
+     }
+ 
+<a href="#h0-2" id="h0-2" class="h">@@ -78,16 +77,14 @@ impl RoleNode&lt;Candidate&gt; {
+</a>                 debug!(&quot;Received term {} vote from {:?}&quot;, self.term, msg.from);
+                 self.role.votes += 1;
+                 if self.role.votes &gt;= self.quorum() {
+<a href="#h0-2-3" id="h0-2-3" class="d">-                    let queued = std::mem::take(&amp;mut self.queued_reqs);
+</a><a href="#h0-2-4" id="h0-2-4" class="d">-                    let mut node: Node = self.become_leader()?.into();
+</a><a href="#h0-2-5" id="h0-2-5" class="d">-                    for (from, event) in queued {
+</a><a href="#h0-2-6" id="h0-2-6" class="d">-                        node = node.step(Message { from, to: Address::Local, term: 0, event })?;
+</a><a href="#h0-2-7" id="h0-2-7" class="d">-                    }
+</a><a href="#h0-2-8" id="h0-2-8" class="d">-                    return Ok(node);
+</a><a href="#h0-2-9" id="h0-2-9" class="i">+                    return Ok(self.become_leader()?.into());
+</a>                 }
+             }
+ 
+<a href="#h0-2-13" id="h0-2-13" class="d">-            Event::ClientRequest { .. } =&gt; self.queued_reqs.push((msg.from, msg.event)),
+</a><a href="#h0-2-14" id="h0-2-14" class="i">+            // Abort any inbound client requests while candidate.
+</a><a href="#h0-2-15" id="h0-2-15" class="i">+            Event::ClientRequest { id, .. } =&gt; {
+</a><a href="#h0-2-16" id="h0-2-16" class="i">+                self.send(msg.from, Event::ClientResponse { id, response: Err(Error::Abort) })?;
+</a><a href="#h0-2-17" id="h0-2-17" class="i">+            }
+</a> 
+             Event::ClientResponse { id, mut response } =&gt; {
+                 if let Ok(Response::Status(ref mut status)) = response {
+<a href="#h0-3" id="h0-3" class="h">@@ -139,7 +136,7 @@ mod tests {
+</a>         mpsc::UnboundedReceiver&lt;Message&gt;,
+         mpsc::UnboundedReceiver&lt;Instruction&gt;,
+     )&gt; {
+<a href="#h0-3-3" id="h0-3-3" class="d">-        let (node_tx, mut node_rx) = mpsc::unbounded_channel();
+</a><a href="#h0-3-4" id="h0-3-4" class="i">+        let (node_tx, node_rx) = mpsc::unbounded_channel();
+</a>         let (state_tx, state_rx) = mpsc::unbounded_channel();
+         let mut log = Log::new(Box::new(storage::engine::Memory::new()), false)?;
+         log.append(1, Some(vec![0x01]))?;
+<a href="#h0-4" id="h0-4" class="h">@@ -148,33 +145,21 @@ mod tests {
+</a>         log.commit(2)?;
+         log.set_term(3, None)?;
+ 
+<a href="#h0-4-3" id="h0-4-3" class="d">-        let mut node = RoleNode {
+</a><a href="#h0-4-4" id="h0-4-4" class="i">+        let node = RoleNode {
+</a>             id: 1,
+             peers: vec![2, 3, 4, 5],
+             term: 3,
+             log,
+             node_tx,
+             state_tx,
+<a href="#h0-4-11" id="h0-4-11" class="d">-            queued_reqs: Vec::new(),
+</a>             proxied_reqs: HashMap::new(),
+             role: Candidate::new(),
+         };
+<a href="#h0-4-15" id="h0-4-15" class="d">-        node = match node.step(Message {
+</a><a href="#h0-4-16" id="h0-4-16" class="d">-            from: Address::Client,
+</a><a href="#h0-4-17" id="h0-4-17" class="d">-            to: Address::Local,
+</a><a href="#h0-4-18" id="h0-4-18" class="d">-            term: 0,
+</a><a href="#h0-4-19" id="h0-4-19" class="d">-            event: Event::ClientRequest { id: vec![0xaf], request: Request::Query(vec![0xf0]) },
+</a><a href="#h0-4-20" id="h0-4-20" class="d">-        })? {
+</a><a href="#h0-4-21" id="h0-4-21" class="d">-            Node::Candidate(c) =&gt; c,
+</a><a href="#h0-4-22" id="h0-4-22" class="d">-            _ =&gt; panic!(&quot;Unexpected node type&quot;),
+</a><a href="#h0-4-23" id="h0-4-23" class="d">-        };
+</a><a href="#h0-4-24" id="h0-4-24" class="d">-        assert_messages(&amp;mut node_rx, vec![]);
+</a>         Ok((node, node_rx, state_rx))
+     }
+ 
+     #[test]
+<a href="#h0-4-29" id="h0-4-29" class="d">-    // Heartbeat for current term converts to follower, forwards the queued request from setup(),
+</a><a href="#h0-4-30" id="h0-4-30" class="d">-    // and emits ConfirmLeader.
+</a><a href="#h0-4-31" id="h0-4-31" class="i">+    // Heartbeat for current term converts to follower and emits ConfirmLeader.
+</a>     fn step_heartbeat_current_term() -&gt; Result&lt;()&gt; {
+         let (candidate, mut node_rx, mut state_rx) = setup()?;
+         let mut node = candidate.step(Message {
+<a href="#h0-5" id="h0-5" class="h">@@ -186,31 +171,20 @@ mod tests {
+</a>         assert_node(&amp;mut node).is_follower().term(3);
+         assert_messages(
+             &amp;mut node_rx,
+<a href="#h0-5-3" id="h0-5-3" class="d">-            vec![
+</a><a href="#h0-5-4" id="h0-5-4" class="d">-                Message {
+</a><a href="#h0-5-5" id="h0-5-5" class="d">-                    from: Address::Local,
+</a><a href="#h0-5-6" id="h0-5-6" class="d">-                    to: Address::Node(2),
+</a><a href="#h0-5-7" id="h0-5-7" class="d">-                    term: 0,
+</a><a href="#h0-5-8" id="h0-5-8" class="d">-                    event: Event::ClientRequest {
+</a><a href="#h0-5-9" id="h0-5-9" class="d">-                        id: vec![0xaf],
+</a><a href="#h0-5-10" id="h0-5-10" class="d">-                        request: Request::Query(vec![0xf0]),
+</a><a href="#h0-5-11" id="h0-5-11" class="d">-                    },
+</a><a href="#h0-5-12" id="h0-5-12" class="d">-                },
+</a><a href="#h0-5-13" id="h0-5-13" class="d">-                Message {
+</a><a href="#h0-5-14" id="h0-5-14" class="d">-                    from: Address::Local,
+</a><a href="#h0-5-15" id="h0-5-15" class="d">-                    to: Address::Node(2),
+</a><a href="#h0-5-16" id="h0-5-16" class="d">-                    term: 3,
+</a><a href="#h0-5-17" id="h0-5-17" class="d">-                    event: Event::ConfirmLeader { commit_index: 2, has_committed: true },
+</a><a href="#h0-5-18" id="h0-5-18" class="d">-                },
+</a><a href="#h0-5-19" id="h0-5-19" class="d">-            ],
+</a><a href="#h0-5-20" id="h0-5-20" class="i">+            vec![Message {
+</a><a href="#h0-5-21" id="h0-5-21" class="i">+                from: Address::Local,
+</a><a href="#h0-5-22" id="h0-5-22" class="i">+                to: Address::Node(2),
+</a><a href="#h0-5-23" id="h0-5-23" class="i">+                term: 3,
+</a><a href="#h0-5-24" id="h0-5-24" class="i">+                event: Event::ConfirmLeader { commit_index: 2, has_committed: true },
+</a><a href="#h0-5-25" id="h0-5-25" class="i">+            }],
+</a>         );
+         assert_messages(&amp;mut state_rx, vec![]);
+         Ok(())
+     }
+ 
+     #[test]
+<a href="#h0-5-32" id="h0-5-32" class="d">-    // Heartbeat for future term converts to follower, forwards queued request, and emits
+</a><a href="#h0-5-33" id="h0-5-33" class="d">-    // ConfirmLeader event
+</a><a href="#h0-5-34" id="h0-5-34" class="i">+    // Heartbeat for future term converts to follower and emits ConfirmLeader
+</a><a href="#h0-5-35" id="h0-5-35" class="i">+    // event.
+</a>     fn step_heartbeat_future_term() -&gt; Result&lt;()&gt; {
+         let (candidate, mut node_rx, mut state_rx) = setup()?;
+         let mut node = candidate.step(Message {
+<a href="#h0-6" id="h0-6" class="h">@@ -222,23 +196,12 @@ mod tests {
+</a>         assert_node(&amp;mut node).is_follower().term(4);
+         assert_messages(
+             &amp;mut node_rx,
+<a href="#h0-6-3" id="h0-6-3" class="d">-            vec![
+</a><a href="#h0-6-4" id="h0-6-4" class="d">-                Message {
+</a><a href="#h0-6-5" id="h0-6-5" class="d">-                    from: Address::Local,
+</a><a href="#h0-6-6" id="h0-6-6" class="d">-                    to: Address::Node(2),
+</a><a href="#h0-6-7" id="h0-6-7" class="d">-                    term: 0,
+</a><a href="#h0-6-8" id="h0-6-8" class="d">-                    event: Event::ClientRequest {
+</a><a href="#h0-6-9" id="h0-6-9" class="d">-                        id: vec![0xaf],
+</a><a href="#h0-6-10" id="h0-6-10" class="d">-                        request: Request::Query(vec![0xf0]),
+</a><a href="#h0-6-11" id="h0-6-11" class="d">-                    },
+</a><a href="#h0-6-12" id="h0-6-12" class="d">-                },
+</a><a href="#h0-6-13" id="h0-6-13" class="d">-                Message {
+</a><a href="#h0-6-14" id="h0-6-14" class="d">-                    from: Address::Local,
+</a><a href="#h0-6-15" id="h0-6-15" class="d">-                    to: Address::Node(2),
+</a><a href="#h0-6-16" id="h0-6-16" class="d">-                    term: 4,
+</a><a href="#h0-6-17" id="h0-6-17" class="d">-                    event: Event::ConfirmLeader { commit_index: 2, has_committed: true },
+</a><a href="#h0-6-18" id="h0-6-18" class="d">-                },
+</a><a href="#h0-6-19" id="h0-6-19" class="d">-            ],
+</a><a href="#h0-6-20" id="h0-6-20" class="i">+            vec![Message {
+</a><a href="#h0-6-21" id="h0-6-21" class="i">+                from: Address::Local,
+</a><a href="#h0-6-22" id="h0-6-22" class="i">+                to: Address::Node(2),
+</a><a href="#h0-6-23" id="h0-6-23" class="i">+                term: 4,
+</a><a href="#h0-6-24" id="h0-6-24" class="i">+                event: Event::ConfirmLeader { commit_index: 2, has_committed: true },
+</a><a href="#h0-6-25" id="h0-6-25" class="i">+            }],
+</a>         );
+         assert_messages(&amp;mut state_rx, vec![]);
+         Ok(())
+<a href="#h0-7" id="h0-7" class="h">@@ -312,30 +275,34 @@ mod tests {
+</a>             )
+         }
+ 
+<a href="#h0-7-3" id="h0-7-3" class="d">-        // Now that we&#39;re leader, we process the queued request
+</a><a href="#h0-7-4" id="h0-7-4" class="i">+        assert_messages(&amp;mut node_rx, vec![]);
+</a><a href="#h0-7-5" id="h0-7-5" class="i">+        assert_messages(&amp;mut state_rx, vec![]);
+</a><a href="#h0-7-6" id="h0-7-6" class="i">+        Ok(())
+</a><a href="#h0-7-7" id="h0-7-7" class="i">+    }
+</a><a href="#h0-7-8" id="h0-7-8" class="i">+
+</a><a href="#h0-7-9" id="h0-7-9" class="i">+    #[test]
+</a><a href="#h0-7-10" id="h0-7-10" class="i">+    // ClientRequest returns Error::Abort.
+</a><a href="#h0-7-11" id="h0-7-11" class="i">+    fn step_clientrequest() -&gt; Result&lt;()&gt; {
+</a><a href="#h0-7-12" id="h0-7-12" class="i">+        let (candidate, mut node_rx, mut state_rx) = setup()?;
+</a><a href="#h0-7-13" id="h0-7-13" class="i">+        let mut node = Node::Candidate(candidate);
+</a><a href="#h0-7-14" id="h0-7-14" class="i">+
+</a><a href="#h0-7-15" id="h0-7-15" class="i">+        node = node.step(Message {
+</a><a href="#h0-7-16" id="h0-7-16" class="i">+            from: Address::Client,
+</a><a href="#h0-7-17" id="h0-7-17" class="i">+            to: Address::Local,
+</a><a href="#h0-7-18" id="h0-7-18" class="i">+            term: 0,
+</a><a href="#h0-7-19" id="h0-7-19" class="i">+            event: Event::ClientRequest { id: vec![0x01], request: Request::Mutate(vec![0xaf]) },
+</a><a href="#h0-7-20" id="h0-7-20" class="i">+        })?;
+</a><a href="#h0-7-21" id="h0-7-21" class="i">+        assert_node(&amp;mut node).is_candidate().term(3);
+</a>         assert_messages(
+             &amp;mut node_rx,
+             vec![Message {
+                 from: Address::Local,
+<a href="#h0-7-26" id="h0-7-26" class="d">-                to: Address::Broadcast,
+</a><a href="#h0-7-27" id="h0-7-27" class="i">+                to: Address::Client,
+</a>                 term: 3,
+<a href="#h0-7-29" id="h0-7-29" class="d">-                event: Event::Heartbeat { commit_index: 2, commit_term: 1 },
+</a><a href="#h0-7-30" id="h0-7-30" class="i">+                event: Event::ClientResponse { id: vec![0x01], response: Err(Error::Abort) },
+</a>             }],
+         );
+<a href="#h0-7-33" id="h0-7-33" class="d">-        assert_messages(
+</a><a href="#h0-7-34" id="h0-7-34" class="d">-            &amp;mut state_rx,
+</a><a href="#h0-7-35" id="h0-7-35" class="d">-            vec![
+</a><a href="#h0-7-36" id="h0-7-36" class="d">-                Instruction::Query {
+</a><a href="#h0-7-37" id="h0-7-37" class="d">-                    id: vec![0xaf],
+</a><a href="#h0-7-38" id="h0-7-38" class="d">-                    address: Address::Client,
+</a><a href="#h0-7-39" id="h0-7-39" class="d">-                    command: vec![0xf0],
+</a><a href="#h0-7-40" id="h0-7-40" class="d">-                    term: 3,
+</a><a href="#h0-7-41" id="h0-7-41" class="d">-                    index: 2,
+</a><a href="#h0-7-42" id="h0-7-42" class="d">-                    quorum: 3,
+</a><a href="#h0-7-43" id="h0-7-43" class="d">-                },
+</a><a href="#h0-7-44" id="h0-7-44" class="d">-                Instruction::Vote { term: 3, index: 2, address: Address::Local },
+</a><a href="#h0-7-45" id="h0-7-45" class="d">-            ],
+</a><a href="#h0-7-46" id="h0-7-46" class="d">-        );
+</a><a href="#h0-7-47" id="h0-7-47" class="i">+        assert_messages(&amp;mut state_rx, vec![]);
+</a>         Ok(())
+     }
+ 
+<b>diff --git a/<a id="h1" href="../file/src/raft/node/follower.rs.html">src/raft/node/follower.rs</a> b/<a href="../file/src/raft/node/follower.rs.html">src/raft/node/follower.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -1,6 +1,6 @@
+</a> use super::super::{Address, Event, Instruction, Message, Response};
+ use super::{Candidate, Node, NodeID, RoleNode, Term, ELECTION_TIMEOUT_MAX, ELECTION_TIMEOUT_MIN};
+<a href="#h1-0-2" id="h1-0-2" class="d">-use crate::error::Result;
+</a><a href="#h1-0-3" id="h1-0-3" class="i">+use crate::error::{Error, Result};
+</a> 
+ use ::log::{debug, info, warn};
+ use rand::Rng as _;
+<a href="#h1-1" id="h1-1" class="h">@@ -56,7 +56,6 @@ impl RoleNode&lt;Follower&gt; {
+</a>         };
+         self.role = Follower::new(Some(leader), voted_for);
+         self.abort_proxied()?;
+<a href="#h1-1-3" id="h1-1-3" class="d">-        self.forward_queued(Address::Node(leader))?;
+</a>         Ok(self)
+     }
+ 
+<a href="#h1-2" id="h1-2" class="h">@@ -129,12 +128,14 @@ impl RoleNode&lt;Follower&gt; {
+</a>                 }
+             }
+ 
+<a href="#h1-2-3" id="h1-2-3" class="i">+            // Forward requests to the leader, or abort them if there is none.
+</a>             Event::ClientRequest { ref id, .. } =&gt; {
+<a href="#h1-2-5" id="h1-2-5" class="i">+                let id = id.clone();
+</a>                 if let Some(leader) = self.role.leader {
+<a href="#h1-2-7" id="h1-2-7" class="d">-                    self.proxied_reqs.insert(id.clone(), msg.from);
+</a><a href="#h1-2-8" id="h1-2-8" class="i">+                    self.proxied_reqs.insert(id, msg.from);
+</a>                     self.send(Address::Node(leader), msg.event)?
+                 } else {
+<a href="#h1-2-11" id="h1-2-11" class="d">-                    self.queued_reqs.push((msg.from, msg.event));
+</a><a href="#h1-2-12" id="h1-2-12" class="i">+                    self.send(msg.from, Event::ClientResponse { id, response: Err(Error::Abort) })?
+</a>                 }
+             }
+ 
+<a href="#h1-3" id="h1-3" class="h">@@ -208,7 +209,6 @@ pub mod tests {
+</a>             node_tx,
+             state_tx,
+             proxied_reqs: HashMap::new(),
+<a href="#h1-3-3" id="h1-3-3" class="d">-            queued_reqs: Vec::new(),
+</a>             role: Follower::new(Some(2), None),
+         };
+         Ok((node, node_rx, state_rx))
+<a href="#h1-4" id="h1-4" class="h">@@ -529,7 +529,6 @@ pub mod tests {
+</a>             node_tx,
+             state_tx,
+             proxied_reqs: HashMap::new(),
+<a href="#h1-4-3" id="h1-4-3" class="d">-            queued_reqs: Vec::new(),
+</a>             role: Follower::new(Some(2), None),
+         };
+ 
+<a href="#h1-5" id="h1-5" class="h">@@ -788,8 +787,7 @@ pub mod tests {
+</a>             .is_follower()
+             .term(3)
+             .leader(Some(2))
+<a href="#h1-5-3" id="h1-5-3" class="d">-            .proxied(vec![(vec![0x01], Address::Client)])
+</a><a href="#h1-5-4" id="h1-5-4" class="d">-            .queued(vec![]);
+</a><a href="#h1-5-5" id="h1-5-5" class="i">+            .proxied(vec![(vec![0x01], Address::Client)]);
+</a>         assert_messages(
+             &amp;mut node_rx,
+             vec![Message {
+<a href="#h1-6" id="h1-6" class="h">@@ -813,7 +811,7 @@ pub mod tests {
+</a>                 response: Ok(Response::Mutate(vec![0xaf])),
+             },
+         })?;
+<a href="#h1-6-3" id="h1-6-3" class="d">-        assert_node(&amp;mut node).is_follower().term(3).leader(Some(2)).proxied(vec![]).queued(vec![]);
+</a><a href="#h1-6-4" id="h1-6-4" class="i">+        assert_node(&amp;mut node).is_follower().term(3).leader(Some(2)).proxied(vec![]);
+</a>         assert_messages(
+             &amp;mut node_rx,
+             vec![Message {
+<a href="#h1-7" id="h1-7" class="h">@@ -831,8 +829,8 @@ pub mod tests {
+</a>     }
+ 
+     #[test]
+<a href="#h1-7-3" id="h1-7-3" class="d">-    // ClientRequest is queued when there is no leader, and forwarded when a leader appears.
+</a><a href="#h1-7-4" id="h1-7-4" class="d">-    fn step_clientrequest_queued() -&gt; Result&lt;()&gt; {
+</a><a href="#h1-7-5" id="h1-7-5" class="i">+    // ClientRequest returns Error::Abort when there is no leader.
+</a><a href="#h1-7-6" id="h1-7-6" class="i">+    fn step_clientrequest_no_leader() -&gt; Result&lt;()&gt; {
+</a>         let (mut follower, mut node_rx, mut state_rx) = setup()?;
+         follower.role = Follower::new(None, None);
+         let mut node = Node::Follower(follower);
+<a href="#h1-8" id="h1-8" class="h">@@ -843,52 +841,17 @@ pub mod tests {
+</a>             term: 0,
+             event: Event::ClientRequest { id: vec![0x01], request: Request::Mutate(vec![0xaf]) },
+         })?;
+<a href="#h1-8-3" id="h1-8-3" class="d">-        assert_node(&amp;mut node).is_follower().term(3).leader(None).proxied(vec![]).queued(vec![(
+</a><a href="#h1-8-4" id="h1-8-4" class="d">-            Address::Client,
+</a><a href="#h1-8-5" id="h1-8-5" class="d">-            Event::ClientRequest { id: vec![0x01], request: Request::Mutate(vec![0xaf]) },
+</a><a href="#h1-8-6" id="h1-8-6" class="d">-        )]);
+</a><a href="#h1-8-7" id="h1-8-7" class="d">-        assert_messages(&amp;mut node_rx, vec![]);
+</a><a href="#h1-8-8" id="h1-8-8" class="d">-        assert_messages(&amp;mut state_rx, vec![]);
+</a><a href="#h1-8-9" id="h1-8-9" class="d">-
+</a><a href="#h1-8-10" id="h1-8-10" class="d">-        // When a leader appears, we will proxy the queued request to them.
+</a><a href="#h1-8-11" id="h1-8-11" class="d">-        node = node.step(Message {
+</a><a href="#h1-8-12" id="h1-8-12" class="d">-            from: Address::Node(3),
+</a><a href="#h1-8-13" id="h1-8-13" class="d">-            to: Address::Node(1),
+</a><a href="#h1-8-14" id="h1-8-14" class="d">-            term: 3,
+</a><a href="#h1-8-15" id="h1-8-15" class="d">-            event: Event::Heartbeat { commit_index: 3, commit_term: 2 },
+</a><a href="#h1-8-16" id="h1-8-16" class="d">-        })?;
+</a><a href="#h1-8-17" id="h1-8-17" class="d">-        assert_node(&amp;mut node)
+</a><a href="#h1-8-18" id="h1-8-18" class="d">-            .is_follower()
+</a><a href="#h1-8-19" id="h1-8-19" class="d">-            .term(3)
+</a><a href="#h1-8-20" id="h1-8-20" class="d">-            .leader(Some(3))
+</a><a href="#h1-8-21" id="h1-8-21" class="d">-            .proxied(vec![(vec![0x01], Address::Client)])
+</a><a href="#h1-8-22" id="h1-8-22" class="d">-            .queued(vec![]);
+</a><a href="#h1-8-23" id="h1-8-23" class="i">+        assert_node(&amp;mut node).is_follower().term(3).leader(None).proxied(vec![]);
+</a>         assert_messages(
+             &amp;mut node_rx,
+<a href="#h1-8-26" id="h1-8-26" class="d">-            vec![
+</a><a href="#h1-8-27" id="h1-8-27" class="d">-                Message {
+</a><a href="#h1-8-28" id="h1-8-28" class="d">-                    from: Address::Local,
+</a><a href="#h1-8-29" id="h1-8-29" class="d">-                    to: Address::Node(3),
+</a><a href="#h1-8-30" id="h1-8-30" class="d">-                    term: 0,
+</a><a href="#h1-8-31" id="h1-8-31" class="d">-                    event: Event::ClientRequest {
+</a><a href="#h1-8-32" id="h1-8-32" class="d">-                        id: vec![0x01],
+</a><a href="#h1-8-33" id="h1-8-33" class="d">-                        request: Request::Mutate(vec![0xaf]),
+</a><a href="#h1-8-34" id="h1-8-34" class="d">-                    },
+</a><a href="#h1-8-35" id="h1-8-35" class="d">-                },
+</a><a href="#h1-8-36" id="h1-8-36" class="d">-                Message {
+</a><a href="#h1-8-37" id="h1-8-37" class="d">-                    from: Address::Local,
+</a><a href="#h1-8-38" id="h1-8-38" class="d">-                    to: Address::Node(3),
+</a><a href="#h1-8-39" id="h1-8-39" class="d">-                    term: 3,
+</a><a href="#h1-8-40" id="h1-8-40" class="d">-                    event: Event::ConfirmLeader { commit_index: 3, has_committed: true },
+</a><a href="#h1-8-41" id="h1-8-41" class="d">-                },
+</a><a href="#h1-8-42" id="h1-8-42" class="d">-            ],
+</a><a href="#h1-8-43" id="h1-8-43" class="d">-        );
+</a><a href="#h1-8-44" id="h1-8-44" class="d">-        assert_messages(
+</a><a href="#h1-8-45" id="h1-8-45" class="d">-            &amp;mut state_rx,
+</a><a href="#h1-8-46" id="h1-8-46" class="d">-            vec![Instruction::Apply {
+</a><a href="#h1-8-47" id="h1-8-47" class="d">-                entry: Entry { index: 3, term: 2, command: Some(vec![0x03]) },
+</a><a href="#h1-8-48" id="h1-8-48" class="i">+            vec![Message {
+</a><a href="#h1-8-49" id="h1-8-49" class="i">+                from: Address::Local,
+</a><a href="#h1-8-50" id="h1-8-50" class="i">+                to: Address::Client,
+</a><a href="#h1-8-51" id="h1-8-51" class="i">+                term: 3,
+</a><a href="#h1-8-52" id="h1-8-52" class="i">+                event: Event::ClientResponse { id: vec![0x01], response: Err(Error::Abort) },
+</a>             }],
+         );
+<a href="#h1-8-55" id="h1-8-55" class="i">+        assert_messages(&amp;mut state_rx, vec![]);
+</a>         Ok(())
+     }
+ 
+<a href="#h1-9" id="h1-9" class="h">@@ -908,8 +871,7 @@ pub mod tests {
+</a>             .is_follower()
+             .term(3)
+             .leader(Some(2))
+<a href="#h1-9-3" id="h1-9-3" class="d">-            .proxied(vec![(vec![0x01], Address::Client)])
+</a><a href="#h1-9-4" id="h1-9-4" class="d">-            .queued(vec![]);
+</a><a href="#h1-9-5" id="h1-9-5" class="i">+            .proxied(vec![(vec![0x01], Address::Client)]);
+</a>         assert_messages(
+             &amp;mut node_rx,
+             vec![Message {
+<a href="#h1-10" id="h1-10" class="h">@@ -931,7 +893,7 @@ pub mod tests {
+</a>             term: 4,
+             event: Event::Heartbeat { commit_index: 3, commit_term: 2 },
+         })?;
+<a href="#h1-10-3" id="h1-10-3" class="d">-        assert_node(&amp;mut node).is_follower().term(4).leader(Some(3)).proxied(vec![]).queued(vec![]);
+</a><a href="#h1-10-4" id="h1-10-4" class="i">+        assert_node(&amp;mut node).is_follower().term(4).leader(Some(3)).proxied(vec![]);
+</a>         assert_messages(
+             &amp;mut node_rx,
+             vec![
+<b>diff --git a/<a id="h2" href="../file/src/raft/node/leader.rs.html">src/raft/node/leader.rs</a> b/<a href="../file/src/raft/node/leader.rs.html">src/raft/node/leader.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -253,7 +253,6 @@ mod tests {
+</a>             node_tx,
+             state_tx,
+             proxied_reqs: HashMap::new(),
+<a href="#h2-0-3" id="h2-0-3" class="d">-            queued_reqs: Vec::new(),
+</a>         };
+         Ok((node, node_rx, state_rx))
+     }
+<b>diff --git a/<a id="h3" href="../file/src/raft/node/mod.rs.html">src/raft/node/mod.rs</a> b/<a href="../file/src/raft/node/mod.rs.html">src/raft/node/mod.rs</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -70,7 +70,6 @@ impl Node {
+</a>             log,
+             node_tx,
+             state_tx,
+<a href="#h3-0-3" id="h3-0-3" class="d">-            queued_reqs: Vec::new(),
+</a>             proxied_reqs: HashMap::new(),
+             role: Follower::new(None, voted_for),
+         };
+<a href="#h3-1" id="h3-1" class="h">@@ -138,8 +137,6 @@ pub struct RoleNode&lt;R&gt; {
+</a>     log: Log,
+     node_tx: mpsc::UnboundedSender&lt;Message&gt;,
+     state_tx: mpsc::UnboundedSender&lt;Instruction&gt;,
+<a href="#h3-1-3" id="h3-1-3" class="d">-    /// Keeps track of queued client requests received e.g. during elections.
+</a><a href="#h3-1-4" id="h3-1-4" class="d">-    queued_reqs: Vec&lt;(Address, Event)&gt;,
+</a>     /// Keeps track of proxied client requests, to abort on new leader election.
+     proxied_reqs: HashMap&lt;Vec&lt;u8&gt;, Address&gt;,
+     role: R,
+<a href="#h3-2" id="h3-2" class="h">@@ -155,7 +152,6 @@ impl&lt;R&gt; RoleNode&lt;R&gt; {
+</a>             log: self.log,
+             node_tx: self.node_tx,
+             state_tx: self.state_tx,
+<a href="#h3-2-3" id="h3-2-3" class="d">-            queued_reqs: self.queued_reqs,
+</a>             proxied_reqs: self.proxied_reqs,
+             role,
+         })
+<a href="#h3-3" id="h3-3" class="h">@@ -169,25 +165,6 @@ impl&lt;R&gt; RoleNode&lt;R&gt; {
+</a>         Ok(())
+     }
+ 
+<a href="#h3-3-3" id="h3-3-3" class="d">-    /// Sends any queued requests to the given leader.
+</a><a href="#h3-3-4" id="h3-3-4" class="d">-    fn forward_queued(&amp;mut self, leader: Address) -&gt; Result&lt;()&gt; {
+</a><a href="#h3-3-5" id="h3-3-5" class="d">-        for (from, event) in std::mem::take(&amp;mut self.queued_reqs) {
+</a><a href="#h3-3-6" id="h3-3-6" class="d">-            if let Event::ClientRequest { id, .. } = &amp;event {
+</a><a href="#h3-3-7" id="h3-3-7" class="d">-                self.proxied_reqs.insert(id.clone(), from.clone());
+</a><a href="#h3-3-8" id="h3-3-8" class="d">-                self.node_tx.send(Message {
+</a><a href="#h3-3-9" id="h3-3-9" class="d">-                    from: match from {
+</a><a href="#h3-3-10" id="h3-3-10" class="d">-                        Address::Client =&gt; Address::Local,
+</a><a href="#h3-3-11" id="h3-3-11" class="d">-                        address =&gt; address,
+</a><a href="#h3-3-12" id="h3-3-12" class="d">-                    },
+</a><a href="#h3-3-13" id="h3-3-13" class="d">-                    to: leader.clone(),
+</a><a href="#h3-3-14" id="h3-3-14" class="d">-                    term: 0,
+</a><a href="#h3-3-15" id="h3-3-15" class="d">-                    event,
+</a><a href="#h3-3-16" id="h3-3-16" class="d">-                })?;
+</a><a href="#h3-3-17" id="h3-3-17" class="d">-            }
+</a><a href="#h3-3-18" id="h3-3-18" class="d">-        }
+</a><a href="#h3-3-19" id="h3-3-19" class="d">-        Ok(())
+</a><a href="#h3-3-20" id="h3-3-20" class="d">-    }
+</a><a href="#h3-3-21" id="h3-3-21" class="d">-
+</a>     /// Returns the quorum size of the cluster.
+     fn quorum(&amp;self) -&gt; u64 {
+         (self.peers.len() as u64 + 1) / 2 + 1
+<a href="#h3-4" id="h3-4" class="h">@@ -343,18 +320,6 @@ mod tests {
+</a>             self
+         }
+ 
+<a href="#h3-4-3" id="h3-4-3" class="d">-        pub fn queued(self, queued: Vec&lt;(Address, Event)&gt;) -&gt; Self {
+</a><a href="#h3-4-4" id="h3-4-4" class="d">-            assert_eq!(
+</a><a href="#h3-4-5" id="h3-4-5" class="d">-                &amp;queued,
+</a><a href="#h3-4-6" id="h3-4-6" class="d">-                match self.node {
+</a><a href="#h3-4-7" id="h3-4-7" class="d">-                    Node::Candidate(n) =&gt; &amp;n.queued_reqs,
+</a><a href="#h3-4-8" id="h3-4-8" class="d">-                    Node::Follower(n) =&gt; &amp;n.queued_reqs,
+</a><a href="#h3-4-9" id="h3-4-9" class="d">-                    Node::Leader(n) =&gt; &amp;n.queued_reqs,
+</a><a href="#h3-4-10" id="h3-4-10" class="d">-                }
+</a><a href="#h3-4-11" id="h3-4-11" class="d">-            );
+</a><a href="#h3-4-12" id="h3-4-12" class="d">-            self
+</a><a href="#h3-4-13" id="h3-4-13" class="d">-        }
+</a><a href="#h3-4-14" id="h3-4-14" class="d">-
+</a>         pub fn term(mut self, term: Term) -&gt; Self {
+             assert_eq!(
+                 term,
+<a href="#h3-5" id="h3-5" class="h">@@ -417,7 +382,6 @@ mod tests {
+</a>             node_tx,
+             state_tx,
+             proxied_reqs: HashMap::new(),
+<a href="#h3-5-3" id="h3-5-3" class="d">-            queued_reqs: Vec::new(),
+</a>         };
+         Ok((node, node_rx))
+     }
+<b>diff --git a/<a id="h4" href="../file/tests/setup.rs.html">tests/setup.rs</a> b/<a href="../file/tests/setup.rs.html">tests/setup.rs</a></b>
+<a href="#h4-0" id="h4-0" class="h">@@ -8,6 +8,7 @@ use toydb::{raft, sql, storage};
+</a> use futures_util::future::FutureExt as _;
+ use pretty_assertions::assert_eq;
+ use std::collections::HashMap;
+<a href="#h4-0-3" id="h4-0-3" class="i">+use std::time::Duration;
+</a> use tempdir::TempDir;
+ 
+ // Movie data
+<a href="#h4-1" id="h4-1" class="h">@@ -107,7 +108,7 @@ pub async fn server_with_client(queries: Vec&lt;&amp;str&gt;) -&gt; Result&lt;(Client, Teardown)
+</a>     Ok((client, teardown))
+ }
+ 
+<a href="#h4-1-3" id="h4-1-3" class="d">-/// Sets up a server cluster
+</a><a href="#h4-1-4" id="h4-1-4" class="i">+/// Sets up a server cluster.
+</a> pub async fn cluster(nodes: HashMap&lt;raft::NodeID, (String, String)&gt;) -&gt; Result&lt;Teardown&gt; {
+     let mut teardown = Teardown::empty();
+     for (id, (addr_sql, addr_raft)) in nodes.iter() {
+<a href="#h4-2" id="h4-2" class="h">@@ -118,6 +119,22 @@ pub async fn cluster(nodes: HashMap&lt;raft::NodeID, (String, String)&gt;) -&gt; Result&lt;T
+</a>             .collect();
+         teardown.merge(server(*id, addr_sql, addr_raft, peers).await?);
+     }
+<a href="#h4-2-3" id="h4-2-3" class="i">+
+</a><a href="#h4-2-4" id="h4-2-4" class="i">+    // Wait for nodes to have a leader.
+</a><a href="#h4-2-5" id="h4-2-5" class="i">+    for (id, (addr_sql, _)) in nodes.iter() {
+</a><a href="#h4-2-6" id="h4-2-6" class="i">+        for _ in 0..10 {
+</a><a href="#h4-2-7" id="h4-2-7" class="i">+            match Client::new(addr_sql).await {
+</a><a href="#h4-2-8" id="h4-2-8" class="i">+                Ok(client) =&gt; match client.status().await {
+</a><a href="#h4-2-9" id="h4-2-9" class="i">+                    Ok(status) if status.raft.leader &gt; 0 =&gt; break,
+</a><a href="#h4-2-10" id="h4-2-10" class="i">+                    Ok(_) =&gt; log::error!(&quot;no leader&quot;),
+</a><a href="#h4-2-11" id="h4-2-11" class="i">+                    Err(err) =&gt; log::error!(&quot;Status failed for {}: {}&quot;, id, err),
+</a><a href="#h4-2-12" id="h4-2-12" class="i">+                },
+</a><a href="#h4-2-13" id="h4-2-13" class="i">+                Err(err) =&gt; log::error!(&quot;Client failed for {}: {}&quot;, id, err),
+</a><a href="#h4-2-14" id="h4-2-14" class="i">+            }
+</a><a href="#h4-2-15" id="h4-2-15" class="i">+            tokio::time::sleep(Duration::from_millis(100)).await
+</a><a href="#h4-2-16" id="h4-2-16" class="i">+        }
+</a><a href="#h4-2-17" id="h4-2-17" class="i">+    }
+</a><a href="#h4-2-18" id="h4-2-18" class="i">+
+</a>     Ok(teardown)
+ }
+ 
+</pre>
+</div>
+</body>
+</html>

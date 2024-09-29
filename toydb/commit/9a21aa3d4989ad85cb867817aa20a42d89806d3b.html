@@ -1,0 +1,652 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>sql: clean up expression module - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/9a21aa3d4989ad85cb867817aa20a42d89806d3b.html">9a21aa3d4989ad85cb867817aa20a42d89806d3b</a>
+<b>parent</b> <a href="../commit/cdb202da40e5c14d7ac8268a4f464e568d4ee171.html">cdb202da40e5c14d7ac8268a4f464e568d4ee171</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Thu, 20 Jun 2024 15:41:51 +0200
+
+sql: clean up expression module
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/sql/parser/ast.rs</a></td><td> | </td><td class="num">10</td><td><span class="i">+++++</span><span class="d">-----</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/sql/parser/parser.rs</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/sql/planner/planner.rs</a></td><td> | </td><td class="num">4</td><td><span class="i">+++</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">src/sql/types/expression.rs</a></td><td> | </td><td class="num">368</td><td><span class="i">++++++++++++++++++++++++++++++++++++++++</span><span class="d">----------------------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h4">src/sql/types/mod.rs</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h5">src/sql/types/schema.rs</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h6">src/sql/types/value.rs</a></td><td> | </td><td class="num">5</td><td><span class="i">+++++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h7">tests/sql/expression.rs</a></td><td> | </td><td class="num">4</td><td><span class="i">++</span><span class="d">--</span></td></tr>
+</table></pre><pre>8 files changed, 202 insertions(+), 195 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/sql/parser/ast.rs.html">src/sql/parser/ast.rs</a> b/<a href="../file/src/sql/parser/ast.rs.html">src/sql/parser/ast.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -147,10 +147,10 @@ pub enum Operation {
+</a> 
+     // Mathematical operators
+     Add(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+<a href="#h0-0-3" id="h0-0-3" class="d">-    Assert(Box&lt;Expression&gt;),
+</a>     Divide(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+     Exponentiate(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+     Factorial(Box&lt;Expression&gt;),
+<a href="#h0-0-7" id="h0-0-7" class="i">+    Identity(Box&lt;Expression&gt;),
+</a>     Modulo(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+     Multiply(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+     Negate(Box&lt;Expression&gt;),
+<a href="#h0-1" id="h0-1" class="h">@@ -204,8 +204,8 @@ impl Expression {
+</a>                 Self::replace_with(rhs, |e| e.transform(before, after))?;
+             }
+ 
+<a href="#h0-1-3" id="h0-1-3" class="d">-            Self::Operation(Assert(expr))
+</a><a href="#h0-1-4" id="h0-1-4" class="d">-            | Self::Operation(Factorial(expr))
+</a><a href="#h0-1-5" id="h0-1-5" class="i">+            Self::Operation(Factorial(expr))
+</a><a href="#h0-1-6" id="h0-1-6" class="i">+            | Self::Operation(Identity(expr))
+</a>             | Self::Operation(IsNull(expr))
+             | Self::Operation(Negate(expr))
+             | Self::Operation(Not(expr)) =&gt; {
+<a href="#h0-2" id="h0-2" class="h">@@ -253,8 +253,8 @@ impl Expression {
+</a>                 | Self::Operation(Or(lhs, rhs))
+                 | Self::Operation(Subtract(lhs, rhs)) =&gt; lhs.walk(visitor) &amp;&amp; rhs.walk(visitor),
+ 
+<a href="#h0-2-3" id="h0-2-3" class="d">-                Self::Operation(Assert(expr))
+</a><a href="#h0-2-4" id="h0-2-4" class="d">-                | Self::Operation(Factorial(expr))
+</a><a href="#h0-2-5" id="h0-2-5" class="i">+                Self::Operation(Factorial(expr))
+</a><a href="#h0-2-6" id="h0-2-6" class="i">+                | Self::Operation(Identity(expr))
+</a>                 | Self::Operation(IsNull(expr))
+                 | Self::Operation(Negate(expr))
+                 | Self::Operation(Not(expr)) =&gt; expr.walk(visitor),
+<b>diff --git a/<a id="h1" href="../file/src/sql/parser/parser.rs.html">src/sql/parser/parser.rs</a> b/<a href="../file/src/sql/parser/parser.rs.html">src/sql/parser/parser.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -601,7 +601,7 @@ enum PrefixOperator {
+</a> impl PrefixOperator {
+     fn build(&amp;self, rhs: ast::Expression) -&gt; ast::Expression {
+         match self {
+<a href="#h1-0-3" id="h1-0-3" class="d">-            Self::Plus =&gt; ast::Operation::Assert(Box::new(rhs)).into(),
+</a><a href="#h1-0-4" id="h1-0-4" class="i">+            Self::Plus =&gt; ast::Operation::Identity(Box::new(rhs)).into(),
+</a>             Self::Minus =&gt; ast::Operation::Negate(Box::new(rhs)).into(),
+             Self::Not =&gt; ast::Operation::Not(Box::new(rhs)).into(),
+         }
+<b>diff --git a/<a id="h2" href="../file/src/sql/planner/planner.rs.html">src/sql/planner/planner.rs</a> b/<a href="../file/src/sql/planner/planner.rs.html">src/sql/planner/planner.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -603,7 +603,6 @@ impl&lt;&#39;a, C: Catalog&gt; Planner&lt;&#39;a, C&gt; {
+</a>                 .into()),
+ 
+                 // Mathematical operators
+<a href="#h2-0-3" id="h2-0-3" class="d">-                ast::Operation::Assert(expr) =&gt; Assert(self.build_expression(scope, *expr)?.into()),
+</a>                 ast::Operation::Add(lhs, rhs) =&gt; Add(
+                     self.build_expression(scope, *lhs)?.into(),
+                     self.build_expression(scope, *rhs)?.into(),
+<a href="#h2-1" id="h2-1" class="h">@@ -619,6 +618,9 @@ impl&lt;&#39;a, C: Catalog&gt; Planner&lt;&#39;a, C&gt; {
+</a>                 ast::Operation::Factorial(expr) =&gt; {
+                     Factorial(self.build_expression(scope, *expr)?.into())
+                 }
+<a href="#h2-1-3" id="h2-1-3" class="i">+                ast::Operation::Identity(expr) =&gt; {
+</a><a href="#h2-1-4" id="h2-1-4" class="i">+                    Identity(self.build_expression(scope, *expr)?.into())
+</a><a href="#h2-1-5" id="h2-1-5" class="i">+                }
+</a>                 ast::Operation::Modulo(lhs, rhs) =&gt; Modulo(
+                     self.build_expression(scope, *lhs)?.into(),
+                     self.build_expression(scope, *rhs)?.into(),
+<b>diff --git a/<a id="h3" href="../file/src/sql/types/expression.rs.html">src/sql/types/expression.rs</a> b/<a href="../file/src/sql/types/expression.rs.html">src/sql/types/expression.rs</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -1,81 +1,138 @@
+</a><a href="#h3-0-0" id="h3-0-0" class="d">-use super::{Row, Value};
+</a><a href="#h3-0-1" id="h3-0-1" class="i">+use super::{Label, Row, Value};
+</a> use crate::errinput;
+ use crate::error::{Error, Result};
+ 
+<a href="#h3-0-5" id="h3-0-5" class="d">-use regex::Regex;
+</a><a href="#h3-0-6" id="h3-0-6" class="d">-use serde_derive::{Deserialize, Serialize};
+</a><a href="#h3-0-7" id="h3-0-7" class="d">-use std::fmt::{self, Display};
+</a><a href="#h3-0-8" id="h3-0-8" class="d">-use std::mem::replace;
+</a><a href="#h3-0-9" id="h3-0-9" class="i">+use serde::{Deserialize, Serialize};
+</a> 
+<a href="#h3-0-11" id="h3-0-11" class="d">-/// An expression, made up of constants and operations
+</a><a href="#h3-0-12" id="h3-0-12" class="i">+/// An expression, made up of nested values and operators. Values can either be
+</a><a href="#h3-0-13" id="h3-0-13" class="i">+/// constants or row field references.
+</a><a href="#h3-0-14" id="h3-0-14" class="i">+///
+</a><a href="#h3-0-15" id="h3-0-15" class="i">+/// Since this is a recursive data structure, we have to box each child
+</a><a href="#h3-0-16" id="h3-0-16" class="i">+/// expression, which incurs a heap allocation. There are clever ways to get
+</a><a href="#h3-0-17" id="h3-0-17" class="i">+/// around this, but we keep it simple.
+</a> #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+ pub enum Expression {
+<a href="#h3-0-20" id="h3-0-20" class="d">-    // Values
+</a><a href="#h3-0-21" id="h3-0-21" class="i">+    /// A constant value.
+</a>     Constant(Value),
+<a href="#h3-0-23" id="h3-0-23" class="d">-    Field(usize, Option&lt;(Option&lt;String&gt;, String)&gt;),
+</a><a href="#h3-0-24" id="h3-0-24" class="i">+    /// A field reference (row index) with optional label. The label is only
+</a><a href="#h3-0-25" id="h3-0-25" class="i">+    /// used for display purposes.
+</a><a href="#h3-0-26" id="h3-0-26" class="i">+    Field(usize, Option&lt;Label&gt;),
+</a> 
+<a href="#h3-0-28" id="h3-0-28" class="d">-    // Logical operations
+</a><a href="#h3-0-29" id="h3-0-29" class="i">+    /// Logical AND of two booleans: a AND b.
+</a>     And(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+<a href="#h3-0-31" id="h3-0-31" class="d">-    Not(Box&lt;Expression&gt;),
+</a><a href="#h3-0-32" id="h3-0-32" class="i">+    /// Logical OR of two booleans: a OR b.
+</a>     Or(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+<a href="#h3-0-34" id="h3-0-34" class="i">+    /// Logical NOT of a boolean: NOT a.
+</a><a href="#h3-0-35" id="h3-0-35" class="i">+    Not(Box&lt;Expression&gt;),
+</a> 
+<a href="#h3-0-37" id="h3-0-37" class="d">-    // Comparisons operations (GTE, LTE, and NEQ are composite operations)
+</a><a href="#h3-0-38" id="h3-0-38" class="i">+    /// Equality comparison of two values: a = b.
+</a>     Equal(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+<a href="#h3-0-40" id="h3-0-40" class="i">+    /// &gt; comparison of two values: a &gt; b.
+</a>     GreaterThan(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+<a href="#h3-0-42" id="h3-0-42" class="d">-    IsNull(Box&lt;Expression&gt;),
+</a><a href="#h3-0-43" id="h3-0-43" class="i">+    /// &lt; comparison of two values: a &lt; b.
+</a>     LessThan(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+<a href="#h3-0-45" id="h3-0-45" class="i">+    /// Returns true if the value is null: a IS NULL.
+</a><a href="#h3-0-46" id="h3-0-46" class="i">+    IsNull(Box&lt;Expression&gt;),
+</a> 
+<a href="#h3-0-48" id="h3-0-48" class="d">-    // Mathematical operations
+</a><a href="#h3-0-49" id="h3-0-49" class="i">+    /// Adds two numbers: a + b.
+</a>     Add(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+<a href="#h3-0-51" id="h3-0-51" class="d">-    Assert(Box&lt;Expression&gt;),
+</a><a href="#h3-0-52" id="h3-0-52" class="i">+    /// Divides two numbers: a / b.
+</a>     Divide(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+<a href="#h3-0-54" id="h3-0-54" class="i">+    /// Exponentiates two numbers, i.e. a ^ b.
+</a>     Exponentiate(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+<a href="#h3-0-56" id="h3-0-56" class="i">+    /// Takes the factorial of a number: 4! = 4*3*2*1.
+</a>     Factorial(Box&lt;Expression&gt;),
+<a href="#h3-0-58" id="h3-0-58" class="i">+    /// The identify function, which simply returns the same number.
+</a><a href="#h3-0-59" id="h3-0-59" class="i">+    Identity(Box&lt;Expression&gt;),
+</a><a href="#h3-0-60" id="h3-0-60" class="i">+    /// The remainder after dividing two numbers: a % b.
+</a>     Modulo(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+<a href="#h3-0-62" id="h3-0-62" class="i">+    /// Multiplies two numbers: a * b.
+</a>     Multiply(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+<a href="#h3-0-64" id="h3-0-64" class="i">+    /// Negates the given number: -a.
+</a>     Negate(Box&lt;Expression&gt;),
+<a href="#h3-0-66" id="h3-0-66" class="i">+    /// Subtracts two numbers: a - b.
+</a>     Subtract(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+ 
+<a href="#h3-0-69" id="h3-0-69" class="d">-    // String operations
+</a><a href="#h3-0-70" id="h3-0-70" class="i">+    // Checks if a string matches a pattern: a LIKE b.
+</a>     Like(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+ }
+ 
+<a href="#h3-0-74" id="h3-0-74" class="i">+impl std::fmt::Display for Expression {
+</a><a href="#h3-0-75" id="h3-0-75" class="i">+    fn fmt(&amp;self, f: &amp;mut std::fmt::Formatter&lt;&#39;_&gt;) -&gt; std::fmt::Result {
+</a><a href="#h3-0-76" id="h3-0-76" class="i">+        match self {
+</a><a href="#h3-0-77" id="h3-0-77" class="i">+            Self::Constant(value) =&gt; write!(f, &quot;{value}&quot;),
+</a><a href="#h3-0-78" id="h3-0-78" class="i">+            Self::Field(index, None) =&gt; write!(f, &quot;#{index}&quot;),
+</a><a href="#h3-0-79" id="h3-0-79" class="i">+            Self::Field(_, Some((None, name))) =&gt; write!(f, &quot;{name}&quot;),
+</a><a href="#h3-0-80" id="h3-0-80" class="i">+            Self::Field(_, Some((Some(table), name))) =&gt; write!(f, &quot;{table}.{name}&quot;),
+</a><a href="#h3-0-81" id="h3-0-81" class="i">+
+</a><a href="#h3-0-82" id="h3-0-82" class="i">+            Self::And(lhs, rhs) =&gt; write!(f, &quot;{lhs} AND {rhs}&quot;),
+</a><a href="#h3-0-83" id="h3-0-83" class="i">+            Self::Or(lhs, rhs) =&gt; write!(f, &quot;{lhs} OR {rhs}&quot;),
+</a><a href="#h3-0-84" id="h3-0-84" class="i">+            Self::Not(expr) =&gt; write!(f, &quot;NOT {expr}&quot;),
+</a><a href="#h3-0-85" id="h3-0-85" class="i">+
+</a><a href="#h3-0-86" id="h3-0-86" class="i">+            Self::Equal(lhs, rhs) =&gt; write!(f, &quot;{lhs} = {rhs}&quot;),
+</a><a href="#h3-0-87" id="h3-0-87" class="i">+            Self::GreaterThan(lhs, rhs) =&gt; write!(f, &quot;{lhs} &gt; {rhs}&quot;),
+</a><a href="#h3-0-88" id="h3-0-88" class="i">+            Self::LessThan(lhs, rhs) =&gt; write!(f, &quot;{lhs} &lt; {rhs}&quot;),
+</a><a href="#h3-0-89" id="h3-0-89" class="i">+            Self::IsNull(expr) =&gt; write!(f, &quot;{expr} IS NULL&quot;),
+</a><a href="#h3-0-90" id="h3-0-90" class="i">+
+</a><a href="#h3-0-91" id="h3-0-91" class="i">+            Self::Add(lhs, rhs) =&gt; write!(f, &quot;{lhs} + {rhs}&quot;),
+</a><a href="#h3-0-92" id="h3-0-92" class="i">+            Self::Divide(lhs, rhs) =&gt; write!(f, &quot;{lhs} / {rhs}&quot;),
+</a><a href="#h3-0-93" id="h3-0-93" class="i">+            Self::Exponentiate(lhs, rhs) =&gt; write!(f, &quot;{lhs} ^ {rhs}&quot;),
+</a><a href="#h3-0-94" id="h3-0-94" class="i">+            Self::Factorial(expr) =&gt; write!(f, &quot;{expr}!&quot;),
+</a><a href="#h3-0-95" id="h3-0-95" class="i">+            Self::Identity(expr) =&gt; write!(f, &quot;{expr}&quot;),
+</a><a href="#h3-0-96" id="h3-0-96" class="i">+            Self::Modulo(lhs, rhs) =&gt; write!(f, &quot;{lhs} % {rhs}&quot;),
+</a><a href="#h3-0-97" id="h3-0-97" class="i">+            Self::Multiply(lhs, rhs) =&gt; write!(f, &quot;{lhs} * {rhs}&quot;),
+</a><a href="#h3-0-98" id="h3-0-98" class="i">+            Self::Negate(expr) =&gt; write!(f, &quot;-{expr}&quot;),
+</a><a href="#h3-0-99" id="h3-0-99" class="i">+            Self::Subtract(lhs, rhs) =&gt; write!(f, &quot;{lhs} - {rhs}&quot;),
+</a><a href="#h3-0-100" id="h3-0-100" class="i">+
+</a><a href="#h3-0-101" id="h3-0-101" class="i">+            Self::Like(lhs, rhs) =&gt; write!(f, &quot;{lhs} LIKE {rhs}&quot;),
+</a><a href="#h3-0-102" id="h3-0-102" class="i">+        }
+</a><a href="#h3-0-103" id="h3-0-103" class="i">+    }
+</a><a href="#h3-0-104" id="h3-0-104" class="i">+}
+</a><a href="#h3-0-105" id="h3-0-105" class="i">+
+</a> impl Expression {
+<a href="#h3-0-107" id="h3-0-107" class="d">-    /// Evaluates an expression to a value, given an environment
+</a><a href="#h3-0-108" id="h3-0-108" class="i">+    /// Evaluates an expression, returning a value. If a row is given, Field
+</a><a href="#h3-0-109" id="h3-0-109" class="i">+    /// references will look up the row value at the field index. If no row is
+</a><a href="#h3-0-110" id="h3-0-110" class="i">+    /// given, any field references yield NULL.
+</a>     pub fn evaluate(&amp;self, row: Option&lt;&amp;Row&gt;) -&gt; Result&lt;Value&gt; {
+         use Value::*;
+         Ok(match self {
+<a href="#h3-0-114" id="h3-0-114" class="d">-            // Constant values
+</a><a href="#h3-0-115" id="h3-0-115" class="d">-            Self::Constant(c) =&gt; c.clone(),
+</a><a href="#h3-0-116" id="h3-0-116" class="d">-            Self::Field(i, _) =&gt; row.and_then(|row| row.get(*i).cloned()).unwrap_or(Null),
+</a><a href="#h3-0-117" id="h3-0-117" class="i">+            // Constant values return itself.
+</a><a href="#h3-0-118" id="h3-0-118" class="i">+            Self::Constant(value) =&gt; value.clone(),
+</a> 
+<a href="#h3-0-120" id="h3-0-120" class="d">-            // Logical operations
+</a><a href="#h3-0-121" id="h3-0-121" class="i">+            // Field references look up a row value. The planner must make sure
+</a><a href="#h3-0-122" id="h3-0-122" class="i">+            // the field reference is valid.
+</a><a href="#h3-0-123" id="h3-0-123" class="i">+            Self::Field(i, _) =&gt; row.map(|row| row[*i].clone()).unwrap_or(Null),
+</a><a href="#h3-0-124" id="h3-0-124" class="i">+
+</a><a href="#h3-0-125" id="h3-0-125" class="i">+            // Logical AND. Inputs must be boolean or NULL. NULLs generally
+</a><a href="#h3-0-126" id="h3-0-126" class="i">+            // yield NULL, except the special case NULL AND false == false.
+</a>             Self::And(lhs, rhs) =&gt; match (lhs.evaluate(row)?, rhs.evaluate(row)?) {
+                 (Boolean(lhs), Boolean(rhs)) =&gt; Boolean(lhs &amp;&amp; rhs),
+<a href="#h3-0-129" id="h3-0-129" class="d">-                (Boolean(lhs), Null) if !lhs =&gt; Boolean(false),
+</a><a href="#h3-0-130" id="h3-0-130" class="d">-                (Boolean(_), Null) =&gt; Null,
+</a><a href="#h3-0-131" id="h3-0-131" class="d">-                (Null, Boolean(rhs)) if !rhs =&gt; Boolean(false),
+</a><a href="#h3-0-132" id="h3-0-132" class="d">-                (Null, Boolean(_)) =&gt; Null,
+</a><a href="#h3-0-133" id="h3-0-133" class="d">-                (Null, Null) =&gt; Null,
+</a><a href="#h3-0-134" id="h3-0-134" class="i">+                (Boolean(b), Null) | (Null, Boolean(b)) if !b =&gt; Boolean(false),
+</a><a href="#h3-0-135" id="h3-0-135" class="i">+                (Boolean(_), Null) | (Null, Boolean(_)) | (Null, Null) =&gt; Null,
+</a>                 (lhs, rhs) =&gt; return errinput!(&quot;can&#39;t and {lhs} and {rhs}&quot;),
+             },
+<a href="#h3-0-138" id="h3-0-138" class="i">+
+</a><a href="#h3-0-139" id="h3-0-139" class="i">+            // Logical OR. Inputs must be boolean or NULL. NULLs generally
+</a><a href="#h3-0-140" id="h3-0-140" class="i">+            // yield NULL, except the special case NULL OR true == true.
+</a><a href="#h3-0-141" id="h3-0-141" class="i">+            Self::Or(lhs, rhs) =&gt; match (lhs.evaluate(row)?, rhs.evaluate(row)?) {
+</a><a href="#h3-0-142" id="h3-0-142" class="i">+                (Boolean(lhs), Boolean(rhs)) =&gt; Boolean(lhs || rhs),
+</a><a href="#h3-0-143" id="h3-0-143" class="i">+                (Boolean(b), Null) | (Null, Boolean(b)) if b =&gt; Boolean(true),
+</a><a href="#h3-0-144" id="h3-0-144" class="i">+                (Boolean(_), Null) | (Null, Boolean(_)) | (Null, Null) =&gt; Null,
+</a><a href="#h3-0-145" id="h3-0-145" class="i">+                (lhs, rhs) =&gt; return errinput!(&quot;can&#39;t or {lhs} and {rhs}&quot;),
+</a><a href="#h3-0-146" id="h3-0-146" class="i">+            },
+</a><a href="#h3-0-147" id="h3-0-147" class="i">+
+</a><a href="#h3-0-148" id="h3-0-148" class="i">+            // Logical NOT. Input must be boolean or NULL.
+</a>             Self::Not(expr) =&gt; match expr.evaluate(row)? {
+                 Boolean(b) =&gt; Boolean(!b),
+                 Null =&gt; Null,
+                 value =&gt; return errinput!(&quot;can&#39;t negate {value}&quot;),
+             },
+<a href="#h3-0-154" id="h3-0-154" class="d">-            Self::Or(lhs, rhs) =&gt; match (lhs.evaluate(row)?, rhs.evaluate(row)?) {
+</a><a href="#h3-0-155" id="h3-0-155" class="d">-                (Boolean(lhs), Boolean(rhs)) =&gt; Boolean(lhs || rhs),
+</a><a href="#h3-0-156" id="h3-0-156" class="d">-                (Boolean(lhs), Null) if lhs =&gt; Boolean(true),
+</a><a href="#h3-0-157" id="h3-0-157" class="d">-                (Boolean(_), Null) =&gt; Null,
+</a><a href="#h3-0-158" id="h3-0-158" class="d">-                (Null, Boolean(rhs)) if rhs =&gt; Boolean(true),
+</a><a href="#h3-0-159" id="h3-0-159" class="d">-                (Null, Boolean(_)) =&gt; Null,
+</a><a href="#h3-0-160" id="h3-0-160" class="d">-                (Null, Null) =&gt; Null,
+</a><a href="#h3-0-161" id="h3-0-161" class="d">-                (lhs, rhs) =&gt; return errinput!(&quot;can&#39;t or {lhs} and {rhs}&quot;),
+</a><a href="#h3-0-162" id="h3-0-162" class="d">-            },
+</a> 
+<a href="#h3-0-164" id="h3-0-164" class="d">-            // Comparison operations
+</a><a href="#h3-0-165" id="h3-0-165" class="d">-            #[allow(clippy::float_cmp)] // Up to the user if they want to compare or not
+</a><a href="#h3-0-166" id="h3-0-166" class="i">+            // Comparisons. Must be of same type, except floats and integers
+</a><a href="#h3-0-167" id="h3-0-167" class="i">+            // which are interchangeable. NULLs yield NULL.
+</a><a href="#h3-0-168" id="h3-0-168" class="i">+            //
+</a><a href="#h3-0-169" id="h3-0-169" class="i">+            // TODO: handle the f64 NaN case.
+</a><a href="#h3-0-170" id="h3-0-170" class="i">+            #[allow(clippy::float_cmp)]
+</a>             Self::Equal(lhs, rhs) =&gt; match (lhs.evaluate(row)?, rhs.evaluate(row)?) {
+                 (Boolean(lhs), Boolean(rhs)) =&gt; Boolean(lhs == rhs),
+                 (Integer(lhs), Integer(rhs)) =&gt; Boolean(lhs == rhs),
+<a href="#h3-1" id="h3-1" class="h">@@ -108,58 +165,42 @@ impl Expression {
+</a>                 (Null, _) | (_, Null) =&gt; Null,
+                 (lhs, rhs) =&gt; return errinput!(&quot;can&#39;t compare {lhs} and {rhs}&quot;),
+             },
+<a href="#h3-1-3" id="h3-1-3" class="d">-            Self::IsNull(expr) =&gt; match expr.evaluate(row)? {
+</a><a href="#h3-1-4" id="h3-1-4" class="d">-                Null =&gt; Boolean(true),
+</a><a href="#h3-1-5" id="h3-1-5" class="d">-                _ =&gt; Boolean(false),
+</a><a href="#h3-1-6" id="h3-1-6" class="d">-            },
+</a><a href="#h3-1-7" id="h3-1-7" class="i">+            Self::IsNull(expr) =&gt; Boolean(expr.evaluate(row)? == Null),
+</a> 
+<a href="#h3-1-9" id="h3-1-9" class="d">-            // Mathematical operations
+</a><a href="#h3-1-10" id="h3-1-10" class="i">+            // Mathematical operations. Inputs must be numbers, but integers and
+</a><a href="#h3-1-11" id="h3-1-11" class="i">+            // floats are interchangeable (float when mixed). NULLs yield NULL.
+</a>             Self::Add(lhs, rhs) =&gt; match (lhs.evaluate(row)?, rhs.evaluate(row)?) {
+                 (Integer(lhs), Integer(rhs)) =&gt; {
+                     Integer(lhs.checked_add(rhs).ok_or::&lt;Error&gt;(errinput!(&quot;integer overflow&quot;))?)
+                 }
+                 (Integer(lhs), Float(rhs)) =&gt; Float(lhs as f64 + rhs),
+<a href="#h3-1-17" id="h3-1-17" class="d">-                (Integer(_), Null) =&gt; Null,
+</a><a href="#h3-1-18" id="h3-1-18" class="d">-                (Float(lhs), Float(rhs)) =&gt; Float(lhs + rhs),
+</a>                 (Float(lhs), Integer(rhs)) =&gt; Float(lhs + rhs as f64),
+<a href="#h3-1-20" id="h3-1-20" class="d">-                (Float(_), Null) =&gt; Null,
+</a><a href="#h3-1-21" id="h3-1-21" class="d">-                (Null, Float(_)) =&gt; Null,
+</a><a href="#h3-1-22" id="h3-1-22" class="d">-                (Null, Integer(_)) =&gt; Null,
+</a><a href="#h3-1-23" id="h3-1-23" class="d">-                (Null, Null) =&gt; Null,
+</a><a href="#h3-1-24" id="h3-1-24" class="i">+                (Float(lhs), Float(rhs)) =&gt; Float(lhs + rhs),
+</a><a href="#h3-1-25" id="h3-1-25" class="i">+                (Null, Integer(_) | Float(_) | Null) =&gt; Null,
+</a><a href="#h3-1-26" id="h3-1-26" class="i">+                (Integer(_) | Float(_), Null) =&gt; Null,
+</a>                 (lhs, rhs) =&gt; return errinput!(&quot;can&#39;t add {lhs} and {rhs}&quot;),
+             },
+<a href="#h3-1-29" id="h3-1-29" class="d">-            Self::Assert(expr) =&gt; match expr.evaluate(row)? {
+</a><a href="#h3-1-30" id="h3-1-30" class="d">-                Float(f) =&gt; Float(f),
+</a><a href="#h3-1-31" id="h3-1-31" class="d">-                Integer(i) =&gt; Integer(i),
+</a><a href="#h3-1-32" id="h3-1-32" class="d">-                Null =&gt; Null,
+</a><a href="#h3-1-33" id="h3-1-33" class="d">-                expr =&gt; return errinput!(&quot;can&#39;t take the positive of {expr}&quot;),
+</a><a href="#h3-1-34" id="h3-1-34" class="d">-            },
+</a>             Self::Divide(lhs, rhs) =&gt; match (lhs.evaluate(row)?, rhs.evaluate(row)?) {
+                 (Integer(_), Integer(0)) =&gt; return errinput!(&quot;can&#39;t divide by zero&quot;),
+                 (Integer(lhs), Integer(rhs)) =&gt; Integer(lhs / rhs),
+                 (Integer(lhs), Float(rhs)) =&gt; Float(lhs as f64 / rhs),
+<a href="#h3-1-39" id="h3-1-39" class="d">-                (Integer(_), Null) =&gt; Null,
+</a>                 (Float(lhs), Integer(rhs)) =&gt; Float(lhs / rhs as f64),
+                 (Float(lhs), Float(rhs)) =&gt; Float(lhs / rhs),
+<a href="#h3-1-42" id="h3-1-42" class="d">-                (Float(_), Null) =&gt; Null,
+</a><a href="#h3-1-43" id="h3-1-43" class="d">-                (Null, Float(_)) =&gt; Null,
+</a><a href="#h3-1-44" id="h3-1-44" class="d">-                (Null, Integer(_)) =&gt; Null,
+</a><a href="#h3-1-45" id="h3-1-45" class="d">-                (Null, Null) =&gt; Null,
+</a><a href="#h3-1-46" id="h3-1-46" class="i">+                (Null, Integer(_) | Float(_) | Null) =&gt; Null,
+</a><a href="#h3-1-47" id="h3-1-47" class="i">+                (Integer(_) | Float(_), Null) =&gt; Null,
+</a>                 (lhs, rhs) =&gt; return errinput!(&quot;can&#39;t divide {lhs} and {rhs}&quot;),
+             },
+             Self::Exponentiate(lhs, rhs) =&gt; match (lhs.evaluate(row)?, rhs.evaluate(row)?) {
+<a href="#h3-1-51" id="h3-1-51" class="d">-                (Integer(lhs), Integer(rhs)) if rhs &gt;= 0 =&gt; Integer(
+</a><a href="#h3-1-52" id="h3-1-52" class="d">-                    lhs.checked_pow(rhs as u32).ok_or::&lt;Error&gt;(errinput!(&quot;integer overflow&quot;))?,
+</a><a href="#h3-1-53" id="h3-1-53" class="d">-                ),
+</a><a href="#h3-1-54" id="h3-1-54" class="i">+                (Integer(lhs), Integer(rhs)) if rhs &gt;= 0 =&gt; {
+</a><a href="#h3-1-55" id="h3-1-55" class="i">+                    let rhs: u32 = rhs.try_into().or(errinput!(&quot;integer overflow&quot;))?;
+</a><a href="#h3-1-56" id="h3-1-56" class="i">+                    Integer(lhs.checked_pow(rhs).ok_or::&lt;Error&gt;(errinput!(&quot;integer overflow&quot;))?)
+</a><a href="#h3-1-57" id="h3-1-57" class="i">+                }
+</a>                 (Integer(lhs), Integer(rhs)) =&gt; Float((lhs as f64).powf(rhs as f64)),
+                 (Integer(lhs), Float(rhs)) =&gt; Float((lhs as f64).powf(rhs)),
+<a href="#h3-1-60" id="h3-1-60" class="d">-                (Integer(_), Null) =&gt; Null,
+</a>                 (Float(lhs), Integer(rhs)) =&gt; Float((lhs).powi(rhs as i32)),
+                 (Float(lhs), Float(rhs)) =&gt; Float((lhs).powf(rhs)),
+<a href="#h3-1-63" id="h3-1-63" class="d">-                (Float(_), Null) =&gt; Null,
+</a><a href="#h3-1-64" id="h3-1-64" class="d">-                (Null, Float(_)) =&gt; Null,
+</a><a href="#h3-1-65" id="h3-1-65" class="d">-                (Null, Integer(_)) =&gt; Null,
+</a><a href="#h3-1-66" id="h3-1-66" class="d">-                (Null, Null) =&gt; Null,
+</a><a href="#h3-1-67" id="h3-1-67" class="i">+                (Integer(_) | Float(_), Null) =&gt; Null,
+</a><a href="#h3-1-68" id="h3-1-68" class="i">+                (Null, Integer(_) | Float(_) | Null) =&gt; Null,
+</a>                 (lhs, rhs) =&gt; return errinput!(&quot;can&#39;t exponentiate {lhs} and {rhs}&quot;),
+             },
+             Self::Factorial(expr) =&gt; match expr.evaluate(row)? {
+<a href="#h3-2" id="h3-2" class="h">@@ -168,18 +209,19 @@ impl Expression {
+</a>                 Null =&gt; Null,
+                 value =&gt; return errinput!(&quot;can&#39;t take factorial of {value}&quot;),
+             },
+<a href="#h3-2-3" id="h3-2-3" class="i">+            Self::Identity(expr) =&gt; match expr.evaluate(row)? {
+</a><a href="#h3-2-4" id="h3-2-4" class="i">+                v @ (Integer(_) | Float(_) | Null) =&gt; v,
+</a><a href="#h3-2-5" id="h3-2-5" class="i">+                expr =&gt; return errinput!(&quot;can&#39;t take the identity of {expr}&quot;),
+</a><a href="#h3-2-6" id="h3-2-6" class="i">+            },
+</a>             Self::Modulo(lhs, rhs) =&gt; match (lhs.evaluate(row)?, rhs.evaluate(row)?) {
+<a href="#h3-2-8" id="h3-2-8" class="d">-                // This uses remainder semantics, like Postgres.
+</a><a href="#h3-2-9" id="h3-2-9" class="i">+                // Uses remainder semantics, like Postgres.
+</a>                 (Integer(_), Integer(0)) =&gt; return errinput!(&quot;can&#39;t divide by zero&quot;),
+                 (Integer(lhs), Integer(rhs)) =&gt; Integer(lhs % rhs),
+                 (Integer(lhs), Float(rhs)) =&gt; Float(lhs as f64 % rhs),
+<a href="#h3-2-13" id="h3-2-13" class="d">-                (Integer(_), Null) =&gt; Null,
+</a>                 (Float(lhs), Integer(rhs)) =&gt; Float(lhs % rhs as f64),
+                 (Float(lhs), Float(rhs)) =&gt; Float(lhs % rhs),
+<a href="#h3-2-16" id="h3-2-16" class="d">-                (Float(_), Null) =&gt; Null,
+</a><a href="#h3-2-17" id="h3-2-17" class="d">-                (Null, Float(_)) =&gt; Null,
+</a><a href="#h3-2-18" id="h3-2-18" class="d">-                (Null, Integer(_)) =&gt; Null,
+</a><a href="#h3-2-19" id="h3-2-19" class="d">-                (Null, Null) =&gt; Null,
+</a><a href="#h3-2-20" id="h3-2-20" class="i">+                (Integer(_) | Float(_) | Null, Null) =&gt; Null,
+</a><a href="#h3-2-21" id="h3-2-21" class="i">+                (Null, Integer(_) | Float(_)) =&gt; Null,
+</a>                 (lhs, rhs) =&gt; return errinput!(&quot;can&#39;t take modulo of {lhs} and {rhs}&quot;),
+             },
+             Self::Multiply(lhs, rhs) =&gt; match (lhs.evaluate(row)?, rhs.evaluate(row)?) {
+<a href="#h3-3" id="h3-3" class="h">@@ -187,13 +229,10 @@ impl Expression {
+</a>                     Integer(lhs.checked_mul(rhs).ok_or::&lt;Error&gt;(errinput!(&quot;integer overflow&quot;))?)
+                 }
+                 (Integer(lhs), Float(rhs)) =&gt; Float(lhs as f64 * rhs),
+<a href="#h3-3-3" id="h3-3-3" class="d">-                (Integer(_), Null) =&gt; Null,
+</a>                 (Float(lhs), Integer(rhs)) =&gt; Float(lhs * rhs as f64),
+                 (Float(lhs), Float(rhs)) =&gt; Float(lhs * rhs),
+<a href="#h3-3-6" id="h3-3-6" class="d">-                (Float(_), Null) =&gt; Null,
+</a><a href="#h3-3-7" id="h3-3-7" class="d">-                (Null, Float(_)) =&gt; Null,
+</a><a href="#h3-3-8" id="h3-3-8" class="d">-                (Null, Integer(_)) =&gt; Null,
+</a><a href="#h3-3-9" id="h3-3-9" class="d">-                (Null, Null) =&gt; Null,
+</a><a href="#h3-3-10" id="h3-3-10" class="i">+                (Null, Integer(_) | Float(_) | Null) =&gt; Null,
+</a><a href="#h3-3-11" id="h3-3-11" class="i">+                (Integer(_) | Float(_), Null) =&gt; Null,
+</a>                 (lhs, rhs) =&gt; return errinput!(&quot;can&#39;t multiply {lhs} and {rhs}&quot;),
+             },
+             Self::Negate(expr) =&gt; match expr.evaluate(row)? {
+<a href="#h3-4" id="h3-4" class="h">@@ -207,88 +246,37 @@ impl Expression {
+</a>                     Integer(lhs.checked_sub(rhs).ok_or::&lt;Error&gt;(errinput!(&quot;integer overflow&quot;))?)
+                 }
+                 (Integer(lhs), Float(rhs)) =&gt; Float(lhs as f64 - rhs),
+<a href="#h3-4-3" id="h3-4-3" class="d">-                (Integer(_), Null) =&gt; Null,
+</a>                 (Float(lhs), Integer(rhs)) =&gt; Float(lhs - rhs as f64),
+                 (Float(lhs), Float(rhs)) =&gt; Float(lhs - rhs),
+<a href="#h3-4-6" id="h3-4-6" class="d">-                (Float(_), Null) =&gt; Null,
+</a><a href="#h3-4-7" id="h3-4-7" class="d">-                (Null, Float(_)) =&gt; Null,
+</a><a href="#h3-4-8" id="h3-4-8" class="d">-                (Null, Integer(_)) =&gt; Null,
+</a><a href="#h3-4-9" id="h3-4-9" class="d">-                (Null, Null) =&gt; Null,
+</a><a href="#h3-4-10" id="h3-4-10" class="i">+                (Null, Integer(_) | Float(_) | Null) =&gt; Null,
+</a><a href="#h3-4-11" id="h3-4-11" class="i">+                (Integer(_) | Float(_), Null) =&gt; Null,
+</a>                 (lhs, rhs) =&gt; return errinput!(&quot;can&#39;t subtract {lhs} and {rhs}&quot;),
+             },
+ 
+<a href="#h3-4-15" id="h3-4-15" class="d">-            // String operations
+</a><a href="#h3-4-16" id="h3-4-16" class="i">+            // LIKE pattern matching, using _ and % as single- and
+</a><a href="#h3-4-17" id="h3-4-17" class="i">+            // multi-character wildcards. Can be escaped as __ and %%. Inputs
+</a><a href="#h3-4-18" id="h3-4-18" class="i">+            // must be strings. NULLs yield NULL.
+</a>             Self::Like(lhs, rhs) =&gt; match (lhs.evaluate(row)?, rhs.evaluate(row)?) {
+<a href="#h3-4-20" id="h3-4-20" class="d">-                (String(lhs), String(rhs)) =&gt; Boolean(
+</a><a href="#h3-4-21" id="h3-4-21" class="d">-                    Regex::new(&amp;format!(
+</a><a href="#h3-4-22" id="h3-4-22" class="i">+                (String(lhs), String(rhs)) =&gt; {
+</a><a href="#h3-4-23" id="h3-4-23" class="i">+                    let pattern = format!(
+</a>                         &quot;^{}$&quot;,
+                         regex::escape(&amp;rhs)
+                             .replace(&#39;%&#39;, &quot;.*&quot;)
+<a href="#h3-4-27" id="h3-4-27" class="d">-                            .replace(&quot;.*.*&quot;, &quot;%&quot;)
+</a>                             .replace(&#39;_&#39;, &quot;.&quot;)
+<a href="#h3-4-29" id="h3-4-29" class="d">-                            .replace(&quot;..&quot;, &quot;_&quot;)
+</a><a href="#h3-4-30" id="h3-4-30" class="d">-                    ))?
+</a><a href="#h3-4-31" id="h3-4-31" class="d">-                    .is_match(&amp;lhs),
+</a><a href="#h3-4-32" id="h3-4-32" class="d">-                ),
+</a><a href="#h3-4-33" id="h3-4-33" class="d">-                (String(_), Null) =&gt; Null,
+</a><a href="#h3-4-34" id="h3-4-34" class="d">-                (Null, String(_)) =&gt; Null,
+</a><a href="#h3-4-35" id="h3-4-35" class="i">+                            .replace(&quot;.*.*&quot;, &quot;%&quot;) // escaped %%
+</a><a href="#h3-4-36" id="h3-4-36" class="i">+                            .replace(&quot;..&quot;, &quot;_&quot;) // escaped __
+</a><a href="#h3-4-37" id="h3-4-37" class="i">+                    );
+</a><a href="#h3-4-38" id="h3-4-38" class="i">+                    Boolean(regex::Regex::new(&amp;pattern)?.is_match(&amp;lhs))
+</a><a href="#h3-4-39" id="h3-4-39" class="i">+                }
+</a><a href="#h3-4-40" id="h3-4-40" class="i">+                (String(_), Null) | (Null, String(_)) | (Null, Null) =&gt; Null,
+</a>                 (lhs, rhs) =&gt; return errinput!(&quot;can&#39;t LIKE {lhs} and {rhs}&quot;),
+             },
+         })
+     }
+ 
+<a href="#h3-4-46" id="h3-4-46" class="d">-    /// Walks the expression tree while calling a closure. Returns true as soon as the closure
+</a><a href="#h3-4-47" id="h3-4-47" class="d">-    /// returns true. This is the inverse of walk().
+</a><a href="#h3-4-48" id="h3-4-48" class="d">-    pub fn contains&lt;F: Fn(&amp;Expression) -&gt; bool&gt;(&amp;self, visitor: &amp;F) -&gt; bool {
+</a><a href="#h3-4-49" id="h3-4-49" class="d">-        !self.walk(&amp;|e| !visitor(e))
+</a><a href="#h3-4-50" id="h3-4-50" class="d">-    }
+</a><a href="#h3-4-51" id="h3-4-51" class="d">-
+</a><a href="#h3-4-52" id="h3-4-52" class="d">-    /// Replaces the expression with result of the closure. Helper function for transform().
+</a><a href="#h3-4-53" id="h3-4-53" class="d">-    fn replace_with&lt;F: Fn(Self) -&gt; Result&lt;Self&gt;&gt;(&amp;mut self, f: F) -&gt; Result&lt;()&gt; {
+</a><a href="#h3-4-54" id="h3-4-54" class="d">-        // Temporarily replace expression with a null value, in case closure panics. May consider
+</a><a href="#h3-4-55" id="h3-4-55" class="d">-        // replace_with crate if this hampers performance.
+</a><a href="#h3-4-56" id="h3-4-56" class="d">-        let expr = replace(self, Expression::Constant(Value::Null));
+</a><a href="#h3-4-57" id="h3-4-57" class="d">-        *self = f(expr)?;
+</a><a href="#h3-4-58" id="h3-4-58" class="d">-        Ok(())
+</a><a href="#h3-4-59" id="h3-4-59" class="d">-    }
+</a><a href="#h3-4-60" id="h3-4-60" class="d">-
+</a><a href="#h3-4-61" id="h3-4-61" class="d">-    /// Transforms the expression tree by applying a closure before and after descending.
+</a><a href="#h3-4-62" id="h3-4-62" class="d">-    pub fn transform&lt;B, A&gt;(mut self, before: &amp;B, after: &amp;A) -&gt; Result&lt;Self&gt;
+</a><a href="#h3-4-63" id="h3-4-63" class="d">-    where
+</a><a href="#h3-4-64" id="h3-4-64" class="d">-        B: Fn(Self) -&gt; Result&lt;Self&gt;,
+</a><a href="#h3-4-65" id="h3-4-65" class="d">-        A: Fn(Self) -&gt; Result&lt;Self&gt;,
+</a><a href="#h3-4-66" id="h3-4-66" class="d">-    {
+</a><a href="#h3-4-67" id="h3-4-67" class="d">-        self = before(self)?;
+</a><a href="#h3-4-68" id="h3-4-68" class="d">-        match &amp;mut self {
+</a><a href="#h3-4-69" id="h3-4-69" class="d">-            Self::Add(lhs, rhs)
+</a><a href="#h3-4-70" id="h3-4-70" class="d">-            | Self::And(lhs, rhs)
+</a><a href="#h3-4-71" id="h3-4-71" class="d">-            | Self::Divide(lhs, rhs)
+</a><a href="#h3-4-72" id="h3-4-72" class="d">-            | Self::Equal(lhs, rhs)
+</a><a href="#h3-4-73" id="h3-4-73" class="d">-            | Self::Exponentiate(lhs, rhs)
+</a><a href="#h3-4-74" id="h3-4-74" class="d">-            | Self::GreaterThan(lhs, rhs)
+</a><a href="#h3-4-75" id="h3-4-75" class="d">-            | Self::LessThan(lhs, rhs)
+</a><a href="#h3-4-76" id="h3-4-76" class="d">-            | Self::Like(lhs, rhs)
+</a><a href="#h3-4-77" id="h3-4-77" class="d">-            | Self::Modulo(lhs, rhs)
+</a><a href="#h3-4-78" id="h3-4-78" class="d">-            | Self::Multiply(lhs, rhs)
+</a><a href="#h3-4-79" id="h3-4-79" class="d">-            | Self::Or(lhs, rhs)
+</a><a href="#h3-4-80" id="h3-4-80" class="d">-            | Self::Subtract(lhs, rhs) =&gt; {
+</a><a href="#h3-4-81" id="h3-4-81" class="d">-                Self::replace_with(lhs, |e| e.transform(before, after))?;
+</a><a href="#h3-4-82" id="h3-4-82" class="d">-                Self::replace_with(rhs, |e| e.transform(before, after))?;
+</a><a href="#h3-4-83" id="h3-4-83" class="d">-            }
+</a><a href="#h3-4-84" id="h3-4-84" class="d">-
+</a><a href="#h3-4-85" id="h3-4-85" class="d">-            Self::Assert(expr)
+</a><a href="#h3-4-86" id="h3-4-86" class="d">-            | Self::Factorial(expr)
+</a><a href="#h3-4-87" id="h3-4-87" class="d">-            | Self::IsNull(expr)
+</a><a href="#h3-4-88" id="h3-4-88" class="d">-            | Self::Negate(expr)
+</a><a href="#h3-4-89" id="h3-4-89" class="d">-            | Self::Not(expr) =&gt; Self::replace_with(expr, |e| e.transform(before, after))?,
+</a><a href="#h3-4-90" id="h3-4-90" class="d">-
+</a><a href="#h3-4-91" id="h3-4-91" class="d">-            Self::Constant(_) | Self::Field(_, _) =&gt; {}
+</a><a href="#h3-4-92" id="h3-4-92" class="d">-        };
+</a><a href="#h3-4-93" id="h3-4-93" class="d">-        after(self)
+</a><a href="#h3-4-94" id="h3-4-94" class="d">-    }
+</a><a href="#h3-4-95" id="h3-4-95" class="d">-
+</a><a href="#h3-4-96" id="h3-4-96" class="d">-    /// Walks the expression tree, calling a closure for every node. Halts if closure returns false.
+</a><a href="#h3-4-97" id="h3-4-97" class="d">-    pub fn walk&lt;F: Fn(&amp;Expression) -&gt; bool&gt;(&amp;self, visitor: &amp;F) -&gt; bool {
+</a><a href="#h3-4-98" id="h3-4-98" class="i">+    /// Recursively walks the expression tree depth-first, calling the given
+</a><a href="#h3-4-99" id="h3-4-99" class="i">+    /// closure until it returns false. Returns true otherwise.
+</a><a href="#h3-4-100" id="h3-4-100" class="i">+    pub fn walk(&amp;self, visitor: &amp;impl Fn(&amp;Expression) -&gt; bool) -&gt; bool {
+</a>         visitor(self)
+             &amp;&amp; match self {
+                 Self::Add(lhs, rhs)
+<a href="#h3-5" id="h3-5" class="h">@@ -304,8 +292,8 @@ impl Expression {
+</a>                 | Self::Or(lhs, rhs)
+                 | Self::Subtract(lhs, rhs) =&gt; lhs.walk(visitor) &amp;&amp; rhs.walk(visitor),
+ 
+<a href="#h3-5-3" id="h3-5-3" class="d">-                Self::Assert(expr)
+</a><a href="#h3-5-4" id="h3-5-4" class="d">-                | Self::Factorial(expr)
+</a><a href="#h3-5-5" id="h3-5-5" class="i">+                Self::Factorial(expr)
+</a><a href="#h3-5-6" id="h3-5-6" class="i">+                | Self::Identity(expr)
+</a>                 | Self::IsNull(expr)
+                 | Self::Negate(expr)
+                 | Self::Not(expr) =&gt; expr.walk(visitor),
+<a href="#h3-6" id="h3-6" class="h">@@ -314,6 +302,55 @@ impl Expression {
+</a>             }
+     }
+ 
+<a href="#h3-6-3" id="h3-6-3" class="i">+    /// Recursively walks the expression tree depth-first, calling the given
+</a><a href="#h3-6-4" id="h3-6-4" class="i">+    /// closure until it returns true. Returns false otherwise. This is the
+</a><a href="#h3-6-5" id="h3-6-5" class="i">+    /// inverse of walk().
+</a><a href="#h3-6-6" id="h3-6-6" class="i">+    pub fn contains(&amp;self, visitor: &amp;impl Fn(&amp;Expression) -&gt; bool) -&gt; bool {
+</a><a href="#h3-6-7" id="h3-6-7" class="i">+        !self.walk(&amp;|e| !visitor(e))
+</a><a href="#h3-6-8" id="h3-6-8" class="i">+    }
+</a><a href="#h3-6-9" id="h3-6-9" class="i">+
+</a><a href="#h3-6-10" id="h3-6-10" class="i">+    /// Transforms the expression tree by recursively applying the given
+</a><a href="#h3-6-11" id="h3-6-11" class="i">+    /// closures depth-first to each node before/after descending.
+</a><a href="#h3-6-12" id="h3-6-12" class="i">+    pub fn transform&lt;B, A&gt;(mut self, before: &amp;B, after: &amp;A) -&gt; Result&lt;Self&gt;
+</a><a href="#h3-6-13" id="h3-6-13" class="i">+    where
+</a><a href="#h3-6-14" id="h3-6-14" class="i">+        B: Fn(Self) -&gt; Result&lt;Self&gt;,
+</a><a href="#h3-6-15" id="h3-6-15" class="i">+        A: Fn(Self) -&gt; Result&lt;Self&gt;,
+</a><a href="#h3-6-16" id="h3-6-16" class="i">+    {
+</a><a href="#h3-6-17" id="h3-6-17" class="i">+        // Helper for transforming boxed expressions.
+</a><a href="#h3-6-18" id="h3-6-18" class="i">+        let transform = |mut expr: Box&lt;Expression&gt;| -&gt; Result&lt;Box&lt;Expression&gt;&gt; {
+</a><a href="#h3-6-19" id="h3-6-19" class="i">+            *expr = expr.transform(before, after)?;
+</a><a href="#h3-6-20" id="h3-6-20" class="i">+            Ok(expr)
+</a><a href="#h3-6-21" id="h3-6-21" class="i">+        };
+</a><a href="#h3-6-22" id="h3-6-22" class="i">+
+</a><a href="#h3-6-23" id="h3-6-23" class="i">+        self = before(self)?;
+</a><a href="#h3-6-24" id="h3-6-24" class="i">+        self = match self {
+</a><a href="#h3-6-25" id="h3-6-25" class="i">+            Self::Add(lhs, rhs) =&gt; Self::Add(transform(lhs)?, transform(rhs)?),
+</a><a href="#h3-6-26" id="h3-6-26" class="i">+            Self::And(lhs, rhs) =&gt; Self::And(transform(lhs)?, transform(rhs)?),
+</a><a href="#h3-6-27" id="h3-6-27" class="i">+            Self::Divide(lhs, rhs) =&gt; Self::Divide(transform(lhs)?, transform(rhs)?),
+</a><a href="#h3-6-28" id="h3-6-28" class="i">+            Self::Equal(lhs, rhs) =&gt; Self::Equal(transform(lhs)?, transform(rhs)?),
+</a><a href="#h3-6-29" id="h3-6-29" class="i">+            Self::Exponentiate(lhs, rhs) =&gt; Self::Exponentiate(transform(lhs)?, transform(rhs)?),
+</a><a href="#h3-6-30" id="h3-6-30" class="i">+            Self::GreaterThan(lhs, rhs) =&gt; Self::GreaterThan(transform(lhs)?, transform(rhs)?),
+</a><a href="#h3-6-31" id="h3-6-31" class="i">+            Self::LessThan(lhs, rhs) =&gt; Self::LessThan(transform(lhs)?, transform(rhs)?),
+</a><a href="#h3-6-32" id="h3-6-32" class="i">+            Self::Like(lhs, rhs) =&gt; Self::Like(transform(lhs)?, transform(rhs)?),
+</a><a href="#h3-6-33" id="h3-6-33" class="i">+            Self::Modulo(lhs, rhs) =&gt; Self::Modulo(transform(lhs)?, transform(rhs)?),
+</a><a href="#h3-6-34" id="h3-6-34" class="i">+            Self::Multiply(lhs, rhs) =&gt; Self::Multiply(transform(lhs)?, transform(rhs)?),
+</a><a href="#h3-6-35" id="h3-6-35" class="i">+            Self::Or(lhs, rhs) =&gt; Self::Or(transform(lhs)?, transform(rhs)?),
+</a><a href="#h3-6-36" id="h3-6-36" class="i">+            Self::Subtract(lhs, rhs) =&gt; Self::Subtract(transform(lhs)?, transform(rhs)?),
+</a><a href="#h3-6-37" id="h3-6-37" class="i">+
+</a><a href="#h3-6-38" id="h3-6-38" class="i">+            Self::Factorial(expr) =&gt; Self::Factorial(transform(expr)?),
+</a><a href="#h3-6-39" id="h3-6-39" class="i">+            Self::Identity(expr) =&gt; Self::Identity(transform(expr)?),
+</a><a href="#h3-6-40" id="h3-6-40" class="i">+            Self::IsNull(expr) =&gt; Self::IsNull(transform(expr)?),
+</a><a href="#h3-6-41" id="h3-6-41" class="i">+            Self::Negate(expr) =&gt; Self::Negate(transform(expr)?),
+</a><a href="#h3-6-42" id="h3-6-42" class="i">+            Self::Not(expr) =&gt; Self::Not(transform(expr)?),
+</a><a href="#h3-6-43" id="h3-6-43" class="i">+
+</a><a href="#h3-6-44" id="h3-6-44" class="i">+            expr @ (Self::Constant(_) | Self::Field(_, _)) =&gt; expr,
+</a><a href="#h3-6-45" id="h3-6-45" class="i">+        };
+</a><a href="#h3-6-46" id="h3-6-46" class="i">+        self = after(self)?;
+</a><a href="#h3-6-47" id="h3-6-47" class="i">+        Ok(self)
+</a><a href="#h3-6-48" id="h3-6-48" class="i">+    }
+</a><a href="#h3-6-49" id="h3-6-49" class="i">+
+</a><a href="#h3-6-50" id="h3-6-50" class="i">+    // TODO: clean up the transformations below when the optimizer is cleaned up.
+</a><a href="#h3-6-51" id="h3-6-51" class="i">+
+</a>     /// Converts the expression into its negation normal form. This pushes NOT operators into the
+     /// tree using De Morgan&#39;s laws, such that they never occur before other logical operators.
+     pub fn into_nnf(self) -&gt; Self {
+<a href="#h3-7" id="h3-7" class="h">@@ -469,11 +506,7 @@ impl Expression {
+</a>     }
+ 
+     // Creates an expression from a list of field lookup values.
+<a href="#h3-7-3" id="h3-7-3" class="d">-    pub fn from_lookup(
+</a><a href="#h3-7-4" id="h3-7-4" class="d">-        field: usize,
+</a><a href="#h3-7-5" id="h3-7-5" class="d">-        label: Option&lt;(Option&lt;String&gt;, String)&gt;,
+</a><a href="#h3-7-6" id="h3-7-6" class="d">-        values: Vec&lt;Value&gt;,
+</a><a href="#h3-7-7" id="h3-7-7" class="d">-    ) -&gt; Self {
+</a><a href="#h3-7-8" id="h3-7-8" class="i">+    pub fn from_lookup(field: usize, label: Option&lt;Label&gt;, values: Vec&lt;Value&gt;) -&gt; Self {
+</a>         if values.is_empty() {
+             return Expression::Equal(
+                 Expression::Field(field, label).into(),
+<a href="#h3-8" id="h3-8" class="h">@@ -494,36 +527,3 @@ impl Expression {
+</a>         .unwrap()
+     }
+ }
+<a href="#h3-8-3" id="h3-8-3" class="d">-
+</a><a href="#h3-8-4" id="h3-8-4" class="d">-impl Display for Expression {
+</a><a href="#h3-8-5" id="h3-8-5" class="d">-    fn fmt(&amp;self, f: &amp;mut fmt::Formatter&lt;&#39;_&gt;) -&gt; fmt::Result {
+</a><a href="#h3-8-6" id="h3-8-6" class="d">-        let s = match self {
+</a><a href="#h3-8-7" id="h3-8-7" class="d">-            Self::Constant(v) =&gt; v.to_string(),
+</a><a href="#h3-8-8" id="h3-8-8" class="d">-            Self::Field(i, None) =&gt; format!(&quot;#{}&quot;, i),
+</a><a href="#h3-8-9" id="h3-8-9" class="d">-            Self::Field(_, Some((None, name))) =&gt; name.to_string(),
+</a><a href="#h3-8-10" id="h3-8-10" class="d">-            Self::Field(_, Some((Some(table), name))) =&gt; format!(&quot;{}.{}&quot;, table, name),
+</a><a href="#h3-8-11" id="h3-8-11" class="d">-
+</a><a href="#h3-8-12" id="h3-8-12" class="d">-            Self::And(lhs, rhs) =&gt; format!(&quot;{} AND {}&quot;, lhs, rhs),
+</a><a href="#h3-8-13" id="h3-8-13" class="d">-            Self::Or(lhs, rhs) =&gt; format!(&quot;{} OR {}&quot;, lhs, rhs),
+</a><a href="#h3-8-14" id="h3-8-14" class="d">-            Self::Not(expr) =&gt; format!(&quot;NOT {}&quot;, expr),
+</a><a href="#h3-8-15" id="h3-8-15" class="d">-
+</a><a href="#h3-8-16" id="h3-8-16" class="d">-            Self::Equal(lhs, rhs) =&gt; format!(&quot;{} = {}&quot;, lhs, rhs),
+</a><a href="#h3-8-17" id="h3-8-17" class="d">-            Self::GreaterThan(lhs, rhs) =&gt; format!(&quot;{} &gt; {}&quot;, lhs, rhs),
+</a><a href="#h3-8-18" id="h3-8-18" class="d">-            Self::LessThan(lhs, rhs) =&gt; format!(&quot;{} &lt; {}&quot;, lhs, rhs),
+</a><a href="#h3-8-19" id="h3-8-19" class="d">-            Self::IsNull(expr) =&gt; format!(&quot;{} IS NULL&quot;, expr),
+</a><a href="#h3-8-20" id="h3-8-20" class="d">-
+</a><a href="#h3-8-21" id="h3-8-21" class="d">-            Self::Add(lhs, rhs) =&gt; format!(&quot;{} + {}&quot;, lhs, rhs),
+</a><a href="#h3-8-22" id="h3-8-22" class="d">-            Self::Assert(expr) =&gt; expr.to_string(),
+</a><a href="#h3-8-23" id="h3-8-23" class="d">-            Self::Divide(lhs, rhs) =&gt; format!(&quot;{} / {}&quot;, lhs, rhs),
+</a><a href="#h3-8-24" id="h3-8-24" class="d">-            Self::Exponentiate(lhs, rhs) =&gt; format!(&quot;{} ^ {}&quot;, lhs, rhs),
+</a><a href="#h3-8-25" id="h3-8-25" class="d">-            Self::Factorial(expr) =&gt; format!(&quot;!{}&quot;, expr),
+</a><a href="#h3-8-26" id="h3-8-26" class="d">-            Self::Modulo(lhs, rhs) =&gt; format!(&quot;{} % {}&quot;, lhs, rhs),
+</a><a href="#h3-8-27" id="h3-8-27" class="d">-            Self::Multiply(lhs, rhs) =&gt; format!(&quot;{} * {}&quot;, lhs, rhs),
+</a><a href="#h3-8-28" id="h3-8-28" class="d">-            Self::Negate(expr) =&gt; format!(&quot;-{}&quot;, expr),
+</a><a href="#h3-8-29" id="h3-8-29" class="d">-            Self::Subtract(lhs, rhs) =&gt; format!(&quot;{} - {}&quot;, lhs, rhs),
+</a><a href="#h3-8-30" id="h3-8-30" class="d">-
+</a><a href="#h3-8-31" id="h3-8-31" class="d">-            Self::Like(lhs, rhs) =&gt; format!(&quot;{} LIKE {}&quot;, lhs, rhs),
+</a><a href="#h3-8-32" id="h3-8-32" class="d">-        };
+</a><a href="#h3-8-33" id="h3-8-33" class="d">-        write!(f, &quot;{}&quot;, s)
+</a><a href="#h3-8-34" id="h3-8-34" class="d">-    }
+</a><a href="#h3-8-35" id="h3-8-35" class="d">-}
+</a><b>diff --git a/<a id="h4" href="../file/src/sql/types/mod.rs.html">src/sql/types/mod.rs</a> b/<a href="../file/src/sql/types/mod.rs.html">src/sql/types/mod.rs</a></b>
+<a href="#h4-0" id="h4-0" class="h">@@ -4,4 +4,4 @@ mod value;
+</a> 
+ pub use expression::Expression;
+ pub use schema::{Column, Table};
+<a href="#h4-0-3" id="h4-0-3" class="d">-pub use value::{DataType, Row, Rows, Value};
+</a><a href="#h4-0-4" id="h4-0-4" class="i">+pub use value::{DataType, Label, Row, Rows, Value};
+</a><b>diff --git a/<a id="h5" href="../file/src/sql/types/schema.rs.html">src/sql/types/schema.rs</a> b/<a href="../file/src/sql/types/schema.rs.html">src/sql/types/schema.rs</a></b>
+<a href="#h5-0" id="h5-0" class="h">@@ -1,4 +1,4 @@
+</a><a href="#h5-0-0" id="h5-0-0" class="d">-use super::value::{DataType, Value};
+</a><a href="#h5-0-1" id="h5-0-1" class="i">+use super::{DataType, Value};
+</a> use crate::encoding;
+ use crate::errinput;
+ use crate::error::Result;
+<b>diff --git a/<a id="h6" href="../file/src/sql/types/value.rs.html">src/sql/types/value.rs</a> b/<a href="../file/src/sql/types/value.rs.html">src/sql/types/value.rs</a></b>
+<a href="#h6-0" id="h6-0" class="h">@@ -221,3 +221,8 @@ pub type Row = Vec&lt;Value&gt;;
+</a> ///
+ /// TODO: try to avoid boxing here.
+ pub type Rows = Box&lt;dyn Iterator&lt;Item = Result&lt;Row&gt;&gt;&gt;;
+<a href="#h6-0-3" id="h6-0-3" class="i">+
+</a><a href="#h6-0-4" id="h6-0-4" class="i">+/// A column label, consisting of an option table name and a column name.
+</a><a href="#h6-0-5" id="h6-0-5" class="i">+///
+</a><a href="#h6-0-6" id="h6-0-6" class="i">+/// TODO: use this more broadly.
+</a><a href="#h6-0-7" id="h6-0-7" class="i">+pub type Label = (Option&lt;String&gt;, String);
+</a><b>diff --git a/<a id="h7" href="../file/tests/sql/expression.rs.html">tests/sql/expression.rs</a> b/<a href="../file/tests/sql/expression.rs.html">tests/sql/expression.rs</a></b>
+<a href="#h7-0" id="h7-0" class="h">@@ -318,8 +318,8 @@ test_expr! {
+</a>     op_assert_infinity: &quot;+INFINITY&quot; =&gt; Ok(Float(std::f64::INFINITY)),
+     op_assert_nan: &quot;+NAN&quot; =&gt; Ok(Float(std::f64::NAN)),
+     op_assert_multi: &quot;+++1&quot; =&gt; Ok(Integer(1)),
+<a href="#h7-0-3" id="h7-0-3" class="d">-    op_assert_error_bool: &quot;+TRUE&quot; =&gt; Err(Error::InvalidInput(&quot;can&#39;t take the positive of TRUE&quot;.into())),
+</a><a href="#h7-0-4" id="h7-0-4" class="d">-    op_assert_error_string: &quot;+&#39;abc&#39;&quot; =&gt; Err(Error::InvalidInput(&quot;can&#39;t take the positive of abc&quot;.into())),
+</a><a href="#h7-0-5" id="h7-0-5" class="i">+    op_assert_error_bool: &quot;+TRUE&quot; =&gt; Err(Error::InvalidInput(&quot;can&#39;t take the identity of TRUE&quot;.into())),
+</a><a href="#h7-0-6" id="h7-0-6" class="i">+    op_assert_error_string: &quot;+&#39;abc&#39;&quot; =&gt; Err(Error::InvalidInput(&quot;can&#39;t take the identity of abc&quot;.into())),
+</a> 
+     op_divide_float_float: &quot;4.16 / 3.2&quot; =&gt; Ok(Float(1.3)),
+     op_divide_float_float_zero: &quot;4.16 / 0.0&quot; =&gt; Ok(Float(std::f64::INFINITY)),
+</pre>
+</div>
+</body>
+</html>

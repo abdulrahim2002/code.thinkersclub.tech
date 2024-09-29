@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>sql: move `Catalog` trait to engine module - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/1c7aeac6c7cda3da9b26fb5fee937c876e49d614.html">1c7aeac6c7cda3da9b26fb5fee937c876e49d614</a>
+<b>parent</b> <a href="../commit/fc5e3d812325f22d77e0ab0624e69491dabc7c88.html">fc5e3d812325f22d77e0ab0624e69491dabc7c88</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Mon, 17 Jun 2024 14:01:45 +0200
+
+sql: move `Catalog` trait to engine module
+
+Also renames `scan_tables()` to `list_tables()` and returns a vec.
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/server.rs</a></td><td> | </td><td class="num">8</td><td><span class="i">+++++</span><span class="d">---</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/sql/engine/engine.rs</a></td><td> | </td><td class="num">40</td><td><span class="i">+++++++++++++++++++++++++++++++++++++++</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/sql/engine/local.rs</a></td><td> | </td><td class="num">19</td><td><span class="i">++++++++</span><span class="d">-----------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">src/sql/engine/mod.rs</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h4">src/sql/engine/raft.rs</a></td><td> | </td><td class="num">14</td><td><span class="i">+++++</span><span class="d">---------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h5">src/sql/plan/optimizer.rs</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h6">src/sql/plan/plan.rs</a></td><td> | </td><td class="num">4</td><td><span class="i">++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h7">src/sql/plan/planner.rs</a></td><td> | </td><td class="num">3</td><td><span class="i">++</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h8">src/sql/types/schema.rs</a></td><td> | </td><td class="num">39</td><td><span class="i"></span><span class="d">---------------------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h9">tests/sql/mutation.rs</a></td><td> | </td><td class="num">5</td><td><span class="i">++</span><span class="d">---</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h10">tests/sql/schema.rs</a></td><td> | </td><td class="num">5</td><td><span class="i">++</span><span class="d">---</span></td></tr>
+</table></pre><pre>11 files changed, 67 insertions(+), 74 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/server.rs.html">src/server.rs</a> b/<a href="../file/src/server.rs.html">src/server.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -2,8 +2,8 @@ use crate::encoding::{self, Value as _};
+</a> use crate::error::{Error, Result};
+ use crate::raft;
+ use crate::sql;
+<a href="#h0-0-3" id="h0-0-3" class="d">-use crate::sql::engine::{Engine as _, StatementResult};
+</a><a href="#h0-0-4" id="h0-0-4" class="d">-use crate::sql::types::schema::{Catalog as _, Table};
+</a><a href="#h0-0-5" id="h0-0-5" class="i">+use crate::sql::engine::{Catalog as _, Engine as _, StatementResult};
+</a><a href="#h0-0-6" id="h0-0-6" class="i">+use crate::sql::types::schema::Table;
+</a> use crate::sql::types::Row;
+ use crate::storage;
+ 
+<a href="#h0-1" id="h0-1" class="h">@@ -293,7 +293,9 @@ impl Server {
+</a>                     .with_txn_read_only(|txn| txn.must_read_table(&amp;table))
+                     .map(Response::GetTable),
+                 Request::ListTables =&gt; session
+<a href="#h0-1-3" id="h0-1-3" class="d">-                    .with_txn_read_only(|txn| Ok(txn.scan_tables()?.map(|t| t.name).collect()))
+</a><a href="#h0-1-4" id="h0-1-4" class="i">+                    .with_txn_read_only(|txn| {
+</a><a href="#h0-1-5" id="h0-1-5" class="i">+                        Ok(txn.list_tables()?.into_iter().map(|t| t.name).collect())
+</a><a href="#h0-1-6" id="h0-1-6" class="i">+                    })
+</a>                     .map(Response::ListTables),
+                 Request::Status =&gt; session
+                     .status()
+<b>diff --git a/<a id="h1" href="../file/src/sql/engine/engine.rs.html">src/sql/engine/engine.rs</a> b/<a href="../file/src/sql/engine/engine.rs.html">src/sql/engine/engine.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -1,8 +1,9 @@
+</a> #![allow(clippy::module_inception)]
+ 
+ use super::Session;
+<a href="#h1-0-3" id="h1-0-3" class="i">+use crate::errinput;
+</a> use crate::error::Result;
+<a href="#h1-0-5" id="h1-0-5" class="d">-use crate::sql::types::schema::Catalog;
+</a><a href="#h1-0-6" id="h1-0-6" class="i">+use crate::sql::types::schema::Table;
+</a> use crate::sql::types::{Expression, Row, Value};
+ 
+ use std::collections::HashSet;
+<a href="#h1-1" id="h1-1" class="h">@@ -64,3 +65,40 @@ pub type Scan = Box&lt;dyn DoubleEndedIterator&lt;Item = Result&lt;Row&gt;&gt; + Send&gt;;
+</a> 
+ /// An index scan iterator
+ pub type IndexScan = Box&lt;dyn DoubleEndedIterator&lt;Item = Result&lt;(Value, HashSet&lt;Value&gt;)&gt;&gt; + Send&gt;;
+<a href="#h1-1-3" id="h1-1-3" class="i">+
+</a><a href="#h1-1-4" id="h1-1-4" class="i">+/// The catalog stores schema information
+</a><a href="#h1-1-5" id="h1-1-5" class="i">+pub trait Catalog {
+</a><a href="#h1-1-6" id="h1-1-6" class="i">+    /// Creates a new table
+</a><a href="#h1-1-7" id="h1-1-7" class="i">+    fn create_table(&amp;mut self, table: Table) -&gt; Result&lt;()&gt;;
+</a><a href="#h1-1-8" id="h1-1-8" class="i">+    /// Deletes an existing table, or errors if it does not exist
+</a><a href="#h1-1-9" id="h1-1-9" class="i">+    fn delete_table(&amp;mut self, table: &amp;str) -&gt; Result&lt;()&gt;;
+</a><a href="#h1-1-10" id="h1-1-10" class="i">+    /// Reads a table, if it exists
+</a><a href="#h1-1-11" id="h1-1-11" class="i">+    fn read_table(&amp;self, table: &amp;str) -&gt; Result&lt;Option&lt;Table&gt;&gt;;
+</a><a href="#h1-1-12" id="h1-1-12" class="i">+    /// Lists tables.
+</a><a href="#h1-1-13" id="h1-1-13" class="i">+    fn list_tables(&amp;self) -&gt; Result&lt;Vec&lt;Table&gt;&gt;;
+</a><a href="#h1-1-14" id="h1-1-14" class="i">+
+</a><a href="#h1-1-15" id="h1-1-15" class="i">+    /// Reads a table, and errors if it does not exist
+</a><a href="#h1-1-16" id="h1-1-16" class="i">+    fn must_read_table(&amp;self, table: &amp;str) -&gt; Result&lt;Table&gt; {
+</a><a href="#h1-1-17" id="h1-1-17" class="i">+        self.read_table(table)?.ok_or(errinput!(&quot;table {table} does not exist&quot;))
+</a><a href="#h1-1-18" id="h1-1-18" class="i">+    }
+</a><a href="#h1-1-19" id="h1-1-19" class="i">+
+</a><a href="#h1-1-20" id="h1-1-20" class="i">+    /// Returns all references to a table, as table,column pairs.
+</a><a href="#h1-1-21" id="h1-1-21" class="i">+    fn table_references(&amp;self, table: &amp;str, with_self: bool) -&gt; Result&lt;Vec&lt;(String, Vec&lt;String&gt;)&gt;&gt; {
+</a><a href="#h1-1-22" id="h1-1-22" class="i">+        Ok(self
+</a><a href="#h1-1-23" id="h1-1-23" class="i">+            .list_tables()?
+</a><a href="#h1-1-24" id="h1-1-24" class="i">+            .into_iter()
+</a><a href="#h1-1-25" id="h1-1-25" class="i">+            .filter(|t| with_self || t.name != table)
+</a><a href="#h1-1-26" id="h1-1-26" class="i">+            .map(|t| {
+</a><a href="#h1-1-27" id="h1-1-27" class="i">+                (
+</a><a href="#h1-1-28" id="h1-1-28" class="i">+                    t.name,
+</a><a href="#h1-1-29" id="h1-1-29" class="i">+                    t.columns
+</a><a href="#h1-1-30" id="h1-1-30" class="i">+                        .iter()
+</a><a href="#h1-1-31" id="h1-1-31" class="i">+                        .filter(|c| c.references.as_deref() == Some(table))
+</a><a href="#h1-1-32" id="h1-1-32" class="i">+                        .map(|c| c.name.clone())
+</a><a href="#h1-1-33" id="h1-1-33" class="i">+                        .collect::&lt;Vec&lt;_&gt;&gt;(),
+</a><a href="#h1-1-34" id="h1-1-34" class="i">+                )
+</a><a href="#h1-1-35" id="h1-1-35" class="i">+            })
+</a><a href="#h1-1-36" id="h1-1-36" class="i">+            .filter(|(_, cs)| !cs.is_empty())
+</a><a href="#h1-1-37" id="h1-1-37" class="i">+            .collect())
+</a><a href="#h1-1-38" id="h1-1-38" class="i">+    }
+</a><a href="#h1-1-39" id="h1-1-39" class="i">+}
+</a><b>diff --git a/<a id="h2" href="../file/src/sql/engine/local.rs.html">src/sql/engine/local.rs</a> b/<a href="../file/src/sql/engine/local.rs.html">src/sql/engine/local.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -1,6 +1,6 @@
+</a><a href="#h2-0-0" id="h2-0-0" class="d">-use super::super::types::schema::{Catalog, Table, Tables};
+</a><a href="#h2-0-1" id="h2-0-1" class="i">+use super::super::types::schema::Table;
+</a> use super::super::types::{Expression, Row, Value};
+<a href="#h2-0-3" id="h2-0-3" class="d">-use super::Transaction as _;
+</a><a href="#h2-0-4" id="h2-0-4" class="i">+use super::{Catalog, Transaction as _};
+</a> use crate::encoding::{self, Key as _, Value as _};
+ use crate::error::Result;
+ use crate::storage;
+<a href="#h2-1" id="h2-1" class="h">@@ -297,15 +297,12 @@ impl&lt;E: storage::Engine&gt; Catalog for Transaction&lt;E&gt; {
+</a>         self.txn.get(&amp;Key::Table(table.into()).encode())?.map(|v| Table::decode(&amp;v)).transpose()
+     }
+ 
+<a href="#h2-1-3" id="h2-1-3" class="d">-    fn scan_tables(&amp;self) -&gt; Result&lt;Tables&gt; {
+</a><a href="#h2-1-4" id="h2-1-4" class="d">-        Ok(Box::new(
+</a><a href="#h2-1-5" id="h2-1-5" class="d">-            self.txn
+</a><a href="#h2-1-6" id="h2-1-6" class="d">-                .scan_prefix(&amp;KeyPrefix::Table.encode())?
+</a><a href="#h2-1-7" id="h2-1-7" class="d">-                .iter()
+</a><a href="#h2-1-8" id="h2-1-8" class="d">-                .map(|r| r.and_then(|(_, v)| Table::decode(&amp;v)))
+</a><a href="#h2-1-9" id="h2-1-9" class="d">-                .collect::&lt;Result&lt;Vec&lt;_&gt;&gt;&gt;()?
+</a><a href="#h2-1-10" id="h2-1-10" class="d">-                .into_iter(),
+</a><a href="#h2-1-11" id="h2-1-11" class="d">-        ))
+</a><a href="#h2-1-12" id="h2-1-12" class="i">+    fn list_tables(&amp;self) -&gt; Result&lt;Vec&lt;Table&gt;&gt; {
+</a><a href="#h2-1-13" id="h2-1-13" class="i">+        self.txn
+</a><a href="#h2-1-14" id="h2-1-14" class="i">+            .scan_prefix(&amp;KeyPrefix::Table.encode())?
+</a><a href="#h2-1-15" id="h2-1-15" class="i">+            .iter()
+</a><a href="#h2-1-16" id="h2-1-16" class="i">+            .map(|r| r.and_then(|(_, v)| Table::decode(&amp;v)))
+</a><a href="#h2-1-17" id="h2-1-17" class="i">+            .collect()
+</a>     }
+ }
+ 
+<b>diff --git a/<a id="h3" href="../file/src/sql/engine/mod.rs.html">src/sql/engine/mod.rs</a> b/<a href="../file/src/sql/engine/mod.rs.html">src/sql/engine/mod.rs</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -3,7 +3,7 @@ mod local;
+</a> mod raft;
+ mod session;
+ 
+<a href="#h3-0-3" id="h3-0-3" class="d">-pub use engine::{Engine, IndexScan, Scan, Transaction};
+</a><a href="#h3-0-4" id="h3-0-4" class="i">+pub use engine::{Catalog, Engine, IndexScan, Scan, Transaction};
+</a> pub use local::Local;
+ pub use raft::{Raft, Status};
+ pub use session::{Session, StatementResult};
+<b>diff --git a/<a id="h4" href="../file/src/sql/engine/raft.rs.html">src/sql/engine/raft.rs</a> b/<a href="../file/src/sql/engine/raft.rs.html">src/sql/engine/raft.rs</a></b>
+<a href="#h4-0" id="h4-0" class="h">@@ -1,6 +1,6 @@
+</a><a href="#h4-0-0" id="h4-0-0" class="d">-use super::super::types::schema::{Catalog, Table, Tables};
+</a><a href="#h4-0-1" id="h4-0-1" class="i">+use super::super::types::schema::Table;
+</a> use super::super::types::{Expression, Row, Value};
+<a href="#h4-0-3" id="h4-0-3" class="d">-use super::{Engine as _, IndexScan, Scan, Transaction as _};
+</a><a href="#h4-0-4" id="h4-0-4" class="i">+use super::{Catalog, Engine as _, IndexScan, Scan, Transaction as _};
+</a> use crate::encoding::{self, bincode, Value as _};
+ use crate::errdata;
+ use crate::error::Result;
+<a href="#h4-1" id="h4-1" class="h">@@ -282,10 +282,8 @@ impl Catalog for Transaction {
+</a>         self.client.query(Query::ReadTable { txn: self.state.clone(), table: table.to_string() })
+     }
+ 
+<a href="#h4-1-3" id="h4-1-3" class="d">-    fn scan_tables(&amp;self) -&gt; Result&lt;Tables&gt; {
+</a><a href="#h4-1-4" id="h4-1-4" class="d">-        Ok(Box::new(
+</a><a href="#h4-1-5" id="h4-1-5" class="d">-            self.client.query::&lt;Vec&lt;_&gt;&gt;(Query::ScanTables { txn: self.state.clone() })?.into_iter(),
+</a><a href="#h4-1-6" id="h4-1-6" class="d">-        ))
+</a><a href="#h4-1-7" id="h4-1-7" class="i">+    fn list_tables(&amp;self) -&gt; Result&lt;Vec&lt;Table&gt;&gt; {
+</a><a href="#h4-1-8" id="h4-1-8" class="i">+        self.client.query(Query::ScanTables { txn: self.state.clone() })
+</a>     }
+ }
+ 
+<a href="#h4-2" id="h4-2" class="h">@@ -388,9 +386,7 @@ impl&lt;E: storage::Engine&gt; raft::State for State&lt;E&gt; {
+</a>             Query::ReadTable { txn, table } =&gt; {
+                 self.engine.resume(txn)?.read_table(&amp;table)?.encode()
+             }
+<a href="#h4-2-3" id="h4-2-3" class="d">-            Query::ScanTables { txn } =&gt; {
+</a><a href="#h4-2-4" id="h4-2-4" class="d">-                self.engine.resume(txn)?.scan_tables()?.collect::&lt;Vec&lt;_&gt;&gt;().encode()
+</a><a href="#h4-2-5" id="h4-2-5" class="d">-            }
+</a><a href="#h4-2-6" id="h4-2-6" class="i">+            Query::ScanTables { txn } =&gt; self.engine.resume(txn)?.list_tables()?.encode(),
+</a>         };
+         Ok(response)
+     }
+<b>diff --git a/<a id="h5" href="../file/src/sql/plan/optimizer.rs.html">src/sql/plan/optimizer.rs</a> b/<a href="../file/src/sql/plan/optimizer.rs.html">src/sql/plan/optimizer.rs</a></b>
+<a href="#h5-0" id="h5-0" class="h">@@ -1,7 +1,7 @@
+</a><a href="#h5-0-0" id="h5-0-0" class="d">-use super::super::types::schema::Catalog;
+</a> use super::super::types::{Expression, Value};
+ use super::plan::Node;
+ use crate::error::Result;
+<a href="#h5-0-4" id="h5-0-4" class="i">+use crate::sql::engine::Catalog;
+</a> 
+ use std::mem::replace;
+ 
+<b>diff --git a/<a id="h6" href="../file/src/sql/plan/plan.rs.html">src/sql/plan/plan.rs</a> b/<a href="../file/src/sql/plan/plan.rs.html">src/sql/plan/plan.rs</a></b>
+<a href="#h6-0" id="h6-0" class="h">@@ -3,10 +3,10 @@
+</a> use super::optimizer::{self, Optimizer as _};
+ use super::planner::Planner;
+ use crate::error::Result;
+<a href="#h6-0-3" id="h6-0-3" class="d">-use crate::sql::engine::Transaction;
+</a><a href="#h6-0-4" id="h6-0-4" class="i">+use crate::sql::engine::{Catalog, Transaction};
+</a> use crate::sql::execution::{self, ExecutionResult};
+ use crate::sql::parser::ast;
+<a href="#h6-0-7" id="h6-0-7" class="d">-use crate::sql::types::schema::{Catalog, Table};
+</a><a href="#h6-0-8" id="h6-0-8" class="i">+use crate::sql::types::schema::Table;
+</a> use crate::sql::types::{Expression, Value};
+ 
+ use serde::{Deserialize, Serialize};
+<b>diff --git a/<a id="h7" href="../file/src/sql/plan/planner.rs.html">src/sql/plan/planner.rs</a> b/<a href="../file/src/sql/plan/planner.rs.html">src/sql/plan/planner.rs</a></b>
+<a href="#h7-0" id="h7-0" class="h">@@ -1,9 +1,10 @@
+</a> use super::super::parser::ast;
+<a href="#h7-0-1" id="h7-0-1" class="d">-use super::super::types::schema::{Catalog, Column, Table};
+</a><a href="#h7-0-2" id="h7-0-2" class="i">+use super::super::types::schema::{Column, Table};
+</a> use super::super::types::{Expression, Value};
+ use super::{plan::Node, plan::Plan, Aggregate, Direction};
+ use crate::errinput;
+ use crate::error::Result;
+<a href="#h7-0-7" id="h7-0-7" class="i">+use crate::sql::engine::Catalog;
+</a> 
+ use std::collections::{HashMap, HashSet};
+ use std::mem::replace;
+<b>diff --git a/<a id="h8" href="../file/src/sql/types/schema.rs.html">src/sql/types/schema.rs</a> b/<a href="../file/src/sql/types/schema.rs.html">src/sql/types/schema.rs</a></b>
+<a href="#h8-0" id="h8-0" class="h">@@ -8,45 +8,6 @@ use crate::sql::parser::format_ident;
+</a> use serde::{Deserialize, Serialize};
+ use std::fmt::{self, Display};
+ 
+<a href="#h8-0-3" id="h8-0-3" class="d">-/// The catalog stores schema information
+</a><a href="#h8-0-4" id="h8-0-4" class="d">-pub trait Catalog {
+</a><a href="#h8-0-5" id="h8-0-5" class="d">-    /// Creates a new table
+</a><a href="#h8-0-6" id="h8-0-6" class="d">-    fn create_table(&amp;mut self, table: Table) -&gt; Result&lt;()&gt;;
+</a><a href="#h8-0-7" id="h8-0-7" class="d">-    /// Deletes an existing table, or errors if it does not exist
+</a><a href="#h8-0-8" id="h8-0-8" class="d">-    fn delete_table(&amp;mut self, table: &amp;str) -&gt; Result&lt;()&gt;;
+</a><a href="#h8-0-9" id="h8-0-9" class="d">-    /// Reads a table, if it exists
+</a><a href="#h8-0-10" id="h8-0-10" class="d">-    fn read_table(&amp;self, table: &amp;str) -&gt; Result&lt;Option&lt;Table&gt;&gt;;
+</a><a href="#h8-0-11" id="h8-0-11" class="d">-    /// Iterates over all tables
+</a><a href="#h8-0-12" id="h8-0-12" class="d">-    fn scan_tables(&amp;self) -&gt; Result&lt;Tables&gt;;
+</a><a href="#h8-0-13" id="h8-0-13" class="d">-
+</a><a href="#h8-0-14" id="h8-0-14" class="d">-    /// Reads a table, and errors if it does not exist
+</a><a href="#h8-0-15" id="h8-0-15" class="d">-    fn must_read_table(&amp;self, table: &amp;str) -&gt; Result&lt;Table&gt; {
+</a><a href="#h8-0-16" id="h8-0-16" class="d">-        self.read_table(table)?.ok_or(errinput!(&quot;table {table} does not exist&quot;))
+</a><a href="#h8-0-17" id="h8-0-17" class="d">-    }
+</a><a href="#h8-0-18" id="h8-0-18" class="d">-
+</a><a href="#h8-0-19" id="h8-0-19" class="d">-    /// Returns all references to a table, as table,column pairs.
+</a><a href="#h8-0-20" id="h8-0-20" class="d">-    fn table_references(&amp;self, table: &amp;str, with_self: bool) -&gt; Result&lt;Vec&lt;(String, Vec&lt;String&gt;)&gt;&gt; {
+</a><a href="#h8-0-21" id="h8-0-21" class="d">-        Ok(self
+</a><a href="#h8-0-22" id="h8-0-22" class="d">-            .scan_tables()?
+</a><a href="#h8-0-23" id="h8-0-23" class="d">-            .filter(|t| with_self || t.name != table)
+</a><a href="#h8-0-24" id="h8-0-24" class="d">-            .map(|t| {
+</a><a href="#h8-0-25" id="h8-0-25" class="d">-                (
+</a><a href="#h8-0-26" id="h8-0-26" class="d">-                    t.name,
+</a><a href="#h8-0-27" id="h8-0-27" class="d">-                    t.columns
+</a><a href="#h8-0-28" id="h8-0-28" class="d">-                        .iter()
+</a><a href="#h8-0-29" id="h8-0-29" class="d">-                        .filter(|c| c.references.as_deref() == Some(table))
+</a><a href="#h8-0-30" id="h8-0-30" class="d">-                        .map(|c| c.name.clone())
+</a><a href="#h8-0-31" id="h8-0-31" class="d">-                        .collect::&lt;Vec&lt;_&gt;&gt;(),
+</a><a href="#h8-0-32" id="h8-0-32" class="d">-                )
+</a><a href="#h8-0-33" id="h8-0-33" class="d">-            })
+</a><a href="#h8-0-34" id="h8-0-34" class="d">-            .filter(|(_, cs)| !cs.is_empty())
+</a><a href="#h8-0-35" id="h8-0-35" class="d">-            .collect())
+</a><a href="#h8-0-36" id="h8-0-36" class="d">-    }
+</a><a href="#h8-0-37" id="h8-0-37" class="d">-}
+</a><a href="#h8-0-38" id="h8-0-38" class="d">-
+</a><a href="#h8-0-39" id="h8-0-39" class="d">-/// A table scan iterator
+</a><a href="#h8-0-40" id="h8-0-40" class="d">-pub type Tables = Box&lt;dyn DoubleEndedIterator&lt;Item = Table&gt; + Send&gt;;
+</a><a href="#h8-0-41" id="h8-0-41" class="d">-
+</a> /// A table schema
+ #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+ pub struct Table {
+<b>diff --git a/<a id="h9" href="../file/tests/sql/mutation.rs.html">tests/sql/mutation.rs</a> b/<a href="../file/tests/sql/mutation.rs.html">tests/sql/mutation.rs</a></b>
+<a href="#h9-0" id="h9-0" class="h">@@ -1,7 +1,6 @@
+</a> //! Mutation tests, using an in-memory database against golden files in tests/sql/mutation/
+ use toydb::error::Result;
+<a href="#h9-0-2" id="h9-0-2" class="d">-use toydb::sql::engine::{Engine as _, Transaction as _};
+</a><a href="#h9-0-3" id="h9-0-3" class="d">-use toydb::sql::types::schema::Catalog as _;
+</a><a href="#h9-0-4" id="h9-0-4" class="i">+use toydb::sql::engine::{Catalog as _, Engine as _, Transaction as _};
+</a> 
+ use goldenfile::Mint;
+ use std::io::Write;
+<a href="#h9-1" id="h9-1" class="h">@@ -31,7 +30,7 @@ macro_rules! test_mutation {
+</a> 
+                 write!(f, &quot;Storage:&quot;)?;
+                 let txn = engine.begin()?;
+<a href="#h9-1-3" id="h9-1-3" class="d">-                for table in txn.scan_tables()? {
+</a><a href="#h9-1-4" id="h9-1-4" class="i">+                for table in txn.list_tables()? {
+</a>                     write!(f, &quot;\n{}\n&quot;, table)?;
+                     for row in txn.scan(&amp;table.name, None)? {
+                         write!(f, &quot;{:?}\n&quot;, row?)?;
+<b>diff --git a/<a id="h10" href="../file/tests/sql/schema.rs.html">tests/sql/schema.rs</a> b/<a href="../file/tests/sql/schema.rs.html">tests/sql/schema.rs</a></b>
+<a href="#h10-0" id="h10-0" class="h">@@ -1,7 +1,6 @@
+</a> //! Schema-related tests, using an in-memory database against golden files in tests/sql/chema/
+ use toydb::error::Result;
+<a href="#h10-0-2" id="h10-0-2" class="d">-use toydb::sql::engine::{Engine as _, Transaction as _};
+</a><a href="#h10-0-3" id="h10-0-3" class="d">-use toydb::sql::types::schema::Catalog as _;
+</a><a href="#h10-0-4" id="h10-0-4" class="i">+use toydb::sql::engine::{Catalog as _, Engine as _, Transaction as _};
+</a> 
+ use goldenfile::Mint;
+ use std::io::Write;
+<a href="#h10-1" id="h10-1" class="h">@@ -29,7 +28,7 @@ macro_rules! test_schema {
+</a> 
+                 write!(f, &quot;Storage:&quot;)?;
+                 let txn = engine.begin()?;
+<a href="#h10-1-3" id="h10-1-3" class="d">-                for table in txn.scan_tables()? {
+</a><a href="#h10-1-4" id="h10-1-4" class="i">+                for table in txn.list_tables()? {
+</a>                     write!(f, &quot;\n{}\n&quot;, table)?;
+                     for row in txn.scan(&amp;table.name, None)? {
+                         write!(f, &quot;{:?}\n&quot;, row?)?;
+</pre>
+</div>
+</body>
+</html>

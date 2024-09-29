@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>sql: don&#39;t use constants for short-circuit optimizer - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/681de5bd182166ab9b734de07a948045701d79c7.html">681de5bd182166ab9b734de07a948045701d79c7</a>
+<b>parent</b> <a href="../commit/95a80bba67e652b1343d89fecb25b8f56d4c3d98.html">95a80bba67e652b1343d89fecb25b8f56d4c3d98</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Mon,  8 Jul 2024 18:02:41 +0200
+
+sql: don&#39;t use constants for short-circuit optimizer
+
+These prevent manual PartialEq implementation.
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/sql/planner/optimizer.rs</a></td><td> | </td><td class="num">31</td><td><span class="i">++++++++++++++++++</span><span class="d">-------------</span></td></tr>
+</table></pre><pre>1 file changed, 18 insertions(+), 13 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/sql/planner/optimizer.rs.html">src/sql/planner/optimizer.rs</a> b/<a href="../file/src/sql/planner/optimizer.rs.html">src/sql/planner/optimizer.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -298,30 +298,35 @@ pub(super) fn join_type(node: Node) -&gt; Result&lt;Node&gt; {
+</a> ///
+ /// TODO: omit order by primary key, limit 0, NULL comparison.
+ pub(super) fn short_circuit(node: Node) -&gt; Result&lt;Node&gt; {
+<a href="#h0-0-3" id="h0-0-3" class="d">-    const TRUE: Expression = Expression::Constant(Value::Boolean(true));
+</a><a href="#h0-0-4" id="h0-0-4" class="d">-    const TRUEOPT: Option&lt;Expression&gt; = Some(TRUE);
+</a><a href="#h0-0-5" id="h0-0-5" class="d">-    const FALSE: Expression = Expression::Constant(Value::Boolean(false));
+</a><a href="#h0-0-6" id="h0-0-6" class="d">-    const FALSEOPT: Option&lt;Expression&gt; = Some(FALSE);
+</a><a href="#h0-0-7" id="h0-0-7" class="d">-    const NULL: Expression = Expression::Constant(Value::Null);
+</a><a href="#h0-0-8" id="h0-0-8" class="d">-    const NULLOPT: Option&lt;Expression&gt; = Some(NULL);
+</a><a href="#h0-0-9" id="h0-0-9" class="i">+    use Expression::Constant;
+</a><a href="#h0-0-10" id="h0-0-10" class="i">+    use Value::{Boolean, Null};
+</a> 
+     let transform = |node| match node {
+         // Filter nodes that always yield true are unnecessary: remove them .
+<a href="#h0-0-14" id="h0-0-14" class="d">-        Node::Filter { source, predicate: TRUE } =&gt; *source,
+</a><a href="#h0-0-15" id="h0-0-15" class="i">+        Node::Filter { source, predicate: Constant(Boolean(true)) } =&gt; *source,
+</a> 
+         // Predicates that always yield true are unnecessary: remove them.
+<a href="#h0-0-18" id="h0-0-18" class="d">-        Node::Scan { table, filter: TRUEOPT, alias } =&gt; Node::Scan { table, filter: None, alias },
+</a><a href="#h0-0-19" id="h0-0-19" class="d">-        Node::NestedLoopJoin { left, left_size, right, right_size, predicate: TRUEOPT, outer } =&gt; {
+</a><a href="#h0-0-20" id="h0-0-20" class="d">-            Node::NestedLoopJoin { left, left_size, right, right_size, predicate: None, outer }
+</a><a href="#h0-0-21" id="h0-0-21" class="i">+        Node::Scan { table, filter: Some(Constant(Boolean(true))), alias } =&gt; {
+</a><a href="#h0-0-22" id="h0-0-22" class="i">+            Node::Scan { table, filter: None, alias }
+</a>         }
+<a href="#h0-0-24" id="h0-0-24" class="i">+        Node::NestedLoopJoin {
+</a><a href="#h0-0-25" id="h0-0-25" class="i">+            left,
+</a><a href="#h0-0-26" id="h0-0-26" class="i">+            left_size,
+</a><a href="#h0-0-27" id="h0-0-27" class="i">+            right,
+</a><a href="#h0-0-28" id="h0-0-28" class="i">+            right_size,
+</a><a href="#h0-0-29" id="h0-0-29" class="i">+            predicate: Some(Constant(Boolean(true))),
+</a><a href="#h0-0-30" id="h0-0-30" class="i">+            outer,
+</a><a href="#h0-0-31" id="h0-0-31" class="i">+        } =&gt; Node::NestedLoopJoin { left, left_size, right, right_size, predicate: None, outer },
+</a> 
+         // Short-circuit nodes that can&#39;t produce anything by replacing them
+         // with a Nothing node.
+<a href="#h0-0-35" id="h0-0-35" class="d">-        Node::Filter { predicate: FALSE | NULL, .. } =&gt; Node::Nothing,
+</a><a href="#h0-0-36" id="h0-0-36" class="i">+        Node::Filter { predicate: Constant(Boolean(false) | Null), .. } =&gt; Node::Nothing,
+</a>         Node::IndexLookup { values, .. } if values.is_empty() =&gt; Node::Nothing,
+         Node::KeyLookup { keys, .. } if keys.is_empty() =&gt; Node::Nothing,
+<a href="#h0-0-39" id="h0-0-39" class="d">-        Node::NestedLoopJoin { predicate: FALSEOPT | NULLOPT, .. } =&gt; Node::Nothing,
+</a><a href="#h0-0-40" id="h0-0-40" class="d">-        Node::Scan { filter: FALSEOPT | NULLOPT, .. } =&gt; Node::Nothing,
+</a><a href="#h0-0-41" id="h0-0-41" class="i">+        Node::NestedLoopJoin { predicate: Some(Constant(Boolean(false) | Null)), .. } =&gt; {
+</a><a href="#h0-0-42" id="h0-0-42" class="i">+            Node::Nothing
+</a><a href="#h0-0-43" id="h0-0-43" class="i">+        }
+</a><a href="#h0-0-44" id="h0-0-44" class="i">+        Node::Scan { filter: Some(Constant(Boolean(false) | Null)), .. } =&gt; Node::Nothing,
+</a>         Node::Values { rows, .. } if rows.is_empty() =&gt; Node::Nothing,
+ 
+         // Short-circuit nodes that pull from a Nothing node.
+</pre>
+</div>
+</body>
+</html>

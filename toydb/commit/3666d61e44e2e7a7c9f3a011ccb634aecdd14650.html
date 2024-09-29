@@ -1,0 +1,609 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>raft: clean up `Log` - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/3666d61e44e2e7a7c9f3a011ccb634aecdd14650.html">3666d61e44e2e7a7c9f3a011ccb634aecdd14650</a>
+<b>parent</b> <a href="../commit/13c05100c41e3ed070fd1eebcac69887f9a7f354.html">13c05100c41e3ed070fd1eebcac69887f9a7f354</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Fri, 31 May 2024 12:50:46 +0200
+
+raft: clean up `Log`
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/raft/log.rs</a></td><td> | </td><td class="num">143</td><td><span class="i">++++++++++++++++++++++++++++++++++</span><span class="d">---------------------------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/raft/node.rs</a></td><td> | </td><td class="num">4</td><td><span class="i">+++</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/raft/testscripts/log/append</a></td><td> | </td><td class="num">24</td><td><span class="i">++++++++++++</span><span class="d">------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">src/raft/testscripts/log/commit</a></td><td> | </td><td class="num">22</td><td><span class="i">+++++++++++</span><span class="d">-----------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h4">src/raft/testscripts/log/splice</a></td><td> | </td><td class="num">40</td><td><span class="i">++++++++++++++++++++</span><span class="d">--------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h5">src/raft/testscripts/log/status</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h6">src/raft/testscripts/log/term</a></td><td> | </td><td class="num">10</td><td><span class="i">+++++</span><span class="d">-----</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h7">src/raft/testscripts/node/request_status</a></td><td> | </td><td class="num">10</td><td><span class="i">+++++</span><span class="d">-----</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h8">src/raft/testscripts/node/request_status_single</a></td><td> | </td><td class="num">4</td><td><span class="i">++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h9">tests/e2e/client.rs</a></td><td> | </td><td class="num">6</td><td><span class="i">+++</span><span class="d">---</span></td></tr>
+</table></pre><pre>10 files changed, 124 insertions(+), 141 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/raft/log.rs.html">src/raft/log.rs</a> b/<a href="../file/src/raft/log.rs.html">src/raft/log.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -1,12 +1,12 @@
+</a> use super::{NodeID, Term};
+<a href="#h0-0-1" id="h0-0-1" class="d">-use crate::encoding::{self, bincode, Key as _};
+</a><a href="#h0-0-2" id="h0-0-2" class="i">+use crate::encoding::{self, bincode, Key as _, Value as _};
+</a> use crate::error::Result;
+ use crate::storage;
+<a href="#h0-0-5" id="h0-0-5" class="d">-use crate::{asserterr, errassert, errdata};
+</a><a href="#h0-0-6" id="h0-0-6" class="i">+use crate::{asserterr, errassert};
+</a> 
+ use serde::{Deserialize, Serialize};
+ 
+<a href="#h0-0-10" id="h0-0-10" class="d">-/// A log index.
+</a><a href="#h0-0-11" id="h0-0-11" class="i">+/// A log index. Starts at 1, indicates no index if 0.
+</a> pub type Index = u64;
+ 
+ /// A log entry.
+<a href="#h0-1" id="h0-1" class="h">@@ -20,7 +20,9 @@ pub struct Entry {
+</a>     pub command: Option&lt;Vec&lt;u8&gt;&gt;,
+ }
+ 
+<a href="#h0-1-3" id="h0-1-3" class="d">-/// A log key, encoded using KeyCode.
+</a><a href="#h0-1-4" id="h0-1-4" class="i">+impl encoding::Value for Entry {}
+</a><a href="#h0-1-5" id="h0-1-5" class="i">+
+</a><a href="#h0-1-6" id="h0-1-6" class="i">+/// A log storage key.
+</a> #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+ pub enum Key {
+     /// A log entry, storing the term and command.
+<a href="#h0-2" id="h0-2" class="h">@@ -33,9 +35,7 @@ pub enum Key {
+</a> 
+ impl encoding::Key&lt;&#39;_&gt; for Key {}
+ 
+<a href="#h0-2-3" id="h0-2-3" class="d">-/// Log key prefixes, used for prefix scans.
+</a><a href="#h0-2-4" id="h0-2-4" class="d">-///
+</a><a href="#h0-2-5" id="h0-2-5" class="d">-/// TODO: consider handling this in Key somehow.
+</a><a href="#h0-2-6" id="h0-2-6" class="i">+/// Log key prefixes used for prefix scans. Must match the Key structure.
+</a> #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+ enum KeyPrefix {
+     Entry,
+<a href="#h0-3" id="h0-3" class="h">@@ -48,8 +48,8 @@ impl encoding::Key&lt;&#39;_&gt; for KeyPrefix {}
+</a> /// A Raft log.
+ pub struct Log {
+     /// The underlying storage engine. Uses a trait object instead of generics,
+<a href="#h0-3-3" id="h0-3-3" class="d">-    /// to allow runtime selection of the engine (based on the program config)
+</a><a href="#h0-3-4" id="h0-3-4" class="d">-    /// and avoid propagating the generic type parameters throughout.
+</a><a href="#h0-3-5" id="h0-3-5" class="i">+    /// to allow runtime selection of the engine and avoid propagating the
+</a><a href="#h0-3-6" id="h0-3-6" class="i">+    /// generic type parameters throughout Raft.
+</a>     engine: Box&lt;dyn storage::Engine&gt;,
+     /// The index of the last stored entry.
+     last_index: Index,
+<a href="#h0-4" id="h0-4" class="h">@@ -62,13 +62,13 @@ pub struct Log {
+</a> }
+ 
+ impl Log {
+<a href="#h0-4-3" id="h0-4-3" class="d">-    /// Creates a new log, using the given storage engine.
+</a><a href="#h0-4-4" id="h0-4-4" class="i">+    /// Initializes a log using the given storage engine.
+</a>     pub fn new(mut engine: impl storage::Engine + &#39;static) -&gt; Result&lt;Self&gt; {
+         let (last_index, last_term) = engine
+             .scan_prefix(&amp;KeyPrefix::Entry.encode()?)
+             .last()
+             .transpose()?
+<a href="#h0-4-10" id="h0-4-10" class="d">-            .map(|(k, v)| Self::decode_entry(&amp;k, &amp;v))
+</a><a href="#h0-4-11" id="h0-4-11" class="i">+            .map(|(_, v)| Entry::decode(&amp;v))
+</a>             .transpose()?
+             .map(|e| (e.index, e.term))
+             .unwrap_or((0, 0));
+<a href="#h0-5" id="h0-5" class="h">@@ -80,23 +80,6 @@ impl Log {
+</a>         Ok(Self { engine: Box::new(engine), last_index, last_term, commit_index, commit_term })
+     }
+ 
+<a href="#h0-5-3" id="h0-5-3" class="d">-    /// Decodes an entry from a log key/value pair.
+</a><a href="#h0-5-4" id="h0-5-4" class="d">-    fn decode_entry(key: &amp;[u8], value: &amp;[u8]) -&gt; Result&lt;Entry&gt; {
+</a><a href="#h0-5-5" id="h0-5-5" class="d">-        let Key::Entry(index) = Key::decode(key)? else { return errdata!(&quot;invalid key {key:x?}&quot;) };
+</a><a href="#h0-5-6" id="h0-5-6" class="d">-            Self::decode_entry_value(index, value)
+</a><a href="#h0-5-7" id="h0-5-7" class="d">-    }
+</a><a href="#h0-5-8" id="h0-5-8" class="d">-
+</a><a href="#h0-5-9" id="h0-5-9" class="d">-    /// Decodes an entry from a value at a given index.
+</a><a href="#h0-5-10" id="h0-5-10" class="d">-    fn decode_entry_value(index: Index, value: &amp;[u8]) -&gt; Result&lt;Entry&gt; {
+</a><a href="#h0-5-11" id="h0-5-11" class="d">-        let (term, command) = bincode::deserialize(value)?;
+</a><a href="#h0-5-12" id="h0-5-12" class="d">-        Ok(Entry { index, term, command })
+</a><a href="#h0-5-13" id="h0-5-13" class="d">-    }
+</a><a href="#h0-5-14" id="h0-5-14" class="d">-
+</a><a href="#h0-5-15" id="h0-5-15" class="d">-    /// Returns log engine name and status.
+</a><a href="#h0-5-16" id="h0-5-16" class="d">-    pub fn status(&amp;mut self) -&gt; Result&lt;storage::engine::Status&gt; {
+</a><a href="#h0-5-17" id="h0-5-17" class="d">-        self.engine.status()
+</a><a href="#h0-5-18" id="h0-5-18" class="d">-    }
+</a><a href="#h0-5-19" id="h0-5-19" class="d">-
+</a>     /// Returns the commit index and term.
+     pub fn get_commit_index(&amp;self) -&gt; (Index, Term) {
+         (self.commit_index, self.commit_term)
+<a href="#h0-6" id="h0-6" class="h">@@ -134,9 +117,9 @@ impl Log {
+</a>         Ok(())
+     }
+ 
+<a href="#h0-6-3" id="h0-6-3" class="d">-    /// Appends a command to the log, returning its index. None implies a noop
+</a><a href="#h0-6-4" id="h0-6-4" class="d">-    /// command, typically after Raft leader changes. The term must be equal to
+</a><a href="#h0-6-5" id="h0-6-5" class="d">-    /// or greater than the previous entry.
+</a><a href="#h0-6-6" id="h0-6-6" class="i">+    /// Appends a command to the log and flushes it to disk, returning its
+</a><a href="#h0-6-7" id="h0-6-7" class="i">+    /// index. None implies a noop command, typically after Raft leader changes.
+</a><a href="#h0-6-8" id="h0-6-8" class="i">+    /// The term must be equal to or greater than the previous entry.
+</a>     pub fn append(&amp;mut self, term: Term, command: Option&lt;Vec&lt;u8&gt;&gt;) -&gt; Result&lt;Index&gt; {
+         match self.get(self.last_index)? {
+             Some(e) if term &lt; e.term =&gt; return errassert!(&quot;term regression {} → {term}&quot;, e.term),
+<a href="#h0-7" id="h0-7" class="h">@@ -144,12 +127,14 @@ impl Log {
+</a>             None if term == 0 =&gt; return errassert!(&quot;can&#39;t append entry with term 0&quot;),
+             Some(_) | None =&gt; {}
+         }
+<a href="#h0-7-3" id="h0-7-3" class="d">-        let index = self.last_index + 1;
+</a><a href="#h0-7-4" id="h0-7-4" class="d">-        self.engine.set(&amp;Key::Entry(index).encode()?, bincode::serialize(&amp;(term, command))?)?;
+</a><a href="#h0-7-5" id="h0-7-5" class="i">+        // We could omit the index in the encoded value, since it&#39;s also stored
+</a><a href="#h0-7-6" id="h0-7-6" class="i">+        // in the key, but we keep it simple.
+</a><a href="#h0-7-7" id="h0-7-7" class="i">+        let entry = Entry { index: self.last_index + 1, term, command };
+</a><a href="#h0-7-8" id="h0-7-8" class="i">+        self.engine.set(&amp;Key::Entry(entry.index).encode()?, entry.encode()?)?;
+</a>         self.engine.flush()?;
+<a href="#h0-7-10" id="h0-7-10" class="d">-        self.last_index = index;
+</a><a href="#h0-7-11" id="h0-7-11" class="d">-        self.last_term = term;
+</a><a href="#h0-7-12" id="h0-7-12" class="d">-        Ok(index)
+</a><a href="#h0-7-13" id="h0-7-13" class="i">+        self.last_index = entry.index;
+</a><a href="#h0-7-14" id="h0-7-14" class="i">+        self.last_term = entry.term;
+</a><a href="#h0-7-15" id="h0-7-15" class="i">+        Ok(entry.index)
+</a>     }
+ 
+     /// Commits entries up to and including the given index. The index must
+<a href="#h0-8" id="h0-8" class="h">@@ -174,10 +159,7 @@ impl Log {
+</a> 
+     /// Fetches an entry at an index, or None if it does not exist.
+     pub fn get(&amp;mut self, index: Index) -&gt; Result&lt;Option&lt;Entry&gt;&gt; {
+<a href="#h0-8-3" id="h0-8-3" class="d">-        self.engine
+</a><a href="#h0-8-4" id="h0-8-4" class="d">-            .get(&amp;Key::Entry(index).encode()?)?
+</a><a href="#h0-8-5" id="h0-8-5" class="d">-            .map(|v| Self::decode_entry_value(index, &amp;v))
+</a><a href="#h0-8-6" id="h0-8-6" class="d">-            .transpose()
+</a><a href="#h0-8-7" id="h0-8-7" class="i">+        self.engine.get(&amp;Key::Entry(index).encode()?)?.map(|v| Entry::decode(&amp;v)).transpose()
+</a>     }
+ 
+     /// Checks if the log contains an entry with the given index and term.
+<a href="#h0-9" id="h0-9" class="h">@@ -190,31 +172,27 @@ impl Log {
+</a>         &amp;mut self,
+         range: impl std::ops::RangeBounds&lt;Index&gt;,
+     ) -&gt; Result&lt;impl Iterator&lt;Item = Result&lt;Entry&gt;&gt; + &#39;_&gt; {
+<a href="#h0-9-3" id="h0-9-3" class="i">+        use std::ops::Bound;
+</a>         let from = match range.start_bound() {
+<a href="#h0-9-5" id="h0-9-5" class="d">-            std::ops::Bound::Excluded(i) =&gt; std::ops::Bound::Excluded(Key::Entry(*i).encode()?),
+</a><a href="#h0-9-6" id="h0-9-6" class="d">-            std::ops::Bound::Included(i) =&gt; std::ops::Bound::Included(Key::Entry(*i).encode()?),
+</a><a href="#h0-9-7" id="h0-9-7" class="d">-            std::ops::Bound::Unbounded =&gt; std::ops::Bound::Included(Key::Entry(0).encode()?),
+</a><a href="#h0-9-8" id="h0-9-8" class="i">+            Bound::Excluded(&amp;index) =&gt; Bound::Excluded(Key::Entry(index).encode()?),
+</a><a href="#h0-9-9" id="h0-9-9" class="i">+            Bound::Included(&amp;index) =&gt; Bound::Included(Key::Entry(index).encode()?),
+</a><a href="#h0-9-10" id="h0-9-10" class="i">+            Bound::Unbounded =&gt; Bound::Included(Key::Entry(0).encode()?),
+</a>         };
+         let to = match range.end_bound() {
+<a href="#h0-9-13" id="h0-9-13" class="d">-            std::ops::Bound::Excluded(i) =&gt; std::ops::Bound::Excluded(Key::Entry(*i).encode()?),
+</a><a href="#h0-9-14" id="h0-9-14" class="d">-            std::ops::Bound::Included(i) =&gt; std::ops::Bound::Included(Key::Entry(*i).encode()?),
+</a><a href="#h0-9-15" id="h0-9-15" class="d">-            std::ops::Bound::Unbounded =&gt; {
+</a><a href="#h0-9-16" id="h0-9-16" class="d">-                std::ops::Bound::Included(Key::Entry(Index::MAX).encode()?)
+</a><a href="#h0-9-17" id="h0-9-17" class="d">-            }
+</a><a href="#h0-9-18" id="h0-9-18" class="i">+            Bound::Excluded(&amp;index) =&gt; Bound::Excluded(Key::Entry(index).encode()?),
+</a><a href="#h0-9-19" id="h0-9-19" class="i">+            Bound::Included(&amp;index) =&gt; Bound::Included(Key::Entry(index).encode()?),
+</a><a href="#h0-9-20" id="h0-9-20" class="i">+            Bound::Unbounded =&gt; Bound::Included(Key::Entry(Index::MAX).encode()?),
+</a>         };
+<a href="#h0-9-22" id="h0-9-22" class="d">-        Ok(self
+</a><a href="#h0-9-23" id="h0-9-23" class="d">-            .engine
+</a><a href="#h0-9-24" id="h0-9-24" class="d">-            .scan_dyn((from, to))
+</a><a href="#h0-9-25" id="h0-9-25" class="d">-            .map(|r| r.and_then(|(k, v)| Self::decode_entry(&amp;k, &amp;v))))
+</a><a href="#h0-9-26" id="h0-9-26" class="i">+        Ok(self.engine.scan_dyn((from, to)).map(|r| r.and_then(|(_, v)| Entry::decode(&amp;v))))
+</a>     }
+ 
+<a href="#h0-9-29" id="h0-9-29" class="d">-    /// Splices a set of entries into the log. The entries must have contiguous
+</a><a href="#h0-9-30" id="h0-9-30" class="d">-    /// indexes and equal/increasing terms, and the first entry must be in the
+</a><a href="#h0-9-31" id="h0-9-31" class="d">-    /// range [1,last_index+1] with a term at or equal to the previous (base)
+</a><a href="#h0-9-32" id="h0-9-32" class="d">-    /// entry&#39;s term. New indexes will be appended. Overlapping indexes with the
+</a><a href="#h0-9-33" id="h0-9-33" class="d">-    /// same term must be equal and will be ignored. Overlapping indexes with
+</a><a href="#h0-9-34" id="h0-9-34" class="d">-    /// different terms will truncate the existing log at the first conflict and
+</a><a href="#h0-9-35" id="h0-9-35" class="d">-    /// then splice the new entries.
+</a><a href="#h0-9-36" id="h0-9-36" class="i">+    /// Splices a set of entries into the log and flushes it to disk. The
+</a><a href="#h0-9-37" id="h0-9-37" class="i">+    /// entries must have contiguous indexes and equal/increasing terms, and the
+</a><a href="#h0-9-38" id="h0-9-38" class="i">+    /// first entry must be in the range [1,last_index+1] with a term at or
+</a><a href="#h0-9-39" id="h0-9-39" class="i">+    /// equal to the previous (base) entry&#39;s term. New indexes will be appended.
+</a><a href="#h0-9-40" id="h0-9-40" class="i">+    /// Overlapping indexes with the same term must be equal and will be
+</a><a href="#h0-9-41" id="h0-9-41" class="i">+    /// ignored. Overlapping indexes with different terms will truncate the
+</a><a href="#h0-9-42" id="h0-9-42" class="i">+    /// existing log at the first conflict and then splice the new entries.
+</a>     pub fn splice(&amp;mut self, entries: Vec&lt;Entry&gt;) -&gt; Result&lt;Index&gt; {
+         let (Some(first), Some(last)) = (entries.first(), entries.last()) else {
+             return Ok(self.last_index); // empty input is noop
+<a href="#h0-10" id="h0-10" class="h">@@ -267,10 +245,7 @@ impl Log {
+</a>         asserterr!(first.index &gt; self.commit_index, &quot;spliced entries below commit index&quot;);
+ 
+         for entry in entries {
+<a href="#h0-10-3" id="h0-10-3" class="d">-            self.engine.set(
+</a><a href="#h0-10-4" id="h0-10-4" class="d">-                &amp;Key::Entry(entry.index).encode()?,
+</a><a href="#h0-10-5" id="h0-10-5" class="d">-                bincode::serialize(&amp;(&amp;entry.term, &amp;entry.command))?,
+</a><a href="#h0-10-6" id="h0-10-6" class="d">-            )?;
+</a><a href="#h0-10-7" id="h0-10-7" class="i">+            self.engine.set(&amp;Key::Entry(entry.index).encode()?, entry.encode()?)?;
+</a>         }
+         for index in last.index + 1..=self.last_index {
+             self.engine.delete(&amp;Key::Entry(index).encode()?)?;
+<a href="#h0-11" id="h0-11" class="h">@@ -281,6 +256,11 @@ impl Log {
+</a>         self.last_term = last.term;
+         Ok(self.last_index)
+     }
+<a href="#h0-11-3" id="h0-11-3" class="i">+
+</a><a href="#h0-11-4" id="h0-11-4" class="i">+    /// Returns log engine status.
+</a><a href="#h0-11-5" id="h0-11-5" class="i">+    pub fn status(&amp;mut self) -&gt; Result&lt;storage::Status&gt; {
+</a><a href="#h0-11-6" id="h0-11-6" class="i">+        self.engine.status()
+</a><a href="#h0-11-7" id="h0-11-7" class="i">+    }
+</a> }
+ 
+ #[cfg(test)]
+<a href="#h0-12" id="h0-12" class="h">@@ -334,6 +314,17 @@ mod tests {
+</a>                     output.push_str(&amp;format!(&quot;commit → {}\n&quot;, Self::format_entry(&amp;entry)));
+                 }
+ 
+<a href="#h0-12-3" id="h0-12-3" class="i">+                // dump
+</a><a href="#h0-12-4" id="h0-12-4" class="i">+                &quot;dump&quot; =&gt; {
+</a><a href="#h0-12-5" id="h0-12-5" class="i">+                    command.consume_args().reject_rest()?;
+</a><a href="#h0-12-6" id="h0-12-6" class="i">+                    let range = (std::ops::Bound::Unbounded, std::ops::Bound::Unbounded);
+</a><a href="#h0-12-7" id="h0-12-7" class="i">+                    let mut scan = self.log.engine.scan_dyn(range);
+</a><a href="#h0-12-8" id="h0-12-8" class="i">+                    while let Some((key, value)) = scan.next().transpose()? {
+</a><a href="#h0-12-9" id="h0-12-9" class="i">+                        output.push_str(&amp;Self::format_key_value(&amp;key, &amp;value));
+</a><a href="#h0-12-10" id="h0-12-10" class="i">+                        output.push(&#39;\n&#39;);
+</a><a href="#h0-12-11" id="h0-12-11" class="i">+                    }
+</a><a href="#h0-12-12" id="h0-12-12" class="i">+                }
+</a><a href="#h0-12-13" id="h0-12-13" class="i">+
+</a>                 // get INDEX...
+                 &quot;get&quot; =&gt; {
+                     let mut args = command.consume_args();
+<a href="#h0-13" id="h0-13" class="h">@@ -341,11 +332,13 @@ mod tests {
+</a>                         args.rest_pos().iter().map(|a| a.parse()).collect::&lt;Result&lt;_, _&gt;&gt;()?;
+                     args.reject_rest()?;
+                     for index in indexes {
+<a href="#h0-13-3" id="h0-13-3" class="d">-                        let result = match self.log.get(index)? {
+</a><a href="#h0-13-4" id="h0-13-4" class="d">-                            Some(entry) =&gt; Self::format_entry(&amp;entry),
+</a><a href="#h0-13-5" id="h0-13-5" class="d">-                            None =&gt; &quot;None&quot;.to_string(),
+</a><a href="#h0-13-6" id="h0-13-6" class="d">-                        };
+</a><a href="#h0-13-7" id="h0-13-7" class="d">-                        output.push_str(&amp;format!(&quot;{result}\n&quot;));
+</a><a href="#h0-13-8" id="h0-13-8" class="i">+                        let entry = self
+</a><a href="#h0-13-9" id="h0-13-9" class="i">+                            .log
+</a><a href="#h0-13-10" id="h0-13-10" class="i">+                            .get(index)?
+</a><a href="#h0-13-11" id="h0-13-11" class="i">+                            .as_ref()
+</a><a href="#h0-13-12" id="h0-13-12" class="i">+                            .map(Self::format_entry)
+</a><a href="#h0-13-13" id="h0-13-13" class="i">+                            .unwrap_or(&quot;None&quot;.to_string());
+</a><a href="#h0-13-14" id="h0-13-14" class="i">+                        output.push_str(&amp;format!(&quot;{entry}\n&quot;));
+</a>                     }
+                 }
+ 
+<a href="#h0-14" id="h0-14" class="h">@@ -374,17 +367,6 @@ mod tests {
+</a>                     }
+                 }
+ 
+<a href="#h0-14-3" id="h0-14-3" class="d">-                // raw
+</a><a href="#h0-14-4" id="h0-14-4" class="d">-                &quot;raw&quot; =&gt; {
+</a><a href="#h0-14-5" id="h0-14-5" class="d">-                    command.consume_args().reject_rest()?;
+</a><a href="#h0-14-6" id="h0-14-6" class="d">-                    let range = (std::ops::Bound::Unbounded, std::ops::Bound::Unbounded);
+</a><a href="#h0-14-7" id="h0-14-7" class="d">-                    let mut scan = self.log.engine.scan_dyn(range);
+</a><a href="#h0-14-8" id="h0-14-8" class="d">-                    while let Some((key, value)) = scan.next().transpose()? {
+</a><a href="#h0-14-9" id="h0-14-9" class="d">-                        output.push_str(&amp;Self::format_key_value(&amp;key, &amp;value));
+</a><a href="#h0-14-10" id="h0-14-10" class="d">-                        output.push(&#39;\n&#39;);
+</a><a href="#h0-14-11" id="h0-14-11" class="d">-                    }
+</a><a href="#h0-14-12" id="h0-14-12" class="d">-                }
+</a><a href="#h0-14-13" id="h0-14-13" class="d">-
+</a>                 // scan [RANGE]
+                 &quot;scan&quot; =&gt; {
+                     let mut args = command.consume_args();
+<a href="#h0-15" id="h0-15" class="h">@@ -499,8 +481,7 @@ mod tests {
+</a>                     Operation::Flush =&gt; &quot;flush&quot;.to_string(),
+                     Operation::Set(k, v) =&gt; format!(&quot;set {}&quot;, Self::format_key_value(&amp;k, &amp;v)),
+                 };
+<a href="#h0-15-3" id="h0-15-3" class="d">-                output.push_str(&amp;s);
+</a><a href="#h0-15-4" id="h0-15-4" class="d">-                output.push(&#39;\n&#39;);
+</a><a href="#h0-15-5" id="h0-15-5" class="i">+                output.push_str(&amp;format!(&quot;engine: {s}\n&quot;));
+</a>             }
+         }
+ 
+<b>diff --git a/<a id="h1" href="../file/src/raft/node.rs.html">src/raft/node.rs</a> b/<a href="../file/src/raft/node.rs.html">src/raft/node.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -164,7 +164,9 @@ impl&lt;R: Role&gt; RawNode&lt;R&gt; {
+</a>     {
+         let applied_index = state.get_applied_index();
+         let commit_index = log.get_commit_index().0;
+<a href="#h1-0-3" id="h1-0-3" class="d">-        assert!(commit_index &gt;= applied_index, &quot;Commit index below applied index&quot;);
+</a><a href="#h1-0-4" id="h1-0-4" class="i">+        // NB: we don&#39;t assert that commit_index &gt;= applied_index, because the
+</a><a href="#h1-0-5" id="h1-0-5" class="i">+        // local commit index is not synced to durable storage -- on restart, it
+</a><a href="#h1-0-6" id="h1-0-6" class="i">+        // can be recovered from a quorum of logs.
+</a>         if applied_index &gt;= commit_index {
+             return Ok(());
+         }
+<b>diff --git a/<a id="h2" href="../file/src/raft/testscripts/log/append.html">src/raft/testscripts/log/append</a> b/<a href="../file/src/raft/testscripts/log/append.html">src/raft/testscripts/log/append</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -8,28 +8,28 @@ Error: assertion failed: can&#39;t append entry with term 0
+</a> # to durable storage.
+ append 2 foo oplog=true
+ ---
+<a href="#h2-0-3" id="h2-0-3" class="d">-set Entry(1) 0x000000000000000001 = 0x020103666f6f
+</a><a href="#h2-0-4" id="h2-0-4" class="d">-flush
+</a><a href="#h2-0-5" id="h2-0-5" class="i">+engine: set Entry(1) 0x000000000000000001 = 0x01020103666f6f
+</a><a href="#h2-0-6" id="h2-0-6" class="i">+engine: flush
+</a> append → 1@2 foo
+ 
+ # Appending a noop entry (no command) also works.
+ append 2 oplog=true
+ ---
+<a href="#h2-0-12" id="h2-0-12" class="d">-set Entry(2) 0x000000000000000002 = 0x0200
+</a><a href="#h2-0-13" id="h2-0-13" class="d">-flush
+</a><a href="#h2-0-14" id="h2-0-14" class="i">+engine: set Entry(2) 0x000000000000000002 = 0x020200
+</a><a href="#h2-0-15" id="h2-0-15" class="i">+engine: flush
+</a> append → 2@2 None
+ 
+ # Check that the last index/term is updated (commit index isn&#39;t), and that
+ # the engine contains the expected data, both in logical and raw form.
+ status
+ scan
+<a href="#h2-0-22" id="h2-0-22" class="d">-raw
+</a><a href="#h2-0-23" id="h2-0-23" class="i">+dump
+</a> ---
+ last=2@2 commit=0@0
+ 1@2 foo
+ 2@2 None
+<a href="#h2-0-28" id="h2-0-28" class="d">-Entry(1) 0x000000000000000001 = 0x020103666f6f
+</a><a href="#h2-0-29" id="h2-0-29" class="d">-Entry(2) 0x000000000000000002 = 0x0200
+</a><a href="#h2-0-30" id="h2-0-30" class="i">+Entry(1) 0x000000000000000001 = 0x01020103666f6f
+</a><a href="#h2-0-31" id="h2-0-31" class="i">+Entry(2) 0x000000000000000002 = 0x020200
+</a> 
+ # Bumping the term with a command is allowed. Skipping a term and omitting the
+ # command is also allowed.
+<a href="#h2-1" id="h2-1" class="h">@@ -49,14 +49,14 @@ Error: assertion failed: term regression 5 → 0
+</a> # Dump the final status and data.
+ status
+ scan
+<a href="#h2-1-3" id="h2-1-3" class="d">-raw
+</a><a href="#h2-1-4" id="h2-1-4" class="i">+dump
+</a> ---
+ last=4@5 commit=0@0
+ 1@2 foo
+ 2@2 None
+ 3@3 command
+ 4@5 None
+<a href="#h2-1-11" id="h2-1-11" class="d">-Entry(1) 0x000000000000000001 = 0x020103666f6f
+</a><a href="#h2-1-12" id="h2-1-12" class="d">-Entry(2) 0x000000000000000002 = 0x0200
+</a><a href="#h2-1-13" id="h2-1-13" class="d">-Entry(3) 0x000000000000000003 = 0x030107636f6d6d616e64
+</a><a href="#h2-1-14" id="h2-1-14" class="d">-Entry(4) 0x000000000000000004 = 0x0500
+</a><a href="#h2-1-15" id="h2-1-15" class="i">+Entry(1) 0x000000000000000001 = 0x01020103666f6f
+</a><a href="#h2-1-16" id="h2-1-16" class="i">+Entry(2) 0x000000000000000002 = 0x020200
+</a><a href="#h2-1-17" id="h2-1-17" class="i">+Entry(3) 0x000000000000000003 = 0x03030107636f6d6d616e64
+</a><a href="#h2-1-18" id="h2-1-18" class="i">+Entry(4) 0x000000000000000004 = 0x040500
+</a><b>diff --git a/<a id="h3" href="../file/src/raft/testscripts/log/commit.html">src/raft/testscripts/log/commit</a> b/<a href="../file/src/raft/testscripts/log/commit.html">src/raft/testscripts/log/commit</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -20,16 +20,16 @@ Error: assertion failed: commit index 0 does not exist
+</a> commit 1@1 oplog=true
+ status
+ ---
+<a href="#h3-0-3" id="h3-0-3" class="d">-set CommitIndex 0x02 = 0x0101
+</a><a href="#h3-0-4" id="h3-0-4" class="i">+engine: set CommitIndex 0x02 = 0x0101
+</a> commit → 1@1 None
+ last=3@2 commit=1@1
+ 
+<a href="#h3-0-8" id="h3-0-8" class="d">-# Dump the raw engine contents too.
+</a><a href="#h3-0-9" id="h3-0-9" class="d">-raw
+</a><a href="#h3-0-10" id="h3-0-10" class="i">+# Dump the raw engine contents tdump
+</a><a href="#h3-0-11" id="h3-0-11" class="i">+dump
+</a> ---
+<a href="#h3-0-13" id="h3-0-13" class="d">-Entry(1) 0x000000000000000001 = 0x0100
+</a><a href="#h3-0-14" id="h3-0-14" class="d">-Entry(2) 0x000000000000000002 = 0x010103666f6f
+</a><a href="#h3-0-15" id="h3-0-15" class="d">-Entry(3) 0x000000000000000003 = 0x020103626172
+</a><a href="#h3-0-16" id="h3-0-16" class="i">+Entry(1) 0x000000000000000001 = 0x010100
+</a><a href="#h3-0-17" id="h3-0-17" class="i">+Entry(2) 0x000000000000000002 = 0x02010103666f6f
+</a><a href="#h3-0-18" id="h3-0-18" class="i">+Entry(3) 0x000000000000000003 = 0x03020103626172
+</a> CommitIndex 0x02 = 0x0101
+ 
+ # Commits are idempotent, which doesn&#39;t incur an engine set.
+<a href="#h3-1" id="h3-1" class="h">@@ -69,10 +69,10 @@ status
+</a> Error: assertion failed: commit index 4 does not exist
+ last=3@2 commit=3@2
+ 
+<a href="#h3-1-3" id="h3-1-3" class="d">-# Dump the raw value.
+</a><a href="#h3-1-4" id="h3-1-4" class="d">-raw
+</a><a href="#h3-1-5" id="h3-1-5" class="i">+# Dump the raw values.
+</a><a href="#h3-1-6" id="h3-1-6" class="i">+dump
+</a> ---
+<a href="#h3-1-8" id="h3-1-8" class="d">-Entry(1) 0x000000000000000001 = 0x0100
+</a><a href="#h3-1-9" id="h3-1-9" class="d">-Entry(2) 0x000000000000000002 = 0x010103666f6f
+</a><a href="#h3-1-10" id="h3-1-10" class="d">-Entry(3) 0x000000000000000003 = 0x020103626172
+</a><a href="#h3-1-11" id="h3-1-11" class="i">+Entry(1) 0x000000000000000001 = 0x010100
+</a><a href="#h3-1-12" id="h3-1-12" class="i">+Entry(2) 0x000000000000000002 = 0x02010103666f6f
+</a><a href="#h3-1-13" id="h3-1-13" class="i">+Entry(3) 0x000000000000000003 = 0x03020103626172
+</a> CommitIndex 0x02 = 0x0302
+<b>diff --git a/<a id="h4" href="../file/src/raft/testscripts/log/splice.html">src/raft/testscripts/log/splice</a> b/<a href="../file/src/raft/testscripts/log/splice.html">src/raft/testscripts/log/splice</a></b>
+<a href="#h4-0" id="h4-0" class="h">@@ -15,9 +15,9 @@ splice 1@2= 2@2=command oplog=true
+</a> status
+ scan
+ ---
+<a href="#h4-0-3" id="h4-0-3" class="d">-set Entry(1) 0x000000000000000001 = 0x0200
+</a><a href="#h4-0-4" id="h4-0-4" class="d">-set Entry(2) 0x000000000000000002 = 0x020107636f6d6d616e64
+</a><a href="#h4-0-5" id="h4-0-5" class="d">-flush
+</a><a href="#h4-0-6" id="h4-0-6" class="i">+engine: set Entry(1) 0x000000000000000001 = 0x010200
+</a><a href="#h4-0-7" id="h4-0-7" class="i">+engine: set Entry(2) 0x000000000000000002 = 0x02020107636f6d6d616e64
+</a><a href="#h4-0-8" id="h4-0-8" class="i">+engine: flush
+</a> splice → 2@2 command
+ last=2@2 commit=0@0
+ 1@2 None
+<a href="#h4-1" id="h4-1" class="h">@@ -107,9 +107,9 @@ splice → 4@3 None
+</a> splice 3@2=bar 4@3= 5@3=foo 6@3=bar oplog=true
+ scan
+ ---
+<a href="#h4-1-3" id="h4-1-3" class="d">-set Entry(5) 0x000000000000000005 = 0x030103666f6f
+</a><a href="#h4-1-4" id="h4-1-4" class="d">-set Entry(6) 0x000000000000000006 = 0x030103626172
+</a><a href="#h4-1-5" id="h4-1-5" class="d">-flush
+</a><a href="#h4-1-6" id="h4-1-6" class="i">+engine: set Entry(5) 0x000000000000000005 = 0x05030103666f6f
+</a><a href="#h4-1-7" id="h4-1-7" class="i">+engine: set Entry(6) 0x000000000000000006 = 0x06030103626172
+</a><a href="#h4-1-8" id="h4-1-8" class="i">+engine: flush
+</a> splice → 6@3 bar
+ 1@2 None
+ 2@2 command
+<a href="#h4-2" id="h4-2" class="h">@@ -123,10 +123,10 @@ splice 4@4= oplog=true
+</a> status
+ scan
+ ---
+<a href="#h4-2-3" id="h4-2-3" class="d">-set Entry(4) 0x000000000000000004 = 0x0400
+</a><a href="#h4-2-4" id="h4-2-4" class="d">-delete Entry(5) 0x000000000000000005
+</a><a href="#h4-2-5" id="h4-2-5" class="d">-delete Entry(6) 0x000000000000000006
+</a><a href="#h4-2-6" id="h4-2-6" class="d">-flush
+</a><a href="#h4-2-7" id="h4-2-7" class="i">+engine: set Entry(4) 0x000000000000000004 = 0x040400
+</a><a href="#h4-2-8" id="h4-2-8" class="i">+engine: delete Entry(5) 0x000000000000000005
+</a><a href="#h4-2-9" id="h4-2-9" class="i">+engine: delete Entry(6) 0x000000000000000006
+</a><a href="#h4-2-10" id="h4-2-10" class="i">+engine: flush
+</a> splice → 4@4 None
+ last=4@4 commit=0@0
+ 1@2 None
+<a href="#h4-3" id="h4-3" class="h">@@ -139,11 +139,11 @@ splice 1@5= 2@5=foo 3@5=bar oplog=true
+</a> status
+ scan
+ ---
+<a href="#h4-3-3" id="h4-3-3" class="d">-set Entry(1) 0x000000000000000001 = 0x0500
+</a><a href="#h4-3-4" id="h4-3-4" class="d">-set Entry(2) 0x000000000000000002 = 0x050103666f6f
+</a><a href="#h4-3-5" id="h4-3-5" class="d">-set Entry(3) 0x000000000000000003 = 0x050103626172
+</a><a href="#h4-3-6" id="h4-3-6" class="d">-delete Entry(4) 0x000000000000000004
+</a><a href="#h4-3-7" id="h4-3-7" class="d">-flush
+</a><a href="#h4-3-8" id="h4-3-8" class="i">+engine: set Entry(1) 0x000000000000000001 = 0x010500
+</a><a href="#h4-3-9" id="h4-3-9" class="i">+engine: set Entry(2) 0x000000000000000002 = 0x02050103666f6f
+</a><a href="#h4-3-10" id="h4-3-10" class="i">+engine: set Entry(3) 0x000000000000000003 = 0x03050103626172
+</a><a href="#h4-3-11" id="h4-3-11" class="i">+engine: delete Entry(4) 0x000000000000000004
+</a><a href="#h4-3-12" id="h4-3-12" class="i">+engine: flush
+</a> splice → 3@5 bar
+ last=3@5 commit=0@0
+ 1@5 None
+<a href="#h4-4" id="h4-4" class="h">@@ -184,10 +184,10 @@ Error: assertion failed: spliced entries below commit index
+</a> Error: assertion failed: spliced entries below commit index
+ 
+ # Dump the raw data.
+<a href="#h4-4-3" id="h4-4-3" class="d">-raw
+</a><a href="#h4-4-4" id="h4-4-4" class="i">+dump
+</a> ---
+<a href="#h4-4-6" id="h4-4-6" class="d">-Entry(1) 0x000000000000000001 = 0x0500
+</a><a href="#h4-4-7" id="h4-4-7" class="d">-Entry(2) 0x000000000000000002 = 0x050103666f6f
+</a><a href="#h4-4-8" id="h4-4-8" class="d">-Entry(3) 0x000000000000000003 = 0x0600
+</a><a href="#h4-4-9" id="h4-4-9" class="d">-Entry(4) 0x000000000000000004 = 0x060103626172
+</a><a href="#h4-4-10" id="h4-4-10" class="i">+Entry(1) 0x000000000000000001 = 0x010500
+</a><a href="#h4-4-11" id="h4-4-11" class="i">+Entry(2) 0x000000000000000002 = 0x02050103666f6f
+</a><a href="#h4-4-12" id="h4-4-12" class="i">+Entry(3) 0x000000000000000003 = 0x030600
+</a><a href="#h4-4-13" id="h4-4-13" class="i">+Entry(4) 0x000000000000000004 = 0x04060103626172
+</a> CommitIndex 0x02 = 0x0205
+<b>diff --git a/<a id="h5" href="../file/src/raft/testscripts/log/status.html">src/raft/testscripts/log/status</a> b/<a href="../file/src/raft/testscripts/log/status.html">src/raft/testscripts/log/status</a></b>
+<a href="#h5-0" id="h5-0" class="h">@@ -28,7 +28,7 @@ status engine=true
+</a> last=3@2 commit=2@1 engine=Status {
+     name: &quot;memory&quot;,
+     keys: 5,
+<a href="#h5-0-3" id="h5-0-3" class="d">-    size: 48,
+</a><a href="#h5-0-4" id="h5-0-4" class="i">+    size: 51,
+</a>     total_disk_size: 0,
+     live_disk_size: 0,
+     garbage_disk_size: 0,
+<b>diff --git a/<a id="h6" href="../file/src/raft/testscripts/log/term.html">src/raft/testscripts/log/term</a> b/<a href="../file/src/raft/testscripts/log/term.html">src/raft/testscripts/log/term</a></b>
+<a href="#h6-0" id="h6-0" class="h">@@ -13,16 +13,16 @@ Error: assertion failed: can&#39;t set term 0
+</a> set_term 3 oplog=true
+ get_term
+ ---
+<a href="#h6-0-3" id="h6-0-3" class="d">-set TermVote 0x01 = 0x0300
+</a><a href="#h6-0-4" id="h6-0-4" class="d">-flush
+</a><a href="#h6-0-5" id="h6-0-5" class="i">+engine: set TermVote 0x01 = 0x0300
+</a><a href="#h6-0-6" id="h6-0-6" class="i">+engine: flush
+</a> term=3 vote=None
+ 
+ # set_term stores a term and vote.
+ set_term 3 7 oplog=true
+ get_term
+ ---
+<a href="#h6-0-13" id="h6-0-13" class="d">-set TermVote 0x01 = 0x030107
+</a><a href="#h6-0-14" id="h6-0-14" class="d">-flush
+</a><a href="#h6-0-15" id="h6-0-15" class="i">+engine: set TermVote 0x01 = 0x030107
+</a><a href="#h6-0-16" id="h6-0-16" class="i">+engine: flush
+</a> term=3 vote=7
+ 
+ # set_term is idempotent, which doesn&#39;t incur an engine write.
+<a href="#h6-1" id="h6-1" class="h">@@ -60,7 +60,7 @@ Error: assertion failed: can&#39;t change vote Some(1) → Some(2)
+</a> 
+ # The above errors should not have changed the term/vote.
+ get_term
+<a href="#h6-1-3" id="h6-1-3" class="d">-raw
+</a><a href="#h6-1-4" id="h6-1-4" class="i">+dump
+</a> ---
+ term=9 vote=1
+ TermVote 0x01 = 0x090101
+<b>diff --git a/<a id="h7" href="../file/src/raft/testscripts/node/request_status.html">src/raft/testscripts/node/request_status</a> b/<a href="../file/src/raft/testscripts/node/request_status.html">src/raft/testscripts/node/request_status</a></b>
+<a href="#h7-0" id="h7-0" class="h">@@ -25,7 +25,7 @@ status request=true 1
+</a> stabilize
+ ---
+ c1@1 → n1 ClientRequest id=0x02 status
+<a href="#h7-0-3" id="h7-0-3" class="d">-n1@1 → c1 ClientResponse id=0x02 status Status { leader: 1, term: 1, last_index: {1: 2, 2: 2, 3: 1}, commit_index: 2, apply_index: 2, storage: Status { name: &quot;memory&quot;, keys: 4, size: 39, total_disk_size: 0, live_disk_size: 0, garbage_disk_size: 0 } }
+</a><a href="#h7-0-4" id="h7-0-4" class="i">+n1@1 → c1 ClientResponse id=0x02 status Status { leader: 1, term: 1, last_index: {1: 2, 2: 2, 3: 1}, commit_index: 2, apply_index: 2, storage: Status { name: &quot;memory&quot;, keys: 4, size: 41, total_disk_size: 0, live_disk_size: 0, garbage_disk_size: 0 } }
+</a> c1@1 status ⇒ Status {
+     leader: 1,
+     term: 1,
+<a href="#h7-1" id="h7-1" class="h">@@ -39,7 +39,7 @@ c1@1 status ⇒ Status {
+</a>     storage: Status {
+         name: &quot;memory&quot;,
+         keys: 4,
+<a href="#h7-1-3" id="h7-1-3" class="d">-        size: 39,
+</a><a href="#h7-1-4" id="h7-1-4" class="i">+        size: 41,
+</a>         total_disk_size: 0,
+         live_disk_size: 0,
+         garbage_disk_size: 0,
+<a href="#h7-2" id="h7-2" class="h">@@ -52,8 +52,8 @@ stabilize
+</a> ---
+ c2@1 → n2 ClientRequest id=0x03 status
+ n2@1 → n1 ClientRequest id=0x03 status
+<a href="#h7-2-3" id="h7-2-3" class="d">-n1@1 → n2 ClientResponse id=0x03 status Status { leader: 1, term: 1, last_index: {1: 2, 2: 2, 3: 1}, commit_index: 2, apply_index: 2, storage: Status { name: &quot;memory&quot;, keys: 4, size: 39, total_disk_size: 0, live_disk_size: 0, garbage_disk_size: 0 } }
+</a><a href="#h7-2-4" id="h7-2-4" class="d">-n2@1 → c2 ClientResponse id=0x03 status Status { leader: 1, term: 1, last_index: {1: 2, 2: 2, 3: 1}, commit_index: 2, apply_index: 2, storage: Status { name: &quot;memory&quot;, keys: 4, size: 39, total_disk_size: 0, live_disk_size: 0, garbage_disk_size: 0 } }
+</a><a href="#h7-2-5" id="h7-2-5" class="i">+n1@1 → n2 ClientResponse id=0x03 status Status { leader: 1, term: 1, last_index: {1: 2, 2: 2, 3: 1}, commit_index: 2, apply_index: 2, storage: Status { name: &quot;memory&quot;, keys: 4, size: 41, total_disk_size: 0, live_disk_size: 0, garbage_disk_size: 0 } }
+</a><a href="#h7-2-6" id="h7-2-6" class="i">+n2@1 → c2 ClientResponse id=0x03 status Status { leader: 1, term: 1, last_index: {1: 2, 2: 2, 3: 1}, commit_index: 2, apply_index: 2, storage: Status { name: &quot;memory&quot;, keys: 4, size: 41, total_disk_size: 0, live_disk_size: 0, garbage_disk_size: 0 } }
+</a> c2@1 status ⇒ Status {
+     leader: 1,
+     term: 1,
+<a href="#h7-3" id="h7-3" class="h">@@ -67,7 +67,7 @@ c2@1 status ⇒ Status {
+</a>     storage: Status {
+         name: &quot;memory&quot;,
+         keys: 4,
+<a href="#h7-3-3" id="h7-3-3" class="d">-        size: 39,
+</a><a href="#h7-3-4" id="h7-3-4" class="i">+        size: 41,
+</a>         total_disk_size: 0,
+         live_disk_size: 0,
+         garbage_disk_size: 0,
+<b>diff --git a/<a id="h8" href="../file/src/raft/testscripts/node/request_status_single.html">src/raft/testscripts/node/request_status_single</a> b/<a href="../file/src/raft/testscripts/node/request_status_single.html">src/raft/testscripts/node/request_status_single</a></b>
+<a href="#h8-0" id="h8-0" class="h">@@ -16,7 +16,7 @@ status request=true 1
+</a> stabilize
+ ---
+ c1@1 → n1 ClientRequest id=0x02 status
+<a href="#h8-0-3" id="h8-0-3" class="d">-n1@1 → c1 ClientResponse id=0x02 status Status { leader: 1, term: 1, last_index: {1: 2}, commit_index: 2, apply_index: 2, storage: Status { name: &quot;memory&quot;, keys: 4, size: 39, total_disk_size: 0, live_disk_size: 0, garbage_disk_size: 0 } }
+</a><a href="#h8-0-4" id="h8-0-4" class="i">+n1@1 → c1 ClientResponse id=0x02 status Status { leader: 1, term: 1, last_index: {1: 2}, commit_index: 2, apply_index: 2, storage: Status { name: &quot;memory&quot;, keys: 4, size: 41, total_disk_size: 0, live_disk_size: 0, garbage_disk_size: 0 } }
+</a> c1@1 status ⇒ Status {
+     leader: 1,
+     term: 1,
+<a href="#h8-1" id="h8-1" class="h">@@ -28,7 +28,7 @@ c1@1 status ⇒ Status {
+</a>     storage: Status {
+         name: &quot;memory&quot;,
+         keys: 4,
+<a href="#h8-1-3" id="h8-1-3" class="d">-        size: 39,
+</a><a href="#h8-1-4" id="h8-1-4" class="i">+        size: 41,
+</a>         total_disk_size: 0,
+         live_disk_size: 0,
+         garbage_disk_size: 0,
+<b>diff --git a/<a id="h9" href="../file/tests/e2e/client.rs.html">tests/e2e/client.rs</a> b/<a href="../file/tests/e2e/client.rs.html">tests/e2e/client.rs</a></b>
+<a href="#h9-0" id="h9-0" class="h">@@ -129,9 +129,9 @@ fn status() -&gt; Result&lt;()&gt; {
+</a>                 storage: storage::engine::Status {
+                     name: &quot;bitcask&quot;.to_string(),
+                     keys: 29,
+<a href="#h9-0-3" id="h9-0-3" class="d">-                    size: 1322,
+</a><a href="#h9-0-4" id="h9-0-4" class="d">-                    total_disk_size: 1829,
+</a><a href="#h9-0-5" id="h9-0-5" class="d">-                    live_disk_size: 1554,
+</a><a href="#h9-0-6" id="h9-0-6" class="i">+                    size: 1349,
+</a><a href="#h9-0-7" id="h9-0-7" class="i">+                    total_disk_size: 1856,
+</a><a href="#h9-0-8" id="h9-0-8" class="i">+                    live_disk_size: 1581,
+</a>                     garbage_disk_size: 275
+                 },
+             },
+</pre>
+</div>
+</body>
+</html>

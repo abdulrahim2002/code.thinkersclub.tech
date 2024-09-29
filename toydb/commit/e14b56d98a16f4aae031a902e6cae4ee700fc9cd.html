@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>move explain handling into sql::engine::Session - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/e14b56d98a16f4aae031a902e6cae4ee700fc9cd.html">e14b56d98a16f4aae031a902e6cae4ee700fc9cd</a>
+<b>parent</b> <a href="../commit/74376e1006566959138b8d971f2108235af41070.html">74376e1006566959138b8d971f2108235af41070</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Mon, 27 Apr 2020 01:53:03 +0200
+
+move explain handling into sql::engine::Session
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/sql/engine/mod.rs</a></td><td> | </td><td class="num">3</td><td><span class="i">+++</span><span class="d"></span></td></tr>
+<tr><td class="D">D</td><td><a href="#h1">src/sql/execution/explain.rs</a></td><td> | </td><td class="num">19</td><td><span class="i"></span><span class="d">-------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/sql/execution/mod.rs</a></td><td> | </td><td class="num">3</td><td><span class="i"></span><span class="d">---</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">src/sql/plan/mod.rs</a></td><td> | </td><td class="num">5</td><td><span class="i">+</span><span class="d">----</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h4">src/sql/plan/planner.rs</a></td><td> | </td><td class="num">4</td><td><span class="i">+++</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h5">tests/sql/query.rs</a></td><td> | </td><td class="num">4</td><td><span class="i"></span><span class="d">----</span></td></tr>
+</table></pre><pre>6 files changed, 7 insertions(+), 31 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/sql/engine/mod.rs.html">src/sql/engine/mod.rs</a> b/<a href="../file/src/sql/engine/mod.rs.html">src/sql/engine/mod.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -112,6 +112,9 @@ impl&lt;E: Engine + &#39;static&gt; Session&lt;E&gt; {
+</a>                 txn.rollback()?;
+                 Ok(result)
+             }
+<a href="#h0-0-3" id="h0-0-3" class="i">+            ast::Statement::Explain(statement) =&gt; self.with_txn(Mode::ReadOnly, |txn| {
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+                Ok(ResultSet::Explain(Plan::build(*statement)?.optimize(txn)?.0))
+</a><a href="#h0-0-5" id="h0-0-5" class="i">+            }),
+</a>             statement if self.txn.is_some() =&gt; Plan::build(statement)?
+                 .optimize(self.txn.as_mut().unwrap())?
+                 .execute(Context { txn: self.txn.as_mut().unwrap() }),
+<b>diff --git a/<a id="h1" href="../file/src/sql/execution/explain.rs.html">src/sql/execution/explain.rs</a> b/<a href="../file/src/sql/execution/explain.rs.html">src/sql/execution/explain.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -1,19 +0,0 @@
+</a><a href="#h1-0-0" id="h1-0-0" class="d">-use super::super::engine::Transaction;
+</a><a href="#h1-0-1" id="h1-0-1" class="d">-use super::super::plan::Node;
+</a><a href="#h1-0-2" id="h1-0-2" class="d">-use super::{Context, Executor, ResultSet};
+</a><a href="#h1-0-3" id="h1-0-3" class="d">-use crate::Error;
+</a><a href="#h1-0-4" id="h1-0-4" class="d">-
+</a><a href="#h1-0-5" id="h1-0-5" class="d">-/// An executor that produces a query plan
+</a><a href="#h1-0-6" id="h1-0-6" class="d">-pub struct Explain(Node);
+</a><a href="#h1-0-7" id="h1-0-7" class="d">-
+</a><a href="#h1-0-8" id="h1-0-8" class="d">-impl Explain {
+</a><a href="#h1-0-9" id="h1-0-9" class="d">-    pub fn new(plan: Node) -&gt; Box&lt;Self&gt; {
+</a><a href="#h1-0-10" id="h1-0-10" class="d">-        Box::new(Self(plan))
+</a><a href="#h1-0-11" id="h1-0-11" class="d">-    }
+</a><a href="#h1-0-12" id="h1-0-12" class="d">-}
+</a><a href="#h1-0-13" id="h1-0-13" class="d">-
+</a><a href="#h1-0-14" id="h1-0-14" class="d">-impl&lt;T: Transaction&gt; Executor&lt;T&gt; for Explain {
+</a><a href="#h1-0-15" id="h1-0-15" class="d">-    fn execute(self: Box&lt;Self&gt;, _ctx: &amp;mut Context&lt;T&gt;) -&gt; Result&lt;ResultSet, Error&gt; {
+</a><a href="#h1-0-16" id="h1-0-16" class="d">-        Ok(ResultSet::Explain(self.0))
+</a><a href="#h1-0-17" id="h1-0-17" class="d">-    }
+</a><a href="#h1-0-18" id="h1-0-18" class="d">-}
+</a><b>diff --git a/<a id="h2" href="../file/src/sql/execution/mod.rs.html">src/sql/execution/mod.rs</a> b/<a href="../file/src/sql/execution/mod.rs.html">src/sql/execution/mod.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -2,7 +2,6 @@ mod aggregation;
+</a> mod create_table;
+ mod delete;
+ mod drop_table;
+<a href="#h2-0-3" id="h2-0-3" class="d">-mod explain;
+</a> mod filter;
+ mod index_lookup;
+ mod insert;
+<a href="#h2-1" id="h2-1" class="h">@@ -20,7 +19,6 @@ use aggregation::Aggregation;
+</a> use create_table::CreateTable;
+ use delete::Delete;
+ use drop_table::DropTable;
+<a href="#h2-1-3" id="h2-1-3" class="d">-use explain::Explain;
+</a> use filter::Filter;
+ use index_lookup::IndexLookup;
+ use insert::Insert;
+<a href="#h2-2" id="h2-2" class="h">@@ -58,7 +56,6 @@ impl&lt;T: Transaction + &#39;static&gt; dyn Executor&lt;T&gt; {
+</a>             Node::CreateTable { schema } =&gt; CreateTable::new(schema),
+             Node::Delete { table, source } =&gt; Delete::new(table, Self::build(*source)),
+             Node::DropTable { name } =&gt; DropTable::new(name),
+<a href="#h2-2-3" id="h2-2-3" class="d">-            Node::Explain(plan) =&gt; Explain::new(*plan),
+</a>             Node::Filter { source, predicate } =&gt; Filter::new(Self::build(*source), predicate),
+             Node::IndexLookup { table, alias, column, keys } =&gt; {
+                 IndexLookup::new(table, alias, column, keys)
+<b>diff --git a/<a id="h3" href="../file/src/sql/plan/mod.rs.html">src/sql/plan/mod.rs</a> b/<a href="../file/src/sql/plan/mod.rs.html">src/sql/plan/mod.rs</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -15,7 +15,7 @@ use std::collections::BTreeMap;
+</a> 
+ /// A query plan
+ #[derive(Debug)]
+<a href="#h3-0-3" id="h3-0-3" class="d">-pub struct Plan(Node);
+</a><a href="#h3-0-4" id="h3-0-4" class="i">+pub struct Plan(pub Node);
+</a> 
+ impl Plan {
+     /// Builds a plan from an AST statement
+<a href="#h3-1" id="h3-1" class="h">@@ -58,7 +58,6 @@ pub enum Node {
+</a>     DropTable {
+         name: String,
+     },
+<a href="#h3-1-3" id="h3-1-3" class="d">-    Explain(Box&lt;Node&gt;),
+</a>     Filter {
+         source: Box&lt;Node&gt;,
+         predicate: Expression,
+<a href="#h3-2" id="h3-2" class="h">@@ -139,7 +138,6 @@ impl Node {
+</a>             Self::Delete { table, source } =&gt; {
+                 Self::Delete { table, source: source.transform(pre, post)?.into() }
+             }
+<a href="#h3-2-3" id="h3-2-3" class="d">-            Self::Explain(node) =&gt; Self::Explain(node.transform(pre, post)?.into()),
+</a>             Self::Filter { source, predicate } =&gt; {
+                 Self::Filter { source: source.transform(pre, post)?.into(), predicate }
+             }
+<a href="#h3-3" id="h3-3" class="h">@@ -183,7 +181,6 @@ impl Node {
+</a>             n @ Self::CreateTable { .. } =&gt; n,
+             n @ Self::Delete { .. } =&gt; n,
+             n @ Self::DropTable { .. } =&gt; n,
+<a href="#h3-3-3" id="h3-3-3" class="d">-            n @ Self::Explain { .. } =&gt; n,
+</a>             n @ Self::IndexLookup { .. } =&gt; n,
+             n @ Self::KeyLookup { .. } =&gt; n,
+             n @ Self::Limit { .. } =&gt; n,
+<b>diff --git a/<a id="h4" href="../file/src/sql/plan/planner.rs.html">src/sql/plan/planner.rs</a> b/<a href="../file/src/sql/plan/planner.rs.html">src/sql/plan/planner.rs</a></b>
+<a href="#h4-0" id="h4-0" class="h">@@ -27,6 +27,9 @@ impl Planner {
+</a>                     statement
+                 )))
+             }
+<a href="#h4-0-3" id="h4-0-3" class="i">+            ast::Statement::Explain(_) =&gt; {
+</a><a href="#h4-0-4" id="h4-0-4" class="i">+                return Err(Error::Internal(format!(&quot;Unexpected explain statement&quot;)))
+</a><a href="#h4-0-5" id="h4-0-5" class="i">+            }
+</a>             ast::Statement::CreateTable { name, columns } =&gt; {
+                 Node::CreateTable { schema: self.build_schema_table(name, columns)? }
+             }
+<a href="#h4-1" id="h4-1" class="h">@@ -42,7 +45,6 @@ impl Planner {
+</a>                 }),
+             },
+             ast::Statement::DropTable(name) =&gt; Node::DropTable { name },
+<a href="#h4-1-3" id="h4-1-3" class="d">-            ast::Statement::Explain(stmt) =&gt; Node::Explain(Box::new(self.build_statement(*stmt)?)),
+</a>             ast::Statement::Insert { table, columns, values } =&gt; Node::Insert {
+                 table,
+                 columns: columns.unwrap_or_else(Vec::new),
+<b>diff --git a/<a id="h5" href="../file/tests/sql/query.rs.html">tests/sql/query.rs</a> b/<a href="../file/tests/sql/query.rs.html">tests/sql/query.rs</a></b>
+<a href="#h5-0" id="h5-0" class="h">@@ -141,9 +141,6 @@ macro_rules! test_query {
+</a>                         write!(f, &quot; &lt;none&gt;\n&quot;)?;
+                     }
+                 }
+<a href="#h5-0-3" id="h5-0-3" class="d">-                ResultSet::Explain(plan) =&gt; {
+</a><a href="#h5-0-4" id="h5-0-4" class="d">-                    write!(f, &quot; {:#?}&quot;, plan)?;
+</a><a href="#h5-0-5" id="h5-0-5" class="d">-                }
+</a>                 result =&gt; return Err(Error::Internal(format!(&quot;Unexpected result {:?}&quot;, result))),
+             }
+             Ok(())
+<a href="#h5-1" id="h5-1" class="h">@@ -157,7 +154,6 @@ test_query! {
+</a>     bare: &quot;SELECT&quot;,
+     trailing_comma: &quot;SELECT 1,&quot;,
+     lowercase: &quot;select 1&quot;,
+<a href="#h5-1-3" id="h5-1-3" class="d">-    explain: &quot;EXPLAIN SELECT m.id, m.title, g.name FROM movies m JOIN GENRES g ON m.genre_id = g.id WHERE m.released &gt;= 2000&quot;,
+</a> 
+     field_single: &quot;SELECT id FROM movies&quot;,
+     field_multi: &quot;SELECT id, title FROM movies&quot;,
+</pre>
+</div>
+</body>
+</html>

@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>sql: use `Label` in execution results - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/770d283aca0a90abd029e151728e36f1307877af.html">770d283aca0a90abd029e151728e36f1307877af</a>
+<b>parent</b> <a href="../commit/9a21aa3d4989ad85cb867817aa20a42d89806d3b.html">9a21aa3d4989ad85cb867817aa20a42d89806d3b</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Thu, 20 Jun 2024 18:27:32 +0200
+
+sql: use `Label` in execution results
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/bin/toysql.rs</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/sql/engine/session.rs</a></td><td> | </td><td class="num">4</td><td><span class="i">++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/sql/execution/aggregate.rs</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">src/sql/execution/execute.rs</a></td><td> | </td><td class="num">5</td><td><span class="i">+++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h4">src/sql/execution/source.rs</a></td><td> | </td><td class="num">6</td><td><span class="i">+++</span><span class="d">---</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h5">src/sql/execution/transform.rs</a></td><td> | </td><td class="num">3</td><td><span class="i">++</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h6">tests/e2e/client.rs</a></td><td> | </td><td class="num">4</td><td><span class="i">++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h7">tests/sql/query.rs</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+</table></pre><pre>8 files changed, 15 insertions(+), 13 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/bin/toysql.rs.html">src/bin/toysql.rs</a> b/<a href="../file/src/bin/toysql.rs.html">src/bin/toysql.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -203,7 +203,7 @@ Storage:   {keys} keys, {logical_size} MB logical, {nodes}x {disk_size} MB disk,
+</a>                         &quot;{}&quot;,
+                         columns
+                             .iter()
+<a href="#h0-0-3" id="h0-0-3" class="d">-                            .map(|c| c.as_deref().unwrap_or(&quot;?&quot;))
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+                            .map(|c| c.as_ref().map(|l| l.1.as_str()).unwrap_or(&quot;?&quot;))
+</a>                             .collect::&lt;Vec&lt;_&gt;&gt;()
+                             .join(&quot;|&quot;)
+                     );
+<b>diff --git a/<a id="h1" href="../file/src/sql/engine/session.rs.html">src/sql/engine/session.rs</a> b/<a href="../file/src/sql/engine/session.rs.html">src/sql/engine/session.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -4,7 +4,7 @@ use crate::error::{Error, Result};
+</a> use crate::sql::execution::ExecutionResult;
+ use crate::sql::parser::{ast, Parser};
+ use crate::sql::planner::Plan;
+<a href="#h1-0-3" id="h1-0-3" class="d">-use crate::sql::types::{Row, Rows, Value};
+</a><a href="#h1-0-4" id="h1-0-4" class="i">+use crate::sql::types::{Label, Row, Rows, Value};
+</a> use crate::storage::mvcc;
+ use crate::{errdata, errinput};
+ 
+<a href="#h1-1" id="h1-1" class="h">@@ -140,7 +140,7 @@ pub enum StatementResult {
+</a>     // For simplicity, we buffer and send the entire set of rows as a vector
+     // instead of streaming them to the client. Streaming reads haven&#39;t been
+     // implemented from Raft either, so they&#39;re buffered all the way through.
+<a href="#h1-1-3" id="h1-1-3" class="d">-    Select { columns: Vec&lt;Option&lt;String&gt;&gt;, rows: Vec&lt;Row&gt; },
+</a><a href="#h1-1-4" id="h1-1-4" class="i">+    Select { columns: Vec&lt;Option&lt;Label&gt;&gt;, rows: Vec&lt;Row&gt; },
+</a> }
+ 
+ /// Converts an execution result into a statement result.
+<b>diff --git a/<a id="h2" href="../file/src/sql/execution/aggregate.rs.html">src/sql/execution/aggregate.rs</a> b/<a href="../file/src/sql/execution/aggregate.rs.html">src/sql/execution/aggregate.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -33,7 +33,7 @@ pub(super) fn aggregate(
+</a>             .columns
+             .into_iter()
+             .enumerate()
+<a href="#h2-0-3" id="h2-0-3" class="d">-            .map(|(i, c)| if i &lt; agg_count { None } else { c })
+</a><a href="#h2-0-4" id="h2-0-4" class="i">+            .map(|(i, label)| if i &lt; agg_count { None } else { label })
+</a>             .collect(),
+         rows: Box::new(accumulators.into_iter().map(|(bucket, accs)| {
+             Ok(accs.into_iter().map(|acc| acc.aggregate()).chain(bucket).collect())
+<b>diff --git a/<a id="h3" href="../file/src/sql/execution/execute.rs.html">src/sql/execution/execute.rs</a> b/<a href="../file/src/sql/execution/execute.rs.html">src/sql/execution/execute.rs</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -7,6 +7,7 @@ use super::write;
+</a> use crate::error::Result;
+ use crate::sql::engine::{Catalog, Transaction};
+ use crate::sql::planner::{Node, Plan};
+<a href="#h3-0-3" id="h3-0-3" class="i">+use crate::sql::types::Label;
+</a> use crate::sql::types::{Row, Rows};
+ 
+ /// Executes a plan, returning an execution result.
+<a href="#h3-1" id="h3-1" class="h">@@ -121,7 +122,7 @@ pub enum ExecutionResult {
+</a> /// A query result iterator, containing the columns and row iterator.
+ pub struct QueryIterator {
+     /// Column names.
+<a href="#h3-1-3" id="h3-1-3" class="d">-    pub columns: Vec&lt;Option&lt;String&gt;&gt;,
+</a><a href="#h3-1-4" id="h3-1-4" class="i">+    pub columns: Vec&lt;Option&lt;Label&gt;&gt;,
+</a>     /// Row iterator.
+     pub rows: Rows,
+ }
+<a href="#h3-2" id="h3-2" class="h">@@ -138,7 +139,7 @@ impl QueryIterator {
+</a>     /// Replaces the columns with the result of the closure.
+     pub fn map_columns&lt;F&gt;(mut self, f: F) -&gt; Self
+     where
+<a href="#h3-2-3" id="h3-2-3" class="d">-        F: FnOnce(Vec&lt;Option&lt;String&gt;&gt;) -&gt; Vec&lt;Option&lt;String&gt;&gt;,
+</a><a href="#h3-2-4" id="h3-2-4" class="i">+        F: FnOnce(Vec&lt;Option&lt;Label&gt;&gt;) -&gt; Vec&lt;Option&lt;Label&gt;&gt;,
+</a>     {
+         self.columns = f(self.columns);
+         self
+<b>diff --git a/<a id="h4" href="../file/src/sql/execution/source.rs.html">src/sql/execution/source.rs</a> b/<a href="../file/src/sql/execution/source.rs.html">src/sql/execution/source.rs</a></b>
+<a href="#h4-0" id="h4-0" class="h">@@ -10,7 +10,7 @@ pub(super) fn scan(
+</a>     filter: Option&lt;Expression&gt;,
+ ) -&gt; Result&lt;QueryIterator&gt; {
+     Ok(QueryIterator {
+<a href="#h4-0-3" id="h4-0-3" class="d">-        columns: table.columns.into_iter().map(|c| Some(c.name)).collect(),
+</a><a href="#h4-0-4" id="h4-0-4" class="i">+        columns: table.columns.into_iter().map(|c| Some((None, c.name))).collect(),
+</a>         rows: Box::new(txn.scan(&amp;table.name, filter)?),
+     })
+ }
+<a href="#h4-1" id="h4-1" class="h">@@ -22,7 +22,7 @@ pub(super) fn lookup_key(
+</a>     keys: Vec&lt;Value&gt;,
+ ) -&gt; Result&lt;QueryIterator&gt; {
+     Ok(QueryIterator {
+<a href="#h4-1-3" id="h4-1-3" class="d">-        columns: table.columns.into_iter().map(|c| Some(c.name)).collect(),
+</a><a href="#h4-1-4" id="h4-1-4" class="i">+        columns: table.columns.into_iter().map(|c| Some((None, c.name))).collect(),
+</a>         rows: Box::new(txn.get(&amp;table.name, &amp;keys)?.into_iter().map(Ok)),
+     })
+ }
+<a href="#h4-2" id="h4-2" class="h">@@ -38,7 +38,7 @@ pub(super) fn lookup_index(
+</a>     let rows = txn.get(&amp;table.name, &amp;pks)?;
+ 
+     Ok(QueryIterator {
+<a href="#h4-2-3" id="h4-2-3" class="d">-        columns: table.columns.into_iter().map(|c| Some(c.name)).collect(),
+</a><a href="#h4-2-4" id="h4-2-4" class="i">+        columns: table.columns.into_iter().map(|c| Some((None, c.name))).collect(),
+</a>         rows: Box::new(rows.into_iter().map(Ok)),
+     })
+ }
+<b>diff --git a/<a id="h5" href="../file/src/sql/execution/transform.rs.html">src/sql/execution/transform.rs</a> b/<a href="../file/src/sql/execution/transform.rs.html">src/sql/execution/transform.rs</a></b>
+<a href="#h5-0" id="h5-0" class="h">@@ -70,6 +70,7 @@ pub(super) fn project(
+</a>     expressions: Vec&lt;(Expression, Option&lt;String&gt;)&gt;,
+ ) -&gt; QueryIterator {
+     // TODO: pass expressions and labels separately.
+<a href="#h5-0-3" id="h5-0-3" class="i">+    // TODO: these should be actual labels.
+</a>     let (expressions, labels): (Vec&lt;_&gt;, Vec&lt;_&gt;) = expressions.into_iter().unzip();
+ 
+     // Use explicit column label if given, or pass through the source column
+<a href="#h5-1" id="h5-1" class="h">@@ -81,7 +82,7 @@ pub(super) fn project(
+</a>                 .enumerate()
+                 .map(|(i, label)| {
+                     if let Some(label) = label {
+<a href="#h5-1-3" id="h5-1-3" class="d">-                        Some(label)
+</a><a href="#h5-1-4" id="h5-1-4" class="i">+                        Some((None, label))
+</a>                     } else if let Expression::Field(f, _) = &amp;expressions[i] {
+                         columns.get(*f).cloned().expect(&quot;invalid field reference&quot;)
+                     } else {
+<b>diff --git a/<a id="h6" href="../file/tests/e2e/client.rs.html">tests/e2e/client.rs</a> b/<a href="../file/tests/e2e/client.rs.html">tests/e2e/client.rs</a></b>
+<a href="#h6-0" id="h6-0" class="h">@@ -158,7 +158,7 @@ fn execute() -&gt; Result&lt;()&gt; {
+</a>     assert_eq!(
+         result,
+         StatementResult::Select {
+<a href="#h6-0-3" id="h6-0-3" class="d">-            columns: vec![Some(&quot;id&quot;.into()), Some(&quot;name&quot;.into())],
+</a><a href="#h6-0-4" id="h6-0-4" class="i">+            columns: vec![Some((None, &quot;id&quot;.into())), Some((None, &quot;name&quot;.into()))],
+</a>             rows: vec![
+                 vec![Value::Integer(1), Value::String(&quot;Science Fiction&quot;.into())],
+                 vec![Value::Integer(2), Value::String(&quot;Action&quot;.into())],
+<a href="#h6-1" id="h6-1" class="h">@@ -171,7 +171,7 @@ fn execute() -&gt; Result&lt;()&gt; {
+</a>     assert_eq!(
+         result,
+         StatementResult::Select {
+<a href="#h6-1-3" id="h6-1-3" class="d">-            columns: vec![Some(&quot;id&quot;.into()), Some(&quot;name&quot;.into())],
+</a><a href="#h6-1-4" id="h6-1-4" class="i">+            columns: vec![Some((None, &quot;id&quot;.into())), Some((None, &quot;name&quot;.into()))],
+</a>             rows: vec![],
+         }
+     );
+<b>diff --git a/<a id="h7" href="../file/tests/sql/query.rs.html">tests/sql/query.rs</a> b/<a href="../file/tests/sql/query.rs.html">tests/sql/query.rs</a></b>
+<a href="#h7-0" id="h7-0" class="h">@@ -92,7 +92,7 @@ macro_rules! test_query {
+</a>                     if !columns.is_empty() || !rows.is_empty() {
+                         write!(f, &quot; {:?}\n&quot;, columns
+                             .into_iter()
+<a href="#h7-0-3" id="h7-0-3" class="d">-                            .map(|c| c.unwrap_or_else(|| &quot;?&quot;.to_string()))
+</a><a href="#h7-0-4" id="h7-0-4" class="i">+                            .map(|c| c.map(|l| l.1).unwrap_or_else(|| &quot;?&quot;.to_string()))
+</a>                             .collect::&lt;Vec&lt;_&gt;&gt;())?;
+                         for row in rows {
+                             write!(f, &quot;{:?}\n&quot;, row)?;
+</pre>
+</div>
+</body>
+</html>

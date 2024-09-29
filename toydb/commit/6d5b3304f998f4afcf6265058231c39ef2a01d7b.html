@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Use GAT for Store::scan() iterator. - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/6d5b3304f998f4afcf6265058231c39ef2a01d7b.html">6d5b3304f998f4afcf6265058231c39ef2a01d7b</a>
+<b>parent</b> <a href="../commit/082cfdc1aff9f323b3608cc30a8c2f3509f7fb90.html">082cfdc1aff9f323b3608cc30a8c2f3509f7fb90</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Sat,  2 Sep 2023 16:55:50 +0200
+
+Use GAT for Store::scan() iterator.
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/storage/kv/bitcask.rs</a></td><td> | </td><td class="num">36</td><td><span class="i">+++++++++++++++++++++++++++++++</span><span class="d">-----</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/storage/kv/memory.rs</a></td><td> | </td><td class="num">33</td><td><span class="i">++++++++++++++++++++++++++++++</span><span class="d">---</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/storage/kv/mod.rs</a></td><td> | </td><td class="num">11</td><td><span class="i">+++++++</span><span class="d">----</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">src/storage/kv/mvcc.rs</a></td><td> | </td><td class="num">11</td><td><span class="i">+++++++</span><span class="d">----</span></td></tr>
+</table></pre><pre>4 files changed, 75 insertions(+), 16 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/storage/kv/bitcask.rs.html">src/storage/kv/bitcask.rs</a> b/<a href="../file/src/storage/kv/bitcask.rs.html">src/storage/kv/bitcask.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -1,4 +1,4 @@
+</a><a href="#h0-0-0" id="h0-0-0" class="d">-use super::{Scan, Store};
+</a><a href="#h0-0-1" id="h0-0-1" class="i">+use super::Store;
+</a> use crate::error::Result;
+ 
+ use fs4::FileExt;
+<a href="#h0-1" id="h0-1" class="h">@@ -94,6 +94,8 @@ impl std::fmt::Display for BitCask {
+</a> }
+ 
+ impl Store for BitCask {
+<a href="#h0-1-3" id="h0-1-3" class="i">+    type ScanIterator&lt;&#39;a&gt; = ScanIterator&lt;&#39;a&gt;;
+</a><a href="#h0-1-4" id="h0-1-4" class="i">+
+</a>     fn delete(&amp;mut self, key: &amp;[u8]) -&gt; Result&lt;()&gt; {
+         self.log.write_entry(key, None)?;
+         self.keydir.remove(key);
+<a href="#h0-2" id="h0-2" class="h">@@ -112,10 +114,8 @@ impl Store for BitCask {
+</a>         }
+     }
+ 
+<a href="#h0-2-3" id="h0-2-3" class="d">-    fn scan&lt;R: std::ops::RangeBounds&lt;Vec&lt;u8&gt;&gt;&gt;(&amp;mut self, range: R) -&gt; Scan {
+</a><a href="#h0-2-4" id="h0-2-4" class="d">-        Box::new(self.keydir.range(range).map(|(key, (value_pos, value_len))| {
+</a><a href="#h0-2-5" id="h0-2-5" class="d">-            Ok((key.clone(), self.log.read_value(*value_pos, *value_len)?))
+</a><a href="#h0-2-6" id="h0-2-6" class="d">-        }))
+</a><a href="#h0-2-7" id="h0-2-7" class="i">+    fn scan&lt;R: std::ops::RangeBounds&lt;Vec&lt;u8&gt;&gt;&gt;(&amp;mut self, range: R) -&gt; Self::ScanIterator&lt;&#39;_&gt; {
+</a><a href="#h0-2-8" id="h0-2-8" class="i">+        ScanIterator { inner: self.keydir.range(range), log: &amp;mut self.log }
+</a>     }
+ 
+     fn set(&amp;mut self, key: &amp;[u8], value: Vec&lt;u8&gt;) -&gt; Result&lt;()&gt; {
+<a href="#h0-3" id="h0-3" class="h">@@ -126,6 +126,32 @@ impl Store for BitCask {
+</a>     }
+ }
+ 
+<a href="#h0-3-3" id="h0-3-3" class="i">+pub struct ScanIterator&lt;&#39;a&gt; {
+</a><a href="#h0-3-4" id="h0-3-4" class="i">+    inner: std::collections::btree_map::Range&lt;&#39;a, Vec&lt;u8&gt;, (u64, u32)&gt;,
+</a><a href="#h0-3-5" id="h0-3-5" class="i">+    log: &amp;&#39;a mut Log,
+</a><a href="#h0-3-6" id="h0-3-6" class="i">+}
+</a><a href="#h0-3-7" id="h0-3-7" class="i">+
+</a><a href="#h0-3-8" id="h0-3-8" class="i">+impl&lt;&#39;a&gt; ScanIterator&lt;&#39;a&gt; {
+</a><a href="#h0-3-9" id="h0-3-9" class="i">+    fn map(&amp;mut self, item: (&amp;Vec&lt;u8&gt;, &amp;(u64, u32))) -&gt; &lt;Self as Iterator&gt;::Item {
+</a><a href="#h0-3-10" id="h0-3-10" class="i">+        let (key, (value_pos, value_len)) = item;
+</a><a href="#h0-3-11" id="h0-3-11" class="i">+        Ok((key.clone(), self.log.read_value(*value_pos, *value_len)?))
+</a><a href="#h0-3-12" id="h0-3-12" class="i">+    }
+</a><a href="#h0-3-13" id="h0-3-13" class="i">+}
+</a><a href="#h0-3-14" id="h0-3-14" class="i">+
+</a><a href="#h0-3-15" id="h0-3-15" class="i">+impl&lt;&#39;a&gt; Iterator for ScanIterator&lt;&#39;a&gt; {
+</a><a href="#h0-3-16" id="h0-3-16" class="i">+    type Item = Result&lt;(Vec&lt;u8&gt;, Vec&lt;u8&gt;)&gt;;
+</a><a href="#h0-3-17" id="h0-3-17" class="i">+
+</a><a href="#h0-3-18" id="h0-3-18" class="i">+    fn next(&amp;mut self) -&gt; Option&lt;Self::Item&gt; {
+</a><a href="#h0-3-19" id="h0-3-19" class="i">+        self.inner.next().map(|item| self.map(item))
+</a><a href="#h0-3-20" id="h0-3-20" class="i">+    }
+</a><a href="#h0-3-21" id="h0-3-21" class="i">+}
+</a><a href="#h0-3-22" id="h0-3-22" class="i">+
+</a><a href="#h0-3-23" id="h0-3-23" class="i">+impl&lt;&#39;a&gt; DoubleEndedIterator for ScanIterator&lt;&#39;a&gt; {
+</a><a href="#h0-3-24" id="h0-3-24" class="i">+    fn next_back(&amp;mut self) -&gt; Option&lt;Self::Item&gt; {
+</a><a href="#h0-3-25" id="h0-3-25" class="i">+        self.inner.next_back().map(|item| self.map(item))
+</a><a href="#h0-3-26" id="h0-3-26" class="i">+    }
+</a><a href="#h0-3-27" id="h0-3-27" class="i">+}
+</a><a href="#h0-3-28" id="h0-3-28" class="i">+
+</a> impl BitCask {
+     /// Compacts the current log file by writing out a new log file containing
+     /// only live keys and replacing the current file with it.
+<b>diff --git a/<a id="h1" href="../file/src/storage/kv/memory.rs.html">src/storage/kv/memory.rs</a> b/<a href="../file/src/storage/kv/memory.rs.html">src/storage/kv/memory.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -1,4 +1,4 @@
+</a><a href="#h1-0-0" id="h1-0-0" class="d">-use super::{Scan, Store};
+</a><a href="#h1-0-1" id="h1-0-1" class="i">+use super::Store;
+</a> use crate::error::Result;
+ 
+ /// In-memory key-value store using the Rust standard library B-tree implementation.
+<a href="#h1-1" id="h1-1" class="h">@@ -20,6 +20,8 @@ impl std::fmt::Display for Memory {
+</a> }
+ 
+ impl Store for Memory {
+<a href="#h1-1-3" id="h1-1-3" class="i">+    type ScanIterator&lt;&#39;a&gt; = ScanIterator&lt;&#39;a&gt;;
+</a><a href="#h1-1-4" id="h1-1-4" class="i">+
+</a>     fn flush(&amp;mut self) -&gt; Result&lt;()&gt; {
+         Ok(())
+     }
+<a href="#h1-2" id="h1-2" class="h">@@ -33,8 +35,8 @@ impl Store for Memory {
+</a>         Ok(self.data.get(key).cloned())
+     }
+ 
+<a href="#h1-2-3" id="h1-2-3" class="d">-    fn scan&lt;R: std::ops::RangeBounds&lt;Vec&lt;u8&gt;&gt;&gt;(&amp;mut self, range: R) -&gt; Scan {
+</a><a href="#h1-2-4" id="h1-2-4" class="d">-        Box::new(self.data.range(range).map(|(k, v)| Ok((k.clone(), v.clone()))))
+</a><a href="#h1-2-5" id="h1-2-5" class="i">+    fn scan&lt;R: std::ops::RangeBounds&lt;Vec&lt;u8&gt;&gt;&gt;(&amp;mut self, range: R) -&gt; Self::ScanIterator&lt;&#39;_&gt; {
+</a><a href="#h1-2-6" id="h1-2-6" class="i">+        ScanIterator { inner: self.data.range(range) }
+</a>     }
+ 
+     fn set(&amp;mut self, key: &amp;[u8], value: Vec&lt;u8&gt;) -&gt; Result&lt;()&gt; {
+<a href="#h1-3" id="h1-3" class="h">@@ -43,6 +45,31 @@ impl Store for Memory {
+</a>     }
+ }
+ 
+<a href="#h1-3-3" id="h1-3-3" class="i">+pub struct ScanIterator&lt;&#39;a&gt; {
+</a><a href="#h1-3-4" id="h1-3-4" class="i">+    inner: std::collections::btree_map::Range&lt;&#39;a, Vec&lt;u8&gt;, Vec&lt;u8&gt;&gt;,
+</a><a href="#h1-3-5" id="h1-3-5" class="i">+}
+</a><a href="#h1-3-6" id="h1-3-6" class="i">+
+</a><a href="#h1-3-7" id="h1-3-7" class="i">+impl&lt;&#39;a&gt; ScanIterator&lt;&#39;a&gt; {
+</a><a href="#h1-3-8" id="h1-3-8" class="i">+    fn map(item: (&amp;Vec&lt;u8&gt;, &amp;Vec&lt;u8&gt;)) -&gt; &lt;Self as Iterator&gt;::Item {
+</a><a href="#h1-3-9" id="h1-3-9" class="i">+        let (key, value) = item;
+</a><a href="#h1-3-10" id="h1-3-10" class="i">+        Ok((key.clone(), value.clone()))
+</a><a href="#h1-3-11" id="h1-3-11" class="i">+    }
+</a><a href="#h1-3-12" id="h1-3-12" class="i">+}
+</a><a href="#h1-3-13" id="h1-3-13" class="i">+
+</a><a href="#h1-3-14" id="h1-3-14" class="i">+impl&lt;&#39;a&gt; Iterator for ScanIterator&lt;&#39;a&gt; {
+</a><a href="#h1-3-15" id="h1-3-15" class="i">+    type Item = Result&lt;(Vec&lt;u8&gt;, Vec&lt;u8&gt;)&gt;;
+</a><a href="#h1-3-16" id="h1-3-16" class="i">+
+</a><a href="#h1-3-17" id="h1-3-17" class="i">+    fn next(&amp;mut self) -&gt; Option&lt;Self::Item&gt; {
+</a><a href="#h1-3-18" id="h1-3-18" class="i">+        self.inner.next().map(Self::map)
+</a><a href="#h1-3-19" id="h1-3-19" class="i">+    }
+</a><a href="#h1-3-20" id="h1-3-20" class="i">+}
+</a><a href="#h1-3-21" id="h1-3-21" class="i">+
+</a><a href="#h1-3-22" id="h1-3-22" class="i">+impl&lt;&#39;a&gt; DoubleEndedIterator for ScanIterator&lt;&#39;a&gt; {
+</a><a href="#h1-3-23" id="h1-3-23" class="i">+    fn next_back(&amp;mut self) -&gt; Option&lt;Self::Item&gt; {
+</a><a href="#h1-3-24" id="h1-3-24" class="i">+        self.inner.next_back().map(Self::map)
+</a><a href="#h1-3-25" id="h1-3-25" class="i">+    }
+</a><a href="#h1-3-26" id="h1-3-26" class="i">+}
+</a><a href="#h1-3-27" id="h1-3-27" class="i">+
+</a> #[cfg(test)]
+ mod tests {
+     use super::*;
+<b>diff --git a/<a id="h2" href="../file/src/storage/kv/mod.rs.html">src/storage/kv/mod.rs</a> b/<a href="../file/src/storage/kv/mod.rs.html">src/storage/kv/mod.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -11,6 +11,12 @@ use crate::error::Result;
+</a> 
+ /// A key/value store.
+ pub trait Store: std::fmt::Display + Send + Sync {
+<a href="#h2-0-3" id="h2-0-3" class="i">+    /// The iterator returned by scan(). Traits can&#39;t return &quot;impl Trait&quot;, and
+</a><a href="#h2-0-4" id="h2-0-4" class="i">+    /// we don&#39;t want to use trait objects, so the type must be specified.
+</a><a href="#h2-0-5" id="h2-0-5" class="i">+    type ScanIterator&lt;&#39;a&gt;: DoubleEndedIterator&lt;Item = Result&lt;(Vec&lt;u8&gt;, Vec&lt;u8&gt;)&gt;&gt; + &#39;a
+</a><a href="#h2-0-6" id="h2-0-6" class="i">+    where
+</a><a href="#h2-0-7" id="h2-0-7" class="i">+        Self: &#39;a;
+</a><a href="#h2-0-8" id="h2-0-8" class="i">+
+</a>     /// Deletes a key, or does nothing if it does not exist.
+     fn delete(&amp;mut self, key: &amp;[u8]) -&gt; Result&lt;()&gt;;
+ 
+<a href="#h2-1" id="h2-1" class="h">@@ -21,15 +27,12 @@ pub trait Store: std::fmt::Display + Send + Sync {
+</a>     fn get(&amp;mut self, key: &amp;[u8]) -&gt; Result&lt;Option&lt;Vec&lt;u8&gt;&gt;&gt;;
+ 
+     /// Iterates over an ordered range of key/value pairs.
+<a href="#h2-1-3" id="h2-1-3" class="d">-    fn scan&lt;R: std::ops::RangeBounds&lt;Vec&lt;u8&gt;&gt;&gt;(&amp;mut self, range: R) -&gt; Scan;
+</a><a href="#h2-1-4" id="h2-1-4" class="i">+    fn scan&lt;R: std::ops::RangeBounds&lt;Vec&lt;u8&gt;&gt;&gt;(&amp;mut self, range: R) -&gt; Self::ScanIterator&lt;&#39;_&gt;;
+</a> 
+     /// Sets a value for a key, replacing the existing value if any.
+     fn set(&amp;mut self, key: &amp;[u8], value: Vec&lt;u8&gt;) -&gt; Result&lt;()&gt;;
+ }
+ 
+<a href="#h2-1-10" id="h2-1-10" class="d">-/// Iterator over a key/value range.
+</a><a href="#h2-1-11" id="h2-1-11" class="d">-pub type Scan&lt;&#39;a&gt; = Box&lt;dyn DoubleEndedIterator&lt;Item = Result&lt;(Vec&lt;u8&gt;, Vec&lt;u8&gt;)&gt;&gt; + Send + &#39;a&gt;;
+</a><a href="#h2-1-12" id="h2-1-12" class="d">-
+</a> #[cfg(test)]
+ mod tests {
+     /// Generates common tests for any Store implementation.
+<b>diff --git a/<a id="h3" href="../file/src/storage/kv/mvcc.rs.html">src/storage/kv/mvcc.rs</a> b/<a href="../file/src/storage/kv/mvcc.rs.html">src/storage/kv/mvcc.rs</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -209,7 +209,7 @@ impl&lt;S: Store&gt; Transaction&lt;S&gt; {
+</a>     }
+ 
+     /// Scans a key range.
+<a href="#h3-0-3" id="h3-0-3" class="d">-    pub fn scan(&amp;self, range: impl RangeBounds&lt;Vec&lt;u8&gt;&gt;) -&gt; Result&lt;super::Scan&gt; {
+</a><a href="#h3-0-4" id="h3-0-4" class="i">+    pub fn scan(&amp;self, range: impl RangeBounds&lt;Vec&lt;u8&gt;&gt;) -&gt; Result&lt;ScanIterator&gt; {
+</a>         let start = match range.start_bound() {
+             Bound::Excluded(k) =&gt; Bound::Excluded(Key::Record(k.into(), std::u64::MAX).encode()),
+             Bound::Included(k) =&gt; Bound::Included(Key::Record(k.into(), 0).encode()),
+<a href="#h3-1" id="h3-1" class="h">@@ -226,7 +226,7 @@ impl&lt;S: Store&gt; Transaction&lt;S&gt; {
+</a>     }
+ 
+     /// Scans keys under a given prefix.
+<a href="#h3-1-3" id="h3-1-3" class="d">-    pub fn scan_prefix(&amp;self, prefix: &amp;[u8]) -&gt; Result&lt;super::Scan&gt; {
+</a><a href="#h3-1-4" id="h3-1-4" class="i">+    pub fn scan_prefix(&amp;self, prefix: &amp;[u8]) -&gt; Result&lt;ScanIterator&gt; {
+</a>         if prefix.is_empty() {
+             return Err(Error::Internal(&quot;Scan prefix cannot be empty&quot;.into()));
+         }
+<a href="#h3-2" id="h3-2" class="h">@@ -422,18 +422,21 @@ impl&lt;&#39;a&gt; Key&lt;&#39;a&gt; {
+</a>     }
+ }
+ 
+<a href="#h3-2-3" id="h3-2-3" class="i">+pub type ScanIterator&lt;&#39;a&gt; =
+</a><a href="#h3-2-4" id="h3-2-4" class="i">+    Box&lt;dyn DoubleEndedIterator&lt;Item = Result&lt;(Vec&lt;u8&gt;, Vec&lt;u8&gt;)&gt;&gt; + Send + &#39;a&gt;;
+</a><a href="#h3-2-5" id="h3-2-5" class="i">+
+</a> /// A key range scan.
+ pub struct Scan&lt;&#39;a&gt; {
+     /// The augmented KV store iterator, with key (decoded) and value. Note that we don&#39;t retain
+     /// the decoded version, so there will be multiple keys (for each version). We want the last.
+<a href="#h3-2-10" id="h3-2-10" class="d">-    scan: Peekable&lt;super::Scan&lt;&#39;a&gt;&gt;,
+</a><a href="#h3-2-11" id="h3-2-11" class="i">+    scan: Peekable&lt;ScanIterator&lt;&#39;a&gt;&gt;,
+</a>     /// Keeps track of next_back() seen key, whose previous versions should be ignored.
+     next_back_seen: Option&lt;Vec&lt;u8&gt;&gt;,
+ }
+ 
+ impl&lt;&#39;a&gt; Scan&lt;&#39;a&gt; {
+     /// Creates a new scan.
+<a href="#h3-2-18" id="h3-2-18" class="d">-    fn new(mut scan: super::Scan&lt;&#39;a&gt;, snapshot: Snapshot) -&gt; Self {
+</a><a href="#h3-2-19" id="h3-2-19" class="i">+    fn new(mut scan: ScanIterator&lt;&#39;a&gt;, snapshot: Snapshot) -&gt; Self {
+</a>         // Augment the underlying scan to decode the key and filter invisible versions. We don&#39;t
+         // return the version, since we don&#39;t need it, but beware that all versions of the key
+         // will still be returned - we usually only need the last, which is what the next() and
+</pre>
+</div>
+</body>
+</html>

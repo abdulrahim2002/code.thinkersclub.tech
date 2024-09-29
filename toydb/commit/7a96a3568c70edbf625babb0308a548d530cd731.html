@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>storage: add and use `Mirror` test engine - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/7a96a3568c70edbf625babb0308a548d530cd731.html">7a96a3568c70edbf625babb0308a548d530cd731</a>
+<b>parent</b> <a href="../commit/e6f5fe056341d5a202853ad34d79d8cc6f1e0873.html">e6f5fe056341d5a202853ad34d79d8cc6f1e0873</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Wed, 12 Jun 2024 11:06:29 +0200
+
+storage: add and use `Mirror` test engine
+
+This mirrors operations across two engines and verifies that they give
+the same results.
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">Cargo.toml</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/raft/log.rs</a></td><td> | </td><td class="num">14</td><td><span class="i">++++++++++++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/raft/node.rs</a></td><td> | </td><td class="num">25</td><td><span class="i">++++++++++++++++++++++</span><span class="d">---</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">src/raft/testscripts/log/status</a></td><td> | </td><td class="num">10</td><td><span class="i">+++++</span><span class="d">-----</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h4">src/raft/testscripts/node/request_status</a></td><td> | </td><td class="num">22</td><td><span class="i">+++++++++++</span><span class="d">-----------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h5">src/raft/testscripts/node/request_status_single</a></td><td> | </td><td class="num">10</td><td><span class="i">+++++</span><span class="d">-----</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h6">src/storage/engine.rs</a></td><td> | </td><td class="num">98</td><td><span class="i">+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d"></span></td></tr>
+</table></pre><pre>7 files changed, 154 insertions(+), 26 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/Cargo.toml.html">Cargo.toml</a> b/<a href="../file/Cargo.toml.html">Cargo.toml</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -39,6 +39,7 @@ paste = &quot;1.0.14&quot;
+</a> pretty_assertions = &quot;1.4.0&quot;
+ serde_json = &quot;1.0.117&quot;
+ serial_test = &quot;3.1.1&quot;
+<a href="#h0-0-3" id="h0-0-3" class="i">+# TODO: tempdir crate is replaced by tempfile.
+</a> tempdir = &quot;0.3.7&quot;
+ tempfile = &quot;3.10.1&quot;
+ test-case = &quot;3.3.1&quot;
+<b>diff --git a/<a id="h1" href="../file/src/raft/log.rs.html">src/raft/log.rs</a> b/<a href="../file/src/raft/log.rs.html">src/raft/log.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -358,6 +358,8 @@ mod tests {
+</a>     struct TestRunner {
+         log: Log,
+         op_rx: Receiver&lt;testengine::Operation&gt;,
+<a href="#h1-0-3" id="h1-0-3" class="i">+        #[allow(dead_code)]
+</a><a href="#h1-0-4" id="h1-0-4" class="i">+        tempdir: tempdir::TempDir, // deleted when dropped
+</a>     }
+ 
+     impl goldenscript::Runner for TestRunner {
+<a href="#h1-1" id="h1-1" class="h">@@ -444,6 +446,8 @@ mod tests {
+</a>                 // reload
+                 &quot;reload&quot; =&gt; {
+                     command.consume_args().reject_rest()?;
+<a href="#h1-1-3" id="h1-1-3" class="i">+                    // To get owned access to the inner engine, temporarily
+</a><a href="#h1-1-4" id="h1-1-4" class="i">+                    // replace it with an empty memory engine.
+</a>                     let engine =
+                         std::mem::replace(&amp;mut self.log.engine, Box::new(storage::Memory::new()));
+                     self.log = Log::new(engine)?;
+<a href="#h1-2" id="h1-2" class="h">@@ -537,10 +541,16 @@ mod tests {
+</a> 
+     impl TestRunner {
+         fn new() -&gt; Self {
+<a href="#h1-2-3" id="h1-2-3" class="i">+            // Use both a BitCask and a Memory engine, and mirror operations
+</a><a href="#h1-2-4" id="h1-2-4" class="i">+            // across them. Emit write events to op_tx.
+</a>             let (op_tx, op_rx) = crossbeam::channel::unbounded();
+<a href="#h1-2-6" id="h1-2-6" class="d">-            let engine = testengine::Emit::new(storage::Memory::new(), op_tx);
+</a><a href="#h1-2-7" id="h1-2-7" class="i">+            let tempdir = tempdir::TempDir::new(&quot;toydb&quot;).expect(&quot;tempdir failed&quot;);
+</a><a href="#h1-2-8" id="h1-2-8" class="i">+            let bitcask =
+</a><a href="#h1-2-9" id="h1-2-9" class="i">+                storage::BitCask::new(tempdir.path().join(&quot;bitcask&quot;)).expect(&quot;bitcask failed&quot;);
+</a><a href="#h1-2-10" id="h1-2-10" class="i">+            let memory = storage::Memory::new();
+</a><a href="#h1-2-11" id="h1-2-11" class="i">+            let engine = testengine::Emit::new(testengine::Mirror::new(bitcask, memory), op_tx);
+</a>             let log = Log::new(Box::new(engine)).expect(&quot;log init failed&quot;);
+<a href="#h1-2-13" id="h1-2-13" class="d">-            Self { log, op_rx }
+</a><a href="#h1-2-14" id="h1-2-14" class="i">+            Self { log, op_rx, tempdir }
+</a>         }
+ 
+         /// Formats a log entry.
+<b>diff --git a/<a id="h2" href="../file/src/raft/node.rs.html">src/raft/node.rs</a> b/<a href="../file/src/raft/node.rs.html">src/raft/node.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -1136,6 +1136,7 @@ mod tests {
+</a>     use crate::raft::state::test::{self as teststate, KVCommand, KVResponse};
+     use crate::raft::Entry;
+     use crate::storage;
+<a href="#h2-0-3" id="h2-0-3" class="i">+    use crate::storage::engine::test as testengine;
+</a>     use crossbeam::channel::Receiver;
+     use std::borrow::Borrow;
+     use std::error::Error;
+<a href="#h2-1" id="h2-1" class="h">@@ -1230,7 +1231,6 @@ mod tests {
+</a>     }
+ 
+     /// Runs Raft goldenscript tests. See run() for available commands.
+<a href="#h2-1-3" id="h2-1-3" class="d">-    #[derive(Default)]
+</a>     struct TestRunner {
+         /// IDs of all cluster nodes, in order.
+         ids: Vec&lt;NodeID&gt;,
+<a href="#h2-2" id="h2-2" class="h">@@ -1249,6 +1249,9 @@ mod tests {
+</a>         requests: HashMap&lt;RequestID, Request&gt;,
+         /// The request ID to use for the next client request.
+         next_request_id: u64,
+<a href="#h2-2-3" id="h2-2-3" class="i">+        /// Temporary directory (deleted when dropped).
+</a><a href="#h2-2-4" id="h2-2-4" class="i">+        #[allow(dead_code)]
+</a><a href="#h2-2-5" id="h2-2-5" class="i">+        tempdir: tempdir::TempDir,
+</a>     }
+ 
+     impl goldenscript::Runner for TestRunner {
+<a href="#h2-3" id="h2-3" class="h">@@ -1428,7 +1431,17 @@ mod tests {
+</a> 
+     impl TestRunner {
+         fn new() -&gt; Self {
+<a href="#h2-3-3" id="h2-3-3" class="d">-            Self { next_request_id: 1, ..Default::default() }
+</a><a href="#h2-3-4" id="h2-3-4" class="i">+            Self {
+</a><a href="#h2-3-5" id="h2-3-5" class="i">+                ids: Vec::new(),
+</a><a href="#h2-3-6" id="h2-3-6" class="i">+                nodes: HashMap::new(),
+</a><a href="#h2-3-7" id="h2-3-7" class="i">+                nodes_rx: HashMap::new(),
+</a><a href="#h2-3-8" id="h2-3-8" class="i">+                nodes_pending: HashMap::new(),
+</a><a href="#h2-3-9" id="h2-3-9" class="i">+                applied_rx: HashMap::new(),
+</a><a href="#h2-3-10" id="h2-3-10" class="i">+                disconnected: HashMap::new(),
+</a><a href="#h2-3-11" id="h2-3-11" class="i">+                requests: HashMap::new(),
+</a><a href="#h2-3-12" id="h2-3-12" class="i">+                next_request_id: 1,
+</a><a href="#h2-3-13" id="h2-3-13" class="i">+                tempdir: tempdir::TempDir::new(&quot;toydb&quot;).expect(&quot;tempdir failed&quot;),
+</a><a href="#h2-3-14" id="h2-3-14" class="i">+            }
+</a>         }
+ 
+         /// Creates a new empty node and inserts it.
+<a href="#h2-4" id="h2-4" class="h">@@ -1438,7 +1451,13 @@ mod tests {
+</a>             peers: HashSet&lt;NodeID&gt;,
+             opts: Options,
+         ) -&gt; Result&lt;(), Box&lt;dyn Error&gt;&gt; {
+<a href="#h2-4-3" id="h2-4-3" class="d">-            let log = Log::new(Box::new(storage::Memory::new()))?;
+</a><a href="#h2-4-4" id="h2-4-4" class="i">+            // Use both a BitCask and a Memory engine, and mirror operations
+</a><a href="#h2-4-5" id="h2-4-5" class="i">+            // across them, for added engine test coverage.
+</a><a href="#h2-4-6" id="h2-4-6" class="i">+            let path = self.tempdir.path().join(format!(&quot;{id}.log&quot;));
+</a><a href="#h2-4-7" id="h2-4-7" class="i">+            let bitcask = storage::BitCask::new(path).expect(&quot;bitcask failed&quot;);
+</a><a href="#h2-4-8" id="h2-4-8" class="i">+            let memory = storage::Memory::new();
+</a><a href="#h2-4-9" id="h2-4-9" class="i">+            let engine = testengine::Mirror::new(bitcask, memory);
+</a><a href="#h2-4-10" id="h2-4-10" class="i">+            let log = Log::new(Box::new(engine))?;
+</a>             let state = teststate::KV::new();
+             self.add_node_with(id, peers, log, state, opts)
+         }
+<b>diff --git a/<a id="h3" href="../file/src/raft/testscripts/log/status.html">src/raft/testscripts/log/status</a> b/<a href="../file/src/raft/testscripts/log/status.html">src/raft/testscripts/log/status</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -2,7 +2,7 @@
+</a> status engine=true
+ ---
+ term=0 last=0@0 commit=0@0 vote=None engine=Status {
+<a href="#h3-0-3" id="h3-0-3" class="d">-    name: &quot;memory&quot;,
+</a><a href="#h3-0-4" id="h3-0-4" class="i">+    name: &quot;bitcask&quot;,
+</a>     keys: 0,
+     size: 0,
+     total_disk_size: 0,
+<a href="#h3-1" id="h3-1" class="h">@@ -27,10 +27,10 @@ commit → 2@1 foo
+</a> status engine=true
+ ---
+ term=2 last=3@2 commit=2@1 vote=1 engine=Status {
+<a href="#h3-1-3" id="h3-1-3" class="d">-    name: &quot;memory&quot;,
+</a><a href="#h3-1-4" id="h3-1-4" class="i">+    name: &quot;bitcask&quot;,
+</a>     keys: 5,
+     size: 51,
+<a href="#h3-1-7" id="h3-1-7" class="d">-    total_disk_size: 0,
+</a><a href="#h3-1-8" id="h3-1-8" class="d">-    live_disk_size: 0,
+</a><a href="#h3-1-9" id="h3-1-9" class="d">-    garbage_disk_size: 0,
+</a><a href="#h3-1-10" id="h3-1-10" class="i">+    total_disk_size: 102,
+</a><a href="#h3-1-11" id="h3-1-11" class="i">+    live_disk_size: 91,
+</a><a href="#h3-1-12" id="h3-1-12" class="i">+    garbage_disk_size: 11,
+</a> }
+<b>diff --git a/<a id="h4" href="../file/src/raft/testscripts/node/request_status.html">src/raft/testscripts/node/request_status</a> b/<a href="../file/src/raft/testscripts/node/request_status.html">src/raft/testscripts/node/request_status</a></b>
+<a href="#h4-0" id="h4-0" class="h">@@ -25,7 +25,7 @@ status request=true 1
+</a> stabilize
+ ---
+ c1@1 → n1 ClientRequest id=0x02 status
+<a href="#h4-0-3" id="h4-0-3" class="d">-n1@1 → c1 ClientResponse id=0x02 status Status { leader: 1, term: 1, match_index: {1: 2, 2: 2, 3: 1}, commit_index: 2, applied_index: 2, storage: Status { name: &quot;memory&quot;, keys: 4, size: 41, total_disk_size: 0, live_disk_size: 0, garbage_disk_size: 0 } }
+</a><a href="#h4-0-4" id="h4-0-4" class="i">+n1@1 → c1 ClientResponse id=0x02 status Status { leader: 1, term: 1, match_index: {1: 2, 2: 2, 3: 1}, commit_index: 2, applied_index: 2, storage: Status { name: &quot;bitcask&quot;, keys: 4, size: 41, total_disk_size: 84, live_disk_size: 73, garbage_disk_size: 11 } }
+</a> c1@1 status ⇒ Status {
+     leader: 1,
+     term: 1,
+<a href="#h4-1" id="h4-1" class="h">@@ -37,12 +37,12 @@ c1@1 status ⇒ Status {
+</a>     commit_index: 2,
+     applied_index: 2,
+     storage: Status {
+<a href="#h4-1-3" id="h4-1-3" class="d">-        name: &quot;memory&quot;,
+</a><a href="#h4-1-4" id="h4-1-4" class="i">+        name: &quot;bitcask&quot;,
+</a>         keys: 4,
+         size: 41,
+<a href="#h4-1-7" id="h4-1-7" class="d">-        total_disk_size: 0,
+</a><a href="#h4-1-8" id="h4-1-8" class="d">-        live_disk_size: 0,
+</a><a href="#h4-1-9" id="h4-1-9" class="d">-        garbage_disk_size: 0,
+</a><a href="#h4-1-10" id="h4-1-10" class="i">+        total_disk_size: 84,
+</a><a href="#h4-1-11" id="h4-1-11" class="i">+        live_disk_size: 73,
+</a><a href="#h4-1-12" id="h4-1-12" class="i">+        garbage_disk_size: 11,
+</a>     },
+ }
+ 
+<a href="#h4-2" id="h4-2" class="h">@@ -52,8 +52,8 @@ stabilize
+</a> ---
+ c2@1 → n2 ClientRequest id=0x03 status
+ n2@1 → n1 ClientRequest id=0x03 status
+<a href="#h4-2-3" id="h4-2-3" class="d">-n1@1 → n2 ClientResponse id=0x03 status Status { leader: 1, term: 1, match_index: {1: 2, 2: 2, 3: 1}, commit_index: 2, applied_index: 2, storage: Status { name: &quot;memory&quot;, keys: 4, size: 41, total_disk_size: 0, live_disk_size: 0, garbage_disk_size: 0 } }
+</a><a href="#h4-2-4" id="h4-2-4" class="d">-n2@1 → c2 ClientResponse id=0x03 status Status { leader: 1, term: 1, match_index: {1: 2, 2: 2, 3: 1}, commit_index: 2, applied_index: 2, storage: Status { name: &quot;memory&quot;, keys: 4, size: 41, total_disk_size: 0, live_disk_size: 0, garbage_disk_size: 0 } }
+</a><a href="#h4-2-5" id="h4-2-5" class="i">+n1@1 → n2 ClientResponse id=0x03 status Status { leader: 1, term: 1, match_index: {1: 2, 2: 2, 3: 1}, commit_index: 2, applied_index: 2, storage: Status { name: &quot;bitcask&quot;, keys: 4, size: 41, total_disk_size: 84, live_disk_size: 73, garbage_disk_size: 11 } }
+</a><a href="#h4-2-6" id="h4-2-6" class="i">+n2@1 → c2 ClientResponse id=0x03 status Status { leader: 1, term: 1, match_index: {1: 2, 2: 2, 3: 1}, commit_index: 2, applied_index: 2, storage: Status { name: &quot;bitcask&quot;, keys: 4, size: 41, total_disk_size: 84, live_disk_size: 73, garbage_disk_size: 11 } }
+</a> c2@1 status ⇒ Status {
+     leader: 1,
+     term: 1,
+<a href="#h4-3" id="h4-3" class="h">@@ -65,11 +65,11 @@ c2@1 status ⇒ Status {
+</a>     commit_index: 2,
+     applied_index: 2,
+     storage: Status {
+<a href="#h4-3-3" id="h4-3-3" class="d">-        name: &quot;memory&quot;,
+</a><a href="#h4-3-4" id="h4-3-4" class="i">+        name: &quot;bitcask&quot;,
+</a>         keys: 4,
+         size: 41,
+<a href="#h4-3-7" id="h4-3-7" class="d">-        total_disk_size: 0,
+</a><a href="#h4-3-8" id="h4-3-8" class="d">-        live_disk_size: 0,
+</a><a href="#h4-3-9" id="h4-3-9" class="d">-        garbage_disk_size: 0,
+</a><a href="#h4-3-10" id="h4-3-10" class="i">+        total_disk_size: 84,
+</a><a href="#h4-3-11" id="h4-3-11" class="i">+        live_disk_size: 73,
+</a><a href="#h4-3-12" id="h4-3-12" class="i">+        garbage_disk_size: 11,
+</a>     },
+ }
+<b>diff --git a/<a id="h5" href="../file/src/raft/testscripts/node/request_status_single.html">src/raft/testscripts/node/request_status_single</a> b/<a href="../file/src/raft/testscripts/node/request_status_single.html">src/raft/testscripts/node/request_status_single</a></b>
+<a href="#h5-0" id="h5-0" class="h">@@ -16,7 +16,7 @@ status request=true 1
+</a> stabilize
+ ---
+ c1@1 → n1 ClientRequest id=0x02 status
+<a href="#h5-0-3" id="h5-0-3" class="d">-n1@1 → c1 ClientResponse id=0x02 status Status { leader: 1, term: 1, match_index: {1: 2}, commit_index: 2, applied_index: 2, storage: Status { name: &quot;memory&quot;, keys: 4, size: 41, total_disk_size: 0, live_disk_size: 0, garbage_disk_size: 0 } }
+</a><a href="#h5-0-4" id="h5-0-4" class="i">+n1@1 → c1 ClientResponse id=0x02 status Status { leader: 1, term: 1, match_index: {1: 2}, commit_index: 2, applied_index: 2, storage: Status { name: &quot;bitcask&quot;, keys: 4, size: 41, total_disk_size: 84, live_disk_size: 73, garbage_disk_size: 11 } }
+</a> c1@1 status ⇒ Status {
+     leader: 1,
+     term: 1,
+<a href="#h5-1" id="h5-1" class="h">@@ -26,11 +26,11 @@ c1@1 status ⇒ Status {
+</a>     commit_index: 2,
+     applied_index: 2,
+     storage: Status {
+<a href="#h5-1-3" id="h5-1-3" class="d">-        name: &quot;memory&quot;,
+</a><a href="#h5-1-4" id="h5-1-4" class="i">+        name: &quot;bitcask&quot;,
+</a>         keys: 4,
+         size: 41,
+<a href="#h5-1-7" id="h5-1-7" class="d">-        total_disk_size: 0,
+</a><a href="#h5-1-8" id="h5-1-8" class="d">-        live_disk_size: 0,
+</a><a href="#h5-1-9" id="h5-1-9" class="d">-        garbage_disk_size: 0,
+</a><a href="#h5-1-10" id="h5-1-10" class="i">+        total_disk_size: 84,
+</a><a href="#h5-1-11" id="h5-1-11" class="i">+        live_disk_size: 73,
+</a><a href="#h5-1-12" id="h5-1-12" class="i">+        garbage_disk_size: 11,
+</a>     },
+ }
+<b>diff --git a/<a id="h6" href="../file/src/storage/engine.rs.html">src/storage/engine.rs</a> b/<a href="../file/src/storage/engine.rs.html">src/storage/engine.rs</a></b>
+<a href="#h6-0" id="h6-0" class="h">@@ -295,6 +295,104 @@ pub mod test {
+</a>             self.inner.status()
+         }
+     }
+<a href="#h6-0-3" id="h6-0-3" class="i">+
+</a><a href="#h6-0-4" id="h6-0-4" class="i">+    /// An engine that wraps two others and mirrors operations across them,
+</a><a href="#h6-0-5" id="h6-0-5" class="i">+    /// panicking if they produce different results. Engine implementations
+</a><a href="#h6-0-6" id="h6-0-6" class="i">+    /// should not have any observable differences in behavior.
+</a><a href="#h6-0-7" id="h6-0-7" class="i">+    ///
+</a><a href="#h6-0-8" id="h6-0-8" class="i">+    /// TODO: use this in more tests, e.g. MVCC tests.
+</a><a href="#h6-0-9" id="h6-0-9" class="i">+    pub struct Mirror&lt;A: Engine, B: Engine&gt; {
+</a><a href="#h6-0-10" id="h6-0-10" class="i">+        pub a: A,
+</a><a href="#h6-0-11" id="h6-0-11" class="i">+        pub b: B,
+</a><a href="#h6-0-12" id="h6-0-12" class="i">+    }
+</a><a href="#h6-0-13" id="h6-0-13" class="i">+
+</a><a href="#h6-0-14" id="h6-0-14" class="i">+    impl&lt;A: Engine, B: Engine&gt; Mirror&lt;A, B&gt; {
+</a><a href="#h6-0-15" id="h6-0-15" class="i">+        pub fn new(a: A, b: B) -&gt; Self {
+</a><a href="#h6-0-16" id="h6-0-16" class="i">+            Self { a, b }
+</a><a href="#h6-0-17" id="h6-0-17" class="i">+        }
+</a><a href="#h6-0-18" id="h6-0-18" class="i">+    }
+</a><a href="#h6-0-19" id="h6-0-19" class="i">+
+</a><a href="#h6-0-20" id="h6-0-20" class="i">+    impl&lt;A: Engine, B: Engine&gt; Engine for Mirror&lt;A, B&gt; {
+</a><a href="#h6-0-21" id="h6-0-21" class="i">+        type ScanIterator&lt;&#39;a&gt; = MirrorIterator&lt;&#39;a, A, B&gt;
+</a><a href="#h6-0-22" id="h6-0-22" class="i">+        where
+</a><a href="#h6-0-23" id="h6-0-23" class="i">+            Self: Sized,
+</a><a href="#h6-0-24" id="h6-0-24" class="i">+            A: &#39;a,
+</a><a href="#h6-0-25" id="h6-0-25" class="i">+            B: &#39;a;
+</a><a href="#h6-0-26" id="h6-0-26" class="i">+
+</a><a href="#h6-0-27" id="h6-0-27" class="i">+        fn delete(&amp;mut self, key: &amp;[u8]) -&gt; Result&lt;()&gt; {
+</a><a href="#h6-0-28" id="h6-0-28" class="i">+            self.a.delete(key)?;
+</a><a href="#h6-0-29" id="h6-0-29" class="i">+            self.b.delete(key)
+</a><a href="#h6-0-30" id="h6-0-30" class="i">+        }
+</a><a href="#h6-0-31" id="h6-0-31" class="i">+
+</a><a href="#h6-0-32" id="h6-0-32" class="i">+        fn flush(&amp;mut self) -&gt; Result&lt;()&gt; {
+</a><a href="#h6-0-33" id="h6-0-33" class="i">+            self.a.flush()?;
+</a><a href="#h6-0-34" id="h6-0-34" class="i">+            self.b.flush()
+</a><a href="#h6-0-35" id="h6-0-35" class="i">+        }
+</a><a href="#h6-0-36" id="h6-0-36" class="i">+
+</a><a href="#h6-0-37" id="h6-0-37" class="i">+        fn get(&amp;mut self, key: &amp;[u8]) -&gt; Result&lt;Option&lt;Vec&lt;u8&gt;&gt;&gt; {
+</a><a href="#h6-0-38" id="h6-0-38" class="i">+            let a = self.a.get(key)?;
+</a><a href="#h6-0-39" id="h6-0-39" class="i">+            let b = self.b.get(key)?;
+</a><a href="#h6-0-40" id="h6-0-40" class="i">+            assert_eq!(a, b);
+</a><a href="#h6-0-41" id="h6-0-41" class="i">+            Ok(a)
+</a><a href="#h6-0-42" id="h6-0-42" class="i">+        }
+</a><a href="#h6-0-43" id="h6-0-43" class="i">+
+</a><a href="#h6-0-44" id="h6-0-44" class="i">+        fn scan(&amp;mut self, range: impl std::ops::RangeBounds&lt;Vec&lt;u8&gt;&gt;) -&gt; Self::ScanIterator&lt;&#39;_&gt;
+</a><a href="#h6-0-45" id="h6-0-45" class="i">+        where
+</a><a href="#h6-0-46" id="h6-0-46" class="i">+            Self: Sized,
+</a><a href="#h6-0-47" id="h6-0-47" class="i">+        {
+</a><a href="#h6-0-48" id="h6-0-48" class="i">+            let a = self.a.scan((range.start_bound().cloned(), range.end_bound().cloned()));
+</a><a href="#h6-0-49" id="h6-0-49" class="i">+            let b = self.b.scan(range);
+</a><a href="#h6-0-50" id="h6-0-50" class="i">+            MirrorIterator { a, b }
+</a><a href="#h6-0-51" id="h6-0-51" class="i">+        }
+</a><a href="#h6-0-52" id="h6-0-52" class="i">+
+</a><a href="#h6-0-53" id="h6-0-53" class="i">+        fn scan_dyn(
+</a><a href="#h6-0-54" id="h6-0-54" class="i">+            &amp;mut self,
+</a><a href="#h6-0-55" id="h6-0-55" class="i">+            range: (std::ops::Bound&lt;Vec&lt;u8&gt;&gt;, std::ops::Bound&lt;Vec&lt;u8&gt;&gt;),
+</a><a href="#h6-0-56" id="h6-0-56" class="i">+        ) -&gt; Box&lt;dyn ScanIterator + &#39;_&gt; {
+</a><a href="#h6-0-57" id="h6-0-57" class="i">+            let a = self.a.scan(range.clone());
+</a><a href="#h6-0-58" id="h6-0-58" class="i">+            let b = self.b.scan(range);
+</a><a href="#h6-0-59" id="h6-0-59" class="i">+            Box::new(MirrorIterator::&lt;A, B&gt; { a, b })
+</a><a href="#h6-0-60" id="h6-0-60" class="i">+        }
+</a><a href="#h6-0-61" id="h6-0-61" class="i">+
+</a><a href="#h6-0-62" id="h6-0-62" class="i">+        fn set(&amp;mut self, key: &amp;[u8], value: Vec&lt;u8&gt;) -&gt; Result&lt;()&gt; {
+</a><a href="#h6-0-63" id="h6-0-63" class="i">+            self.a.set(key, value.clone())?;
+</a><a href="#h6-0-64" id="h6-0-64" class="i">+            self.b.set(key, value)
+</a><a href="#h6-0-65" id="h6-0-65" class="i">+        }
+</a><a href="#h6-0-66" id="h6-0-66" class="i">+
+</a><a href="#h6-0-67" id="h6-0-67" class="i">+        fn status(&amp;mut self) -&gt; Result&lt;Status&gt; {
+</a><a href="#h6-0-68" id="h6-0-68" class="i">+            let a = self.a.status()?;
+</a><a href="#h6-0-69" id="h6-0-69" class="i">+            let b = self.b.status()?;
+</a><a href="#h6-0-70" id="h6-0-70" class="i">+            // Only some items are comparable.
+</a><a href="#h6-0-71" id="h6-0-71" class="i">+            assert_eq!(a.keys, b.keys);
+</a><a href="#h6-0-72" id="h6-0-72" class="i">+            assert_eq!(a.size, b.size);
+</a><a href="#h6-0-73" id="h6-0-73" class="i">+            Ok(a)
+</a><a href="#h6-0-74" id="h6-0-74" class="i">+        }
+</a><a href="#h6-0-75" id="h6-0-75" class="i">+    }
+</a><a href="#h6-0-76" id="h6-0-76" class="i">+
+</a><a href="#h6-0-77" id="h6-0-77" class="i">+    pub struct MirrorIterator&lt;&#39;a, A: Engine + &#39;a, B: Engine + &#39;a&gt; {
+</a><a href="#h6-0-78" id="h6-0-78" class="i">+        a: A::ScanIterator&lt;&#39;a&gt;,
+</a><a href="#h6-0-79" id="h6-0-79" class="i">+        b: B::ScanIterator&lt;&#39;a&gt;,
+</a><a href="#h6-0-80" id="h6-0-80" class="i">+    }
+</a><a href="#h6-0-81" id="h6-0-81" class="i">+
+</a><a href="#h6-0-82" id="h6-0-82" class="i">+    impl&lt;&#39;a, A: Engine, B: Engine&gt; Iterator for MirrorIterator&lt;&#39;a, A, B&gt; {
+</a><a href="#h6-0-83" id="h6-0-83" class="i">+        type Item = Result&lt;(Vec&lt;u8&gt;, Vec&lt;u8&gt;)&gt;;
+</a><a href="#h6-0-84" id="h6-0-84" class="i">+
+</a><a href="#h6-0-85" id="h6-0-85" class="i">+        fn next(&amp;mut self) -&gt; Option&lt;Self::Item&gt; {
+</a><a href="#h6-0-86" id="h6-0-86" class="i">+            let a = self.a.next();
+</a><a href="#h6-0-87" id="h6-0-87" class="i">+            let b = self.b.next();
+</a><a href="#h6-0-88" id="h6-0-88" class="i">+            assert_eq!(a, b);
+</a><a href="#h6-0-89" id="h6-0-89" class="i">+            a
+</a><a href="#h6-0-90" id="h6-0-90" class="i">+        }
+</a><a href="#h6-0-91" id="h6-0-91" class="i">+    }
+</a><a href="#h6-0-92" id="h6-0-92" class="i">+
+</a><a href="#h6-0-93" id="h6-0-93" class="i">+    impl&lt;&#39;a, A: Engine, B: Engine&gt; DoubleEndedIterator for MirrorIterator&lt;&#39;a, A, B&gt; {
+</a><a href="#h6-0-94" id="h6-0-94" class="i">+        fn next_back(&amp;mut self) -&gt; Option&lt;Self::Item&gt; {
+</a><a href="#h6-0-95" id="h6-0-95" class="i">+            let a = self.a.next_back();
+</a><a href="#h6-0-96" id="h6-0-96" class="i">+            let b = self.b.next_back();
+</a><a href="#h6-0-97" id="h6-0-97" class="i">+            assert_eq!(a, b);
+</a><a href="#h6-0-98" id="h6-0-98" class="i">+            a
+</a><a href="#h6-0-99" id="h6-0-99" class="i">+        }
+</a><a href="#h6-0-100" id="h6-0-100" class="i">+    }
+</a> }
+ 
+ #[cfg(test)]
+</pre>
+</div>
+</body>
+</html>

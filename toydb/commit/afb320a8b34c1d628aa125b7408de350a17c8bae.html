@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Apply noop commands to state machine. - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/afb320a8b34c1d628aa125b7408de350a17c8bae.html">afb320a8b34c1d628aa125b7408de350a17c8bae</a>
+<b>parent</b> <a href="../commit/411a01db5e2c0e1f62284e2094818d3cc0bfcd2d.html">411a01db5e2c0e1f62284e2094818d3cc0bfcd2d</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Sat, 18 Nov 2023 14:54:02 +0100
+
+Apply noop commands to state machine.
+
+This simplifies applied_index tracking.
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/raft/node/mod.rs</a></td><td> | </td><td class="num">23</td><td><span class="i">+++++++++</span><span class="d">--------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/raft/state.rs</a></td><td> | </td><td class="num">61</td><td><span class="i">++++++++++++++++++++++++++++</span><span class="d">---------------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/sql/engine/raft.rs</a></td><td> | </td><td class="num">30</td><td><span class="i">++++++++++++++++</span><span class="d">--------------</span></td></tr>
+</table></pre><pre>3 files changed, 53 insertions(+), 61 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/raft/node/mod.rs.html">src/raft/node/mod.rs</a> b/<a href="../file/src/raft/node/mod.rs.html">src/raft/node/mod.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -479,23 +479,18 @@ mod tests {
+</a>     }
+ 
+     #[tokio::test(flavor = &quot;multi_thread&quot;, worker_threads = 2)]
+<a href="#h0-0-3" id="h0-0-3" class="d">-    async fn new_state_apply_missing() -&gt; Result&lt;()&gt; {
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+    #[should_panic(expected = &quot;applied index above commit index&quot;)]
+</a><a href="#h0-0-5" id="h0-0-5" class="i">+    async fn new_state_apply_missing() {
+</a>         let (node_tx, _) = mpsc::unbounded_channel();
+<a href="#h0-0-7" id="h0-0-7" class="d">-        let mut log = Log::new(Box::new(storage::engine::Memory::new()), false)?;
+</a><a href="#h0-0-8" id="h0-0-8" class="d">-        log.append(1, Some(vec![0x01]))?;
+</a><a href="#h0-0-9" id="h0-0-9" class="d">-        log.append(2, None)?;
+</a><a href="#h0-0-10" id="h0-0-10" class="d">-        log.append(2, Some(vec![0x02]))?;
+</a><a href="#h0-0-11" id="h0-0-11" class="d">-        log.commit(3)?;
+</a><a href="#h0-0-12" id="h0-0-12" class="d">-        log.append(2, Some(vec![0x03]))?;
+</a><a href="#h0-0-13" id="h0-0-13" class="i">+        let mut log = Log::new(Box::new(storage::engine::Memory::new()), false).unwrap();
+</a><a href="#h0-0-14" id="h0-0-14" class="i">+        log.append(1, Some(vec![0x01])).unwrap();
+</a><a href="#h0-0-15" id="h0-0-15" class="i">+        log.append(2, None).unwrap();
+</a><a href="#h0-0-16" id="h0-0-16" class="i">+        log.append(2, Some(vec![0x02])).unwrap();
+</a><a href="#h0-0-17" id="h0-0-17" class="i">+        log.commit(3).unwrap();
+</a><a href="#h0-0-18" id="h0-0-18" class="i">+        log.append(2, Some(vec![0x03])).unwrap();
+</a>         let state = Box::new(TestState::new(4));
+ 
+<a href="#h0-0-21" id="h0-0-21" class="d">-        assert_eq!(
+</a><a href="#h0-0-22" id="h0-0-22" class="d">-            Node::new(1, vec![2, 3], log, state.clone(), node_tx).await.err(),
+</a><a href="#h0-0-23" id="h0-0-23" class="d">-            Some(Error::Internal(
+</a><a href="#h0-0-24" id="h0-0-24" class="d">-                &quot;State machine applied index 4 greater than log commit index 3&quot;.into()
+</a><a href="#h0-0-25" id="h0-0-25" class="d">-            ))
+</a><a href="#h0-0-26" id="h0-0-26" class="d">-        );
+</a><a href="#h0-0-27" id="h0-0-27" class="d">-        Ok(())
+</a><a href="#h0-0-28" id="h0-0-28" class="i">+        Node::new(1, vec![2, 3], log, state.clone(), node_tx).await.unwrap();
+</a>     }
+ 
+     #[tokio::test]
+<b>diff --git a/<a id="h1" href="../file/src/raft/state.rs.html">src/raft/state.rs</a> b/<a href="../file/src/raft/state.rs.html">src/raft/state.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -12,9 +12,16 @@ pub trait State: Send {
+</a>     /// Returns the last applied index from the state machine.
+     fn get_applied_index(&amp;self) -&gt; Index;
+ 
+<a href="#h1-0-3" id="h1-0-3" class="d">-    /// Mutates the state machine. If the state machine returns Error::Internal, the Raft node
+</a><a href="#h1-0-4" id="h1-0-4" class="d">-    /// halts. For any other error, the state is applied and the error propagated to the caller.
+</a><a href="#h1-0-5" id="h1-0-5" class="d">-    fn mutate(&amp;mut self, index: Index, command: Vec&lt;u8&gt;) -&gt; Result&lt;Vec&lt;u8&gt;&gt;;
+</a><a href="#h1-0-6" id="h1-0-6" class="i">+    /// Applies a log entry to the state machine. If it returns Error::Internal,
+</a><a href="#h1-0-7" id="h1-0-7" class="i">+    /// the Raft node halts. Any other error is considered applied and returned
+</a><a href="#h1-0-8" id="h1-0-8" class="i">+    /// to the caller.
+</a><a href="#h1-0-9" id="h1-0-9" class="i">+    ///
+</a><a href="#h1-0-10" id="h1-0-10" class="i">+    /// The entry may contain a noop command, which is committed by Raft during
+</a><a href="#h1-0-11" id="h1-0-11" class="i">+    /// leader changes. This still needs to be applied to the state machine to
+</a><a href="#h1-0-12" id="h1-0-12" class="i">+    /// properly track the applied index, and returns an empty result.
+</a><a href="#h1-0-13" id="h1-0-13" class="i">+    ///
+</a><a href="#h1-0-14" id="h1-0-14" class="i">+    /// TODO: consider using runtime assertions instead of Error::Internal.
+</a><a href="#h1-0-15" id="h1-0-15" class="i">+    fn apply(&amp;mut self, entry: Entry) -&gt; Result&lt;Vec&lt;u8&gt;&gt;;
+</a> 
+     /// Queries the state machine. All errors are propagated to the caller.
+     fn query(&amp;self, command: Vec&lt;u8&gt;) -&gt; Result&lt;Vec&lt;u8&gt;&gt;;
+<a href="#h1-1" id="h1-1" class="h">@@ -51,7 +58,6 @@ struct Query {
+</a> pub struct Driver {
+     state_rx: UnboundedReceiverStream&lt;Instruction&gt;,
+     node_tx: mpsc::UnboundedSender&lt;Message&gt;,
+<a href="#h1-1-3" id="h1-1-3" class="d">-    applied_index: Index,
+</a>     /// Notify clients when their mutation is applied. &lt;index, (client, id)&gt;
+     notify: HashMap&lt;Index, (Address, Vec&lt;u8&gt;)&gt;,
+     /// Execute client queries when they receive a quorum. &lt;index, &lt;id, query&gt;&gt;
+<a href="#h1-2" id="h1-2" class="h">@@ -67,7 +73,6 @@ impl Driver {
+</a>         Self {
+             state_rx: UnboundedReceiverStream::new(state_rx),
+             node_tx,
+<a href="#h1-2-3" id="h1-2-3" class="d">-            applied_index: 0,
+</a>             notify: HashMap::new(),
+             queries: BTreeMap::new(),
+         }
+<a href="#h1-3" id="h1-3" class="h">@@ -75,8 +80,7 @@ impl Driver {
+</a> 
+     /// Drives a state machine.
+     pub async fn drive(mut self, mut state: Box&lt;dyn State&gt;) -&gt; Result&lt;()&gt; {
+<a href="#h1-3-3" id="h1-3-3" class="d">-        self.applied_index = state.get_applied_index();
+</a><a href="#h1-3-4" id="h1-3-4" class="d">-        debug!(&quot;Starting state machine driver at applied index {}&quot;, self.applied_index);
+</a><a href="#h1-3-5" id="h1-3-5" class="i">+        debug!(&quot;Starting state machine driver at applied index {}&quot;, state.get_applied_index());
+</a>         while let Some(instruction) = self.state_rx.next().await {
+             if let Err(error) = self.execute(instruction, &amp;mut *state).await {
+                 error!(&quot;Halting state machine due to error: {}&quot;, error);
+<a href="#h1-4" id="h1-4" class="h">@@ -91,40 +95,29 @@ impl Driver {
+</a>     pub fn apply_log(&amp;mut self, state: &amp;mut dyn State, log: &amp;mut Log) -&gt; Result&lt;Index&gt; {
+         let applied_index = state.get_applied_index();
+         let (commit_index, _) = log.get_commit_index();
+<a href="#h1-4-3" id="h1-4-3" class="d">-        if applied_index &gt; commit_index {
+</a><a href="#h1-4-4" id="h1-4-4" class="d">-            return Err(Error::Internal(format!(
+</a><a href="#h1-4-5" id="h1-4-5" class="d">-                &quot;State machine applied index {} greater than log commit index {}&quot;,
+</a><a href="#h1-4-6" id="h1-4-6" class="d">-                applied_index, commit_index
+</a><a href="#h1-4-7" id="h1-4-7" class="d">-            )));
+</a><a href="#h1-4-8" id="h1-4-8" class="d">-        }
+</a><a href="#h1-4-9" id="h1-4-9" class="i">+        assert!(applied_index &lt;= commit_index, &quot;applied index above commit index&quot;);
+</a><a href="#h1-4-10" id="h1-4-10" class="i">+
+</a>         if applied_index &lt; commit_index {
+             let mut scan = log.scan((applied_index + 1)..=commit_index)?;
+             while let Some(entry) = scan.next().transpose()? {
+                 self.apply(state, entry)?;
+             }
+         }
+<a href="#h1-4-17" id="h1-4-17" class="d">-        Ok(self.applied_index)
+</a><a href="#h1-4-18" id="h1-4-18" class="i">+        Ok(state.get_applied_index())
+</a>     }
+ 
+     /// Applies an entry to the state machine.
+     pub fn apply(&amp;mut self, state: &amp;mut dyn State, entry: Entry) -&gt; Result&lt;Index&gt; {
+<a href="#h1-4-23" id="h1-4-23" class="d">-        // Apply the command, unless it&#39;s a noop.
+</a><a href="#h1-4-24" id="h1-4-24" class="i">+        // Apply the command.
+</a>         debug!(&quot;Applying {:?}&quot;, entry);
+<a href="#h1-4-26" id="h1-4-26" class="d">-        if let Some(command) = entry.command {
+</a><a href="#h1-4-27" id="h1-4-27" class="d">-            match state.mutate(entry.index, command) {
+</a><a href="#h1-4-28" id="h1-4-28" class="d">-                Err(error @ Error::Internal(_)) =&gt; return Err(error),
+</a><a href="#h1-4-29" id="h1-4-29" class="d">-                result =&gt; self.notify_applied(entry.index, result)?,
+</a><a href="#h1-4-30" id="h1-4-30" class="d">-            };
+</a><a href="#h1-4-31" id="h1-4-31" class="d">-        }
+</a><a href="#h1-4-32" id="h1-4-32" class="d">-        // We have to track applied_index here, separately from the state machine, because
+</a><a href="#h1-4-33" id="h1-4-33" class="d">-        // no-op log entries are significant for whether a query should be executed.
+</a><a href="#h1-4-34" id="h1-4-34" class="d">-        //
+</a><a href="#h1-4-35" id="h1-4-35" class="d">-        // TODO: track noop commands in the state machine.
+</a><a href="#h1-4-36" id="h1-4-36" class="d">-        self.applied_index = entry.index;
+</a><a href="#h1-4-37" id="h1-4-37" class="i">+        match state.apply(entry) {
+</a><a href="#h1-4-38" id="h1-4-38" class="i">+            Err(error @ Error::Internal(_)) =&gt; return Err(error),
+</a><a href="#h1-4-39" id="h1-4-39" class="i">+            result =&gt; self.notify_applied(state.get_applied_index(), result)?,
+</a><a href="#h1-4-40" id="h1-4-40" class="i">+        };
+</a>         // Try to execute any pending queries, since they may have been submitted for a
+         // commit_index which hadn&#39;t been applied yet.
+         self.query_execute(state)?;
+<a href="#h1-4-44" id="h1-4-44" class="d">-        Ok(self.applied_index)
+</a><a href="#h1-4-45" id="h1-4-45" class="i">+        Ok(state.get_applied_index())
+</a>     }
+ 
+     /// Executes a state machine instruction.
+<a href="#h1-5" id="h1-5" class="h">@@ -202,7 +195,7 @@ impl Driver {
+</a> 
+     /// Executes any queries that are ready.
+     fn query_execute(&amp;mut self, state: &amp;mut dyn State) -&gt; Result&lt;()&gt; {
+<a href="#h1-5-3" id="h1-5-3" class="d">-        for query in self.query_ready(self.applied_index) {
+</a><a href="#h1-5-4" id="h1-5-4" class="i">+        for query in self.query_ready(state.get_applied_index()) {
+</a>             debug!(&quot;Executing query {:?}&quot;, query.command);
+             let result = state.query(query.command);
+             if let Err(error @ Error::Internal(_)) = result {
+<a href="#h1-6" id="h1-6" class="h">@@ -291,11 +284,13 @@ pub mod tests {
+</a>             *self.applied_index.lock().unwrap()
+         }
+ 
+<a href="#h1-6-3" id="h1-6-3" class="d">-        // Appends the command to the internal commands list.
+</a><a href="#h1-6-4" id="h1-6-4" class="d">-        fn mutate(&amp;mut self, index: Index, command: Vec&lt;u8&gt;) -&gt; Result&lt;Vec&lt;u8&gt;&gt; {
+</a><a href="#h1-6-5" id="h1-6-5" class="d">-            self.commands.lock()?.push(command.clone());
+</a><a href="#h1-6-6" id="h1-6-6" class="d">-            *self.applied_index.lock()? = index;
+</a><a href="#h1-6-7" id="h1-6-7" class="d">-            Ok(command)
+</a><a href="#h1-6-8" id="h1-6-8" class="i">+        // Appends the entry to the internal command list.
+</a><a href="#h1-6-9" id="h1-6-9" class="i">+        fn apply(&amp;mut self, entry: Entry) -&gt; Result&lt;Vec&lt;u8&gt;&gt; {
+</a><a href="#h1-6-10" id="h1-6-10" class="i">+            if let Some(command) = &amp;entry.command {
+</a><a href="#h1-6-11" id="h1-6-11" class="i">+                self.commands.lock()?.push(command.clone());
+</a><a href="#h1-6-12" id="h1-6-12" class="i">+            }
+</a><a href="#h1-6-13" id="h1-6-13" class="i">+            *self.applied_index.lock()? = entry.index;
+</a><a href="#h1-6-14" id="h1-6-14" class="i">+            Ok(entry.command.unwrap_or_default())
+</a>         }
+ 
+         // Appends the command to the internal commands list.
+<b>diff --git a/<a id="h2" href="../file/src/sql/engine/raft.rs.html">src/sql/engine/raft.rs</a> b/<a href="../file/src/sql/engine/raft.rs.html">src/sql/engine/raft.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -2,7 +2,7 @@ use super::super::schema::{Catalog, Table, Tables};
+</a> use super::super::types::{Expression, Row, Value};
+ use super::{Engine as _, IndexScan, Scan, Transaction as _};
+ use crate::error::{Error, Result};
+<a href="#h2-0-3" id="h2-0-3" class="d">-use crate::raft;
+</a><a href="#h2-0-4" id="h2-0-4" class="i">+use crate::raft::{self, Entry};
+</a> use crate::storage::{self, bincode, mvcc::TransactionState};
+ 
+ use serde::{de::DeserializeOwned, Deserialize, Serialize};
+<a href="#h2-1" id="h2-1" class="h">@@ -294,8 +294,8 @@ impl&lt;E: storage::engine::Engine&gt; State&lt;E&gt; {
+</a>         Ok(State { engine, applied_index })
+     }
+ 
+<a href="#h2-1-3" id="h2-1-3" class="d">-    /// Applies a state machine mutation
+</a><a href="#h2-1-4" id="h2-1-4" class="d">-    fn apply(&amp;mut self, mutation: Mutation) -&gt; Result&lt;Vec&lt;u8&gt;&gt; {
+</a><a href="#h2-1-5" id="h2-1-5" class="i">+    /// Mutates the state machine.
+</a><a href="#h2-1-6" id="h2-1-6" class="i">+    fn mutate(&amp;mut self, mutation: Mutation) -&gt; Result&lt;Vec&lt;u8&gt;&gt; {
+</a>         match mutation {
+             Mutation::Begin { read_only, as_of } =&gt; {
+                 let txn = if !read_only {
+<a href="#h2-2" id="h2-2" class="h">@@ -335,17 +335,19 @@ impl&lt;E: storage::engine::Engine&gt; raft::State for State&lt;E&gt; {
+</a>         self.applied_index
+     }
+ 
+<a href="#h2-2-3" id="h2-2-3" class="d">-    fn mutate(&amp;mut self, index: u64, command: Vec&lt;u8&gt;) -&gt; Result&lt;Vec&lt;u8&gt;&gt; {
+</a><a href="#h2-2-4" id="h2-2-4" class="d">-        // We don&#39;t check that index == applied_index + 1, since the Raft log commits no-op
+</a><a href="#h2-2-5" id="h2-2-5" class="d">-        // entries during leader election which we need to ignore.
+</a><a href="#h2-2-6" id="h2-2-6" class="d">-        match self.apply(bincode::deserialize(&amp;command)?) {
+</a><a href="#h2-2-7" id="h2-2-7" class="d">-            error @ Err(Error::Internal(_)) =&gt; error,
+</a><a href="#h2-2-8" id="h2-2-8" class="d">-            result =&gt; {
+</a><a href="#h2-2-9" id="h2-2-9" class="d">-                self.engine.set_metadata(b&quot;applied_index&quot;, bincode::serialize(&amp;(index))?)?;
+</a><a href="#h2-2-10" id="h2-2-10" class="d">-                self.applied_index = index;
+</a><a href="#h2-2-11" id="h2-2-11" class="d">-                result
+</a><a href="#h2-2-12" id="h2-2-12" class="d">-            }
+</a><a href="#h2-2-13" id="h2-2-13" class="d">-        }
+</a><a href="#h2-2-14" id="h2-2-14" class="i">+    fn apply(&amp;mut self, entry: Entry) -&gt; Result&lt;Vec&lt;u8&gt;&gt; {
+</a><a href="#h2-2-15" id="h2-2-15" class="i">+        assert_eq!(entry.index, self.applied_index + 1, &quot;entry index not after applied index&quot;);
+</a><a href="#h2-2-16" id="h2-2-16" class="i">+
+</a><a href="#h2-2-17" id="h2-2-17" class="i">+        let result = match &amp;entry.command {
+</a><a href="#h2-2-18" id="h2-2-18" class="i">+            Some(command) =&gt; match self.mutate(bincode::deserialize(command)?) {
+</a><a href="#h2-2-19" id="h2-2-19" class="i">+                error @ Err(Error::Internal(_)) =&gt; return error, // don&#39;t record as applied
+</a><a href="#h2-2-20" id="h2-2-20" class="i">+                result =&gt; result,
+</a><a href="#h2-2-21" id="h2-2-21" class="i">+            },
+</a><a href="#h2-2-22" id="h2-2-22" class="i">+            None =&gt; Ok(Vec::new()),
+</a><a href="#h2-2-23" id="h2-2-23" class="i">+        };
+</a><a href="#h2-2-24" id="h2-2-24" class="i">+        self.applied_index = entry.index;
+</a><a href="#h2-2-25" id="h2-2-25" class="i">+        self.engine.set_metadata(b&quot;applied_index&quot;, bincode::serialize(&amp;entry.index)?)?;
+</a><a href="#h2-2-26" id="h2-2-26" class="i">+        result
+</a>     }
+ 
+     fn query(&amp;self, command: Vec&lt;u8&gt;) -&gt; Result&lt;Vec&lt;u8&gt;&gt; {
+</pre>
+</div>
+</body>
+</html>

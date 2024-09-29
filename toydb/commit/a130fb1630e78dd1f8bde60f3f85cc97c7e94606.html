@@ -1,0 +1,764 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>sql: add initial EXPLAIN support - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/a130fb1630e78dd1f8bde60f3f85cc97c7e94606.html">a130fb1630e78dd1f8bde60f3f85cc97c7e94606</a>
+<b>parent</b> <a href="../commit/b6376d7b9b67570d1d8dd8041c8d5564b432fb83.html">b6376d7b9b67570d1d8dd8041c8d5564b432fb83</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Sun, 12 Apr 2020 13:15:27 +0200
+
+sql: add initial EXPLAIN support
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">REFERENCE.md</a></td><td> | </td><td class="num">10</td><td><span class="i">+++++++++</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/bin/toysql.rs</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="A">A</td><td><a href="#h2">src/sql/execution/explain.rs</a></td><td> | </td><td class="num">19</td><td><span class="i">+++++++++++++++++++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">src/sql/execution/mod.rs</a></td><td> | </td><td class="num">5</td><td><span class="i">+++++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h4">src/sql/parser/ast.rs</a></td><td> | </td><td class="num">3</td><td><span class="i">+++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h5">src/sql/parser/lexer.rs</a></td><td> | </td><td class="num">3</td><td><span class="i">+++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h6">src/sql/parser/mod.rs</a></td><td> | </td><td class="num">11</td><td><span class="i">+++++++++++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h7">src/sql/plan/mod.rs</a></td><td> | </td><td class="num">29</td><td><span class="i">++++++++++++++++</span><span class="d">-------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h8">src/sql/plan/planner.rs</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h9">src/sql/types/expression.rs</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h10">tests/sql/query.rs</a></td><td> | </td><td class="num">46</td><td><span class="i">++++++++++++++++++++++++++</span><span class="d">--------------------</span></td></tr>
+<tr><td class="A">A</td><td><a href="#h11">tests/sql/query/explain</a></td><td> | </td><td class="num">377</td><td><span class="i">+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d"></span></td></tr>
+</table></pre><pre>12 files changed, 472 insertions(+), 35 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/REFERENCE.md.html">REFERENCE.md</a> b/<a href="../file/REFERENCE.md.html">REFERENCE.md</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -19,7 +19,7 @@ Numeric types are not interchangable when stored; a float value cannot be stored
+</a> 
+ Keywords are reserved words that have special meaning in SQL statements, such as `SELECT`. These cannot be used as identifiers (e.g. table names) unless quoted with `&quot;`. Keywords are case-insensitive. The complete list of keywords is:
+ 
+<a href="#h0-0-3" id="h0-0-3" class="d">-`AS`, `ASC`, `AND`, `BEGIN`, `BOOL`, `BOOLEAN`, `BY`, `CHAR`, `COMMIT`, `CREATE`, `CROSS`, `DEFAULT`,`DELETE`, `DESC`, `DOUBLE`, `DROP`, `FALSE`, `FLOAT`, `FROM`, `GROUP`, `HAVING`, `INFINITY`, `INNER`, `INSERT`, `INT`, `INTEGER`, `INTO`, `IS`, `JOIN`, `KEY`, `LEFT`, `LIKE`, `LIMIT`, `NAN`, `NOT`, `NULL`, `OF`, `OFFSET`, `ON`, `ONLY`, `OR`, `ORDER`, `OUTER`, `PRIMARY`, `READ`, `REFERENCES`, `RIGHT`, `ROLLBACK`, `SELECT`, `SET`, `STRING`, `SYSTEM`, `TABLE`, `TEXT`, `TIME`, `TRANSACTION`, `TRUE`, `UNIQUE`, `UPDATE`, `VALUES`, `VARCHAR`, `WHERE`, `WRITE`
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+`AS`, `ASC`, `AND`, `BEGIN`, `BOOL`, `BOOLEAN`, `BY`, `CHAR`, `COMMIT`, `CREATE`, `CROSS`, `DEFAULT`,`DELETE`, `DESC`, `DOUBLE`, `DROP`, `EXPLAIN`, `FALSE`, `FLOAT`, `FROM`, `GROUP`, `HAVING`, `INFINITY`, `INNER`, `INSERT`, `INT`, `INTEGER`, `INTO`, `IS`, `JOIN`, `KEY`, `LEFT`, `LIKE`, `LIMIT`, `NAN`, `NOT`, `NULL`, `OF`, `OFFSET`, `ON`, `ONLY`, `OR`, `ORDER`, `OUTER`, `PRIMARY`, `READ`, `REFERENCES`, `RIGHT`, `ROLLBACK`, `SELECT`, `SET`, `STRING`, `SYSTEM`, `TABLE`, `TEXT`, `TIME`, `TRANSACTION`, `TRUE`, `UNIQUE`, `UPDATE`, `VALUES`, `VARCHAR`, `WHERE`, `WRITE`
+</a> 
+ ### Identifiers
+ 
+<a href="#h0-1" id="h0-1" class="h">@@ -260,6 +260,14 @@ DROP TABLE &lt;b&gt;&lt;i&gt;table_name&lt;/i&gt;&lt;/b&gt;
+</a> 
+ * ***`table_name`***: the table to delete. Errors if it does not exist.
+ 
+<a href="#h0-1-3" id="h0-1-3" class="i">+### `EXPLAIN`
+</a><a href="#h0-1-4" id="h0-1-4" class="i">+
+</a><a href="#h0-1-5" id="h0-1-5" class="i">+Outputs the execution plan for the given statement.
+</a><a href="#h0-1-6" id="h0-1-6" class="i">+
+</a><a href="#h0-1-7" id="h0-1-7" class="i">+&lt;pre&gt;
+</a><a href="#h0-1-8" id="h0-1-8" class="i">+EXPLAIN [ &lt;b&gt;&lt;i&gt;statement&lt;/i&gt;&lt;/b&gt; ]
+</a><a href="#h0-1-9" id="h0-1-9" class="i">+&lt;/pre&gt;
+</a><a href="#h0-1-10" id="h0-1-10" class="i">+
+</a> ### `INSERT`
+ 
+ Inserts rows into a table.
+<b>diff --git a/<a id="h1" href="../file/src/bin/toysql.rs.html">src/bin/toysql.rs</a> b/<a href="../file/src/bin/toysql.rs.html">src/bin/toysql.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -153,6 +153,7 @@ Semicolons are not supported. The following !-commands are also available:
+</a>             ResultSet::Update { count } =&gt; println!(&quot;Updated {} rows&quot;, count),
+             ResultSet::CreateTable { name } =&gt; println!(&quot;Created table {}&quot;, name),
+             ResultSet::DropTable { name } =&gt; println!(&quot;Dropped table {}&quot;, name),
+<a href="#h1-0-3" id="h1-0-3" class="i">+            ResultSet::Explain(plan) =&gt; println!(&quot;{:#?}&quot;, plan),
+</a>             ResultSet::Query { mut relation } =&gt; {
+                 if self.show_headers {
+                     println!(
+<b>diff --git a/<a id="h2" href="../file/src/sql/execution/explain.rs.html">src/sql/execution/explain.rs</a> b/<a href="../file/src/sql/execution/explain.rs.html">src/sql/execution/explain.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -0,0 +1,19 @@
+</a><a href="#h2-0-0" id="h2-0-0" class="i">+use super::super::engine::Transaction;
+</a><a href="#h2-0-1" id="h2-0-1" class="i">+use super::super::plan::Node;
+</a><a href="#h2-0-2" id="h2-0-2" class="i">+use super::{Context, Executor, ResultSet};
+</a><a href="#h2-0-3" id="h2-0-3" class="i">+use crate::Error;
+</a><a href="#h2-0-4" id="h2-0-4" class="i">+
+</a><a href="#h2-0-5" id="h2-0-5" class="i">+/// An executor that produces a query plan
+</a><a href="#h2-0-6" id="h2-0-6" class="i">+pub struct Explain(Node);
+</a><a href="#h2-0-7" id="h2-0-7" class="i">+
+</a><a href="#h2-0-8" id="h2-0-8" class="i">+impl Explain {
+</a><a href="#h2-0-9" id="h2-0-9" class="i">+    pub fn new(plan: Node) -&gt; Box&lt;Self&gt; {
+</a><a href="#h2-0-10" id="h2-0-10" class="i">+        Box::new(Self(plan))
+</a><a href="#h2-0-11" id="h2-0-11" class="i">+    }
+</a><a href="#h2-0-12" id="h2-0-12" class="i">+}
+</a><a href="#h2-0-13" id="h2-0-13" class="i">+
+</a><a href="#h2-0-14" id="h2-0-14" class="i">+impl&lt;T: Transaction&gt; Executor&lt;T&gt; for Explain {
+</a><a href="#h2-0-15" id="h2-0-15" class="i">+    fn execute(self: Box&lt;Self&gt;, _ctx: &amp;mut Context&lt;T&gt;) -&gt; Result&lt;ResultSet, Error&gt; {
+</a><a href="#h2-0-16" id="h2-0-16" class="i">+        Ok(ResultSet::Explain(self.0))
+</a><a href="#h2-0-17" id="h2-0-17" class="i">+    }
+</a><a href="#h2-0-18" id="h2-0-18" class="i">+}
+</a><b>diff --git a/<a id="h3" href="../file/src/sql/execution/mod.rs.html">src/sql/execution/mod.rs</a> b/<a href="../file/src/sql/execution/mod.rs.html">src/sql/execution/mod.rs</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -2,6 +2,7 @@ mod aggregation;
+</a> mod create_table;
+ mod delete;
+ mod drop_table;
+<a href="#h3-0-3" id="h3-0-3" class="i">+mod explain;
+</a> mod filter;
+ mod insert;
+ mod limit;
+<a href="#h3-1" id="h3-1" class="h">@@ -17,6 +18,7 @@ use aggregation::Aggregation;
+</a> use create_table::CreateTable;
+ use delete::Delete;
+ use drop_table::DropTable;
+<a href="#h3-1-3" id="h3-1-3" class="i">+use explain::Explain;
+</a> use filter::Filter;
+ use insert::Insert;
+ use limit::Limit;
+<a href="#h3-2" id="h3-2" class="h">@@ -50,6 +52,7 @@ impl&lt;T: Transaction + &#39;static&gt; dyn Executor&lt;T&gt; {
+</a>             Node::CreateTable { schema } =&gt; CreateTable::new(schema),
+             Node::Delete { table, source } =&gt; Delete::new(table, Self::build(*source)),
+             Node::DropTable { name } =&gt; DropTable::new(name),
+<a href="#h3-2-3" id="h3-2-3" class="i">+            Node::Explain(plan) =&gt; Explain::new(*plan),
+</a>             Node::Filter { source, predicate } =&gt; Filter::new(Self::build(*source), predicate),
+             Node::Insert { table, columns, expressions } =&gt; {
+                 Insert::new(table, columns, expressions)
+<a href="#h3-3" id="h3-3" class="h">@@ -99,6 +102,8 @@ pub enum ResultSet {
+</a>     DropTable { name: String },
+     // Query result
+     Query { relation: Relation },
+<a href="#h3-3-3" id="h3-3-3" class="i">+    // Explain result
+</a><a href="#h3-3-4" id="h3-3-4" class="i">+    Explain(Node),
+</a> }
+ 
+ /// Column metadata for a result.
+<b>diff --git a/<a id="h4" href="../file/src/sql/parser/ast.rs.html">src/sql/parser/ast.rs</a> b/<a href="../file/src/sql/parser/ast.rs.html">src/sql/parser/ast.rs</a></b>
+<a href="#h4-0" id="h4-0" class="h">@@ -35,6 +35,9 @@ pub enum Statement {
+</a>     },
+     /// An UPDATE statement
+     Update { table: String, set: BTreeMap&lt;String, Expression&gt;, r#where: Option&lt;WhereClause&gt; },
+<a href="#h4-0-3" id="h4-0-3" class="i">+
+</a><a href="#h4-0-4" id="h4-0-4" class="i">+    /// An EXPLAIN statement
+</a><a href="#h4-0-5" id="h4-0-5" class="i">+    Explain(Box&lt;Statement&gt;),
+</a> }
+ 
+ /// A column specification
+<b>diff --git a/<a id="h5" href="../file/src/sql/parser/lexer.rs.html">src/sql/parser/lexer.rs</a> b/<a href="../file/src/sql/parser/lexer.rs.html">src/sql/parser/lexer.rs</a></b>
+<a href="#h5-0" id="h5-0" class="h">@@ -86,6 +86,7 @@ pub enum Keyword {
+</a>     Desc,
+     Double,
+     Drop,
+<a href="#h5-0-3" id="h5-0-3" class="i">+    Explain,
+</a>     False,
+     Float,
+     From,
+<a href="#h5-1" id="h5-1" class="h">@@ -155,6 +156,7 @@ impl Keyword {
+</a>             &quot;DESC&quot; =&gt; Self::Desc,
+             &quot;DOUBLE&quot; =&gt; Self::Double,
+             &quot;DROP&quot; =&gt; Self::Drop,
+<a href="#h5-1-3" id="h5-1-3" class="i">+            &quot;EXPLAIN&quot; =&gt; Self::Explain,
+</a>             &quot;FALSE&quot; =&gt; Self::False,
+             &quot;FLOAT&quot; =&gt; Self::Float,
+             &quot;FROM&quot; =&gt; Self::From,
+<a href="#h5-2" id="h5-2" class="h">@@ -224,6 +226,7 @@ impl Keyword {
+</a>             Self::Desc =&gt; &quot;DESC&quot;,
+             Self::Double =&gt; &quot;DOUBLE&quot;,
+             Self::Drop =&gt; &quot;DROP&quot;,
+<a href="#h5-2-3" id="h5-2-3" class="i">+            Self::Explain =&gt; &quot;EXPLAIN&quot;,
+</a>             Self::False =&gt; &quot;FALSE&quot;,
+             Self::Float =&gt; &quot;FLOAT&quot;,
+             Self::From =&gt; &quot;FROM&quot;,
+<b>diff --git a/<a id="h6" href="../file/src/sql/parser/mod.rs.html">src/sql/parser/mod.rs</a> b/<a href="../file/src/sql/parser/mod.rs.html">src/sql/parser/mod.rs</a></b>
+<a href="#h6-0" id="h6-0" class="h">@@ -112,6 +112,8 @@ impl&lt;&#39;a&gt; Parser&lt;&#39;a&gt; {
+</a>             Some(Token::Keyword(Keyword::Select)) =&gt; self.parse_statement_select(),
+             Some(Token::Keyword(Keyword::Update)) =&gt; self.parse_statement_update(),
+ 
+<a href="#h6-0-3" id="h6-0-3" class="i">+            Some(Token::Keyword(Keyword::Explain)) =&gt; self.parse_statement_explain(),
+</a><a href="#h6-0-4" id="h6-0-4" class="i">+
+</a>             Some(token) =&gt; Err(Error::Parse(format!(&quot;Unexpected token {}&quot;, token))),
+             None =&gt; Err(Error::Parse(&quot;Unexpected end of input&quot;.into())),
+         }
+<a href="#h6-1" id="h6-1" class="h">@@ -220,6 +222,15 @@ impl&lt;&#39;a&gt; Parser&lt;&#39;a&gt; {
+</a>         Ok(ast::Statement::Delete { table, r#where: self.parse_clause_where()? })
+     }
+ 
+<a href="#h6-1-3" id="h6-1-3" class="i">+    /// Parses a delete statement
+</a><a href="#h6-1-4" id="h6-1-4" class="i">+    fn parse_statement_explain(&amp;mut self) -&gt; Result&lt;ast::Statement, Error&gt; {
+</a><a href="#h6-1-5" id="h6-1-5" class="i">+        self.next_expect(Some(Keyword::Explain.into()))?;
+</a><a href="#h6-1-6" id="h6-1-6" class="i">+        if let Some(Token::Keyword(Keyword::Explain)) = self.peek()? {
+</a><a href="#h6-1-7" id="h6-1-7" class="i">+            return Err(Error::Parse(&quot;Cannot nest EXPLAIN statements&quot;.into()));
+</a><a href="#h6-1-8" id="h6-1-8" class="i">+        }
+</a><a href="#h6-1-9" id="h6-1-9" class="i">+        Ok(ast::Statement::Explain(Box::new(self.parse_statement()?)))
+</a><a href="#h6-1-10" id="h6-1-10" class="i">+    }
+</a><a href="#h6-1-11" id="h6-1-11" class="i">+
+</a>     /// Parses an insert statement
+     fn parse_statement_insert(&amp;mut self) -&gt; Result&lt;ast::Statement, Error&gt; {
+         self.next_expect(Some(Keyword::Insert.into()))?;
+<b>diff --git a/<a id="h7" href="../file/src/sql/plan/mod.rs.html">src/sql/plan/mod.rs</a> b/<a href="../file/src/sql/plan/mod.rs.html">src/sql/plan/mod.rs</a></b>
+<a href="#h7-0" id="h7-0" class="h">@@ -37,10 +37,10 @@ impl Plan {
+</a> }
+ 
+ /// A plan node
+<a href="#h7-0-3" id="h7-0-3" class="d">-#[derive(Debug)]
+</a><a href="#h7-0-4" id="h7-0-4" class="i">+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+</a> pub enum Node {
+     Aggregation {
+<a href="#h7-0-7" id="h7-0-7" class="d">-        source: Box&lt;Self&gt;,
+</a><a href="#h7-0-8" id="h7-0-8" class="i">+        source: Box&lt;Node&gt;,
+</a>         aggregates: Vec&lt;Aggregate&gt;,
+     },
+     CreateTable {
+<a href="#h7-1" id="h7-1" class="h">@@ -48,13 +48,14 @@ pub enum Node {
+</a>     },
+     Delete {
+         table: String,
+<a href="#h7-1-3" id="h7-1-3" class="d">-        source: Box&lt;Self&gt;,
+</a><a href="#h7-1-4" id="h7-1-4" class="i">+        source: Box&lt;Node&gt;,
+</a>     },
+     DropTable {
+         name: String,
+     },
+<a href="#h7-1-9" id="h7-1-9" class="i">+    Explain(Box&lt;Node&gt;),
+</a>     Filter {
+<a href="#h7-1-11" id="h7-1-11" class="d">-        source: Box&lt;Self&gt;,
+</a><a href="#h7-1-12" id="h7-1-12" class="i">+        source: Box&lt;Node&gt;,
+</a>         predicate: Expression,
+     },
+     Insert {
+<a href="#h7-2" id="h7-2" class="h">@@ -63,27 +64,27 @@ pub enum Node {
+</a>         expressions: Vec&lt;Expressions&gt;,
+     },
+     Limit {
+<a href="#h7-2-3" id="h7-2-3" class="d">-        source: Box&lt;Self&gt;,
+</a><a href="#h7-2-4" id="h7-2-4" class="i">+        source: Box&lt;Node&gt;,
+</a>         limit: u64,
+     },
+     NestedLoopJoin {
+<a href="#h7-2-8" id="h7-2-8" class="d">-        outer: Box&lt;Self&gt;,
+</a><a href="#h7-2-9" id="h7-2-9" class="d">-        inner: Box&lt;Self&gt;,
+</a><a href="#h7-2-10" id="h7-2-10" class="i">+        outer: Box&lt;Node&gt;,
+</a><a href="#h7-2-11" id="h7-2-11" class="i">+        inner: Box&lt;Node&gt;,
+</a>         predicate: Option&lt;Expression&gt;,
+         pad: bool,
+         flip: bool,
+     },
+     Nothing,
+     Offset {
+<a href="#h7-2-18" id="h7-2-18" class="d">-        source: Box&lt;Self&gt;,
+</a><a href="#h7-2-19" id="h7-2-19" class="i">+        source: Box&lt;Node&gt;,
+</a>         offset: u64,
+     },
+     Order {
+<a href="#h7-2-23" id="h7-2-23" class="d">-        source: Box&lt;Self&gt;,
+</a><a href="#h7-2-24" id="h7-2-24" class="i">+        source: Box&lt;Node&gt;,
+</a>         orders: Vec&lt;(Expression, Direction)&gt;,
+     },
+     Projection {
+<a href="#h7-2-28" id="h7-2-28" class="d">-        source: Box&lt;Self&gt;,
+</a><a href="#h7-2-29" id="h7-2-29" class="i">+        source: Box&lt;Node&gt;,
+</a>         labels: Vec&lt;Option&lt;String&gt;&gt;,
+         expressions: Expressions,
+     },
+<a href="#h7-3" id="h7-3" class="h">@@ -94,7 +95,7 @@ pub enum Node {
+</a>     // Uses BTreeMap for test stability
+     Update {
+         table: String,
+<a href="#h7-3-3" id="h7-3-3" class="d">-        source: Box&lt;Self&gt;,
+</a><a href="#h7-3-4" id="h7-3-4" class="i">+        source: Box&lt;Node&gt;,
+</a>         expressions: BTreeMap&lt;String, Expression&gt;,
+     },
+ }
+<a href="#h7-4" id="h7-4" class="h">@@ -119,6 +120,7 @@ impl Node {
+</a>             Self::Delete { table, source } =&gt; {
+                 Self::Delete { table, source: source.transform(pre, post)?.into() }
+             }
+<a href="#h7-4-3" id="h7-4-3" class="i">+            Self::Explain(node) =&gt; Self::Explain(node.transform(pre, post)?.into()),
+</a>             Self::Filter { source, predicate } =&gt; {
+                 Self::Filter { source: source.transform(pre, post)?.into(), predicate }
+             }
+<a href="#h7-5" id="h7-5" class="h">@@ -162,6 +164,7 @@ impl Node {
+</a>             n @ Self::CreateTable { .. } =&gt; n,
+             n @ Self::Delete { .. } =&gt; n,
+             n @ Self::DropTable { .. } =&gt; n,
+<a href="#h7-5-3" id="h7-5-3" class="i">+            n @ Self::Explain { .. } =&gt; n,
+</a>             n @ Self::Limit { .. } =&gt; n,
+             n @ Self::NestedLoopJoin { .. } =&gt; n,
+             n @ Self::Nothing =&gt; n,
+<a href="#h7-6" id="h7-6" class="h">@@ -206,7 +209,7 @@ impl Node {
+</a> }
+ 
+ /// An aggregate operation
+<a href="#h7-6-3" id="h7-6-3" class="d">-#[derive(Debug)]
+</a><a href="#h7-6-4" id="h7-6-4" class="i">+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+</a> pub enum Aggregate {
+     Average,
+     Count,
+<a href="#h7-7" id="h7-7" class="h">@@ -218,7 +221,7 @@ pub enum Aggregate {
+</a> pub type Aggregates = Vec&lt;Aggregate&gt;;
+ 
+ /// A sort order direction
+<a href="#h7-7-3" id="h7-7-3" class="d">-#[derive(Debug, PartialEq)]
+</a><a href="#h7-7-4" id="h7-7-4" class="i">+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+</a> pub enum Direction {
+     Ascending,
+     Descending,
+<b>diff --git a/<a id="h8" href="../file/src/sql/plan/planner.rs.html">src/sql/plan/planner.rs</a> b/<a href="../file/src/sql/plan/planner.rs.html">src/sql/plan/planner.rs</a></b>
+<a href="#h8-0" id="h8-0" class="h">@@ -43,6 +43,7 @@ impl Planner {
+</a>                 Node::Delete { table, source: Box::new(source) }
+             }
+             ast::Statement::DropTable(name) =&gt; Node::DropTable { name },
+<a href="#h8-0-3" id="h8-0-3" class="i">+            ast::Statement::Explain(stmt) =&gt; Node::Explain(Box::new(self.build_statement(*stmt)?)),
+</a>             ast::Statement::Insert { table, columns, values } =&gt; Node::Insert {
+                 table,
+                 columns: columns.unwrap_or_else(Vec::new),
+<b>diff --git a/<a id="h9" href="../file/src/sql/types/expression.rs.html">src/sql/types/expression.rs</a> b/<a href="../file/src/sql/types/expression.rs.html">src/sql/types/expression.rs</a></b>
+<a href="#h9-0" id="h9-0" class="h">@@ -5,7 +5,7 @@ use regex::Regex;
+</a> use std::collections::HashMap;
+ 
+ /// An expression, made up of constants and operations
+<a href="#h9-0-3" id="h9-0-3" class="d">-#[derive(Debug, PartialEq)]
+</a><a href="#h9-0-4" id="h9-0-4" class="i">+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+</a> pub enum Expression {
+     // Values
+     Constant(Value),
+<b>diff --git a/<a id="h10" href="../file/tests/sql/query.rs.html">tests/sql/query.rs</a> b/<a href="../file/tests/sql/query.rs.html">tests/sql/query.rs</a></b>
+<a href="#h10-0" id="h10-0" class="h">@@ -119,29 +119,34 @@ macro_rules! test_query {
+</a>                 }
+             };
+             txn.commit()?;
+<a href="#h10-0-3" id="h10-0-3" class="d">-            if let ResultSet::Query{relation} = result {
+</a><a href="#h10-0-4" id="h10-0-4" class="d">-                let columns = relation.columns.clone();
+</a><a href="#h10-0-5" id="h10-0-5" class="d">-                let rows: Vec&lt;Row&gt; = match relation.collect() {
+</a><a href="#h10-0-6" id="h10-0-6" class="d">-                    Ok(rows) =&gt; rows,
+</a><a href="#h10-0-7" id="h10-0-7" class="d">-                    Err(err) =&gt; {
+</a><a href="#h10-0-8" id="h10-0-8" class="d">-                        write!(f, &quot; {:?}&quot;, err)?;
+</a><a href="#h10-0-9" id="h10-0-9" class="d">-                        return Ok(())
+</a><a href="#h10-0-10" id="h10-0-10" class="i">+            match result {
+</a><a href="#h10-0-11" id="h10-0-11" class="i">+                ResultSet::Query{relation} =&gt; {
+</a><a href="#h10-0-12" id="h10-0-12" class="i">+                    let columns = relation.columns.clone();
+</a><a href="#h10-0-13" id="h10-0-13" class="i">+                    let rows: Vec&lt;Row&gt; = match relation.collect() {
+</a><a href="#h10-0-14" id="h10-0-14" class="i">+                        Ok(rows) =&gt; rows,
+</a><a href="#h10-0-15" id="h10-0-15" class="i">+                        Err(err) =&gt; {
+</a><a href="#h10-0-16" id="h10-0-16" class="i">+                            write!(f, &quot; {:?}&quot;, err)?;
+</a><a href="#h10-0-17" id="h10-0-17" class="i">+                            return Ok(())
+</a><a href="#h10-0-18" id="h10-0-18" class="i">+                        }
+</a><a href="#h10-0-19" id="h10-0-19" class="i">+                    };
+</a><a href="#h10-0-20" id="h10-0-20" class="i">+                    if !columns.is_empty() || !rows.is_empty() {
+</a><a href="#h10-0-21" id="h10-0-21" class="i">+                        write!(f, &quot; {:?}\n&quot;, columns
+</a><a href="#h10-0-22" id="h10-0-22" class="i">+                            .into_iter()
+</a><a href="#h10-0-23" id="h10-0-23" class="i">+                            .map(|c| c.name.unwrap_or_else(|| &quot;?&quot;.to_string()))
+</a><a href="#h10-0-24" id="h10-0-24" class="i">+                            .collect::&lt;Vec&lt;_&gt;&gt;())?;
+</a><a href="#h10-0-25" id="h10-0-25" class="i">+                        for row in rows {
+</a><a href="#h10-0-26" id="h10-0-26" class="i">+                            write!(f, &quot;{:?}\n&quot;, row)?;
+</a><a href="#h10-0-27" id="h10-0-27" class="i">+                        }
+</a><a href="#h10-0-28" id="h10-0-28" class="i">+                    } else {
+</a><a href="#h10-0-29" id="h10-0-29" class="i">+                        write!(f, &quot; &lt;none&gt;\n&quot;)?;
+</a>                     }
+<a href="#h10-0-31" id="h10-0-31" class="d">-                };
+</a><a href="#h10-0-32" id="h10-0-32" class="d">-                if !columns.is_empty() || !rows.is_empty() {
+</a><a href="#h10-0-33" id="h10-0-33" class="d">-                    write!(f, &quot; {:?}\n&quot;, columns
+</a><a href="#h10-0-34" id="h10-0-34" class="d">-                        .into_iter()
+</a><a href="#h10-0-35" id="h10-0-35" class="d">-                        .map(|c| c.name.unwrap_or_else(|| &quot;?&quot;.to_string()))
+</a><a href="#h10-0-36" id="h10-0-36" class="d">-                        .collect::&lt;Vec&lt;_&gt;&gt;())?;
+</a><a href="#h10-0-37" id="h10-0-37" class="d">-                    for row in rows {
+</a><a href="#h10-0-38" id="h10-0-38" class="d">-                        write!(f, &quot;{:?}\n&quot;, row)?;
+</a><a href="#h10-0-39" id="h10-0-39" class="d">-                    }
+</a><a href="#h10-0-40" id="h10-0-40" class="d">-                } else {
+</a><a href="#h10-0-41" id="h10-0-41" class="d">-                    write!(f, &quot; &lt;none&gt;\n&quot;)?;
+</a>                 }
+<a href="#h10-0-43" id="h10-0-43" class="d">-                return Ok(())
+</a><a href="#h10-0-44" id="h10-0-44" class="i">+                ResultSet::Explain(plan) =&gt; {
+</a><a href="#h10-0-45" id="h10-0-45" class="i">+                    write!(f, &quot; {:#?}&quot;, plan)?;
+</a><a href="#h10-0-46" id="h10-0-46" class="i">+                }
+</a><a href="#h10-0-47" id="h10-0-47" class="i">+                result =&gt; return Err(Error::Internal(format!(&quot;Unexpected result {:?}&quot;, result))),
+</a>             }
+<a href="#h10-0-49" id="h10-0-49" class="d">-            Err(Error::Internal(&quot;Unexpected result&quot;.into()))
+</a><a href="#h10-0-50" id="h10-0-50" class="i">+            Ok(())
+</a>         }
+     )*
+     }
+<a href="#h10-1" id="h10-1" class="h">@@ -152,6 +157,7 @@ test_query! {
+</a>     bare: &quot;SELECT&quot;,
+     trailing_comma: &quot;SELECT 1,&quot;,
+     lowercase: &quot;select 1&quot;,
+<a href="#h10-1-3" id="h10-1-3" class="i">+    explain: &quot;EXPLAIN SELECT m.id, m.title, g.name FROM movies m JOIN GENRES g ON m.genre_id = g.id WHERE m.released &gt;= 2000&quot;,
+</a> 
+     field_single: &quot;SELECT id FROM movies&quot;,
+     field_multi: &quot;SELECT id, title FROM movies&quot;,
+<b>diff --git a/<a id="h11" href="../file/tests/sql/query/explain.html">tests/sql/query/explain</a> b/<a href="../file/tests/sql/query/explain.html">tests/sql/query/explain</a></b>
+<a href="#h11-0" id="h11-0" class="h">@@ -0,0 +1,376 @@
+</a><a href="#h11-0-0" id="h11-0-0" class="i">+Query: EXPLAIN SELECT m.id, m.title, g.name FROM movies m JOIN GENRES g ON m.genre_id = g.id WHERE m.released &gt;= 2000
+</a><a href="#h11-0-1" id="h11-0-1" class="i">+
+</a><a href="#h11-0-2" id="h11-0-2" class="i">+AST: Explain(
+</a><a href="#h11-0-3" id="h11-0-3" class="i">+    Select {
+</a><a href="#h11-0-4" id="h11-0-4" class="i">+        select: SelectClause {
+</a><a href="#h11-0-5" id="h11-0-5" class="i">+            expressions: [
+</a><a href="#h11-0-6" id="h11-0-6" class="i">+                Field(
+</a><a href="#h11-0-7" id="h11-0-7" class="i">+                    Some(
+</a><a href="#h11-0-8" id="h11-0-8" class="i">+                        &quot;m&quot;,
+</a><a href="#h11-0-9" id="h11-0-9" class="i">+                    ),
+</a><a href="#h11-0-10" id="h11-0-10" class="i">+                    &quot;id&quot;,
+</a><a href="#h11-0-11" id="h11-0-11" class="i">+                ),
+</a><a href="#h11-0-12" id="h11-0-12" class="i">+                Field(
+</a><a href="#h11-0-13" id="h11-0-13" class="i">+                    Some(
+</a><a href="#h11-0-14" id="h11-0-14" class="i">+                        &quot;m&quot;,
+</a><a href="#h11-0-15" id="h11-0-15" class="i">+                    ),
+</a><a href="#h11-0-16" id="h11-0-16" class="i">+                    &quot;title&quot;,
+</a><a href="#h11-0-17" id="h11-0-17" class="i">+                ),
+</a><a href="#h11-0-18" id="h11-0-18" class="i">+                Field(
+</a><a href="#h11-0-19" id="h11-0-19" class="i">+                    Some(
+</a><a href="#h11-0-20" id="h11-0-20" class="i">+                        &quot;g&quot;,
+</a><a href="#h11-0-21" id="h11-0-21" class="i">+                    ),
+</a><a href="#h11-0-22" id="h11-0-22" class="i">+                    &quot;name&quot;,
+</a><a href="#h11-0-23" id="h11-0-23" class="i">+                ),
+</a><a href="#h11-0-24" id="h11-0-24" class="i">+            ],
+</a><a href="#h11-0-25" id="h11-0-25" class="i">+            labels: [
+</a><a href="#h11-0-26" id="h11-0-26" class="i">+                None,
+</a><a href="#h11-0-27" id="h11-0-27" class="i">+                None,
+</a><a href="#h11-0-28" id="h11-0-28" class="i">+                None,
+</a><a href="#h11-0-29" id="h11-0-29" class="i">+            ],
+</a><a href="#h11-0-30" id="h11-0-30" class="i">+        },
+</a><a href="#h11-0-31" id="h11-0-31" class="i">+        from: Some(
+</a><a href="#h11-0-32" id="h11-0-32" class="i">+            FromClause {
+</a><a href="#h11-0-33" id="h11-0-33" class="i">+                items: [
+</a><a href="#h11-0-34" id="h11-0-34" class="i">+                    Join {
+</a><a href="#h11-0-35" id="h11-0-35" class="i">+                        left: Table {
+</a><a href="#h11-0-36" id="h11-0-36" class="i">+                            name: &quot;movies&quot;,
+</a><a href="#h11-0-37" id="h11-0-37" class="i">+                            alias: Some(
+</a><a href="#h11-0-38" id="h11-0-38" class="i">+                                &quot;m&quot;,
+</a><a href="#h11-0-39" id="h11-0-39" class="i">+                            ),
+</a><a href="#h11-0-40" id="h11-0-40" class="i">+                        },
+</a><a href="#h11-0-41" id="h11-0-41" class="i">+                        right: Table {
+</a><a href="#h11-0-42" id="h11-0-42" class="i">+                            name: &quot;genres&quot;,
+</a><a href="#h11-0-43" id="h11-0-43" class="i">+                            alias: Some(
+</a><a href="#h11-0-44" id="h11-0-44" class="i">+                                &quot;g&quot;,
+</a><a href="#h11-0-45" id="h11-0-45" class="i">+                            ),
+</a><a href="#h11-0-46" id="h11-0-46" class="i">+                        },
+</a><a href="#h11-0-47" id="h11-0-47" class="i">+                        type: Inner,
+</a><a href="#h11-0-48" id="h11-0-48" class="i">+                        predicate: Some(
+</a><a href="#h11-0-49" id="h11-0-49" class="i">+                            Operation(
+</a><a href="#h11-0-50" id="h11-0-50" class="i">+                                Equal(
+</a><a href="#h11-0-51" id="h11-0-51" class="i">+                                    Field(
+</a><a href="#h11-0-52" id="h11-0-52" class="i">+                                        Some(
+</a><a href="#h11-0-53" id="h11-0-53" class="i">+                                            &quot;m&quot;,
+</a><a href="#h11-0-54" id="h11-0-54" class="i">+                                        ),
+</a><a href="#h11-0-55" id="h11-0-55" class="i">+                                        &quot;genre_id&quot;,
+</a><a href="#h11-0-56" id="h11-0-56" class="i">+                                    ),
+</a><a href="#h11-0-57" id="h11-0-57" class="i">+                                    Field(
+</a><a href="#h11-0-58" id="h11-0-58" class="i">+                                        Some(
+</a><a href="#h11-0-59" id="h11-0-59" class="i">+                                            &quot;g&quot;,
+</a><a href="#h11-0-60" id="h11-0-60" class="i">+                                        ),
+</a><a href="#h11-0-61" id="h11-0-61" class="i">+                                        &quot;id&quot;,
+</a><a href="#h11-0-62" id="h11-0-62" class="i">+                                    ),
+</a><a href="#h11-0-63" id="h11-0-63" class="i">+                                ),
+</a><a href="#h11-0-64" id="h11-0-64" class="i">+                            ),
+</a><a href="#h11-0-65" id="h11-0-65" class="i">+                        ),
+</a><a href="#h11-0-66" id="h11-0-66" class="i">+                    },
+</a><a href="#h11-0-67" id="h11-0-67" class="i">+                ],
+</a><a href="#h11-0-68" id="h11-0-68" class="i">+            },
+</a><a href="#h11-0-69" id="h11-0-69" class="i">+        ),
+</a><a href="#h11-0-70" id="h11-0-70" class="i">+        where: Some(
+</a><a href="#h11-0-71" id="h11-0-71" class="i">+            WhereClause(
+</a><a href="#h11-0-72" id="h11-0-72" class="i">+                Operation(
+</a><a href="#h11-0-73" id="h11-0-73" class="i">+                    GreaterThanOrEqual(
+</a><a href="#h11-0-74" id="h11-0-74" class="i">+                        Field(
+</a><a href="#h11-0-75" id="h11-0-75" class="i">+                            Some(
+</a><a href="#h11-0-76" id="h11-0-76" class="i">+                                &quot;m&quot;,
+</a><a href="#h11-0-77" id="h11-0-77" class="i">+                            ),
+</a><a href="#h11-0-78" id="h11-0-78" class="i">+                            &quot;released&quot;,
+</a><a href="#h11-0-79" id="h11-0-79" class="i">+                        ),
+</a><a href="#h11-0-80" id="h11-0-80" class="i">+                        Literal(
+</a><a href="#h11-0-81" id="h11-0-81" class="i">+                            Integer(
+</a><a href="#h11-0-82" id="h11-0-82" class="i">+                                2000,
+</a><a href="#h11-0-83" id="h11-0-83" class="i">+                            ),
+</a><a href="#h11-0-84" id="h11-0-84" class="i">+                        ),
+</a><a href="#h11-0-85" id="h11-0-85" class="i">+                    ),
+</a><a href="#h11-0-86" id="h11-0-86" class="i">+                ),
+</a><a href="#h11-0-87" id="h11-0-87" class="i">+            ),
+</a><a href="#h11-0-88" id="h11-0-88" class="i">+        ),
+</a><a href="#h11-0-89" id="h11-0-89" class="i">+        group_by: None,
+</a><a href="#h11-0-90" id="h11-0-90" class="i">+        having: None,
+</a><a href="#h11-0-91" id="h11-0-91" class="i">+        order: [],
+</a><a href="#h11-0-92" id="h11-0-92" class="i">+        limit: None,
+</a><a href="#h11-0-93" id="h11-0-93" class="i">+        offset: None,
+</a><a href="#h11-0-94" id="h11-0-94" class="i">+    },
+</a><a href="#h11-0-95" id="h11-0-95" class="i">+)
+</a><a href="#h11-0-96" id="h11-0-96" class="i">+
+</a><a href="#h11-0-97" id="h11-0-97" class="i">+Plan: Plan(
+</a><a href="#h11-0-98" id="h11-0-98" class="i">+    Explain(
+</a><a href="#h11-0-99" id="h11-0-99" class="i">+        Projection {
+</a><a href="#h11-0-100" id="h11-0-100" class="i">+            source: Filter {
+</a><a href="#h11-0-101" id="h11-0-101" class="i">+                source: NestedLoopJoin {
+</a><a href="#h11-0-102" id="h11-0-102" class="i">+                    outer: Scan {
+</a><a href="#h11-0-103" id="h11-0-103" class="i">+                        table: &quot;movies&quot;,
+</a><a href="#h11-0-104" id="h11-0-104" class="i">+                        alias: Some(
+</a><a href="#h11-0-105" id="h11-0-105" class="i">+                            &quot;m&quot;,
+</a><a href="#h11-0-106" id="h11-0-106" class="i">+                        ),
+</a><a href="#h11-0-107" id="h11-0-107" class="i">+                    },
+</a><a href="#h11-0-108" id="h11-0-108" class="i">+                    inner: Scan {
+</a><a href="#h11-0-109" id="h11-0-109" class="i">+                        table: &quot;genres&quot;,
+</a><a href="#h11-0-110" id="h11-0-110" class="i">+                        alias: Some(
+</a><a href="#h11-0-111" id="h11-0-111" class="i">+                            &quot;g&quot;,
+</a><a href="#h11-0-112" id="h11-0-112" class="i">+                        ),
+</a><a href="#h11-0-113" id="h11-0-113" class="i">+                    },
+</a><a href="#h11-0-114" id="h11-0-114" class="i">+                    predicate: Some(
+</a><a href="#h11-0-115" id="h11-0-115" class="i">+                        Equal(
+</a><a href="#h11-0-116" id="h11-0-116" class="i">+                            Field(
+</a><a href="#h11-0-117" id="h11-0-117" class="i">+                                Some(
+</a><a href="#h11-0-118" id="h11-0-118" class="i">+                                    &quot;m&quot;,
+</a><a href="#h11-0-119" id="h11-0-119" class="i">+                                ),
+</a><a href="#h11-0-120" id="h11-0-120" class="i">+                                &quot;genre_id&quot;,
+</a><a href="#h11-0-121" id="h11-0-121" class="i">+                            ),
+</a><a href="#h11-0-122" id="h11-0-122" class="i">+                            Field(
+</a><a href="#h11-0-123" id="h11-0-123" class="i">+                                Some(
+</a><a href="#h11-0-124" id="h11-0-124" class="i">+                                    &quot;g&quot;,
+</a><a href="#h11-0-125" id="h11-0-125" class="i">+                                ),
+</a><a href="#h11-0-126" id="h11-0-126" class="i">+                                &quot;id&quot;,
+</a><a href="#h11-0-127" id="h11-0-127" class="i">+                            ),
+</a><a href="#h11-0-128" id="h11-0-128" class="i">+                        ),
+</a><a href="#h11-0-129" id="h11-0-129" class="i">+                    ),
+</a><a href="#h11-0-130" id="h11-0-130" class="i">+                    pad: false,
+</a><a href="#h11-0-131" id="h11-0-131" class="i">+                    flip: false,
+</a><a href="#h11-0-132" id="h11-0-132" class="i">+                },
+</a><a href="#h11-0-133" id="h11-0-133" class="i">+                predicate: Or(
+</a><a href="#h11-0-134" id="h11-0-134" class="i">+                    GreaterThan(
+</a><a href="#h11-0-135" id="h11-0-135" class="i">+                        Field(
+</a><a href="#h11-0-136" id="h11-0-136" class="i">+                            Some(
+</a><a href="#h11-0-137" id="h11-0-137" class="i">+                                &quot;m&quot;,
+</a><a href="#h11-0-138" id="h11-0-138" class="i">+                            ),
+</a><a href="#h11-0-139" id="h11-0-139" class="i">+                            &quot;released&quot;,
+</a><a href="#h11-0-140" id="h11-0-140" class="i">+                        ),
+</a><a href="#h11-0-141" id="h11-0-141" class="i">+                        Constant(
+</a><a href="#h11-0-142" id="h11-0-142" class="i">+                            Integer(
+</a><a href="#h11-0-143" id="h11-0-143" class="i">+                                2000,
+</a><a href="#h11-0-144" id="h11-0-144" class="i">+                            ),
+</a><a href="#h11-0-145" id="h11-0-145" class="i">+                        ),
+</a><a href="#h11-0-146" id="h11-0-146" class="i">+                    ),
+</a><a href="#h11-0-147" id="h11-0-147" class="i">+                    Equal(
+</a><a href="#h11-0-148" id="h11-0-148" class="i">+                        Field(
+</a><a href="#h11-0-149" id="h11-0-149" class="i">+                            Some(
+</a><a href="#h11-0-150" id="h11-0-150" class="i">+                                &quot;m&quot;,
+</a><a href="#h11-0-151" id="h11-0-151" class="i">+                            ),
+</a><a href="#h11-0-152" id="h11-0-152" class="i">+                            &quot;released&quot;,
+</a><a href="#h11-0-153" id="h11-0-153" class="i">+                        ),
+</a><a href="#h11-0-154" id="h11-0-154" class="i">+                        Constant(
+</a><a href="#h11-0-155" id="h11-0-155" class="i">+                            Integer(
+</a><a href="#h11-0-156" id="h11-0-156" class="i">+                                2000,
+</a><a href="#h11-0-157" id="h11-0-157" class="i">+                            ),
+</a><a href="#h11-0-158" id="h11-0-158" class="i">+                        ),
+</a><a href="#h11-0-159" id="h11-0-159" class="i">+                    ),
+</a><a href="#h11-0-160" id="h11-0-160" class="i">+                ),
+</a><a href="#h11-0-161" id="h11-0-161" class="i">+            },
+</a><a href="#h11-0-162" id="h11-0-162" class="i">+            labels: [
+</a><a href="#h11-0-163" id="h11-0-163" class="i">+                None,
+</a><a href="#h11-0-164" id="h11-0-164" class="i">+                None,
+</a><a href="#h11-0-165" id="h11-0-165" class="i">+                None,
+</a><a href="#h11-0-166" id="h11-0-166" class="i">+            ],
+</a><a href="#h11-0-167" id="h11-0-167" class="i">+            expressions: [
+</a><a href="#h11-0-168" id="h11-0-168" class="i">+                Field(
+</a><a href="#h11-0-169" id="h11-0-169" class="i">+                    Some(
+</a><a href="#h11-0-170" id="h11-0-170" class="i">+                        &quot;m&quot;,
+</a><a href="#h11-0-171" id="h11-0-171" class="i">+                    ),
+</a><a href="#h11-0-172" id="h11-0-172" class="i">+                    &quot;id&quot;,
+</a><a href="#h11-0-173" id="h11-0-173" class="i">+                ),
+</a><a href="#h11-0-174" id="h11-0-174" class="i">+                Field(
+</a><a href="#h11-0-175" id="h11-0-175" class="i">+                    Some(
+</a><a href="#h11-0-176" id="h11-0-176" class="i">+                        &quot;m&quot;,
+</a><a href="#h11-0-177" id="h11-0-177" class="i">+                    ),
+</a><a href="#h11-0-178" id="h11-0-178" class="i">+                    &quot;title&quot;,
+</a><a href="#h11-0-179" id="h11-0-179" class="i">+                ),
+</a><a href="#h11-0-180" id="h11-0-180" class="i">+                Field(
+</a><a href="#h11-0-181" id="h11-0-181" class="i">+                    Some(
+</a><a href="#h11-0-182" id="h11-0-182" class="i">+                        &quot;g&quot;,
+</a><a href="#h11-0-183" id="h11-0-183" class="i">+                    ),
+</a><a href="#h11-0-184" id="h11-0-184" class="i">+                    &quot;name&quot;,
+</a><a href="#h11-0-185" id="h11-0-185" class="i">+                ),
+</a><a href="#h11-0-186" id="h11-0-186" class="i">+            ],
+</a><a href="#h11-0-187" id="h11-0-187" class="i">+        },
+</a><a href="#h11-0-188" id="h11-0-188" class="i">+    ),
+</a><a href="#h11-0-189" id="h11-0-189" class="i">+)
+</a><a href="#h11-0-190" id="h11-0-190" class="i">+
+</a><a href="#h11-0-191" id="h11-0-191" class="i">+Optimized plan: Plan(
+</a><a href="#h11-0-192" id="h11-0-192" class="i">+    Explain(
+</a><a href="#h11-0-193" id="h11-0-193" class="i">+        Projection {
+</a><a href="#h11-0-194" id="h11-0-194" class="i">+            source: Filter {
+</a><a href="#h11-0-195" id="h11-0-195" class="i">+                source: NestedLoopJoin {
+</a><a href="#h11-0-196" id="h11-0-196" class="i">+                    outer: Scan {
+</a><a href="#h11-0-197" id="h11-0-197" class="i">+                        table: &quot;movies&quot;,
+</a><a href="#h11-0-198" id="h11-0-198" class="i">+                        alias: Some(
+</a><a href="#h11-0-199" id="h11-0-199" class="i">+                            &quot;m&quot;,
+</a><a href="#h11-0-200" id="h11-0-200" class="i">+                        ),
+</a><a href="#h11-0-201" id="h11-0-201" class="i">+                    },
+</a><a href="#h11-0-202" id="h11-0-202" class="i">+                    inner: Scan {
+</a><a href="#h11-0-203" id="h11-0-203" class="i">+                        table: &quot;genres&quot;,
+</a><a href="#h11-0-204" id="h11-0-204" class="i">+                        alias: Some(
+</a><a href="#h11-0-205" id="h11-0-205" class="i">+                            &quot;g&quot;,
+</a><a href="#h11-0-206" id="h11-0-206" class="i">+                        ),
+</a><a href="#h11-0-207" id="h11-0-207" class="i">+                    },
+</a><a href="#h11-0-208" id="h11-0-208" class="i">+                    predicate: Some(
+</a><a href="#h11-0-209" id="h11-0-209" class="i">+                        Equal(
+</a><a href="#h11-0-210" id="h11-0-210" class="i">+                            Field(
+</a><a href="#h11-0-211" id="h11-0-211" class="i">+                                Some(
+</a><a href="#h11-0-212" id="h11-0-212" class="i">+                                    &quot;m&quot;,
+</a><a href="#h11-0-213" id="h11-0-213" class="i">+                                ),
+</a><a href="#h11-0-214" id="h11-0-214" class="i">+                                &quot;genre_id&quot;,
+</a><a href="#h11-0-215" id="h11-0-215" class="i">+                            ),
+</a><a href="#h11-0-216" id="h11-0-216" class="i">+                            Field(
+</a><a href="#h11-0-217" id="h11-0-217" class="i">+                                Some(
+</a><a href="#h11-0-218" id="h11-0-218" class="i">+                                    &quot;g&quot;,
+</a><a href="#h11-0-219" id="h11-0-219" class="i">+                                ),
+</a><a href="#h11-0-220" id="h11-0-220" class="i">+                                &quot;id&quot;,
+</a><a href="#h11-0-221" id="h11-0-221" class="i">+                            ),
+</a><a href="#h11-0-222" id="h11-0-222" class="i">+                        ),
+</a><a href="#h11-0-223" id="h11-0-223" class="i">+                    ),
+</a><a href="#h11-0-224" id="h11-0-224" class="i">+                    pad: false,
+</a><a href="#h11-0-225" id="h11-0-225" class="i">+                    flip: false,
+</a><a href="#h11-0-226" id="h11-0-226" class="i">+                },
+</a><a href="#h11-0-227" id="h11-0-227" class="i">+                predicate: Or(
+</a><a href="#h11-0-228" id="h11-0-228" class="i">+                    GreaterThan(
+</a><a href="#h11-0-229" id="h11-0-229" class="i">+                        Field(
+</a><a href="#h11-0-230" id="h11-0-230" class="i">+                            Some(
+</a><a href="#h11-0-231" id="h11-0-231" class="i">+                                &quot;m&quot;,
+</a><a href="#h11-0-232" id="h11-0-232" class="i">+                            ),
+</a><a href="#h11-0-233" id="h11-0-233" class="i">+                            &quot;released&quot;,
+</a><a href="#h11-0-234" id="h11-0-234" class="i">+                        ),
+</a><a href="#h11-0-235" id="h11-0-235" class="i">+                        Constant(
+</a><a href="#h11-0-236" id="h11-0-236" class="i">+                            Integer(
+</a><a href="#h11-0-237" id="h11-0-237" class="i">+                                2000,
+</a><a href="#h11-0-238" id="h11-0-238" class="i">+                            ),
+</a><a href="#h11-0-239" id="h11-0-239" class="i">+                        ),
+</a><a href="#h11-0-240" id="h11-0-240" class="i">+                    ),
+</a><a href="#h11-0-241" id="h11-0-241" class="i">+                    Equal(
+</a><a href="#h11-0-242" id="h11-0-242" class="i">+                        Field(
+</a><a href="#h11-0-243" id="h11-0-243" class="i">+                            Some(
+</a><a href="#h11-0-244" id="h11-0-244" class="i">+                                &quot;m&quot;,
+</a><a href="#h11-0-245" id="h11-0-245" class="i">+                            ),
+</a><a href="#h11-0-246" id="h11-0-246" class="i">+                            &quot;released&quot;,
+</a><a href="#h11-0-247" id="h11-0-247" class="i">+                        ),
+</a><a href="#h11-0-248" id="h11-0-248" class="i">+                        Constant(
+</a><a href="#h11-0-249" id="h11-0-249" class="i">+                            Integer(
+</a><a href="#h11-0-250" id="h11-0-250" class="i">+                                2000,
+</a><a href="#h11-0-251" id="h11-0-251" class="i">+                            ),
+</a><a href="#h11-0-252" id="h11-0-252" class="i">+                        ),
+</a><a href="#h11-0-253" id="h11-0-253" class="i">+                    ),
+</a><a href="#h11-0-254" id="h11-0-254" class="i">+                ),
+</a><a href="#h11-0-255" id="h11-0-255" class="i">+            },
+</a><a href="#h11-0-256" id="h11-0-256" class="i">+            labels: [
+</a><a href="#h11-0-257" id="h11-0-257" class="i">+                None,
+</a><a href="#h11-0-258" id="h11-0-258" class="i">+                None,
+</a><a href="#h11-0-259" id="h11-0-259" class="i">+                None,
+</a><a href="#h11-0-260" id="h11-0-260" class="i">+            ],
+</a><a href="#h11-0-261" id="h11-0-261" class="i">+            expressions: [
+</a><a href="#h11-0-262" id="h11-0-262" class="i">+                Field(
+</a><a href="#h11-0-263" id="h11-0-263" class="i">+                    Some(
+</a><a href="#h11-0-264" id="h11-0-264" class="i">+                        &quot;m&quot;,
+</a><a href="#h11-0-265" id="h11-0-265" class="i">+                    ),
+</a><a href="#h11-0-266" id="h11-0-266" class="i">+                    &quot;id&quot;,
+</a><a href="#h11-0-267" id="h11-0-267" class="i">+                ),
+</a><a href="#h11-0-268" id="h11-0-268" class="i">+                Field(
+</a><a href="#h11-0-269" id="h11-0-269" class="i">+                    Some(
+</a><a href="#h11-0-270" id="h11-0-270" class="i">+                        &quot;m&quot;,
+</a><a href="#h11-0-271" id="h11-0-271" class="i">+                    ),
+</a><a href="#h11-0-272" id="h11-0-272" class="i">+                    &quot;title&quot;,
+</a><a href="#h11-0-273" id="h11-0-273" class="i">+                ),
+</a><a href="#h11-0-274" id="h11-0-274" class="i">+                Field(
+</a><a href="#h11-0-275" id="h11-0-275" class="i">+                    Some(
+</a><a href="#h11-0-276" id="h11-0-276" class="i">+                        &quot;g&quot;,
+</a><a href="#h11-0-277" id="h11-0-277" class="i">+                    ),
+</a><a href="#h11-0-278" id="h11-0-278" class="i">+                    &quot;name&quot;,
+</a><a href="#h11-0-279" id="h11-0-279" class="i">+                ),
+</a><a href="#h11-0-280" id="h11-0-280" class="i">+            ],
+</a><a href="#h11-0-281" id="h11-0-281" class="i">+        },
+</a><a href="#h11-0-282" id="h11-0-282" class="i">+    ),
+</a><a href="#h11-0-283" id="h11-0-283" class="i">+)
+</a><a href="#h11-0-284" id="h11-0-284" class="i">+
+</a><a href="#h11-0-285" id="h11-0-285" class="i">+Query: EXPLAIN SELECT m.id, m.title, g.name FROM movies m JOIN GENRES g ON m.genre_id = g.id WHERE m.released &gt;= 2000
+</a><a href="#h11-0-286" id="h11-0-286" class="i">+
+</a><a href="#h11-0-287" id="h11-0-287" class="i">+Result: Projection {
+</a><a href="#h11-0-288" id="h11-0-288" class="i">+    source: Filter {
+</a><a href="#h11-0-289" id="h11-0-289" class="i">+        source: NestedLoopJoin {
+</a><a href="#h11-0-290" id="h11-0-290" class="i">+            outer: Scan {
+</a><a href="#h11-0-291" id="h11-0-291" class="i">+                table: &quot;movies&quot;,
+</a><a href="#h11-0-292" id="h11-0-292" class="i">+                alias: Some(
+</a><a href="#h11-0-293" id="h11-0-293" class="i">+                    &quot;m&quot;,
+</a><a href="#h11-0-294" id="h11-0-294" class="i">+                ),
+</a><a href="#h11-0-295" id="h11-0-295" class="i">+            },
+</a><a href="#h11-0-296" id="h11-0-296" class="i">+            inner: Scan {
+</a><a href="#h11-0-297" id="h11-0-297" class="i">+                table: &quot;genres&quot;,
+</a><a href="#h11-0-298" id="h11-0-298" class="i">+                alias: Some(
+</a><a href="#h11-0-299" id="h11-0-299" class="i">+                    &quot;g&quot;,
+</a><a href="#h11-0-300" id="h11-0-300" class="i">+                ),
+</a><a href="#h11-0-301" id="h11-0-301" class="i">+            },
+</a><a href="#h11-0-302" id="h11-0-302" class="i">+            predicate: Some(
+</a><a href="#h11-0-303" id="h11-0-303" class="i">+                Equal(
+</a><a href="#h11-0-304" id="h11-0-304" class="i">+                    Field(
+</a><a href="#h11-0-305" id="h11-0-305" class="i">+                        Some(
+</a><a href="#h11-0-306" id="h11-0-306" class="i">+                            &quot;m&quot;,
+</a><a href="#h11-0-307" id="h11-0-307" class="i">+                        ),
+</a><a href="#h11-0-308" id="h11-0-308" class="i">+                        &quot;genre_id&quot;,
+</a><a href="#h11-0-309" id="h11-0-309" class="i">+                    ),
+</a><a href="#h11-0-310" id="h11-0-310" class="i">+                    Field(
+</a><a href="#h11-0-311" id="h11-0-311" class="i">+                        Some(
+</a><a href="#h11-0-312" id="h11-0-312" class="i">+                            &quot;g&quot;,
+</a><a href="#h11-0-313" id="h11-0-313" class="i">+                        ),
+</a><a href="#h11-0-314" id="h11-0-314" class="i">+                        &quot;id&quot;,
+</a><a href="#h11-0-315" id="h11-0-315" class="i">+                    ),
+</a><a href="#h11-0-316" id="h11-0-316" class="i">+                ),
+</a><a href="#h11-0-317" id="h11-0-317" class="i">+            ),
+</a><a href="#h11-0-318" id="h11-0-318" class="i">+            pad: false,
+</a><a href="#h11-0-319" id="h11-0-319" class="i">+            flip: false,
+</a><a href="#h11-0-320" id="h11-0-320" class="i">+        },
+</a><a href="#h11-0-321" id="h11-0-321" class="i">+        predicate: Or(
+</a><a href="#h11-0-322" id="h11-0-322" class="i">+            GreaterThan(
+</a><a href="#h11-0-323" id="h11-0-323" class="i">+                Field(
+</a><a href="#h11-0-324" id="h11-0-324" class="i">+                    Some(
+</a><a href="#h11-0-325" id="h11-0-325" class="i">+                        &quot;m&quot;,
+</a><a href="#h11-0-326" id="h11-0-326" class="i">+                    ),
+</a><a href="#h11-0-327" id="h11-0-327" class="i">+                    &quot;released&quot;,
+</a><a href="#h11-0-328" id="h11-0-328" class="i">+                ),
+</a><a href="#h11-0-329" id="h11-0-329" class="i">+                Constant(
+</a><a href="#h11-0-330" id="h11-0-330" class="i">+                    Integer(
+</a><a href="#h11-0-331" id="h11-0-331" class="i">+                        2000,
+</a><a href="#h11-0-332" id="h11-0-332" class="i">+                    ),
+</a><a href="#h11-0-333" id="h11-0-333" class="i">+                ),
+</a><a href="#h11-0-334" id="h11-0-334" class="i">+            ),
+</a><a href="#h11-0-335" id="h11-0-335" class="i">+            Equal(
+</a><a href="#h11-0-336" id="h11-0-336" class="i">+                Field(
+</a><a href="#h11-0-337" id="h11-0-337" class="i">+                    Some(
+</a><a href="#h11-0-338" id="h11-0-338" class="i">+                        &quot;m&quot;,
+</a><a href="#h11-0-339" id="h11-0-339" class="i">+                    ),
+</a><a href="#h11-0-340" id="h11-0-340" class="i">+                    &quot;released&quot;,
+</a><a href="#h11-0-341" id="h11-0-341" class="i">+                ),
+</a><a href="#h11-0-342" id="h11-0-342" class="i">+                Constant(
+</a><a href="#h11-0-343" id="h11-0-343" class="i">+                    Integer(
+</a><a href="#h11-0-344" id="h11-0-344" class="i">+                        2000,
+</a><a href="#h11-0-345" id="h11-0-345" class="i">+                    ),
+</a><a href="#h11-0-346" id="h11-0-346" class="i">+                ),
+</a><a href="#h11-0-347" id="h11-0-347" class="i">+            ),
+</a><a href="#h11-0-348" id="h11-0-348" class="i">+        ),
+</a><a href="#h11-0-349" id="h11-0-349" class="i">+    },
+</a><a href="#h11-0-350" id="h11-0-350" class="i">+    labels: [
+</a><a href="#h11-0-351" id="h11-0-351" class="i">+        None,
+</a><a href="#h11-0-352" id="h11-0-352" class="i">+        None,
+</a><a href="#h11-0-353" id="h11-0-353" class="i">+        None,
+</a><a href="#h11-0-354" id="h11-0-354" class="i">+    ],
+</a><a href="#h11-0-355" id="h11-0-355" class="i">+    expressions: [
+</a><a href="#h11-0-356" id="h11-0-356" class="i">+        Field(
+</a><a href="#h11-0-357" id="h11-0-357" class="i">+            Some(
+</a><a href="#h11-0-358" id="h11-0-358" class="i">+                &quot;m&quot;,
+</a><a href="#h11-0-359" id="h11-0-359" class="i">+            ),
+</a><a href="#h11-0-360" id="h11-0-360" class="i">+            &quot;id&quot;,
+</a><a href="#h11-0-361" id="h11-0-361" class="i">+        ),
+</a><a href="#h11-0-362" id="h11-0-362" class="i">+        Field(
+</a><a href="#h11-0-363" id="h11-0-363" class="i">+            Some(
+</a><a href="#h11-0-364" id="h11-0-364" class="i">+                &quot;m&quot;,
+</a><a href="#h11-0-365" id="h11-0-365" class="i">+            ),
+</a><a href="#h11-0-366" id="h11-0-366" class="i">+            &quot;title&quot;,
+</a><a href="#h11-0-367" id="h11-0-367" class="i">+        ),
+</a><a href="#h11-0-368" id="h11-0-368" class="i">+        Field(
+</a><a href="#h11-0-369" id="h11-0-369" class="i">+            Some(
+</a><a href="#h11-0-370" id="h11-0-370" class="i">+                &quot;g&quot;,
+</a><a href="#h11-0-371" id="h11-0-371" class="i">+            ),
+</a><a href="#h11-0-372" id="h11-0-372" class="i">+            &quot;name&quot;,
+</a><a href="#h11-0-373" id="h11-0-373" class="i">+        ),
+</a><a href="#h11-0-374" id="h11-0-374" class="i">+    ],
+</a><a href="#h11-0-375" id="h11-0-375" class="i">+}
+</a><a href="#h11-0-376" id="h11-0-376" class="i">+\ No newline at end of file
+</a></pre>
+</div>
+</body>
+</html>

@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>sql: use tuple struct for `StatementResult::Begin` - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/3522859bfba80b5b7efd24b6d102d59e54a05733.html">3522859bfba80b5b7efd24b6d102d59e54a05733</a>
+<b>parent</b> <a href="../commit/630e0dcc0a9c5cdddf811a0c615dac150f6b13e2.html">630e0dcc0a9c5cdddf811a0c615dac150f6b13e2</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Mon, 22 Jul 2024 15:23:52 +0200
+
+sql: use tuple struct for `StatementResult::Begin`
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/bin/toysql.rs</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/client.rs</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/sql/engine/session.rs</a></td><td> | </td><td class="num">4</td><td><span class="i">++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">src/sql/testscripts/transactions/begin</a></td><td> | </td><td class="num">14</td><td><span class="i">+++++++</span><span class="d">-------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h4">src/sql/testscripts/transactions/commit</a></td><td> | </td><td class="num">4</td><td><span class="i">++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h5">src/sql/testscripts/transactions/isolation</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h6">src/sql/testscripts/transactions/rollback</a></td><td> | </td><td class="num">4</td><td><span class="i">++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h7">tests/e2e/client.rs</a></td><td> | </td><td class="num">60</td><td><span class="i">+++++++++++++++++++++++++++++++++++</span><span class="d">-------------------------</span></td></tr>
+</table></pre><pre>8 files changed, 51 insertions(+), 41 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/bin/toysql.rs.html">src/bin/toysql.rs</a> b/<a href="../file/src/bin/toysql.rs.html">src/bin/toysql.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -174,7 +174,7 @@ Transactions: {active_txns} active, {versions} total
+</a>     fn execute_sql(&amp;mut self, statement: &amp;str) -&gt; Result&lt;()&gt; {
+         use StatementResult::*;
+         match self.client.execute(statement)? {
+<a href="#h0-0-3" id="h0-0-3" class="d">-            Begin { state } =&gt; match state.read_only {
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+            Begin(state) =&gt; match state.read_only {
+</a>                 true =&gt; println!(&quot;Began read-only transaction at version {}&quot;, state.version),
+                 false =&gt; println!(&quot;Began transaction {}&quot;, state.version),
+             },
+<b>diff --git a/<a id="h1" href="../file/src/client.rs.html">src/client.rs</a> b/<a href="../file/src/client.rs.html">src/client.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -44,7 +44,7 @@ impl Client {
+</a>         };
+         // Update the transaction state.
+         match &amp;result {
+<a href="#h1-0-3" id="h1-0-3" class="d">-            StatementResult::Begin { state } =&gt; self.txn = Some(state.clone()),
+</a><a href="#h1-0-4" id="h1-0-4" class="i">+            StatementResult::Begin(state) =&gt; self.txn = Some(state.clone()),
+</a>             StatementResult::Commit { .. } =&gt; self.txn = None,
+             StatementResult::Rollback { .. } =&gt; self.txn = None,
+             _ =&gt; {}
+<b>diff --git a/<a id="h2" href="../file/src/sql/engine/session.rs.html">src/sql/engine/session.rs</a> b/<a href="../file/src/sql/engine/session.rs.html">src/sql/engine/session.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -46,7 +46,7 @@ impl&lt;&#39;a, E: Engine&lt;&#39;a&gt;&gt; Session&lt;&#39;a, E&gt; {
+</a>                 };
+                 let state = txn.state().clone();
+                 self.txn = Some(txn);
+<a href="#h2-0-3" id="h2-0-3" class="d">-                StatementResult::Begin { state }
+</a><a href="#h2-0-4" id="h2-0-4" class="i">+                StatementResult::Begin(state)
+</a>             }
+             ast::Statement::Commit =&gt; {
+                 let Some(txn) = self.txn.take() else {
+<a href="#h2-1" id="h2-1" class="h">@@ -125,7 +125,7 @@ impl&lt;&#39;a, E: Engine&lt;&#39;a&gt;&gt; Drop for Session&lt;&#39;a, E&gt; {
+</a> /// A session statement result. Sent across the wire to SQL clients.
+ #[derive(Debug, PartialEq, Serialize, Deserialize)]
+ pub enum StatementResult {
+<a href="#h2-1-3" id="h2-1-3" class="d">-    Begin { state: mvcc::TransactionState },
+</a><a href="#h2-1-4" id="h2-1-4" class="i">+    Begin(mvcc::TransactionState),
+</a>     Commit { version: mvcc::Version },
+     Rollback { version: mvcc::Version },
+     Explain(Plan),
+<b>diff --git a/<a id="h3" href="../file/src/sql/testscripts/transactions/begin.html">src/sql/testscripts/transactions/begin</a> b/<a href="../file/src/sql/testscripts/transactions/begin.html">src/sql/testscripts/transactions/begin</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -11,7 +11,7 @@ c1:[result,ops]&gt; BEGIN
+</a> ---
+ c1: set mvcc:NextVersion → 4 [&quot;\x00&quot; → &quot;\x04&quot;]
+ c1: set mvcc:TxnActive(3) → &quot;&quot; [&quot;\x01\x00\x00\x00\x00\x00\x00\x00\x03&quot; → &quot;&quot;]
+<a href="#h3-0-3" id="h3-0-3" class="d">-c1: Begin { state: TransactionState { version: 3, read_only: false, active: {} } }
+</a><a href="#h3-0-4" id="h3-0-4" class="i">+c1: Begin(TransactionState { version: 3, read_only: false, active: {} })
+</a> 
+ # Starting another transaction for c1 errors.
+ c1:!&gt; BEGIN
+<a href="#h3-1" id="h3-1" class="h">@@ -27,7 +27,7 @@ c2:[result,ops]&gt; BEGIN
+</a> c2: set mvcc:NextVersion → 5 [&quot;\x00&quot; → &quot;\x05&quot;]
+ c2: set mvcc:TxnActiveSnapshot(4) → {3} [&quot;\x02\x00\x00\x00\x00\x00\x00\x00\x04&quot; → &quot;\x01\x03&quot;]
+ c2: set mvcc:TxnActive(4) → &quot;&quot; [&quot;\x01\x00\x00\x00\x00\x00\x00\x00\x04&quot; → &quot;&quot;]
+<a href="#h3-1-3" id="h3-1-3" class="d">-c2: Begin { state: TransactionState { version: 4, read_only: false, active: {3} } }
+</a><a href="#h3-1-4" id="h3-1-4" class="i">+c2: Begin(TransactionState { version: 4, read_only: false, active: {3} })
+</a> 
+ # A read-only transaction doesn&#39;t allocate a new version, and doesn&#39;t perform
+ # any storage engine writes. It does capture an active set though, and it can&#39;t
+<a href="#h3-2" id="h3-2" class="h">@@ -36,7 +36,7 @@ c3:[result,ops]&gt; BEGIN READ ONLY
+</a> c3:!&gt; INSERT INTO test VALUES (0, &#39;&#39;)
+ c3:&gt; ROLLBACK
+ ---
+<a href="#h3-2-3" id="h3-2-3" class="d">-c3: Begin { state: TransactionState { version: 5, read_only: true, active: {3, 4} } }
+</a><a href="#h3-2-4" id="h3-2-4" class="i">+c3: Begin(TransactionState { version: 5, read_only: true, active: {3, 4} })
+</a> c3: Error: invalid input: primary key 0 already exists
+ 
+ # c1 writes a value and commits.
+<a href="#h3-3" id="h3-3" class="h">@@ -51,7 +51,7 @@ c3:[result,ops]&gt; BEGIN READ ONLY AS OF SYSTEM TIME 1
+</a> c3:!&gt; SELECT * FROM test
+ c3:&gt; ROLLBACK
+ ---
+<a href="#h3-3-3" id="h3-3-3" class="d">-c3: Begin { state: TransactionState { version: 1, read_only: true, active: {} } }
+</a><a href="#h3-3-4" id="h3-3-4" class="i">+c3: Begin(TransactionState { version: 1, read_only: true, active: {} })
+</a> c3: Error: invalid input: table test does not exist
+ 
+ # It sees the table at version 2, but no rows. The row is visible
+<a href="#h3-4" id="h3-4" class="h">@@ -61,13 +61,13 @@ c3:[result,ops]&gt; BEGIN READ ONLY AS OF SYSTEM TIME 2
+</a> c3:&gt; SELECT * FROM test
+ c3:&gt; ROLLBACK
+ ---
+<a href="#h3-4-3" id="h3-4-3" class="d">-c3: Begin { state: TransactionState { version: 2, read_only: true, active: {} } }
+</a><a href="#h3-4-4" id="h3-4-4" class="i">+c3: Begin(TransactionState { version: 2, read_only: true, active: {} })
+</a> 
+ c3:[result,ops]&gt; BEGIN READ ONLY AS OF SYSTEM TIME 3
+ c3:&gt; SELECT * FROM test
+ c3:&gt; ROLLBACK
+ ---
+<a href="#h3-4-10" id="h3-4-10" class="d">-c3: Begin { state: TransactionState { version: 3, read_only: true, active: {} } }
+</a><a href="#h3-4-11" id="h3-4-11" class="i">+c3: Begin(TransactionState { version: 3, read_only: true, active: {} })
+</a> c3: 0, &#39;&#39;
+ 
+ # At version 4, we inherit c2&#39;s active set which excludes c1, and still can&#39;t
+<a href="#h3-5" id="h3-5" class="h">@@ -76,5 +76,5 @@ c3:[result,ops]&gt; BEGIN READ ONLY AS OF SYSTEM TIME 4
+</a> c3:&gt; SELECT * FROM test
+ c3:&gt; ROLLBACK
+ ---
+<a href="#h3-5-3" id="h3-5-3" class="d">-c3: Begin { state: TransactionState { version: 4, read_only: true, active: {3} } }
+</a><a href="#h3-5-4" id="h3-5-4" class="i">+c3: Begin(TransactionState { version: 4, read_only: true, active: {3} })
+</a> c3: 0, &#39;&#39;
+<b>diff --git a/<a id="h4" href="../file/src/sql/testscripts/transactions/commit.html">src/sql/testscripts/transactions/commit</a> b/<a href="../file/src/sql/testscripts/transactions/commit.html">src/sql/testscripts/transactions/commit</a></b>
+<a href="#h4-0" id="h4-0" class="h">@@ -11,7 +11,7 @@ ok
+</a> ---
+ set mvcc:NextVersion → 3 [&quot;\x00&quot; → &quot;\x03&quot;]
+ set mvcc:TxnActive(2) → &quot;&quot; [&quot;\x01\x00\x00\x00\x00\x00\x00\x00\x02&quot; → &quot;&quot;]
+<a href="#h4-0-3" id="h4-0-3" class="d">-Begin { state: TransactionState { version: 2, read_only: false, active: {} } }
+</a><a href="#h4-0-4" id="h4-0-4" class="i">+Begin(TransactionState { version: 2, read_only: false, active: {} })
+</a> set mvcc:TxnWrite(2, sql:Row(test, 1)) → &quot;&quot; [&quot;\x03\x00\x00\x00\x00\x00\x00\x00\x02\x02test\x00\xff\x00\xff\x02\x80\x00\xff\x00\xff\x00\xff\x00\xff\x00\xff\x00\xff\x01\x00\x00&quot; → &quot;&quot;]
+ set mvcc:Version(sql:Row(test, 1), 2) → 1,&#39;a&#39; [&quot;\x04\x02test\x00\xff\x00\xff\x02\x80\x00\xff\x00\xff\x00\xff\x00\xff\x00\xff\x00\xff\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x02&quot; → &quot;\x01\x06\x02\x02\x02\x04\x01a&quot;]
+ set mvcc:TxnWrite(2, sql:Row(test, 2)) → &quot;&quot; [&quot;\x03\x00\x00\x00\x00\x00\x00\x00\x02\x02test\x00\xff\x00\xff\x02\x80\x00\xff\x00\xff\x00\xff\x00\xff\x00\xff\x00\xff\x02\x00\x00&quot; → &quot;&quot;]
+<a href="#h4-1" id="h4-1" class="h">@@ -39,7 +39,7 @@ c2:[ops,result]&gt; COMMIT
+</a> c2: set mvcc:NextVersion → 5 [&quot;\x00&quot; → &quot;\x05&quot;]
+ c2: set mvcc:TxnActiveSnapshot(4) → {3} [&quot;\x02\x00\x00\x00\x00\x00\x00\x00\x04&quot; → &quot;\x01\x03&quot;]
+ c2: set mvcc:TxnActive(4) → &quot;&quot; [&quot;\x01\x00\x00\x00\x00\x00\x00\x00\x04&quot; → &quot;&quot;]
+<a href="#h4-1-3" id="h4-1-3" class="d">-c2: Begin { state: TransactionState { version: 4, read_only: false, active: {3} } }
+</a><a href="#h4-1-4" id="h4-1-4" class="i">+c2: Begin(TransactionState { version: 4, read_only: false, active: {3} })
+</a> c2: delete mvcc:TxnActive(4) [&quot;\x01\x00\x00\x00\x00\x00\x00\x00\x04&quot;]
+ c2: Commit { version: 4 }
+ 
+<b>diff --git a/<a id="h5" href="../file/src/sql/testscripts/transactions/isolation.html">src/sql/testscripts/transactions/isolation</a> b/<a href="../file/src/sql/testscripts/transactions/isolation.html">src/sql/testscripts/transactions/isolation</a></b>
+<a href="#h5-0" id="h5-0" class="h">@@ -38,7 +38,7 @@ ok
+</a> c4:[result]&gt; BEGIN
+ c4:&gt; INSERT INTO test VALUES (4, &#39;d&#39;)
+ ---
+<a href="#h5-0-3" id="h5-0-3" class="d">-c4: Begin { state: TransactionState { version: 4, read_only: false, active: {2, 3} } }
+</a><a href="#h5-0-4" id="h5-0-4" class="i">+c4: Begin(TransactionState { version: 4, read_only: false, active: {2, 3} })
+</a> 
+ # Commit c2.
+ c2:&gt; COMMIT
+<b>diff --git a/<a id="h6" href="../file/src/sql/testscripts/transactions/rollback.html">src/sql/testscripts/transactions/rollback</a> b/<a href="../file/src/sql/testscripts/transactions/rollback.html">src/sql/testscripts/transactions/rollback</a></b>
+<a href="#h6-0" id="h6-0" class="h">@@ -11,7 +11,7 @@ ok
+</a> ---
+ set mvcc:NextVersion → 3 [&quot;\x00&quot; → &quot;\x03&quot;]
+ set mvcc:TxnActive(2) → &quot;&quot; [&quot;\x01\x00\x00\x00\x00\x00\x00\x00\x02&quot; → &quot;&quot;]
+<a href="#h6-0-3" id="h6-0-3" class="d">-Begin { state: TransactionState { version: 2, read_only: false, active: {} } }
+</a><a href="#h6-0-4" id="h6-0-4" class="i">+Begin(TransactionState { version: 2, read_only: false, active: {} })
+</a> set mvcc:TxnWrite(2, sql:Row(test, 1)) → &quot;&quot; [&quot;\x03\x00\x00\x00\x00\x00\x00\x00\x02\x02test\x00\xff\x00\xff\x02\x80\x00\xff\x00\xff\x00\xff\x00\xff\x00\xff\x00\xff\x01\x00\x00&quot; → &quot;&quot;]
+ set mvcc:Version(sql:Row(test, 1), 2) → 1,&#39;a&#39; [&quot;\x04\x02test\x00\xff\x00\xff\x02\x80\x00\xff\x00\xff\x00\xff\x00\xff\x00\xff\x00\xff\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x02&quot; → &quot;\x01\x06\x02\x02\x02\x04\x01a&quot;]
+ set mvcc:TxnWrite(2, sql:Row(test, 2)) → &quot;&quot; [&quot;\x03\x00\x00\x00\x00\x00\x00\x00\x02\x02test\x00\xff\x00\xff\x02\x80\x00\xff\x00\xff\x00\xff\x00\xff\x00\xff\x00\xff\x02\x00\x00&quot; → &quot;&quot;]
+<a href="#h6-1" id="h6-1" class="h">@@ -41,7 +41,7 @@ c2:[ops,result]&gt; ROLLBACK
+</a> c2: set mvcc:NextVersion → 5 [&quot;\x00&quot; → &quot;\x05&quot;]
+ c2: set mvcc:TxnActiveSnapshot(4) → {3} [&quot;\x02\x00\x00\x00\x00\x00\x00\x00\x04&quot; → &quot;\x01\x03&quot;]
+ c2: set mvcc:TxnActive(4) → &quot;&quot; [&quot;\x01\x00\x00\x00\x00\x00\x00\x00\x04&quot; → &quot;&quot;]
+<a href="#h6-1-3" id="h6-1-3" class="d">-c2: Begin { state: TransactionState { version: 4, read_only: false, active: {3} } }
+</a><a href="#h6-1-4" id="h6-1-4" class="i">+c2: Begin(TransactionState { version: 4, read_only: false, active: {3} })
+</a> c2: delete mvcc:TxnActive(4) [&quot;\x01\x00\x00\x00\x00\x00\x00\x00\x04&quot;]
+ c2: Rollback { version: 4 }
+ 
+<b>diff --git a/<a id="h7" href="../file/tests/e2e/client.rs.html">tests/e2e/client.rs</a> b/<a href="../file/tests/e2e/client.rs.html">tests/e2e/client.rs</a></b>
+<a href="#h7-0" id="h7-0" class="h">@@ -244,9 +244,11 @@ fn execute_txn() -&gt; Result&lt;()&gt; {
+</a>     // Committing a change in a txn should work
+     assert_eq!(
+         c.execute(&quot;BEGIN&quot;)?,
+<a href="#h7-0-3" id="h7-0-3" class="d">-        StatementResult::Begin {
+</a><a href="#h7-0-4" id="h7-0-4" class="d">-            state: mvcc::TransactionState { version: 2, read_only: false, active: BTreeSet::new() }
+</a><a href="#h7-0-5" id="h7-0-5" class="d">-        }
+</a><a href="#h7-0-6" id="h7-0-6" class="i">+        StatementResult::Begin(mvcc::TransactionState {
+</a><a href="#h7-0-7" id="h7-0-7" class="i">+            version: 2,
+</a><a href="#h7-0-8" id="h7-0-8" class="i">+            read_only: false,
+</a><a href="#h7-0-9" id="h7-0-9" class="i">+            active: BTreeSet::new()
+</a><a href="#h7-0-10" id="h7-0-10" class="i">+        })
+</a>     );
+     assert_eq!(
+         c.txn(),
+<a href="#h7-1" id="h7-1" class="h">@@ -264,9 +266,11 @@ fn execute_txn() -&gt; Result&lt;()&gt; {
+</a>     // Rolling back a change in a txn should also work
+     assert_eq!(
+         c.execute(&quot;BEGIN&quot;)?,
+<a href="#h7-1-3" id="h7-1-3" class="d">-        StatementResult::Begin {
+</a><a href="#h7-1-4" id="h7-1-4" class="d">-            state: mvcc::TransactionState { version: 3, read_only: false, active: BTreeSet::new() }
+</a><a href="#h7-1-5" id="h7-1-5" class="d">-        }
+</a><a href="#h7-1-6" id="h7-1-6" class="i">+        StatementResult::Begin(mvcc::TransactionState {
+</a><a href="#h7-1-7" id="h7-1-7" class="i">+            version: 3,
+</a><a href="#h7-1-8" id="h7-1-8" class="i">+            read_only: false,
+</a><a href="#h7-1-9" id="h7-1-9" class="i">+            active: BTreeSet::new()
+</a><a href="#h7-1-10" id="h7-1-10" class="i">+        })
+</a>     );
+     assert_eq!(
+         c.txn(),
+<a href="#h7-2" id="h7-2" class="h">@@ -284,9 +288,11 @@ fn execute_txn() -&gt; Result&lt;()&gt; {
+</a>     // Starting a read-only txn should block writes
+     assert_eq!(
+         c.execute(&quot;BEGIN READ ONLY&quot;)?,
+<a href="#h7-2-3" id="h7-2-3" class="d">-        StatementResult::Begin {
+</a><a href="#h7-2-4" id="h7-2-4" class="d">-            state: mvcc::TransactionState { version: 4, read_only: true, active: BTreeSet::new() }
+</a><a href="#h7-2-5" id="h7-2-5" class="d">-        }
+</a><a href="#h7-2-6" id="h7-2-6" class="i">+        StatementResult::Begin(mvcc::TransactionState {
+</a><a href="#h7-2-7" id="h7-2-7" class="i">+            version: 4,
+</a><a href="#h7-2-8" id="h7-2-8" class="i">+            read_only: true,
+</a><a href="#h7-2-9" id="h7-2-9" class="i">+            active: BTreeSet::new()
+</a><a href="#h7-2-10" id="h7-2-10" class="i">+        })
+</a>     );
+     assert_eq!(
+         c.txn(),
+<a href="#h7-3" id="h7-3" class="h">@@ -307,9 +313,11 @@ fn execute_txn() -&gt; Result&lt;()&gt; {
+</a>     // block writes
+     assert_eq!(
+         c.execute(&quot;BEGIN READ ONLY AS OF SYSTEM TIME 2&quot;)?,
+<a href="#h7-3-3" id="h7-3-3" class="d">-        StatementResult::Begin {
+</a><a href="#h7-3-4" id="h7-3-4" class="d">-            state: mvcc::TransactionState { version: 2, read_only: true, active: BTreeSet::new() }
+</a><a href="#h7-3-5" id="h7-3-5" class="d">-        },
+</a><a href="#h7-3-6" id="h7-3-6" class="i">+        StatementResult::Begin(mvcc::TransactionState {
+</a><a href="#h7-3-7" id="h7-3-7" class="i">+            version: 2,
+</a><a href="#h7-3-8" id="h7-3-8" class="i">+            read_only: true,
+</a><a href="#h7-3-9" id="h7-3-9" class="i">+            active: BTreeSet::new()
+</a><a href="#h7-3-10" id="h7-3-10" class="i">+        }),
+</a>     );
+     assert_eq!(
+         c.txn(),
+<a href="#h7-4" id="h7-4" class="h">@@ -329,9 +337,11 @@ fn execute_txn() -&gt; Result&lt;()&gt; {
+</a>     // A txn should still be usable after an error occurs
+     assert_eq!(
+         c.execute(&quot;BEGIN&quot;)?,
+<a href="#h7-4-3" id="h7-4-3" class="d">-        StatementResult::Begin {
+</a><a href="#h7-4-4" id="h7-4-4" class="d">-            state: mvcc::TransactionState { version: 4, read_only: false, active: BTreeSet::new() }
+</a><a href="#h7-4-5" id="h7-4-5" class="d">-        },
+</a><a href="#h7-4-6" id="h7-4-6" class="i">+        StatementResult::Begin(mvcc::TransactionState {
+</a><a href="#h7-4-7" id="h7-4-7" class="i">+            version: 4,
+</a><a href="#h7-4-8" id="h7-4-8" class="i">+            read_only: false,
+</a><a href="#h7-4-9" id="h7-4-9" class="i">+            active: BTreeSet::new()
+</a><a href="#h7-4-10" id="h7-4-10" class="i">+        })
+</a>     );
+     c.execute(&quot;INSERT INTO genres VALUES (5, &#39;Horror&#39;)&quot;)?;
+     assert_eq!(
+<a href="#h7-5" id="h7-5" class="h">@@ -369,19 +379,19 @@ fn execute_txn_concurrent() -&gt; Result&lt;()&gt; {
+</a>     // Concurrent updates should throw a serialization failure on conflict.
+     assert_eq!(
+         a.execute(&quot;BEGIN&quot;)?,
+<a href="#h7-5-3" id="h7-5-3" class="d">-        StatementResult::Begin {
+</a><a href="#h7-5-4" id="h7-5-4" class="d">-            state: mvcc::TransactionState { version: 2, read_only: false, active: BTreeSet::new() }
+</a><a href="#h7-5-5" id="h7-5-5" class="d">-        },
+</a><a href="#h7-5-6" id="h7-5-6" class="i">+        StatementResult::Begin(mvcc::TransactionState {
+</a><a href="#h7-5-7" id="h7-5-7" class="i">+            version: 2,
+</a><a href="#h7-5-8" id="h7-5-8" class="i">+            read_only: false,
+</a><a href="#h7-5-9" id="h7-5-9" class="i">+            active: BTreeSet::new()
+</a><a href="#h7-5-10" id="h7-5-10" class="i">+        })
+</a>     );
+     assert_eq!(
+         b.execute(&quot;BEGIN&quot;)?,
+<a href="#h7-5-14" id="h7-5-14" class="d">-        StatementResult::Begin {
+</a><a href="#h7-5-15" id="h7-5-15" class="d">-            state: mvcc::TransactionState {
+</a><a href="#h7-5-16" id="h7-5-16" class="d">-                version: 3,
+</a><a href="#h7-5-17" id="h7-5-17" class="d">-                read_only: false,
+</a><a href="#h7-5-18" id="h7-5-18" class="d">-                active: BTreeSet::from([2])
+</a><a href="#h7-5-19" id="h7-5-19" class="d">-            }
+</a><a href="#h7-5-20" id="h7-5-20" class="d">-        },
+</a><a href="#h7-5-21" id="h7-5-21" class="i">+        StatementResult::Begin(mvcc::TransactionState {
+</a><a href="#h7-5-22" id="h7-5-22" class="i">+            version: 3,
+</a><a href="#h7-5-23" id="h7-5-23" class="i">+            read_only: false,
+</a><a href="#h7-5-24" id="h7-5-24" class="i">+            active: BTreeSet::from([2])
+</a><a href="#h7-5-25" id="h7-5-25" class="i">+        })
+</a>     );
+ 
+     assert_row(
+</pre>
+</div>
+</body>
+</html>

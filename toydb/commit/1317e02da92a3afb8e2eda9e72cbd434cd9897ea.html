@@ -1,0 +1,767 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>sql: clean up aggregate planning - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/1317e02da92a3afb8e2eda9e72cbd434cd9897ea.html">1317e02da92a3afb8e2eda9e72cbd434cd9897ea</a>
+<b>parent</b> <a href="../commit/f5a65f0c5a74170bed7921b218525ad819ffdbd3.html">f5a65f0c5a74170bed7921b218525ad819ffdbd3</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Mon, 15 Jul 2024 22:01:26 +0200
+
+sql: clean up aggregate planning
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/sql/planner/plan.rs</a></td><td> | </td><td class="num">4</td><td><span class="i">+++</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/sql/planner/planner.rs</a></td><td> | </td><td class="num">442</td><td><span class="i">+++++++++++++++++++++++++++++++++++</span><span class="d">--------------------------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/sql/testscripts/queries/aggregate</a></td><td> | </td><td class="num">8</td><td><span class="i">++++++++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">src/sql/testscripts/queries/group_by</a></td><td> | </td><td class="num">10</td><td><span class="i">++++++++++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h4">src/sql/testscripts/queries/having</a></td><td> | </td><td class="num">26</td><td><span class="i">+++++++++++</span><span class="d">---------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h5">src/sql/testscripts/queries/order</a></td><td> | </td><td class="num">17</td><td><span class="i">+++++++</span><span class="d">----------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h6">src/sql/types/value.rs</a></td><td> | </td><td class="num">10</td><td><span class="i">++++++++++</span><span class="d"></span></td></tr>
+</table></pre><pre>7 files changed, 244 insertions(+), 273 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/sql/planner/plan.rs.html">src/sql/planner/plan.rs</a> b/<a href="../file/src/sql/planner/plan.rs.html">src/sql/planner/plan.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -82,6 +82,9 @@ impl Plan {
+</a> }
+ 
+ /// A query plan node. These return row iterators and can be nested.
+<a href="#h0-0-3" id="h0-0-3" class="i">+///
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+/// TODO: try to get rid of the labels. Can they be reconstructed by walking
+</a><a href="#h0-0-5" id="h0-0-5" class="i">+/// down the node tree?
+</a> #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+ pub enum Node {
+     /// Computes aggregate values for the given expressions and group_by buckets
+<a href="#h0-1" id="h0-1" class="h">@@ -95,7 +98,6 @@ pub enum Node {
+</a>     /// in-memory hashmap of the right source and looking up matches for each
+     /// row in the left source. When outer is true (e.g. LEFT JOIN), a left row
+     /// without a right match is emitted anyway, with NULLs for the right row.
+<a href="#h0-1-3" id="h0-1-3" class="d">-    /// TODO: do we need the labels?
+</a>     HashJoin {
+         left: Box&lt;Node&gt;,
+         left_field: usize,
+<b>diff --git a/<a id="h1" href="../file/src/sql/planner/planner.rs.html">src/sql/planner/planner.rs</a> b/<a href="../file/src/sql/planner/planner.rs.html">src/sql/planner/planner.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -166,8 +166,8 @@ impl&lt;&#39;a, C: Catalog&gt; Planner&lt;&#39;a, C&gt; {
+</a>         } else if select.is_empty() {
+             return errinput!(&quot;SELECT * requires a FROM clause&quot;);
+         } else {
+<a href="#h1-0-3" id="h1-0-3" class="d">-            // For a constant SELECT, emit a single empty row to project. This
+</a><a href="#h1-0-4" id="h1-0-4" class="d">-            // allows using both a WHERE predicate and aggregate functions.
+</a><a href="#h1-0-5" id="h1-0-5" class="i">+            // For a constant SELECT, emit a single empty row to project with.
+</a><a href="#h1-0-6" id="h1-0-6" class="i">+            // This allows using aggregate functions and WHERE as normal.
+</a>             Node::Values { rows: vec![vec![]] }
+         };
+ 
+<a href="#h1-1" id="h1-1" class="h">@@ -180,48 +180,35 @@ impl&lt;&#39;a, C: Catalog&gt; Planner&lt;&#39;a, C&gt; {
+</a>         // Build aggregate functions and GROUP BY clause.
+         let aggregates = Self::collect_aggregates(&amp;select, &amp;having, &amp;order_by);
+         if !group_by.is_empty() || !aggregates.is_empty() {
+<a href="#h1-1-3" id="h1-1-3" class="d">-            // If there is a SELECT * clause, specify explicit columns. This
+</a><a href="#h1-1-4" id="h1-1-4" class="d">-            // ensures that the columns must be used in GROUP BY as well.
+</a><a href="#h1-1-5" id="h1-1-5" class="d">-            // TODO: consider improving this.
+</a><a href="#h1-1-6" id="h1-1-6" class="i">+            // For SELECT * with aggregates, expand as explicit columns to
+</a><a href="#h1-1-7" id="h1-1-7" class="i">+            // verify that they&#39;re all used in GROUP BY as well.
+</a>             if select.is_empty() {
+<a href="#h1-1-9" id="h1-1-9" class="d">-                for index in 0..node.size() {
+</a><a href="#h1-1-10" id="h1-1-10" class="d">-                    let (table, column) = match scope.get_label(index) {
+</a><a href="#h1-1-11" id="h1-1-11" class="d">-                        Label::Qualified(table, column) =&gt; (Some(table), column),
+</a><a href="#h1-1-12" id="h1-1-12" class="d">-                        Label::Unqualified(column) =&gt; (None, column),
+</a><a href="#h1-1-13" id="h1-1-13" class="d">-                        Label::None =&gt; panic!(&quot;FROM clause must produce labels&quot;),
+</a><a href="#h1-1-14" id="h1-1-14" class="d">-                    };
+</a><a href="#h1-1-15" id="h1-1-15" class="d">-                    select.push((ast::Expression::Field(table, column), None));
+</a><a href="#h1-1-16" id="h1-1-16" class="d">-                }
+</a><a href="#h1-1-17" id="h1-1-17" class="i">+                select = (0..node.size())
+</a><a href="#h1-1-18" id="h1-1-18" class="i">+                    .map(|i| (scope.get_label(i).into_ast_field().expect(&quot;no FROM label&quot;), None))
+</a><a href="#h1-1-19" id="h1-1-19" class="i">+                    .collect();
+</a>             }
+             node = self.build_aggregate(&amp;mut scope, node, group_by, aggregates)?;
+         }
+ 
+         // Build SELECT clause.
+         if !select.is_empty() {
+<a href="#h1-1-26" id="h1-1-26" class="d">-            let labels = select.iter().map(|(_, l)| Label::maybe_name(l.clone())).collect_vec();
+</a><a href="#h1-1-27" id="h1-1-27" class="d">-            let mut expressions: Vec&lt;_&gt; = select
+</a><a href="#h1-1-28" id="h1-1-28" class="d">-                .clone() // TODO: avoid
+</a><a href="#h1-1-29" id="h1-1-29" class="d">-                .into_iter()
+</a><a href="#h1-1-30" id="h1-1-30" class="d">-                .map(|(e, _)| Self::build_expression(e, &amp;scope))
+</a><a href="#h1-1-31" id="h1-1-31" class="d">-                .collect::&lt;Result&lt;_&gt;&gt;()?;
+</a><a href="#h1-1-32" id="h1-1-32" class="d">-            let parent_scope = scope;
+</a><a href="#h1-1-33" id="h1-1-33" class="d">-            scope = parent_scope.project(&amp;expressions, &amp;labels)?;
+</a><a href="#h1-1-34" id="h1-1-34" class="d">-
+</a><a href="#h1-1-35" id="h1-1-35" class="d">-            // Add hidden columns for HAVING and ORDER BY fields not in SELECT.
+</a><a href="#h1-1-36" id="h1-1-36" class="d">-            for expr in having.iter().chain(order_by.iter().map(|(e, _)| e)) {
+</a><a href="#h1-1-37" id="h1-1-37" class="d">-                self.build_hidden(&amp;mut scope, &amp;parent_scope, &amp;mut expressions, expr);
+</a><a href="#h1-1-38" id="h1-1-38" class="i">+            // Prepare the post-projection scope.
+</a><a href="#h1-1-39" id="h1-1-39" class="i">+            let mut child_scope = scope.project(&amp;select);
+</a><a href="#h1-1-40" id="h1-1-40" class="i">+
+</a><a href="#h1-1-41" id="h1-1-41" class="i">+            // Build the SELECT column expressions and aliases.
+</a><a href="#h1-1-42" id="h1-1-42" class="i">+            let mut expressions = Vec::with_capacity(select.len());
+</a><a href="#h1-1-43" id="h1-1-43" class="i">+            let mut labels = Vec::with_capacity(select.len());
+</a><a href="#h1-1-44" id="h1-1-44" class="i">+            for (expr, alias) in select {
+</a><a href="#h1-1-45" id="h1-1-45" class="i">+                expressions.push(Self::build_expression(expr, &amp;scope)?);
+</a><a href="#h1-1-46" id="h1-1-46" class="i">+                labels.push(Label::maybe_name(alias));
+</a>             }
+ 
+<a href="#h1-1-49" id="h1-1-49" class="d">-            // If the parent scope is an aggregate scope, then every projected
+</a><a href="#h1-1-50" id="h1-1-50" class="d">-            // column must also be an aggregate column by definition. Record them
+</a><a href="#h1-1-51" id="h1-1-51" class="d">-            // as such. build_hidden() already does this for hidden columns.
+</a><a href="#h1-1-52" id="h1-1-52" class="d">-            // TODO: clean this up.
+</a><a href="#h1-1-53" id="h1-1-53" class="d">-            if !parent_scope.aggregates.is_empty() {
+</a><a href="#h1-1-54" id="h1-1-54" class="d">-                for (i, expr) in select.into_iter().map(|(e, _)| e).enumerate() {
+</a><a href="#h1-1-55" id="h1-1-55" class="d">-                    scope.aggregates.entry(expr).or_insert(i);
+</a><a href="#h1-1-56" id="h1-1-56" class="d">-                }
+</a><a href="#h1-1-57" id="h1-1-57" class="d">-            }
+</a><a href="#h1-1-58" id="h1-1-58" class="i">+            // Add hidden columns for HAVING and ORDER BY columns not in SELECT.
+</a><a href="#h1-1-59" id="h1-1-59" class="i">+            let hidden = self.build_select_hidden(&amp;scope, &amp;mut child_scope, &amp;having, &amp;order_by);
+</a><a href="#h1-1-60" id="h1-1-60" class="i">+            labels.extend(std::iter::repeat(Label::None).take(hidden.len()));
+</a><a href="#h1-1-61" id="h1-1-61" class="i">+            expressions.extend(hidden);
+</a> 
+<a href="#h1-1-63" id="h1-1-63" class="i">+            scope = child_scope;
+</a>             node = Node::Projection { source: Box::new(node), expressions, labels };
+         };
+ 
+<a href="#h1-2" id="h1-2" class="h">@@ -340,59 +327,34 @@ impl&lt;&#39;a, C: Catalog&gt; Planner&lt;&#39;a, C&gt; {
+</a>         Ok(node)
+     }
+ 
+<a href="#h1-2-3" id="h1-2-3" class="d">-    /// Builds an aggregate node, computing aggregate functions for a set of
+</a><a href="#h1-2-4" id="h1-2-4" class="d">-    /// GROUP BY buckets.
+</a><a href="#h1-2-5" id="h1-2-5" class="i">+    /// Builds an aggregate node, which computes aggregates for a set of GROUP
+</a><a href="#h1-2-6" id="h1-2-6" class="i">+    /// BY buckets. The aggregate functions have been collected from the SELECT,
+</a><a href="#h1-2-7" id="h1-2-7" class="i">+    /// HAVING, and ORDER BY clauses.
+</a><a href="#h1-2-8" id="h1-2-8" class="i">+    ///
+</a><a href="#h1-2-9" id="h1-2-9" class="i">+    /// The ast::Expression for each aggregate function and GROUP BY expression
+</a><a href="#h1-2-10" id="h1-2-10" class="i">+    /// is tracked in the Scope and mapped to the column index. Later nodes
+</a><a href="#h1-2-11" id="h1-2-11" class="i">+    /// (i.e. SELECT, HAVING, and ORDER BY) can look up the column index of
+</a><a href="#h1-2-12" id="h1-2-12" class="i">+    /// aggregate expressions while building expressions. Consider e.g.:
+</a>     ///
+<a href="#h1-2-14" id="h1-2-14" class="d">-    /// The aggregate functions have been collected from the SELECT, HAVING, and
+</a><a href="#h1-2-15" id="h1-2-15" class="d">-    /// ORDER BY clauses (all of which can contain their own aggregate
+</a><a href="#h1-2-16" id="h1-2-16" class="d">-    /// functions).
+</a><a href="#h1-2-17" id="h1-2-17" class="i">+    /// SELECT SUM(a) / COUNT(*) FROM t GROUP BY b % 10 HAVING b % 10 &gt;= 5 ORDER BY MAX(c)
+</a>     ///
+<a href="#h1-2-19" id="h1-2-19" class="d">-    /// The ast::Expression for each aggregate function and each GROUP BY
+</a><a href="#h1-2-20" id="h1-2-20" class="d">-    /// expression (except trivial column names) is stored in the Scope along
+</a><a href="#h1-2-21" id="h1-2-21" class="d">-    /// with the column index. Later nodes (i.e. SELECT, HAVING, and ORDER BY)
+</a><a href="#h1-2-22" id="h1-2-22" class="d">-    /// can look up the column index of aggregate expressions via Scope.
+</a><a href="#h1-2-23" id="h1-2-23" class="d">-    /// Similarly, they are allowed to reference GROUP BY expressions by
+</a><a href="#h1-2-24" id="h1-2-24" class="d">-    /// specifying the exact same expression.
+</a><a href="#h1-2-25" id="h1-2-25" class="i">+    /// This will build an Aggregate node for SUM(a), COUNT(*), MAX(c) bucketed
+</a><a href="#h1-2-26" id="h1-2-26" class="i">+    /// by b % 10. The SELECT can look up up SUM(a) and COUNT(*) to compute the
+</a><a href="#h1-2-27" id="h1-2-27" class="i">+    /// division, and HAVING can look up b % 10 to compute the predicate.
+</a>     fn build_aggregate(
+         &amp;self,
+         scope: &amp;mut Scope,
+         source: Node,
+<a href="#h1-2-32" id="h1-2-32" class="d">-        group_by: Vec&lt;ast::Expression&gt;,
+</a><a href="#h1-2-33" id="h1-2-33" class="d">-        aggregates: Vec&lt;ast::Expression&gt;,
+</a><a href="#h1-2-34" id="h1-2-34" class="i">+        mut group_by: Vec&lt;ast::Expression&gt;,
+</a><a href="#h1-2-35" id="h1-2-35" class="i">+        mut aggregates: Vec&lt;ast::Expression&gt;,
+</a>     ) -&gt; Result&lt;Node&gt; {
+         // Construct a child scope with the group_by and aggregate AST
+<a href="#h1-2-38" id="h1-2-38" class="d">-        // expressions, such that downstream nodes can identify and reference
+</a><a href="#h1-2-39" id="h1-2-39" class="d">-        // them. Discard redundant expressions.
+</a><a href="#h1-2-40" id="h1-2-40" class="d">-        let mut child_scope = scope.project(&amp;[], &amp;[])?; // project to keep tables
+</a><a href="#h1-2-41" id="h1-2-41" class="d">-        let group_by = group_by
+</a><a href="#h1-2-42" id="h1-2-42" class="d">-            .into_iter()
+</a><a href="#h1-2-43" id="h1-2-43" class="d">-            .filter(|expr| {
+</a><a href="#h1-2-44" id="h1-2-44" class="d">-                if child_scope.lookup_aggregate(expr).is_some() {
+</a><a href="#h1-2-45" id="h1-2-45" class="d">-                    return false; // already exists in child scope
+</a><a href="#h1-2-46" id="h1-2-46" class="d">-                }
+</a><a href="#h1-2-47" id="h1-2-47" class="d">-                let mut label = Label::None;
+</a><a href="#h1-2-48" id="h1-2-48" class="d">-                // TODO: add a Scope method to pass through columns from a parent scope.
+</a><a href="#h1-2-49" id="h1-2-49" class="d">-                if let ast::Expression::Field(table, column) = expr {
+</a><a href="#h1-2-50" id="h1-2-50" class="d">-                    if let Ok(index) = scope.lookup_column(table.as_deref(), column.as_str()) {
+</a><a href="#h1-2-51" id="h1-2-51" class="d">-                        label = scope.get_label(index);
+</a><a href="#h1-2-52" id="h1-2-52" class="d">-                    }
+</a><a href="#h1-2-53" id="h1-2-53" class="d">-                }
+</a><a href="#h1-2-54" id="h1-2-54" class="d">-                child_scope.add_aggregate(expr.clone(), label);
+</a><a href="#h1-2-55" id="h1-2-55" class="d">-                true
+</a><a href="#h1-2-56" id="h1-2-56" class="d">-            })
+</a><a href="#h1-2-57" id="h1-2-57" class="d">-            .collect_vec();
+</a><a href="#h1-2-58" id="h1-2-58" class="d">-        let aggregates = aggregates
+</a><a href="#h1-2-59" id="h1-2-59" class="d">-            .into_iter()
+</a><a href="#h1-2-60" id="h1-2-60" class="d">-            .filter(|expr| {
+</a><a href="#h1-2-61" id="h1-2-61" class="d">-                if child_scope.lookup_aggregate(expr).is_some() {
+</a><a href="#h1-2-62" id="h1-2-62" class="d">-                    return false;
+</a><a href="#h1-2-63" id="h1-2-63" class="d">-                }
+</a><a href="#h1-2-64" id="h1-2-64" class="d">-                child_scope.add_aggregate(expr.clone(), Label::None);
+</a><a href="#h1-2-65" id="h1-2-65" class="d">-                true
+</a><a href="#h1-2-66" id="h1-2-66" class="d">-            })
+</a><a href="#h1-2-67" id="h1-2-67" class="d">-            .collect_vec();
+</a><a href="#h1-2-68" id="h1-2-68" class="i">+        // expressions, for lookups. Discard duplicate expressions.
+</a><a href="#h1-2-69" id="h1-2-69" class="i">+        let mut child_scope = scope.spawn();
+</a><a href="#h1-2-70" id="h1-2-70" class="i">+        group_by.retain(|expr| child_scope.add_aggregate(expr, scope).is_some());
+</a><a href="#h1-2-71" id="h1-2-71" class="i">+        aggregates.retain(|expr| child_scope.add_aggregate(expr, scope).is_some());
+</a> 
+<a href="#h1-2-73" id="h1-2-73" class="d">-        // Build the node from the remaining expressions.
+</a><a href="#h1-2-74" id="h1-2-74" class="i">+        // Build the node from the remaining unique expressions.
+</a>         let group_by = group_by
+             .into_iter()
+             .map(|expr| Self::build_expression(expr, scope))
+<a href="#h1-3" id="h1-3" class="h">@@ -431,10 +393,9 @@ impl&lt;&#39;a, C: Catalog&gt; Planner&lt;&#39;a, C&gt; {
+</a>     /// Checks whether a given AST expression is an aggregate function.
+     fn is_aggregate_function(expr: &amp;ast::Expression) -&gt; bool {
+         if let ast::Expression::Function(name, _) = expr {
+<a href="#h1-3-3" id="h1-3-3" class="d">-            [&quot;avg&quot;, &quot;count&quot;, &quot;max&quot;, &quot;min&quot;, &quot;sum&quot;].contains(&amp;name.as_str())
+</a><a href="#h1-3-4" id="h1-3-4" class="d">-        } else {
+</a><a href="#h1-3-5" id="h1-3-5" class="d">-            false
+</a><a href="#h1-3-6" id="h1-3-6" class="i">+            return [&quot;avg&quot;, &quot;count&quot;, &quot;max&quot;, &quot;min&quot;, &quot;sum&quot;].contains(&amp;name.as_str());
+</a>         }
+<a href="#h1-3-8" id="h1-3-8" class="i">+        false
+</a>     }
+ 
+     /// Collects aggregate functions from SELECT, HAVING, and ORDER BY clauses.
+<a href="#h1-4" id="h1-4" class="h">@@ -446,7 +407,6 @@ impl&lt;&#39;a, C: Catalog&gt; Planner&lt;&#39;a, C&gt; {
+</a>         let select = select.iter().map(|(expr, _)| expr);
+         let having = having.iter();
+         let order_by = order_by.iter().map(|(expr, _)| expr);
+<a href="#h1-4-3" id="h1-4-3" class="d">-
+</a>         let mut aggregates = Vec::new();
+         for expr in select.chain(having).chain(order_by) {
+             expr.collect(&amp;|e| Self::is_aggregate_function(e), &amp;mut aggregates)
+<a href="#h1-5" id="h1-5" class="h">@@ -454,61 +414,58 @@ impl&lt;&#39;a, C: Catalog&gt; Planner&lt;&#39;a, C&gt; {
+</a>         aggregates
+     }
+ 
+<a href="#h1-5-3" id="h1-5-3" class="d">-    /// Adds hidden columns to a projection to pass through fields that are used
+</a><a href="#h1-5-4" id="h1-5-4" class="d">-    /// by downstream nodes. Consider e.g.:
+</a><a href="#h1-5-5" id="h1-5-5" class="i">+    /// Builds hidden columns for a projection to pass through fields that are
+</a><a href="#h1-5-6" id="h1-5-6" class="i">+    /// used by downstream nodes. Consider e.g.:
+</a>     ///
+     /// SELECT id FROM table ORDER BY value
+     ///
+<a href="#h1-5-10" id="h1-5-10" class="d">-    /// The ORDER BY node is evaluated after the projection (it may need to
+</a><a href="#h1-5-11" id="h1-5-11" class="d">-    /// order on projected fields like &quot;foo + bar AS alias&quot;), but &quot;value&quot; isn&#39;t
+</a><a href="#h1-5-12" id="h1-5-12" class="d">-    /// projected and so isn&#39;t available to the ORDER BY node. We add a hidden
+</a><a href="#h1-5-13" id="h1-5-13" class="d">-    /// column to the projection such that the effective projection is:
+</a><a href="#h1-5-14" id="h1-5-14" class="i">+    /// The ORDER BY node is evaluated after the SELECT projection (it may need
+</a><a href="#h1-5-15" id="h1-5-15" class="i">+    /// to order on projected columns), but &quot;value&quot; isn&#39;t projected and thus
+</a><a href="#h1-5-16" id="h1-5-16" class="i">+    /// isn&#39;t available to the ORDER BY node. We add a hidden &quot;value&quot; column to
+</a><a href="#h1-5-17" id="h1-5-17" class="i">+    /// the projection to satisfy the ORDER BY.
+</a>     ///
+<a href="#h1-5-19" id="h1-5-19" class="d">-    /// SELECT id, value FROM table ORDER BY value
+</a><a href="#h1-5-20" id="h1-5-20" class="d">-    fn build_hidden(
+</a><a href="#h1-5-21" id="h1-5-21" class="i">+    /// Hidden columns are stripped before returning the result to the client.
+</a><a href="#h1-5-22" id="h1-5-22" class="i">+    fn build_select_hidden(
+</a>         &amp;self,
+<a href="#h1-5-24" id="h1-5-24" class="d">-        scope: &amp;mut Scope,
+</a><a href="#h1-5-25" id="h1-5-25" class="d">-        parent_scope: &amp;Scope,
+</a><a href="#h1-5-26" id="h1-5-26" class="d">-        projection: &amp;mut Vec&lt;Expression&gt;,
+</a><a href="#h1-5-27" id="h1-5-27" class="d">-        expr: &amp;ast::Expression,
+</a><a href="#h1-5-28" id="h1-5-28" class="d">-    ) {
+</a><a href="#h1-5-29" id="h1-5-29" class="d">-        expr.walk(&amp;mut |expr| {
+</a><a href="#h1-5-30" id="h1-5-30" class="d">-            // If this is an aggregate function or GROUP BY expression that
+</a><a href="#h1-5-31" id="h1-5-31" class="d">-            // isn&#39;t already available in the child scope, pass it through.
+</a><a href="#h1-5-32" id="h1-5-32" class="d">-            if let Some(parent_index) = parent_scope.lookup_aggregate(expr) {
+</a><a href="#h1-5-33" id="h1-5-33" class="d">-                if scope.lookup_aggregate(expr).is_none() {
+</a><a href="#h1-5-34" id="h1-5-34" class="d">-                    let label = parent_scope.get_label(parent_index);
+</a><a href="#h1-5-35" id="h1-5-35" class="d">-                    let index = scope.add_aggregate(expr.clone(), label);
+</a><a href="#h1-5-36" id="h1-5-36" class="d">-                    scope.hide(index);
+</a><a href="#h1-5-37" id="h1-5-37" class="d">-                    projection.push(Expression::Field(parent_index, Label::None));
+</a><a href="#h1-5-38" id="h1-5-38" class="d">-                    return true;
+</a><a href="#h1-5-39" id="h1-5-39" class="i">+        scope: &amp;Scope,
+</a><a href="#h1-5-40" id="h1-5-40" class="i">+        child_scope: &amp;mut Scope,
+</a><a href="#h1-5-41" id="h1-5-41" class="i">+        having: &amp;Option&lt;ast::Expression&gt;,
+</a><a href="#h1-5-42" id="h1-5-42" class="i">+        order_by: &amp;[(ast::Expression, ast::Order)],
+</a><a href="#h1-5-43" id="h1-5-43" class="i">+    ) -&gt; Vec&lt;Expression&gt; {
+</a><a href="#h1-5-44" id="h1-5-44" class="i">+        let mut hidden = Vec::new();
+</a><a href="#h1-5-45" id="h1-5-45" class="i">+        for expr in having.iter().chain(order_by.iter().map(|(expr, _)| expr)) {
+</a><a href="#h1-5-46" id="h1-5-46" class="i">+            expr.walk(&amp;mut |expr| {
+</a><a href="#h1-5-47" id="h1-5-47" class="i">+                // If this is an aggregate or GROUP BY expression that isn&#39;t
+</a><a href="#h1-5-48" id="h1-5-48" class="i">+                // already available in the child scope, pass it through.
+</a><a href="#h1-5-49" id="h1-5-49" class="i">+                if let Some(index) = scope.lookup_aggregate(expr) {
+</a><a href="#h1-5-50" id="h1-5-50" class="i">+                    if child_scope.lookup_aggregate(expr).is_none() {
+</a><a href="#h1-5-51" id="h1-5-51" class="i">+                        child_scope.add_passthrough(scope, index, true);
+</a><a href="#h1-5-52" id="h1-5-52" class="i">+                        hidden.push(Expression::Field(index, scope.get_label(index)));
+</a><a href="#h1-5-53" id="h1-5-53" class="i">+                        return true;
+</a><a href="#h1-5-54" id="h1-5-54" class="i">+                    }
+</a>                 }
+<a href="#h1-5-56" id="h1-5-56" class="d">-            }
+</a> 
+<a href="#h1-5-58" id="h1-5-58" class="d">-            // Otherwise, only look for field references.
+</a><a href="#h1-5-59" id="h1-5-59" class="d">-            let ast::Expression::Field(table, name) = expr else {
+</a><a href="#h1-5-60" id="h1-5-60" class="d">-                return true;
+</a><a href="#h1-5-61" id="h1-5-61" class="d">-            };
+</a><a href="#h1-5-62" id="h1-5-62" class="d">-            // If the field already exists post-projection, do nothing.
+</a><a href="#h1-5-63" id="h1-5-63" class="d">-            if scope.lookup_column(table.as_deref(), name).is_ok() {
+</a><a href="#h1-5-64" id="h1-5-64" class="d">-                return true;
+</a><a href="#h1-5-65" id="h1-5-65" class="d">-            }
+</a><a href="#h1-5-66" id="h1-5-66" class="d">-            // If the field doesn&#39;t exist in the parent scope either, we simply
+</a><a href="#h1-5-67" id="h1-5-67" class="d">-            // don&#39;t build a hidden column for it. The field evaluation will
+</a><a href="#h1-5-68" id="h1-5-68" class="d">-            // error when building the downstream node (e.g. ORDER BY).
+</a><a href="#h1-5-69" id="h1-5-69" class="d">-            let Ok(parent_index) = parent_scope.lookup_column(table.as_deref(), name) else {
+</a><a href="#h1-5-70" id="h1-5-70" class="d">-                return true;
+</a><a href="#h1-5-71" id="h1-5-71" class="d">-            };
+</a><a href="#h1-5-72" id="h1-5-72" class="d">-            // Add a hidden column to the projection. Use the given label for
+</a><a href="#h1-5-73" id="h1-5-73" class="d">-            // the projection, but the qualified label for the scope.
+</a><a href="#h1-5-74" id="h1-5-74" class="d">-            let index = scope.add_column(parent_scope.get_label(parent_index));
+</a><a href="#h1-5-75" id="h1-5-75" class="d">-            scope.hide(index);
+</a><a href="#h1-5-76" id="h1-5-76" class="d">-            projection.push(Expression::Field(
+</a><a href="#h1-5-77" id="h1-5-77" class="d">-                parent_index,
+</a><a href="#h1-5-78" id="h1-5-78" class="d">-                Label::maybe_qualified(table.clone(), name.clone()),
+</a><a href="#h1-5-79" id="h1-5-79" class="d">-            ));
+</a><a href="#h1-5-80" id="h1-5-80" class="d">-            true
+</a><a href="#h1-5-81" id="h1-5-81" class="d">-        });
+</a><a href="#h1-5-82" id="h1-5-82" class="i">+                // Look for field references that don&#39;t exist post-projection.
+</a><a href="#h1-5-83" id="h1-5-83" class="i">+                // Otherwise, only look for field references.
+</a><a href="#h1-5-84" id="h1-5-84" class="i">+                let ast::Expression::Field(table, column) = expr else {
+</a><a href="#h1-5-85" id="h1-5-85" class="i">+                    return true;
+</a><a href="#h1-5-86" id="h1-5-86" class="i">+                };
+</a><a href="#h1-5-87" id="h1-5-87" class="i">+                if child_scope.lookup_column(table.as_deref(), column).is_ok() {
+</a><a href="#h1-5-88" id="h1-5-88" class="i">+                    return true;
+</a><a href="#h1-5-89" id="h1-5-89" class="i">+                }
+</a><a href="#h1-5-90" id="h1-5-90" class="i">+                // If the parent lookup fails too, ignore the error. It will be
+</a><a href="#h1-5-91" id="h1-5-91" class="i">+                // surfaced during expression building.
+</a><a href="#h1-5-92" id="h1-5-92" class="i">+                let Ok(index) = scope.lookup_column(table.as_deref(), column) else {
+</a><a href="#h1-5-93" id="h1-5-93" class="i">+                    return true;
+</a><a href="#h1-5-94" id="h1-5-94" class="i">+                };
+</a><a href="#h1-5-95" id="h1-5-95" class="i">+                // Add the hidden column to the projection.
+</a><a href="#h1-5-96" id="h1-5-96" class="i">+                let label = Label::maybe_qualified(table.clone(), column.clone());
+</a><a href="#h1-5-97" id="h1-5-97" class="i">+                child_scope.add_passthrough(scope, index, true);
+</a><a href="#h1-5-98" id="h1-5-98" class="i">+                hidden.push(Expression::Field(index, label));
+</a><a href="#h1-5-99" id="h1-5-99" class="i">+                true
+</a><a href="#h1-5-100" id="h1-5-100" class="i">+            });
+</a><a href="#h1-5-101" id="h1-5-101" class="i">+        }
+</a><a href="#h1-5-102" id="h1-5-102" class="i">+        hidden
+</a>     }
+ 
+     /// Builds an expression from an AST expression.
+<a href="#h1-6" id="h1-6" class="h">@@ -581,8 +538,9 @@ impl&lt;&#39;a, C: Catalog&gt; Planner&lt;&#39;a, C&gt; {
+</a>     }
+ }
+ 
+<a href="#h1-6-3" id="h1-6-3" class="d">-/// A scope maps column/table names to input column indexes for expressions,
+</a><a href="#h1-6-4" id="h1-6-4" class="d">-/// and keeps track of output column names.
+</a><a href="#h1-6-5" id="h1-6-5" class="i">+/// A scope maps column/table names to input column indexes, for lookups during
+</a><a href="#h1-6-6" id="h1-6-6" class="i">+/// expression construction. It also tracks output column names, aggregate and
+</a><a href="#h1-6-7" id="h1-6-7" class="i">+/// GROUP BY expressions, and hidden columns.
+</a> ///
+ /// Expression evaluation generally happens in the context of an input row. This
+ /// row may come directly from a single table, or it may be the result of a long
+<a href="#h1-7" id="h1-7" class="h">@@ -590,9 +548,6 @@ impl&lt;&#39;a, C: Catalog&gt; Planner&lt;&#39;a, C&gt; {
+</a> /// currently visible and what names they have. During expression planning, the
+ /// scope is used to resolve column names to column indexes, which are placed in
+ /// the plan and used during execution.
+<a href="#h1-7-3" id="h1-7-3" class="d">-///
+</a><a href="#h1-7-4" id="h1-7-4" class="d">-/// It also keeps track of output columns for aggregate functions and GROUP BY
+</a><a href="#h1-7-5" id="h1-7-5" class="d">-/// expressions in Aggregate nodes. See aggregates field.
+</a> pub struct Scope {
+     /// The currently visible columns. If empty, only constant expressions can
+     /// be used (no field references).
+<a href="#h1-8" id="h1-8" class="h">@@ -605,21 +560,10 @@ pub struct Scope {
+</a>     /// Index of unqualified column names to column indexes. If a name points
+     /// to multiple columns, lookups will fail with an ambiguous name error.
+     unqualified: HashMap&lt;String, Vec&lt;usize&gt;&gt;,
+<a href="#h1-8-3" id="h1-8-3" class="d">-    /// Index of aggregate expressions to column indexes. This is used to track
+</a><a href="#h1-8-4" id="h1-8-4" class="d">-    /// output columns of Aggregate nodes, e.g. SUM(2 * a + b), and look them up
+</a><a href="#h1-8-5" id="h1-8-5" class="d">-    /// from expressions in downstream SELECT, HAVING, and ORDER BY columns,
+</a><a href="#h1-8-6" id="h1-8-6" class="d">-    /// e.g. SELECT SUM(2 * a + b) / COUNT(*) FROM table. When build_expression
+</a><a href="#h1-8-7" id="h1-8-7" class="d">-    /// encounters an aggregate function, it&#39;s mapped onto an aggregate column
+</a><a href="#h1-8-8" id="h1-8-8" class="d">-    /// index via this index.
+</a><a href="#h1-8-9" id="h1-8-9" class="d">-    ///
+</a><a href="#h1-8-10" id="h1-8-10" class="d">-    /// This is also used to map GROUP BY expressions to the corresponding
+</a><a href="#h1-8-11" id="h1-8-11" class="d">-    /// Aggregate node output column when evaluating downstream node expressions
+</a><a href="#h1-8-12" id="h1-8-12" class="d">-    /// in SELECT, HAVING, and ORDER BY. For trivial column references, e.g.
+</a><a href="#h1-8-13" id="h1-8-13" class="d">-    /// GROUP BY a, b, the column can be accessed and looked up as normal via
+</a><a href="#h1-8-14" id="h1-8-14" class="d">-    /// lookup_column() in downstream node expressions, but for more complex
+</a><a href="#h1-8-15" id="h1-8-15" class="d">-    /// expressions like GROUP BY a * b / 2, the group column can be accessed
+</a><a href="#h1-8-16" id="h1-8-16" class="d">-    /// using the same expression in other nodes, e.g.  GROUP BY a * b / 2 ORDER
+</a><a href="#h1-8-17" id="h1-8-17" class="d">-    /// BY a * b / 2.
+</a><a href="#h1-8-18" id="h1-8-18" class="i">+    /// Index of aggregate and GROUP BY expressions to column indexes. This is
+</a><a href="#h1-8-19" id="h1-8-19" class="i">+    /// used to track output columns of Aggregate nodes and look them up from
+</a><a href="#h1-8-20" id="h1-8-20" class="i">+    /// expressions in downstream SELECT, HAVING, and ORDER BY clauses. If the
+</a><a href="#h1-8-21" id="h1-8-21" class="i">+    /// node contains an (inner) Aggregate node, this is never empty.
+</a>     aggregates: HashMap&lt;ast::Expression, usize&gt;,
+     /// Hidden columns. These are used to pass e.g. ORDER BY and HAVING
+     /// expressions through SELECT projection nodes if the expressions aren&#39;t
+<a href="#h1-9" id="h1-9" class="h">@@ -647,6 +591,13 @@ impl Scope {
+</a>         Ok(scope)
+     }
+ 
+<a href="#h1-9-3" id="h1-9-3" class="i">+    /// Creates a new child scope that inherits from the parent scope.
+</a><a href="#h1-9-4" id="h1-9-4" class="i">+    pub fn spawn(&amp;self) -&gt; Self {
+</a><a href="#h1-9-5" id="h1-9-5" class="i">+        let mut child = Scope::new();
+</a><a href="#h1-9-6" id="h1-9-6" class="i">+        child.tables = self.tables.clone(); // retain table names
+</a><a href="#h1-9-7" id="h1-9-7" class="i">+        child
+</a><a href="#h1-9-8" id="h1-9-8" class="i">+    }
+</a><a href="#h1-9-9" id="h1-9-9" class="i">+
+</a>     /// Adds a table to the scope. The label is either the table&#39;s original name
+     /// or an alias, and must be unique. All table columns are added, in order.
+     fn add_table(&amp;mut self, label: &amp;str, table: &amp;Table) -&gt; Result&lt;()&gt; {
+<a href="#h1-10" id="h1-10" class="h">@@ -706,36 +657,109 @@ impl Scope {
+</a>         self.columns.get(index).cloned().unwrap_or(Label::None)
+     }
+ 
+<a href="#h1-10-3" id="h1-10-3" class="d">-    /// Adds an aggregate expression to the scope, returning the column index.
+</a><a href="#h1-10-4" id="h1-10-4" class="d">-    /// This is either an aggregate function or a GROUP BY expression (i.e. not
+</a><a href="#h1-10-5" id="h1-10-5" class="d">-    /// just a simple column name). It is used to access the aggregate output or
+</a><a href="#h1-10-6" id="h1-10-6" class="d">-    /// GROUP BY column in downstream nodes like SELECT, HAVING, and ORDER BY.
+</a><a href="#h1-10-7" id="h1-10-7" class="d">-    ///
+</a><a href="#h1-10-8" id="h1-10-8" class="d">-    /// If the expression already exists, the current index is returned.
+</a><a href="#h1-10-9" id="h1-10-9" class="d">-    fn add_aggregate(&amp;mut self, expr: ast::Expression, label: Label) -&gt; usize {
+</a><a href="#h1-10-10" id="h1-10-10" class="d">-        if let Some(index) = self.aggregates.get(&amp;expr) {
+</a><a href="#h1-10-11" id="h1-10-11" class="d">-            return *index;
+</a><a href="#h1-10-12" id="h1-10-12" class="i">+    /// Adds an aggregate expression to the scope, returning the new column
+</a><a href="#h1-10-13" id="h1-10-13" class="i">+    /// index or None if the expression already exists. This is either an
+</a><a href="#h1-10-14" id="h1-10-14" class="i">+    /// aggregate function or a GROUP BY expression. It is used to look up the
+</a><a href="#h1-10-15" id="h1-10-15" class="i">+    /// aggregate output column from e.g. SELECT, HAVING, and ORDER BY.
+</a><a href="#h1-10-16" id="h1-10-16" class="i">+    fn add_aggregate(&amp;mut self, expr: &amp;ast::Expression, parent: &amp;Scope) -&gt; Option&lt;usize&gt; {
+</a><a href="#h1-10-17" id="h1-10-17" class="i">+        if self.aggregates.contains_key(expr) {
+</a><a href="#h1-10-18" id="h1-10-18" class="i">+            return None;
+</a><a href="#h1-10-19" id="h1-10-19" class="i">+        }
+</a><a href="#h1-10-20" id="h1-10-20" class="i">+
+</a><a href="#h1-10-21" id="h1-10-21" class="i">+        // If this is a simple column reference (i.e. GROUP BY foo), pass
+</a><a href="#h1-10-22" id="h1-10-22" class="i">+        // through the column label from the parent scope for lookups.
+</a><a href="#h1-10-23" id="h1-10-23" class="i">+        let mut label = Label::None;
+</a><a href="#h1-10-24" id="h1-10-24" class="i">+        if let ast::Expression::Field(table, column) = expr {
+</a><a href="#h1-10-25" id="h1-10-25" class="i">+            // Ignore errors, they will be emitted when building the expression.
+</a><a href="#h1-10-26" id="h1-10-26" class="i">+            if let Ok(index) = parent.lookup_column(table.as_deref(), column.as_str()) {
+</a><a href="#h1-10-27" id="h1-10-27" class="i">+                label = parent.get_label(index);
+</a><a href="#h1-10-28" id="h1-10-28" class="i">+            }
+</a>         }
+<a href="#h1-10-30" id="h1-10-30" class="i">+
+</a>         let index = self.add_column(label);
+<a href="#h1-10-32" id="h1-10-32" class="d">-        self.aggregates.insert(expr, index);
+</a><a href="#h1-10-33" id="h1-10-33" class="d">-        index
+</a><a href="#h1-10-34" id="h1-10-34" class="i">+        self.aggregates.insert(expr.clone(), index);
+</a><a href="#h1-10-35" id="h1-10-35" class="i">+        Some(index)
+</a>     }
+ 
+     /// Looks up an aggregate column index by aggregate function or GROUP BY
+<a href="#h1-10-39" id="h1-10-39" class="d">-    /// expression, if any. Trivial GROUP BY column names are accessed via
+</a><a href="#h1-10-40" id="h1-10-40" class="d">-    /// lookup_column() as normal.
+</a><a href="#h1-10-41" id="h1-10-41" class="d">-    ///
+</a><a href="#h1-10-42" id="h1-10-42" class="d">-    /// Unlike lookup_column(), this returns an option since the caller is
+</a><a href="#h1-10-43" id="h1-10-43" class="d">-    /// expected to fall back to normal expressions building.
+</a><a href="#h1-10-44" id="h1-10-44" class="i">+    /// expression.
+</a>     fn lookup_aggregate(&amp;self, expr: &amp;ast::Expression) -&gt; Option&lt;usize&gt; {
+         self.aggregates.get(expr).copied()
+     }
+ 
+<a href="#h1-10-49" id="h1-10-49" class="d">-    /// Marks the given column as hidden.
+</a><a href="#h1-10-50" id="h1-10-50" class="d">-    fn hide(&amp;mut self, index: usize) {
+</a><a href="#h1-10-51" id="h1-10-51" class="d">-        if index &lt; self.columns.len() {
+</a><a href="#h1-10-52" id="h1-10-52" class="i">+    /// Adds a column that passes through a column from the parent scope,
+</a><a href="#h1-10-53" id="h1-10-53" class="i">+    /// retaining its properties. If hide is true, the column is hidden.
+</a><a href="#h1-10-54" id="h1-10-54" class="i">+    fn add_passthrough(&amp;mut self, parent: &amp;Scope, parent_index: usize, hide: bool) -&gt; usize {
+</a><a href="#h1-10-55" id="h1-10-55" class="i">+        let label = parent.get_label(parent_index);
+</a><a href="#h1-10-56" id="h1-10-56" class="i">+        let index = self.add_column(label);
+</a><a href="#h1-10-57" id="h1-10-57" class="i">+        for (expr, i) in &amp;parent.aggregates {
+</a><a href="#h1-10-58" id="h1-10-58" class="i">+            if *i == parent_index {
+</a><a href="#h1-10-59" id="h1-10-59" class="i">+                self.aggregates.entry(expr.clone()).or_insert(index);
+</a><a href="#h1-10-60" id="h1-10-60" class="i">+            }
+</a><a href="#h1-10-61" id="h1-10-61" class="i">+        }
+</a><a href="#h1-10-62" id="h1-10-62" class="i">+        if hide || parent.hidden.contains(&amp;parent_index) {
+</a>             self.hidden.insert(index);
+         }
+<a href="#h1-10-65" id="h1-10-65" class="i">+        index
+</a><a href="#h1-10-66" id="h1-10-66" class="i">+    }
+</a><a href="#h1-10-67" id="h1-10-67" class="i">+
+</a><a href="#h1-10-68" id="h1-10-68" class="i">+    /// Merges two scopes, by appending the given scope to self.
+</a><a href="#h1-10-69" id="h1-10-69" class="i">+    fn merge(&amp;mut self, scope: Scope) -&gt; Result&lt;()&gt; {
+</a><a href="#h1-10-70" id="h1-10-70" class="i">+        for table in scope.tables {
+</a><a href="#h1-10-71" id="h1-10-71" class="i">+            if self.tables.contains(&amp;table) {
+</a><a href="#h1-10-72" id="h1-10-72" class="i">+                return errinput!(&quot;duplicate table name {table}&quot;);
+</a><a href="#h1-10-73" id="h1-10-73" class="i">+            }
+</a><a href="#h1-10-74" id="h1-10-74" class="i">+            self.tables.insert(table);
+</a><a href="#h1-10-75" id="h1-10-75" class="i">+        }
+</a><a href="#h1-10-76" id="h1-10-76" class="i">+        let offset = self.columns.len();
+</a><a href="#h1-10-77" id="h1-10-77" class="i">+        for label in scope.columns {
+</a><a href="#h1-10-78" id="h1-10-78" class="i">+            self.add_column(label);
+</a><a href="#h1-10-79" id="h1-10-79" class="i">+        }
+</a><a href="#h1-10-80" id="h1-10-80" class="i">+        for (expr, index) in scope.aggregates {
+</a><a href="#h1-10-81" id="h1-10-81" class="i">+            self.aggregates.entry(expr).or_insert(index + offset);
+</a><a href="#h1-10-82" id="h1-10-82" class="i">+        }
+</a><a href="#h1-10-83" id="h1-10-83" class="i">+        self.hidden.extend(scope.hidden.into_iter().map(|index| index + offset));
+</a><a href="#h1-10-84" id="h1-10-84" class="i">+        Ok(())
+</a><a href="#h1-10-85" id="h1-10-85" class="i">+    }
+</a><a href="#h1-10-86" id="h1-10-86" class="i">+
+</a><a href="#h1-10-87" id="h1-10-87" class="i">+    /// Projects the scope via the given expressions and aliases, creating a new
+</a><a href="#h1-10-88" id="h1-10-88" class="i">+    /// child scope with one column per expression. These may be a simple field
+</a><a href="#h1-10-89" id="h1-10-89" class="i">+    /// reference (e.g. &quot;SELECT a, b FROM table&quot;), which passes through the
+</a><a href="#h1-10-90" id="h1-10-90" class="i">+    /// corresponding column from the original scope and retains its qualified
+</a><a href="#h1-10-91" id="h1-10-91" class="i">+    /// and unqualified names. Otherwise, for non-trivial field references, a
+</a><a href="#h1-10-92" id="h1-10-92" class="i">+    /// new column is created for the expression. Explicit aliases may be given.
+</a><a href="#h1-10-93" id="h1-10-93" class="i">+    fn project(&amp;self, expressions: &amp;[(ast::Expression, Option&lt;String&gt;)]) -&gt; Self {
+</a><a href="#h1-10-94" id="h1-10-94" class="i">+        let mut child = self.spawn();
+</a><a href="#h1-10-95" id="h1-10-95" class="i">+        for (expr, alias) in expressions {
+</a><a href="#h1-10-96" id="h1-10-96" class="i">+            // Use the alias if given, or look up any column references.
+</a><a href="#h1-10-97" id="h1-10-97" class="i">+            let mut label = Label::None;
+</a><a href="#h1-10-98" id="h1-10-98" class="i">+            if let Some(alias) = alias {
+</a><a href="#h1-10-99" id="h1-10-99" class="i">+                label = Label::Unqualified(alias.clone());
+</a><a href="#h1-10-100" id="h1-10-100" class="i">+            } else if let ast::Expression::Field(table, column) = expr {
+</a><a href="#h1-10-101" id="h1-10-101" class="i">+                // Ignore errors, they will be surfaced by build_expression().
+</a><a href="#h1-10-102" id="h1-10-102" class="i">+                if let Ok(index) = self.lookup_column(table.as_deref(), column.as_str()) {
+</a><a href="#h1-10-103" id="h1-10-103" class="i">+                    label = self.get_label(index);
+</a><a href="#h1-10-104" id="h1-10-104" class="i">+                }
+</a><a href="#h1-10-105" id="h1-10-105" class="i">+            }
+</a><a href="#h1-10-106" id="h1-10-106" class="i">+
+</a><a href="#h1-10-107" id="h1-10-107" class="i">+            let index = child.add_column(label);
+</a><a href="#h1-10-108" id="h1-10-108" class="i">+
+</a><a href="#h1-10-109" id="h1-10-109" class="i">+            // If this is an aggregate query, then all projected expressions
+</a><a href="#h1-10-110" id="h1-10-110" class="i">+            // must also be aggregates by definition.
+</a><a href="#h1-10-111" id="h1-10-111" class="i">+            if !self.aggregates.is_empty() {
+</a><a href="#h1-10-112" id="h1-10-112" class="i">+                child.aggregates.entry(expr.clone()).or_insert(index);
+</a><a href="#h1-10-113" id="h1-10-113" class="i">+            }
+</a><a href="#h1-10-114" id="h1-10-114" class="i">+        }
+</a><a href="#h1-10-115" id="h1-10-115" class="i">+        child
+</a><a href="#h1-10-116" id="h1-10-116" class="i">+    }
+</a><a href="#h1-10-117" id="h1-10-117" class="i">+
+</a><a href="#h1-10-118" id="h1-10-118" class="i">+    /// Remaps the scope using the given targets.
+</a><a href="#h1-10-119" id="h1-10-119" class="i">+    fn remap(&amp;self, targets: &amp;[Option&lt;usize&gt;]) -&gt; Self {
+</a><a href="#h1-10-120" id="h1-10-120" class="i">+        let mut child = self.spawn();
+</a><a href="#h1-10-121" id="h1-10-121" class="i">+        for index in remap_sources(targets).into_iter().flatten() {
+</a><a href="#h1-10-122" id="h1-10-122" class="i">+            child.add_passthrough(self, index, false);
+</a><a href="#h1-10-123" id="h1-10-123" class="i">+        }
+</a><a href="#h1-10-124" id="h1-10-124" class="i">+        child
+</a>     }
+ 
+     /// Removes hidden columns from the scope, returning their indexes or None
+<a href="#h1-11" id="h1-11" class="h">@@ -747,9 +771,9 @@ impl Scope {
+</a>         let hidden = std::mem::take(&amp;mut self.hidden);
+         let mut index = 0;
+         self.columns.retain(|_| {
+<a href="#h1-11-3" id="h1-11-3" class="d">-            let is_hidden = hidden.contains(&amp;index);
+</a><a href="#h1-11-4" id="h1-11-4" class="i">+            let retain = !hidden.contains(&amp;index);
+</a>             index += 1;
+<a href="#h1-11-6" id="h1-11-6" class="d">-            !is_hidden
+</a><a href="#h1-11-7" id="h1-11-7" class="i">+            retain
+</a>         });
+         self.qualified.retain(|_, index| !hidden.contains(index));
+         self.unqualified.iter_mut().for_each(|(_, vec)| vec.retain(|i| !hidden.contains(i)));
+<a href="#h1-12" id="h1-12" class="h">@@ -775,80 +799,4 @@ impl Scope {
+</a>         }
+         Some(targets)
+     }
+<a href="#h1-12-3" id="h1-12-3" class="d">-
+</a><a href="#h1-12-4" id="h1-12-4" class="d">-    /// Merges two scopes, by appending the given scope to self.
+</a><a href="#h1-12-5" id="h1-12-5" class="d">-    fn merge(&amp;mut self, scope: Scope) -&gt; Result&lt;()&gt; {
+</a><a href="#h1-12-6" id="h1-12-6" class="d">-        for table in scope.tables {
+</a><a href="#h1-12-7" id="h1-12-7" class="d">-            if self.tables.contains(&amp;table) {
+</a><a href="#h1-12-8" id="h1-12-8" class="d">-                return errinput!(&quot;duplicate table name {table}&quot;);
+</a><a href="#h1-12-9" id="h1-12-9" class="d">-            }
+</a><a href="#h1-12-10" id="h1-12-10" class="d">-            self.tables.insert(table);
+</a><a href="#h1-12-11" id="h1-12-11" class="d">-        }
+</a><a href="#h1-12-12" id="h1-12-12" class="d">-        for label in scope.columns {
+</a><a href="#h1-12-13" id="h1-12-13" class="d">-            self.add_column(label);
+</a><a href="#h1-12-14" id="h1-12-14" class="d">-        }
+</a><a href="#h1-12-15" id="h1-12-15" class="d">-        Ok(())
+</a><a href="#h1-12-16" id="h1-12-16" class="d">-    }
+</a><a href="#h1-12-17" id="h1-12-17" class="d">-
+</a><a href="#h1-12-18" id="h1-12-18" class="d">-    /// Projects the scope via the given expressions, creating a new scope with
+</a><a href="#h1-12-19" id="h1-12-19" class="d">-    /// one column per expression. These may be a simple field reference (e.g.
+</a><a href="#h1-12-20" id="h1-12-20" class="d">-    /// &quot;SELECT b, a FROM table&quot;), which passes through the corresponding column
+</a><a href="#h1-12-21" id="h1-12-21" class="d">-    /// from the original scope and retains its qualified and unqualified names.
+</a><a href="#h1-12-22" id="h1-12-22" class="d">-    /// Otherwise, for non-trivial field references, a new column is created for
+</a><a href="#h1-12-23" id="h1-12-23" class="d">-    /// the expression. An explicit label may also be given for each column.
+</a><a href="#h1-12-24" id="h1-12-24" class="d">-    /// Table sets are retained.
+</a><a href="#h1-12-25" id="h1-12-25" class="d">-    fn project(&amp;self, expressions: &amp;[Expression], labels: &amp;[Label]) -&gt; Result&lt;Self&gt; {
+</a><a href="#h1-12-26" id="h1-12-26" class="d">-        assert_eq!(expressions.len(), labels.len());
+</a><a href="#h1-12-27" id="h1-12-27" class="d">-
+</a><a href="#h1-12-28" id="h1-12-28" class="d">-        // Copy the table index.
+</a><a href="#h1-12-29" id="h1-12-29" class="d">-        let mut new = Scope::new();
+</a><a href="#h1-12-30" id="h1-12-30" class="d">-        new.tables = self.tables.clone();
+</a><a href="#h1-12-31" id="h1-12-31" class="d">-
+</a><a href="#h1-12-32" id="h1-12-32" class="d">-        // Map projected field references to old columns.
+</a><a href="#h1-12-33" id="h1-12-33" class="d">-        let mut field_map: HashMap&lt;usize, usize&gt; = HashMap::new();
+</a><a href="#h1-12-34" id="h1-12-34" class="d">-        for (i, expr) in expressions.iter().enumerate() {
+</a><a href="#h1-12-35" id="h1-12-35" class="d">-            if let Expression::Field(f, _) = expr {
+</a><a href="#h1-12-36" id="h1-12-36" class="d">-                field_map.insert(i, *f);
+</a><a href="#h1-12-37" id="h1-12-37" class="d">-            }
+</a><a href="#h1-12-38" id="h1-12-38" class="d">-        }
+</a><a href="#h1-12-39" id="h1-12-39" class="d">-
+</a><a href="#h1-12-40" id="h1-12-40" class="d">-        // Construct the new columns and labels.
+</a><a href="#h1-12-41" id="h1-12-41" class="d">-        for (i, label) in labels.iter().enumerate() {
+</a><a href="#h1-12-42" id="h1-12-42" class="d">-            if label.is_some() {
+</a><a href="#h1-12-43" id="h1-12-43" class="d">-                new.add_column(label.clone()); // explicit label
+</a><a href="#h1-12-44" id="h1-12-44" class="d">-            } else if let Some(f) = field_map.get(&amp;i) {
+</a><a href="#h1-12-45" id="h1-12-45" class="d">-                new.add_column(self.columns[*f].clone()); // field reference
+</a><a href="#h1-12-46" id="h1-12-46" class="d">-            } else {
+</a><a href="#h1-12-47" id="h1-12-47" class="d">-                new.add_column(Label::None); // unlabeled expression
+</a><a href="#h1-12-48" id="h1-12-48" class="d">-            }
+</a><a href="#h1-12-49" id="h1-12-49" class="d">-        }
+</a><a href="#h1-12-50" id="h1-12-50" class="d">-        Ok(new)
+</a><a href="#h1-12-51" id="h1-12-51" class="d">-    }
+</a><a href="#h1-12-52" id="h1-12-52" class="d">-
+</a><a href="#h1-12-53" id="h1-12-53" class="d">-    /// Passes the given column through from a parent scope.
+</a><a href="#h1-12-54" id="h1-12-54" class="d">-    fn add_column_from(&amp;mut self, parent: &amp;Scope, parent_index: usize) -&gt; usize {
+</a><a href="#h1-12-55" id="h1-12-55" class="d">-        let label = parent.get_label(parent_index);
+</a><a href="#h1-12-56" id="h1-12-56" class="d">-        let index = self.add_column(label);
+</a><a href="#h1-12-57" id="h1-12-57" class="d">-        for (expr, i) in &amp;parent.aggregates {
+</a><a href="#h1-12-58" id="h1-12-58" class="d">-            if *i == parent_index {
+</a><a href="#h1-12-59" id="h1-12-59" class="d">-                self.aggregates.entry(expr.clone()).or_insert(index);
+</a><a href="#h1-12-60" id="h1-12-60" class="d">-            }
+</a><a href="#h1-12-61" id="h1-12-61" class="d">-        }
+</a><a href="#h1-12-62" id="h1-12-62" class="d">-        if parent.hidden.contains(&amp;parent_index) {
+</a><a href="#h1-12-63" id="h1-12-63" class="d">-            self.hidden.insert(index);
+</a><a href="#h1-12-64" id="h1-12-64" class="d">-        }
+</a><a href="#h1-12-65" id="h1-12-65" class="d">-        index
+</a><a href="#h1-12-66" id="h1-12-66" class="d">-    }
+</a><a href="#h1-12-67" id="h1-12-67" class="d">-
+</a><a href="#h1-12-68" id="h1-12-68" class="d">-    /// Remaps the scope using the given targets.
+</a><a href="#h1-12-69" id="h1-12-69" class="d">-    fn remap(&amp;self, targets: &amp;[Option&lt;usize&gt;]) -&gt; Self {
+</a><a href="#h1-12-70" id="h1-12-70" class="d">-        let mut new = Scope::new();
+</a><a href="#h1-12-71" id="h1-12-71" class="d">-        new.tables = self.tables.clone();
+</a><a href="#h1-12-72" id="h1-12-72" class="d">-
+</a><a href="#h1-12-73" id="h1-12-73" class="d">-        for index in remap_sources(targets).into_iter().flatten() {
+</a><a href="#h1-12-74" id="h1-12-74" class="d">-            new.add_column_from(self, index);
+</a><a href="#h1-12-75" id="h1-12-75" class="d">-        }
+</a><a href="#h1-12-76" id="h1-12-76" class="d">-
+</a><a href="#h1-12-77" id="h1-12-77" class="d">-        new
+</a><a href="#h1-12-78" id="h1-12-78" class="d">-    }
+</a> }
+<b>diff --git a/<a id="h2" href="../file/src/sql/testscripts/queries/aggregate.html">src/sql/testscripts/queries/aggregate</a> b/<a href="../file/src/sql/testscripts/queries/aggregate.html">src/sql/testscripts/queries/aggregate</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -228,6 +228,14 @@ Aggregate: count(1), min(1), max(1), sum(1), avg(1)
+</a> Error: invalid input: unexpected token ,
+ Error: invalid input: field id must be used in an aggregate or GROUP BY expression
+ 
+<a href="#h2-0-3" id="h2-0-3" class="i">+# Repeated aggregates work.
+</a><a href="#h2-0-4" id="h2-0-4" class="i">+[plan]&gt; SELECT MAX(&quot;int&quot;), MAX(&quot;int&quot;), MAX(&quot;int&quot;) FROM test
+</a><a href="#h2-0-5" id="h2-0-5" class="i">+---
+</a><a href="#h2-0-6" id="h2-0-6" class="i">+Projection: #0, #0, #0
+</a><a href="#h2-0-7" id="h2-0-7" class="i">+└─ Aggregate: max(int)
+</a><a href="#h2-0-8" id="h2-0-8" class="i">+   └─ Scan: test
+</a><a href="#h2-0-9" id="h2-0-9" class="i">+42, 42, 42
+</a><a href="#h2-0-10" id="h2-0-10" class="i">+
+</a> # Aggregate can be expression, both inside and outside the aggregate.
+ [plan]&gt; SELECT SUM(&quot;int&quot; * 10) / COUNT(&quot;int&quot;) + 7 FROM test WHERE &quot;int&quot; IS NOT NULL
+ ---
+<b>diff --git a/<a id="h3" href="../file/src/sql/testscripts/queries/group_by.html">src/sql/testscripts/queries/group_by</a> b/<a href="../file/src/sql/testscripts/queries/group_by.html">src/sql/testscripts/queries/group_by</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -196,6 +196,16 @@ a, TRUE, 2
+</a> b, FALSE, 2
+ b, TRUE, 1
+ 
+<a href="#h3-0-3" id="h3-0-3" class="i">+# Repeated GROUP BY column works.
+</a><a href="#h3-0-4" id="h3-0-4" class="i">+[plan]&gt; SELECT &quot;group&quot;, &quot;group&quot;, &quot;group&quot;, COUNT(*) FROM test GROUP BY &quot;group&quot;, &quot;group&quot;
+</a><a href="#h3-0-5" id="h3-0-5" class="i">+---
+</a><a href="#h3-0-6" id="h3-0-6" class="i">+Projection: test.group, test.group, test.group, #1
+</a><a href="#h3-0-7" id="h3-0-7" class="i">+└─ Aggregate: group(group), count(TRUE)
+</a><a href="#h3-0-8" id="h3-0-8" class="i">+   └─ Scan: test
+</a><a href="#h3-0-9" id="h3-0-9" class="i">+NULL, NULL, NULL, 1
+</a><a href="#h3-0-10" id="h3-0-10" class="i">+a, a, a, 3
+</a><a href="#h3-0-11" id="h3-0-11" class="i">+b, b, b, 3
+</a><a href="#h3-0-12" id="h3-0-12" class="i">+
+</a> # GROUP BY works with joins.
+ [plan]&gt; SELECT t.id % 2, COUNT(*) FROM test t JOIN other o ON t.id % 2 = o.id GROUP BY t.id % 2
+ ---
+<b>diff --git a/<a id="h4" href="../file/src/sql/testscripts/queries/having.html">src/sql/testscripts/queries/having</a> b/<a href="../file/src/sql/testscripts/queries/having.html">src/sql/testscripts/queries/having</a></b>
+<a href="#h4-0" id="h4-0" class="h">@@ -39,11 +39,9 @@ TRUE
+</a> # Having works with an aggregate function, even if it&#39;s not in SELECT.
+ [plan]&gt; SELECT &quot;group&quot;, MAX(&quot;int&quot;) FROM test GROUP BY &quot;group&quot; HAVING MAX(&quot;int&quot;) &gt; 10
+ ---
+<a href="#h4-0-3" id="h4-0-3" class="d">-Remap: #0, #1 (dropped: #2)
+</a><a href="#h4-0-4" id="h4-0-4" class="d">-└─ Filter: #2 &gt; 10
+</a><a href="#h4-0-5" id="h4-0-5" class="d">-   └─ Projection: test.group, #1, #1
+</a><a href="#h4-0-6" id="h4-0-6" class="d">-      └─ Aggregate: group(group), max(int)
+</a><a href="#h4-0-7" id="h4-0-7" class="d">-         └─ Scan: test
+</a><a href="#h4-0-8" id="h4-0-8" class="i">+Filter: #1 &gt; 10
+</a><a href="#h4-0-9" id="h4-0-9" class="i">+└─ Aggregate: group(group), max(int)
+</a><a href="#h4-0-10" id="h4-0-10" class="i">+   └─ Scan: test
+</a> b, 42
+ 
+ [plan]&gt; SELECT &quot;group&quot; FROM test GROUP BY &quot;group&quot; HAVING MAX(&quot;int&quot;) &gt; 10
+<a href="#h4-1" id="h4-1" class="h">@@ -56,11 +54,10 @@ b
+</a> 
+ [plan]&gt; SELECT &quot;group&quot;, MAX(&quot;int&quot;) FROM test GROUP BY &quot;group&quot; HAVING MAX(&quot;int&quot;) - MIN(&quot;int&quot;) &gt; 10
+ ---
+<a href="#h4-1-3" id="h4-1-3" class="d">-Remap: #0, #1 (dropped: #2, #3)
+</a><a href="#h4-1-4" id="h4-1-4" class="d">-└─ Filter: #2 - #3 &gt; 10
+</a><a href="#h4-1-5" id="h4-1-5" class="d">-   └─ Projection: test.group, #1, #1, #2
+</a><a href="#h4-1-6" id="h4-1-6" class="d">-      └─ Aggregate: group(group), max(int), min(int)
+</a><a href="#h4-1-7" id="h4-1-7" class="d">-         └─ Scan: test
+</a><a href="#h4-1-8" id="h4-1-8" class="i">+Remap: #0, #1 (dropped: #2)
+</a><a href="#h4-1-9" id="h4-1-9" class="i">+└─ Filter: #1 - #2 &gt; 10
+</a><a href="#h4-1-10" id="h4-1-10" class="i">+   └─ Aggregate: group(group), max(int), min(int)
+</a><a href="#h4-1-11" id="h4-1-11" class="i">+      └─ Scan: test
+</a> b, 42
+ 
+ # Having works with SELECT aliases.
+<a href="#h4-2" id="h4-2" class="h">@@ -83,11 +80,10 @@ b, 3
+</a> # Having works with compound expressions.
+ [plan]&gt; SELECT &quot;group&quot;, COUNT(*) FROM test GROUP BY &quot;group&quot; HAVING MAX(&quot;int&quot;) / COUNT(*) &gt; 3
+ ---
+<a href="#h4-2-3" id="h4-2-3" class="d">-Remap: #0, #1 (dropped: #2, #3)
+</a><a href="#h4-2-4" id="h4-2-4" class="d">-└─ Filter: #2 / #3 &gt; 3
+</a><a href="#h4-2-5" id="h4-2-5" class="d">-   └─ Projection: test.group, #1, #2, #1
+</a><a href="#h4-2-6" id="h4-2-6" class="d">-      └─ Aggregate: group(group), count(TRUE), max(int)
+</a><a href="#h4-2-7" id="h4-2-7" class="d">-         └─ Scan: test
+</a><a href="#h4-2-8" id="h4-2-8" class="i">+Remap: #0, #1 (dropped: #2)
+</a><a href="#h4-2-9" id="h4-2-9" class="i">+└─ Filter: #2 / #1 &gt; 3
+</a><a href="#h4-2-10" id="h4-2-10" class="i">+   └─ Aggregate: group(group), count(TRUE), max(int)
+</a><a href="#h4-2-11" id="h4-2-11" class="i">+      └─ Scan: test
+</a> b, 3
+ 
+ # Having works with compound expressions using complex GROUP BY expressions
+<b>diff --git a/<a id="h5" href="../file/src/sql/testscripts/queries/order.html">src/sql/testscripts/queries/order</a> b/<a href="../file/src/sql/testscripts/queries/order.html">src/sql/testscripts/queries/order</a></b>
+<a href="#h5-0" id="h5-0" class="h">@@ -472,11 +472,9 @@ Order: o.id desc, t.id asc
+</a> # Order by aggregates, both when in SELECT and otherwise.
+ [plan]&gt; SELECT &quot;bool&quot;, MAX(&quot;int&quot;) FROM test GROUP BY &quot;bool&quot; ORDER BY MAX(&quot;int&quot;) DESC
+ ---
+<a href="#h5-0-3" id="h5-0-3" class="d">-Remap: #0, #1 (dropped: #2)
+</a><a href="#h5-0-4" id="h5-0-4" class="d">-└─ Order: #2 desc
+</a><a href="#h5-0-5" id="h5-0-5" class="d">-   └─ Projection: test.bool, #1, #1
+</a><a href="#h5-0-6" id="h5-0-6" class="d">-      └─ Aggregate: group(bool), max(int)
+</a><a href="#h5-0-7" id="h5-0-7" class="d">-         └─ Scan: test
+</a><a href="#h5-0-8" id="h5-0-8" class="i">+Order: #1 desc
+</a><a href="#h5-0-9" id="h5-0-9" class="i">+└─ Aggregate: group(bool), max(int)
+</a><a href="#h5-0-10" id="h5-0-10" class="i">+   └─ Scan: test
+</a> NULL, 1000
+ TRUE, 0
+ FALSE, -1
+<a href="#h5-1" id="h5-1" class="h">@@ -493,11 +491,10 @@ FALSE
+</a> 
+ [plan]&gt; SELECT &quot;bool&quot;, MAX(&quot;int&quot;) FROM test GROUP BY &quot;bool&quot; ORDER BY MAX(&quot;int&quot;) - MIN(&quot;int&quot;) DESC
+ ---
+<a href="#h5-1-3" id="h5-1-3" class="d">-Remap: #0, #1 (dropped: #2, #3)
+</a><a href="#h5-1-4" id="h5-1-4" class="d">-└─ Order: #2 - #3 desc
+</a><a href="#h5-1-5" id="h5-1-5" class="d">-   └─ Projection: test.bool, #1, #1, #2
+</a><a href="#h5-1-6" id="h5-1-6" class="d">-      └─ Aggregate: group(bool), max(int), min(int)
+</a><a href="#h5-1-7" id="h5-1-7" class="d">-         └─ Scan: test
+</a><a href="#h5-1-8" id="h5-1-8" class="i">+Remap: #0, #1 (dropped: #2)
+</a><a href="#h5-1-9" id="h5-1-9" class="i">+└─ Order: #1 - #2 desc
+</a><a href="#h5-1-10" id="h5-1-10" class="i">+   └─ Aggregate: group(bool), max(int), min(int)
+</a><a href="#h5-1-11" id="h5-1-11" class="i">+      └─ Scan: test
+</a> NULL, 1000
+ FALSE, -1
+ TRUE, 0
+<b>diff --git a/<a id="h6" href="../file/src/sql/types/value.rs.html">src/sql/types/value.rs</a> b/<a href="../file/src/sql/types/value.rs.html">src/sql/types/value.rs</a></b>
+<a href="#h6-0" id="h6-0" class="h">@@ -4,6 +4,7 @@ use crate::encoding;
+</a> use crate::errdata;
+ use crate::errinput;
+ use crate::error::{Error, Result};
+<a href="#h6-0-3" id="h6-0-3" class="i">+use crate::sql::parser::ast;
+</a> 
+ use dyn_clone::DynClone;
+ use serde::{Deserialize, Serialize};
+<a href="#h6-1" id="h6-1" class="h">@@ -415,6 +416,15 @@ impl Label {
+</a>         }
+     }
+ 
+<a href="#h6-1-3" id="h6-1-3" class="i">+    /// Converts the label into an AST field expression.
+</a><a href="#h6-1-4" id="h6-1-4" class="i">+    pub fn into_ast_field(self) -&gt; Option&lt;ast::Expression&gt; {
+</a><a href="#h6-1-5" id="h6-1-5" class="i">+        match self {
+</a><a href="#h6-1-6" id="h6-1-6" class="i">+            Label::Qualified(table, column) =&gt; Some(ast::Expression::Field(Some(table), column)),
+</a><a href="#h6-1-7" id="h6-1-7" class="i">+            Label::Unqualified(column) =&gt; Some(ast::Expression::Field(None, column)),
+</a><a href="#h6-1-8" id="h6-1-8" class="i">+            Label::None =&gt; None,
+</a><a href="#h6-1-9" id="h6-1-9" class="i">+        }
+</a><a href="#h6-1-10" id="h6-1-10" class="i">+    }
+</a><a href="#h6-1-11" id="h6-1-11" class="i">+
+</a>     /// Returns true if the label is None.
+     pub fn is_none(&amp;self) -&gt; bool {
+         matches!(self, Self::None)
+</pre>
+</div>
+</body>
+</html>

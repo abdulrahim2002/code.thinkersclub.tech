@@ -1,0 +1,576 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>sql: added support for DELETE statements - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/eaead92023f7d48e04dbedb188c5cba388d1b738.html">eaead92023f7d48e04dbedb188c5cba388d1b738</a>
+<b>parent</b> <a href="../commit/00910a3a964990181cfe54f6c223cdd12ae59a7a.html">00910a3a964990181cfe54f6c223cdd12ae59a7a</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Tue, 10 Sep 2019 09:20:26 +0200
+
+sql: added support for DELETE statements
+
+<b>Diffstat:</b>
+<table><tr><td class="A">A</td><td><a href="#h0">src/sql/executor/delete.rs</a></td><td> | </td><td class="num">34</td><td><span class="i">++++++++++++++++++++++++++++++++++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/sql/executor/mod.rs</a></td><td> | </td><td class="num">6</td><td><span class="i">++++++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/sql/parser/ast.rs</a></td><td> | </td><td class="num">2</td><td><span class="i">++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">src/sql/parser/lexer.rs</a></td><td> | </td><td class="num">3</td><td><span class="i">+++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h4">src/sql/parser/mod.rs</a></td><td> | </td><td class="num">9</td><td><span class="i">+++++++++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h5">src/sql/plan.rs</a></td><td> | </td><td class="num">8</td><td><span class="i">++++++++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h6">src/sql/storage.rs</a></td><td> | </td><td class="num">5</td><td><span class="i">+++++</span><span class="d"></span></td></tr>
+<tr><td class="A">A</td><td><a href="#h7">src/sql/testdata/delete_all</a></td><td> | </td><td class="num">41</td><td><span class="i">+++++++++++++++++++++++++++++++++++++++++</span><span class="d"></span></td></tr>
+<tr><td class="A">A</td><td><a href="#h8">src/sql/testdata/delete_error_bare</a></td><td> | </td><td class="num">8</td><td><span class="i">++++++++</span><span class="d"></span></td></tr>
+<tr><td class="A">A</td><td><a href="#h9">src/sql/testdata/delete_error_multiple</a></td><td> | </td><td class="num">11</td><td><span class="i">+++++++++++</span><span class="d"></span></td></tr>
+<tr><td class="A">A</td><td><a href="#h10">src/sql/testdata/delete_error_table</a></td><td> | </td><td class="num">25</td><td><span class="i">+++++++++++++++++++++++++</span><span class="d"></span></td></tr>
+<tr><td class="A">A</td><td><a href="#h11">src/sql/testdata/delete_where</a></td><td> | </td><td class="num">74</td><td><span class="i">++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d"></span></td></tr>
+<tr><td class="A">A</td><td><a href="#h12">src/sql/testdata/delete_where_false</a></td><td> | </td><td class="num">63</td><td><span class="i">+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d"></span></td></tr>
+<tr><td class="A">A</td><td><a href="#h13">src/sql/testdata/delete_where_null</a></td><td> | </td><td class="num">59</td><td><span class="i">+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d"></span></td></tr>
+<tr><td class="A">A</td><td><a href="#h14">src/sql/testdata/delete_where_true</a></td><td> | </td><td class="num">58</td><td><span class="i">++++++++++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h15">src/sql/tests.rs</a></td><td> | </td><td class="num">9</td><td><span class="i">+++++++++</span><span class="d"></span></td></tr>
+</table></pre><pre>16 files changed, 415 insertions(+), 0 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/sql/executor/delete.rs.html">src/sql/executor/delete.rs</a> b/<a href="../file/src/sql/executor/delete.rs.html">src/sql/executor/delete.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -0,0 +1,34 @@
+</a><a href="#h0-0-0" id="h0-0-0" class="i">+use super::super::types::Row;
+</a><a href="#h0-0-1" id="h0-0-1" class="i">+use super::{Context, Executor};
+</a><a href="#h0-0-2" id="h0-0-2" class="i">+use crate::Error;
+</a><a href="#h0-0-3" id="h0-0-3" class="i">+
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+/// A delete executor
+</a><a href="#h0-0-5" id="h0-0-5" class="i">+pub struct Delete;
+</a><a href="#h0-0-6" id="h0-0-6" class="i">+
+</a><a href="#h0-0-7" id="h0-0-7" class="i">+impl Delete {
+</a><a href="#h0-0-8" id="h0-0-8" class="i">+    pub fn execute(
+</a><a href="#h0-0-9" id="h0-0-9" class="i">+        ctx: &amp;mut Context,
+</a><a href="#h0-0-10" id="h0-0-10" class="i">+        mut source: Box&lt;dyn Executor&gt;,
+</a><a href="#h0-0-11" id="h0-0-11" class="i">+        table: String,
+</a><a href="#h0-0-12" id="h0-0-12" class="i">+    ) -&gt; Result&lt;Box&lt;dyn Executor&gt;, Error&gt; {
+</a><a href="#h0-0-13" id="h0-0-13" class="i">+        let pk = ctx
+</a><a href="#h0-0-14" id="h0-0-14" class="i">+            .storage
+</a><a href="#h0-0-15" id="h0-0-15" class="i">+            .get_table(&amp;table)?
+</a><a href="#h0-0-16" id="h0-0-16" class="i">+            .ok_or_else(|| Error::Value(format!(&quot;Table {} does not exist&quot;, table)))?
+</a><a href="#h0-0-17" id="h0-0-17" class="i">+            .primary_key;
+</a><a href="#h0-0-18" id="h0-0-18" class="i">+        while let Some(row) = source.fetch()? {
+</a><a href="#h0-0-19" id="h0-0-19" class="i">+            ctx.storage.delete_row(&amp;table, row.get(pk).unwrap())?
+</a><a href="#h0-0-20" id="h0-0-20" class="i">+        }
+</a><a href="#h0-0-21" id="h0-0-21" class="i">+        Ok(Box::new(Self))
+</a><a href="#h0-0-22" id="h0-0-22" class="i">+    }
+</a><a href="#h0-0-23" id="h0-0-23" class="i">+}
+</a><a href="#h0-0-24" id="h0-0-24" class="i">+
+</a><a href="#h0-0-25" id="h0-0-25" class="i">+impl Executor for Delete {
+</a><a href="#h0-0-26" id="h0-0-26" class="i">+    fn columns(&amp;self) -&gt; Vec&lt;String&gt; {
+</a><a href="#h0-0-27" id="h0-0-27" class="i">+        Vec::new()
+</a><a href="#h0-0-28" id="h0-0-28" class="i">+    }
+</a><a href="#h0-0-29" id="h0-0-29" class="i">+
+</a><a href="#h0-0-30" id="h0-0-30" class="i">+    fn fetch(&amp;mut self) -&gt; Result&lt;Option&lt;Row&gt;, Error&gt; {
+</a><a href="#h0-0-31" id="h0-0-31" class="i">+        Ok(None)
+</a><a href="#h0-0-32" id="h0-0-32" class="i">+    }
+</a><a href="#h0-0-33" id="h0-0-33" class="i">+}
+</a><b>diff --git a/<a id="h1" href="../file/src/sql/executor/mod.rs.html">src/sql/executor/mod.rs</a> b/<a href="../file/src/sql/executor/mod.rs.html">src/sql/executor/mod.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -1,4 +1,5 @@
+</a> mod create_table;
+<a href="#h1-0-1" id="h1-0-1" class="i">+mod delete;
+</a> mod drop_table;
+ mod filter;
+ mod insert;
+<a href="#h1-1" id="h1-1" class="h">@@ -7,6 +8,7 @@ mod projection;
+</a> mod scan;
+ 
+ use create_table::CreateTable;
+<a href="#h1-1-3" id="h1-1-3" class="i">+use delete::Delete;
+</a> use drop_table::DropTable;
+ use filter::Filter;
+ use insert::Insert;
+<a href="#h1-2" id="h1-2" class="h">@@ -31,6 +33,10 @@ impl dyn Executor {
+</a>     pub fn execute(ctx: &amp;mut Context, node: Node) -&gt; Result&lt;Box&lt;Self&gt;, Error&gt; {
+         Ok(match node {
+             Node::CreateTable { schema } =&gt; CreateTable::execute(ctx, schema)?,
+<a href="#h1-2-3" id="h1-2-3" class="i">+            Node::Delete { table, source } =&gt; {
+</a><a href="#h1-2-4" id="h1-2-4" class="i">+                let source = Self::execute(ctx, *source)?;
+</a><a href="#h1-2-5" id="h1-2-5" class="i">+                Delete::execute(ctx, source, table)?
+</a><a href="#h1-2-6" id="h1-2-6" class="i">+            }
+</a>             Node::DropTable { name } =&gt; DropTable::execute(ctx, name)?,
+             Node::Filter { source, predicate } =&gt; {
+                 let source = Self::execute(ctx, *source)?;
+<b>diff --git a/<a id="h2" href="../file/src/sql/parser/ast.rs.html">src/sql/parser/ast.rs</a> b/<a href="../file/src/sql/parser/ast.rs.html">src/sql/parser/ast.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -5,6 +5,8 @@ use super::super::types;
+</a> pub enum Statement {
+     /// A CREATE TABLE statement
+     CreateTable { name: String, columns: Vec&lt;ColumnSpec&gt; },
+<a href="#h2-0-3" id="h2-0-3" class="i">+    /// A DELETE statement
+</a><a href="#h2-0-4" id="h2-0-4" class="i">+    Delete { table: String, r#where: Option&lt;WhereClause&gt; },
+</a>     /// A DROP TABLE statement
+     DropTable(String),
+     /// An INSERT statement
+<b>diff --git a/<a id="h3" href="../file/src/sql/parser/lexer.rs.html">src/sql/parser/lexer.rs</a> b/<a href="../file/src/sql/parser/lexer.rs.html">src/sql/parser/lexer.rs</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -73,6 +73,7 @@ pub enum Keyword {
+</a>     As,
+     Boolean,
+     Create,
+<a href="#h3-0-3" id="h3-0-3" class="i">+    Delete,
+</a>     Drop,
+     False,
+     Float,
+<a href="#h3-1" id="h3-1" class="h">@@ -100,6 +101,7 @@ impl Keyword {
+</a>             &quot;AND&quot; =&gt; Self::And,
+             &quot;BOOLEAN&quot; =&gt; Self::Boolean,
+             &quot;CREATE&quot; =&gt; Self::Create,
+<a href="#h3-1-3" id="h3-1-3" class="i">+            &quot;DELETE&quot; =&gt; Self::Delete,
+</a>             &quot;DROP&quot; =&gt; Self::Drop,
+             &quot;FALSE&quot; =&gt; Self::False,
+             &quot;FLOAT&quot; =&gt; Self::Float,
+<a href="#h3-2" id="h3-2" class="h">@@ -128,6 +130,7 @@ impl Keyword {
+</a>             Self::And =&gt; &quot;AND&quot;,
+             Self::Boolean =&gt; &quot;BOOLEAN&quot;,
+             Self::Create =&gt; &quot;CREATE&quot;,
+<a href="#h3-2-3" id="h3-2-3" class="i">+            Self::Delete =&gt; &quot;DELETE&quot;,
+</a>             Self::Drop =&gt; &quot;DROP&quot;,
+             Self::False =&gt; &quot;FALSE&quot;,
+             Self::Float =&gt; &quot;FLOAT&quot;,
+<b>diff --git a/<a id="h4" href="../file/src/sql/parser/mod.rs.html">src/sql/parser/mod.rs</a> b/<a href="../file/src/sql/parser/mod.rs.html">src/sql/parser/mod.rs</a></b>
+<a href="#h4-0" id="h4-0" class="h">@@ -94,6 +94,7 @@ impl&lt;&#39;a&gt; Parser&lt;&#39;a&gt; {
+</a>     fn parse_statement(&amp;mut self) -&gt; Result&lt;ast::Statement, Error&gt; {
+         match self.peek()? {
+             Some(Token::Keyword(Keyword::Create)) =&gt; self.parse_ddl(),
+<a href="#h4-0-3" id="h4-0-3" class="i">+            Some(Token::Keyword(Keyword::Delete)) =&gt; self.parse_statement_delete(),
+</a>             Some(Token::Keyword(Keyword::Drop)) =&gt; self.parse_ddl(),
+             Some(Token::Keyword(Keyword::Insert)) =&gt; self.parse_statement_insert(),
+             Some(Token::Keyword(Keyword::Select)) =&gt; self.parse_statement_select(),
+<a href="#h4-1" id="h4-1" class="h">@@ -185,6 +186,14 @@ impl&lt;&#39;a&gt; Parser&lt;&#39;a&gt; {
+</a>         Ok(column)
+     }
+ 
+<a href="#h4-1-3" id="h4-1-3" class="i">+    /// Parses a delete statement
+</a><a href="#h4-1-4" id="h4-1-4" class="i">+    fn parse_statement_delete(&amp;mut self) -&gt; Result&lt;ast::Statement, Error&gt; {
+</a><a href="#h4-1-5" id="h4-1-5" class="i">+        self.next_expect(Some(Keyword::Delete.into()))?;
+</a><a href="#h4-1-6" id="h4-1-6" class="i">+        self.next_expect(Some(Keyword::From.into()))?;
+</a><a href="#h4-1-7" id="h4-1-7" class="i">+        let table = self.next_ident()?;
+</a><a href="#h4-1-8" id="h4-1-8" class="i">+        Ok(ast::Statement::Delete { table, r#where: self.parse_clause_where()? })
+</a><a href="#h4-1-9" id="h4-1-9" class="i">+    }
+</a><a href="#h4-1-10" id="h4-1-10" class="i">+
+</a>     /// Parses an insert statement
+     fn parse_statement_insert(&amp;mut self) -&gt; Result&lt;ast::Statement, Error&gt; {
+         self.next_expect(Some(Keyword::Insert.into()))?;
+<b>diff --git a/<a id="h5" href="../file/src/sql/plan.rs.html">src/sql/plan.rs</a> b/<a href="../file/src/sql/plan.rs.html">src/sql/plan.rs</a></b>
+<a href="#h5-0" id="h5-0" class="h">@@ -27,6 +27,7 @@ impl Plan {
+</a> #[derive(Debug)]
+ pub enum Node {
+     CreateTable { schema: schema::Table },
+<a href="#h5-0-3" id="h5-0-3" class="i">+    Delete { table: String, source: Box&lt;Self&gt; },
+</a>     DropTable { name: String },
+     Filter { source: Box&lt;Self&gt;, predicate: Expression },
+     Insert { table: String, columns: Vec&lt;String&gt;, expressions: Vec&lt;Expressions&gt; },
+<a href="#h5-1" id="h5-1" class="h">@@ -55,6 +56,13 @@ impl Planner {
+</a>             ast::Statement::CreateTable { name, columns } =&gt; {
+                 Node::CreateTable { schema: self.build_schema_table(name, columns)? }
+             }
+<a href="#h5-1-3" id="h5-1-3" class="i">+            ast::Statement::Delete { table, r#where } =&gt; {
+</a><a href="#h5-1-4" id="h5-1-4" class="i">+                let mut source = Node::Scan { table: table.clone() };
+</a><a href="#h5-1-5" id="h5-1-5" class="i">+                if let Some(ast::WhereClause(expr)) = r#where {
+</a><a href="#h5-1-6" id="h5-1-6" class="i">+                    source = Node::Filter { source: Box::new(source), predicate: expr.into() };
+</a><a href="#h5-1-7" id="h5-1-7" class="i">+                }
+</a><a href="#h5-1-8" id="h5-1-8" class="i">+                Node::Delete { table, source: Box::new(source) }
+</a><a href="#h5-1-9" id="h5-1-9" class="i">+            }
+</a>             ast::Statement::DropTable(name) =&gt; Node::DropTable { name },
+             ast::Statement::Insert { table, columns, values } =&gt; Node::Insert {
+                 table,
+<b>diff --git a/<a id="h6" href="../file/src/sql/storage.rs.html">src/sql/storage.rs</a> b/<a href="../file/src/sql/storage.rs.html">src/sql/storage.rs</a></b>
+<a href="#h6-0" id="h6-0" class="h">@@ -41,6 +41,11 @@ impl Storage {
+</a>         self.kv.write()?.set(&amp;Self::key_table(&amp;table.name), serialize(table)?)
+     }
+ 
+<a href="#h6-0-3" id="h6-0-3" class="i">+    /// Deletes a row
+</a><a href="#h6-0-4" id="h6-0-4" class="i">+    pub fn delete_row(&amp;mut self, table: &amp;str, id: &amp;types::Value) -&gt; Result&lt;(), Error&gt; {
+</a><a href="#h6-0-5" id="h6-0-5" class="i">+        self.kv.write()?.delete(&amp;Self::key_row(table, &amp;id.to_string()))
+</a><a href="#h6-0-6" id="h6-0-6" class="i">+    }
+</a><a href="#h6-0-7" id="h6-0-7" class="i">+
+</a>     /// Deletes a table
+     pub fn delete_table(&amp;mut self, table: &amp;str) -&gt; Result&lt;(), Error&gt; {
+         if self.get_table(table)?.is_none() {
+<b>diff --git a/<a id="h7" href="../file/src/sql/testdata/delete_all.html">src/sql/testdata/delete_all</a> b/<a href="../file/src/sql/testdata/delete_all.html">src/sql/testdata/delete_all</a></b>
+<a href="#h7-0" id="h7-0" class="h">@@ -0,0 +1,41 @@
+</a><a href="#h7-0-0" id="h7-0-0" class="i">+Query: DELETE FROM movies
+</a><a href="#h7-0-1" id="h7-0-1" class="i">+
+</a><a href="#h7-0-2" id="h7-0-2" class="i">+Tokens:
+</a><a href="#h7-0-3" id="h7-0-3" class="i">+  Keyword(Delete)
+</a><a href="#h7-0-4" id="h7-0-4" class="i">+  Keyword(From)
+</a><a href="#h7-0-5" id="h7-0-5" class="i">+  Ident(&quot;movies&quot;)
+</a><a href="#h7-0-6" id="h7-0-6" class="i">+
+</a><a href="#h7-0-7" id="h7-0-7" class="i">+AST: Delete {
+</a><a href="#h7-0-8" id="h7-0-8" class="i">+    table: &quot;movies&quot;,
+</a><a href="#h7-0-9" id="h7-0-9" class="i">+    where: None,
+</a><a href="#h7-0-10" id="h7-0-10" class="i">+}
+</a><a href="#h7-0-11" id="h7-0-11" class="i">+
+</a><a href="#h7-0-12" id="h7-0-12" class="i">+Plan: Plan {
+</a><a href="#h7-0-13" id="h7-0-13" class="i">+    root: Delete {
+</a><a href="#h7-0-14" id="h7-0-14" class="i">+        table: &quot;movies&quot;,
+</a><a href="#h7-0-15" id="h7-0-15" class="i">+        source: Scan {
+</a><a href="#h7-0-16" id="h7-0-16" class="i">+            table: &quot;movies&quot;,
+</a><a href="#h7-0-17" id="h7-0-17" class="i">+        },
+</a><a href="#h7-0-18" id="h7-0-18" class="i">+    },
+</a><a href="#h7-0-19" id="h7-0-19" class="i">+}
+</a><a href="#h7-0-20" id="h7-0-20" class="i">+
+</a><a href="#h7-0-21" id="h7-0-21" class="i">+Query: DELETE FROM movies
+</a><a href="#h7-0-22" id="h7-0-22" class="i">+
+</a><a href="#h7-0-23" id="h7-0-23" class="i">+Result: &lt;none&gt;
+</a><a href="#h7-0-24" id="h7-0-24" class="i">+
+</a><a href="#h7-0-25" id="h7-0-25" class="i">+Storage:
+</a><a href="#h7-0-26" id="h7-0-26" class="i">+CREATE TABLE genres (
+</a><a href="#h7-0-27" id="h7-0-27" class="i">+  id INTEGER PRIMARY KEY NOT NULL,
+</a><a href="#h7-0-28" id="h7-0-28" class="i">+  name VARCHAR NOT NULL
+</a><a href="#h7-0-29" id="h7-0-29" class="i">+)
+</a><a href="#h7-0-30" id="h7-0-30" class="i">+[Integer(1), String(&quot;Science Fiction&quot;)]
+</a><a href="#h7-0-31" id="h7-0-31" class="i">+[Integer(2), String(&quot;Action&quot;)]
+</a><a href="#h7-0-32" id="h7-0-32" class="i">+
+</a><a href="#h7-0-33" id="h7-0-33" class="i">+CREATE TABLE movies (
+</a><a href="#h7-0-34" id="h7-0-34" class="i">+  id INTEGER PRIMARY KEY NOT NULL,
+</a><a href="#h7-0-35" id="h7-0-35" class="i">+  title VARCHAR NOT NULL,
+</a><a href="#h7-0-36" id="h7-0-36" class="i">+  genre_id INTEGER NOT NULL,
+</a><a href="#h7-0-37" id="h7-0-37" class="i">+  released INTEGER NOT NULL,
+</a><a href="#h7-0-38" id="h7-0-38" class="i">+  rating FLOAT,
+</a><a href="#h7-0-39" id="h7-0-39" class="i">+  bluray BOOLEAN
+</a><a href="#h7-0-40" id="h7-0-40" class="i">+)
+</a><b>diff --git a/<a id="h8" href="../file/src/sql/testdata/delete_error_bare.html">src/sql/testdata/delete_error_bare</a> b/<a href="../file/src/sql/testdata/delete_error_bare.html">src/sql/testdata/delete_error_bare</a></b>
+<a href="#h8-0" id="h8-0" class="h">@@ -0,0 +1,7 @@
+</a><a href="#h8-0-0" id="h8-0-0" class="i">+Query: DELETE FROM
+</a><a href="#h8-0-1" id="h8-0-1" class="i">+
+</a><a href="#h8-0-2" id="h8-0-2" class="i">+Tokens:
+</a><a href="#h8-0-3" id="h8-0-3" class="i">+  Keyword(Delete)
+</a><a href="#h8-0-4" id="h8-0-4" class="i">+  Keyword(From)
+</a><a href="#h8-0-5" id="h8-0-5" class="i">+
+</a><a href="#h8-0-6" id="h8-0-6" class="i">+AST: Parse(&quot;Unexpected end of input&quot;)
+</a><a href="#h8-0-7" id="h8-0-7" class="i">+\ No newline at end of file
+</a><b>diff --git a/<a id="h9" href="../file/src/sql/testdata/delete_error_multiple.html">src/sql/testdata/delete_error_multiple</a> b/<a href="../file/src/sql/testdata/delete_error_multiple.html">src/sql/testdata/delete_error_multiple</a></b>
+<a href="#h9-0" id="h9-0" class="h">@@ -0,0 +1,10 @@
+</a><a href="#h9-0-0" id="h9-0-0" class="i">+Query: DELETE FROM movies, genres
+</a><a href="#h9-0-1" id="h9-0-1" class="i">+
+</a><a href="#h9-0-2" id="h9-0-2" class="i">+Tokens:
+</a><a href="#h9-0-3" id="h9-0-3" class="i">+  Keyword(Delete)
+</a><a href="#h9-0-4" id="h9-0-4" class="i">+  Keyword(From)
+</a><a href="#h9-0-5" id="h9-0-5" class="i">+  Ident(&quot;movies&quot;)
+</a><a href="#h9-0-6" id="h9-0-6" class="i">+  Comma
+</a><a href="#h9-0-7" id="h9-0-7" class="i">+  Ident(&quot;genres&quot;)
+</a><a href="#h9-0-8" id="h9-0-8" class="i">+
+</a><a href="#h9-0-9" id="h9-0-9" class="i">+AST: Parse(&quot;Unexpected token ,&quot;)
+</a><a href="#h9-0-10" id="h9-0-10" class="i">+\ No newline at end of file
+</a><b>diff --git a/<a id="h10" href="../file/src/sql/testdata/delete_error_table.html">src/sql/testdata/delete_error_table</a> b/<a href="../file/src/sql/testdata/delete_error_table.html">src/sql/testdata/delete_error_table</a></b>
+<a href="#h10-0" id="h10-0" class="h">@@ -0,0 +1,24 @@
+</a><a href="#h10-0-0" id="h10-0-0" class="i">+Query: DELETE FROM missing
+</a><a href="#h10-0-1" id="h10-0-1" class="i">+
+</a><a href="#h10-0-2" id="h10-0-2" class="i">+Tokens:
+</a><a href="#h10-0-3" id="h10-0-3" class="i">+  Keyword(Delete)
+</a><a href="#h10-0-4" id="h10-0-4" class="i">+  Keyword(From)
+</a><a href="#h10-0-5" id="h10-0-5" class="i">+  Ident(&quot;missing&quot;)
+</a><a href="#h10-0-6" id="h10-0-6" class="i">+
+</a><a href="#h10-0-7" id="h10-0-7" class="i">+AST: Delete {
+</a><a href="#h10-0-8" id="h10-0-8" class="i">+    table: &quot;missing&quot;,
+</a><a href="#h10-0-9" id="h10-0-9" class="i">+    where: None,
+</a><a href="#h10-0-10" id="h10-0-10" class="i">+}
+</a><a href="#h10-0-11" id="h10-0-11" class="i">+
+</a><a href="#h10-0-12" id="h10-0-12" class="i">+Plan: Plan {
+</a><a href="#h10-0-13" id="h10-0-13" class="i">+    root: Delete {
+</a><a href="#h10-0-14" id="h10-0-14" class="i">+        table: &quot;missing&quot;,
+</a><a href="#h10-0-15" id="h10-0-15" class="i">+        source: Scan {
+</a><a href="#h10-0-16" id="h10-0-16" class="i">+            table: &quot;missing&quot;,
+</a><a href="#h10-0-17" id="h10-0-17" class="i">+        },
+</a><a href="#h10-0-18" id="h10-0-18" class="i">+    },
+</a><a href="#h10-0-19" id="h10-0-19" class="i">+}
+</a><a href="#h10-0-20" id="h10-0-20" class="i">+
+</a><a href="#h10-0-21" id="h10-0-21" class="i">+Query: DELETE FROM missing
+</a><a href="#h10-0-22" id="h10-0-22" class="i">+
+</a><a href="#h10-0-23" id="h10-0-23" class="i">+Result: Value(&quot;Table missing not found&quot;)
+</a><a href="#h10-0-24" id="h10-0-24" class="i">+\ No newline at end of file
+</a><b>diff --git a/<a id="h11" href="../file/src/sql/testdata/delete_where.html">src/sql/testdata/delete_where</a> b/<a href="../file/src/sql/testdata/delete_where.html">src/sql/testdata/delete_where</a></b>
+<a href="#h11-0" id="h11-0" class="h">@@ -0,0 +1,74 @@
+</a><a href="#h11-0-0" id="h11-0-0" class="i">+Query: DELETE FROM movies WHERE released &gt;= 2000
+</a><a href="#h11-0-1" id="h11-0-1" class="i">+
+</a><a href="#h11-0-2" id="h11-0-2" class="i">+Tokens:
+</a><a href="#h11-0-3" id="h11-0-3" class="i">+  Keyword(Delete)
+</a><a href="#h11-0-4" id="h11-0-4" class="i">+  Keyword(From)
+</a><a href="#h11-0-5" id="h11-0-5" class="i">+  Ident(&quot;movies&quot;)
+</a><a href="#h11-0-6" id="h11-0-6" class="i">+  Keyword(Where)
+</a><a href="#h11-0-7" id="h11-0-7" class="i">+  Ident(&quot;released&quot;)
+</a><a href="#h11-0-8" id="h11-0-8" class="i">+  GreaterThanOrEqual
+</a><a href="#h11-0-9" id="h11-0-9" class="i">+  Number(&quot;2000&quot;)
+</a><a href="#h11-0-10" id="h11-0-10" class="i">+
+</a><a href="#h11-0-11" id="h11-0-11" class="i">+AST: Delete {
+</a><a href="#h11-0-12" id="h11-0-12" class="i">+    table: &quot;movies&quot;,
+</a><a href="#h11-0-13" id="h11-0-13" class="i">+    where: Some(
+</a><a href="#h11-0-14" id="h11-0-14" class="i">+        WhereClause(
+</a><a href="#h11-0-15" id="h11-0-15" class="i">+            Operation(
+</a><a href="#h11-0-16" id="h11-0-16" class="i">+                CompareGTE(
+</a><a href="#h11-0-17" id="h11-0-17" class="i">+                    Field(
+</a><a href="#h11-0-18" id="h11-0-18" class="i">+                        &quot;released&quot;,
+</a><a href="#h11-0-19" id="h11-0-19" class="i">+                    ),
+</a><a href="#h11-0-20" id="h11-0-20" class="i">+                    Literal(
+</a><a href="#h11-0-21" id="h11-0-21" class="i">+                        Integer(
+</a><a href="#h11-0-22" id="h11-0-22" class="i">+                            2000,
+</a><a href="#h11-0-23" id="h11-0-23" class="i">+                        ),
+</a><a href="#h11-0-24" id="h11-0-24" class="i">+                    ),
+</a><a href="#h11-0-25" id="h11-0-25" class="i">+                ),
+</a><a href="#h11-0-26" id="h11-0-26" class="i">+            ),
+</a><a href="#h11-0-27" id="h11-0-27" class="i">+        ),
+</a><a href="#h11-0-28" id="h11-0-28" class="i">+    ),
+</a><a href="#h11-0-29" id="h11-0-29" class="i">+}
+</a><a href="#h11-0-30" id="h11-0-30" class="i">+
+</a><a href="#h11-0-31" id="h11-0-31" class="i">+Plan: Plan {
+</a><a href="#h11-0-32" id="h11-0-32" class="i">+    root: Delete {
+</a><a href="#h11-0-33" id="h11-0-33" class="i">+        table: &quot;movies&quot;,
+</a><a href="#h11-0-34" id="h11-0-34" class="i">+        source: Filter {
+</a><a href="#h11-0-35" id="h11-0-35" class="i">+            source: Scan {
+</a><a href="#h11-0-36" id="h11-0-36" class="i">+                table: &quot;movies&quot;,
+</a><a href="#h11-0-37" id="h11-0-37" class="i">+            },
+</a><a href="#h11-0-38" id="h11-0-38" class="i">+            predicate: CompareGTE(
+</a><a href="#h11-0-39" id="h11-0-39" class="i">+                Field(
+</a><a href="#h11-0-40" id="h11-0-40" class="i">+                    &quot;released&quot;,
+</a><a href="#h11-0-41" id="h11-0-41" class="i">+                ),
+</a><a href="#h11-0-42" id="h11-0-42" class="i">+                Constant(
+</a><a href="#h11-0-43" id="h11-0-43" class="i">+                    Integer(
+</a><a href="#h11-0-44" id="h11-0-44" class="i">+                        2000,
+</a><a href="#h11-0-45" id="h11-0-45" class="i">+                    ),
+</a><a href="#h11-0-46" id="h11-0-46" class="i">+                ),
+</a><a href="#h11-0-47" id="h11-0-47" class="i">+            ),
+</a><a href="#h11-0-48" id="h11-0-48" class="i">+        },
+</a><a href="#h11-0-49" id="h11-0-49" class="i">+    },
+</a><a href="#h11-0-50" id="h11-0-50" class="i">+}
+</a><a href="#h11-0-51" id="h11-0-51" class="i">+
+</a><a href="#h11-0-52" id="h11-0-52" class="i">+Query: DELETE FROM movies WHERE released &gt;= 2000
+</a><a href="#h11-0-53" id="h11-0-53" class="i">+
+</a><a href="#h11-0-54" id="h11-0-54" class="i">+Result: &lt;none&gt;
+</a><a href="#h11-0-55" id="h11-0-55" class="i">+
+</a><a href="#h11-0-56" id="h11-0-56" class="i">+Storage:
+</a><a href="#h11-0-57" id="h11-0-57" class="i">+CREATE TABLE genres (
+</a><a href="#h11-0-58" id="h11-0-58" class="i">+  id INTEGER PRIMARY KEY NOT NULL,
+</a><a href="#h11-0-59" id="h11-0-59" class="i">+  name VARCHAR NOT NULL
+</a><a href="#h11-0-60" id="h11-0-60" class="i">+)
+</a><a href="#h11-0-61" id="h11-0-61" class="i">+[Integer(1), String(&quot;Science Fiction&quot;)]
+</a><a href="#h11-0-62" id="h11-0-62" class="i">+[Integer(2), String(&quot;Action&quot;)]
+</a><a href="#h11-0-63" id="h11-0-63" class="i">+
+</a><a href="#h11-0-64" id="h11-0-64" class="i">+CREATE TABLE movies (
+</a><a href="#h11-0-65" id="h11-0-65" class="i">+  id INTEGER PRIMARY KEY NOT NULL,
+</a><a href="#h11-0-66" id="h11-0-66" class="i">+  title VARCHAR NOT NULL,
+</a><a href="#h11-0-67" id="h11-0-67" class="i">+  genre_id INTEGER NOT NULL,
+</a><a href="#h11-0-68" id="h11-0-68" class="i">+  released INTEGER NOT NULL,
+</a><a href="#h11-0-69" id="h11-0-69" class="i">+  rating FLOAT,
+</a><a href="#h11-0-70" id="h11-0-70" class="i">+  bluray BOOLEAN
+</a><a href="#h11-0-71" id="h11-0-71" class="i">+)
+</a><a href="#h11-0-72" id="h11-0-72" class="i">+[Integer(1), String(&quot;Stalker&quot;), Integer(1), Integer(1979), Float(8.2), Boolean(false)]
+</a><a href="#h11-0-73" id="h11-0-73" class="i">+[Integer(4), String(&quot;Heat&quot;), Integer(2), Integer(1995), Float(8.2), Boolean(true)]
+</a><b>diff --git a/<a id="h12" href="../file/src/sql/testdata/delete_where_false.html">src/sql/testdata/delete_where_false</a> b/<a href="../file/src/sql/testdata/delete_where_false.html">src/sql/testdata/delete_where_false</a></b>
+<a href="#h12-0" id="h12-0" class="h">@@ -0,0 +1,63 @@
+</a><a href="#h12-0-0" id="h12-0-0" class="i">+Query: DELETE FROM movies WHERE FALSE
+</a><a href="#h12-0-1" id="h12-0-1" class="i">+
+</a><a href="#h12-0-2" id="h12-0-2" class="i">+Tokens:
+</a><a href="#h12-0-3" id="h12-0-3" class="i">+  Keyword(Delete)
+</a><a href="#h12-0-4" id="h12-0-4" class="i">+  Keyword(From)
+</a><a href="#h12-0-5" id="h12-0-5" class="i">+  Ident(&quot;movies&quot;)
+</a><a href="#h12-0-6" id="h12-0-6" class="i">+  Keyword(Where)
+</a><a href="#h12-0-7" id="h12-0-7" class="i">+  Keyword(False)
+</a><a href="#h12-0-8" id="h12-0-8" class="i">+
+</a><a href="#h12-0-9" id="h12-0-9" class="i">+AST: Delete {
+</a><a href="#h12-0-10" id="h12-0-10" class="i">+    table: &quot;movies&quot;,
+</a><a href="#h12-0-11" id="h12-0-11" class="i">+    where: Some(
+</a><a href="#h12-0-12" id="h12-0-12" class="i">+        WhereClause(
+</a><a href="#h12-0-13" id="h12-0-13" class="i">+            Literal(
+</a><a href="#h12-0-14" id="h12-0-14" class="i">+                Boolean(
+</a><a href="#h12-0-15" id="h12-0-15" class="i">+                    false,
+</a><a href="#h12-0-16" id="h12-0-16" class="i">+                ),
+</a><a href="#h12-0-17" id="h12-0-17" class="i">+            ),
+</a><a href="#h12-0-18" id="h12-0-18" class="i">+        ),
+</a><a href="#h12-0-19" id="h12-0-19" class="i">+    ),
+</a><a href="#h12-0-20" id="h12-0-20" class="i">+}
+</a><a href="#h12-0-21" id="h12-0-21" class="i">+
+</a><a href="#h12-0-22" id="h12-0-22" class="i">+Plan: Plan {
+</a><a href="#h12-0-23" id="h12-0-23" class="i">+    root: Delete {
+</a><a href="#h12-0-24" id="h12-0-24" class="i">+        table: &quot;movies&quot;,
+</a><a href="#h12-0-25" id="h12-0-25" class="i">+        source: Filter {
+</a><a href="#h12-0-26" id="h12-0-26" class="i">+            source: Scan {
+</a><a href="#h12-0-27" id="h12-0-27" class="i">+                table: &quot;movies&quot;,
+</a><a href="#h12-0-28" id="h12-0-28" class="i">+            },
+</a><a href="#h12-0-29" id="h12-0-29" class="i">+            predicate: Constant(
+</a><a href="#h12-0-30" id="h12-0-30" class="i">+                Boolean(
+</a><a href="#h12-0-31" id="h12-0-31" class="i">+                    false,
+</a><a href="#h12-0-32" id="h12-0-32" class="i">+                ),
+</a><a href="#h12-0-33" id="h12-0-33" class="i">+            ),
+</a><a href="#h12-0-34" id="h12-0-34" class="i">+        },
+</a><a href="#h12-0-35" id="h12-0-35" class="i">+    },
+</a><a href="#h12-0-36" id="h12-0-36" class="i">+}
+</a><a href="#h12-0-37" id="h12-0-37" class="i">+
+</a><a href="#h12-0-38" id="h12-0-38" class="i">+Query: DELETE FROM movies WHERE FALSE
+</a><a href="#h12-0-39" id="h12-0-39" class="i">+
+</a><a href="#h12-0-40" id="h12-0-40" class="i">+Result: &lt;none&gt;
+</a><a href="#h12-0-41" id="h12-0-41" class="i">+
+</a><a href="#h12-0-42" id="h12-0-42" class="i">+Storage:
+</a><a href="#h12-0-43" id="h12-0-43" class="i">+CREATE TABLE genres (
+</a><a href="#h12-0-44" id="h12-0-44" class="i">+  id INTEGER PRIMARY KEY NOT NULL,
+</a><a href="#h12-0-45" id="h12-0-45" class="i">+  name VARCHAR NOT NULL
+</a><a href="#h12-0-46" id="h12-0-46" class="i">+)
+</a><a href="#h12-0-47" id="h12-0-47" class="i">+[Integer(1), String(&quot;Science Fiction&quot;)]
+</a><a href="#h12-0-48" id="h12-0-48" class="i">+[Integer(2), String(&quot;Action&quot;)]
+</a><a href="#h12-0-49" id="h12-0-49" class="i">+
+</a><a href="#h12-0-50" id="h12-0-50" class="i">+CREATE TABLE movies (
+</a><a href="#h12-0-51" id="h12-0-51" class="i">+  id INTEGER PRIMARY KEY NOT NULL,
+</a><a href="#h12-0-52" id="h12-0-52" class="i">+  title VARCHAR NOT NULL,
+</a><a href="#h12-0-53" id="h12-0-53" class="i">+  genre_id INTEGER NOT NULL,
+</a><a href="#h12-0-54" id="h12-0-54" class="i">+  released INTEGER NOT NULL,
+</a><a href="#h12-0-55" id="h12-0-55" class="i">+  rating FLOAT,
+</a><a href="#h12-0-56" id="h12-0-56" class="i">+  bluray BOOLEAN
+</a><a href="#h12-0-57" id="h12-0-57" class="i">+)
+</a><a href="#h12-0-58" id="h12-0-58" class="i">+[Integer(1), String(&quot;Stalker&quot;), Integer(1), Integer(1979), Float(8.2), Boolean(false)]
+</a><a href="#h12-0-59" id="h12-0-59" class="i">+[Integer(2), String(&quot;Sicario&quot;), Integer(2), Integer(2015), Float(7.6), Boolean(true)]
+</a><a href="#h12-0-60" id="h12-0-60" class="i">+[Integer(3), String(&quot;Primer&quot;), Integer(1), Integer(2004), Float(6.9), Null]
+</a><a href="#h12-0-61" id="h12-0-61" class="i">+[Integer(4), String(&quot;Heat&quot;), Integer(2), Integer(1995), Float(8.2), Boolean(true)]
+</a><a href="#h12-0-62" id="h12-0-62" class="i">+[Integer(5), String(&quot;The Fountain&quot;), Integer(1), Integer(2006), Float(7.2), Boolean(true)]
+</a><b>diff --git a/<a id="h13" href="../file/src/sql/testdata/delete_where_null.html">src/sql/testdata/delete_where_null</a> b/<a href="../file/src/sql/testdata/delete_where_null.html">src/sql/testdata/delete_where_null</a></b>
+<a href="#h13-0" id="h13-0" class="h">@@ -0,0 +1,59 @@
+</a><a href="#h13-0-0" id="h13-0-0" class="i">+Query: DELETE FROM movies WHERE NULL
+</a><a href="#h13-0-1" id="h13-0-1" class="i">+
+</a><a href="#h13-0-2" id="h13-0-2" class="i">+Tokens:
+</a><a href="#h13-0-3" id="h13-0-3" class="i">+  Keyword(Delete)
+</a><a href="#h13-0-4" id="h13-0-4" class="i">+  Keyword(From)
+</a><a href="#h13-0-5" id="h13-0-5" class="i">+  Ident(&quot;movies&quot;)
+</a><a href="#h13-0-6" id="h13-0-6" class="i">+  Keyword(Where)
+</a><a href="#h13-0-7" id="h13-0-7" class="i">+  Keyword(Null)
+</a><a href="#h13-0-8" id="h13-0-8" class="i">+
+</a><a href="#h13-0-9" id="h13-0-9" class="i">+AST: Delete {
+</a><a href="#h13-0-10" id="h13-0-10" class="i">+    table: &quot;movies&quot;,
+</a><a href="#h13-0-11" id="h13-0-11" class="i">+    where: Some(
+</a><a href="#h13-0-12" id="h13-0-12" class="i">+        WhereClause(
+</a><a href="#h13-0-13" id="h13-0-13" class="i">+            Literal(
+</a><a href="#h13-0-14" id="h13-0-14" class="i">+                Null,
+</a><a href="#h13-0-15" id="h13-0-15" class="i">+            ),
+</a><a href="#h13-0-16" id="h13-0-16" class="i">+        ),
+</a><a href="#h13-0-17" id="h13-0-17" class="i">+    ),
+</a><a href="#h13-0-18" id="h13-0-18" class="i">+}
+</a><a href="#h13-0-19" id="h13-0-19" class="i">+
+</a><a href="#h13-0-20" id="h13-0-20" class="i">+Plan: Plan {
+</a><a href="#h13-0-21" id="h13-0-21" class="i">+    root: Delete {
+</a><a href="#h13-0-22" id="h13-0-22" class="i">+        table: &quot;movies&quot;,
+</a><a href="#h13-0-23" id="h13-0-23" class="i">+        source: Filter {
+</a><a href="#h13-0-24" id="h13-0-24" class="i">+            source: Scan {
+</a><a href="#h13-0-25" id="h13-0-25" class="i">+                table: &quot;movies&quot;,
+</a><a href="#h13-0-26" id="h13-0-26" class="i">+            },
+</a><a href="#h13-0-27" id="h13-0-27" class="i">+            predicate: Constant(
+</a><a href="#h13-0-28" id="h13-0-28" class="i">+                Null,
+</a><a href="#h13-0-29" id="h13-0-29" class="i">+            ),
+</a><a href="#h13-0-30" id="h13-0-30" class="i">+        },
+</a><a href="#h13-0-31" id="h13-0-31" class="i">+    },
+</a><a href="#h13-0-32" id="h13-0-32" class="i">+}
+</a><a href="#h13-0-33" id="h13-0-33" class="i">+
+</a><a href="#h13-0-34" id="h13-0-34" class="i">+Query: DELETE FROM movies WHERE NULL
+</a><a href="#h13-0-35" id="h13-0-35" class="i">+
+</a><a href="#h13-0-36" id="h13-0-36" class="i">+Result: &lt;none&gt;
+</a><a href="#h13-0-37" id="h13-0-37" class="i">+
+</a><a href="#h13-0-38" id="h13-0-38" class="i">+Storage:
+</a><a href="#h13-0-39" id="h13-0-39" class="i">+CREATE TABLE genres (
+</a><a href="#h13-0-40" id="h13-0-40" class="i">+  id INTEGER PRIMARY KEY NOT NULL,
+</a><a href="#h13-0-41" id="h13-0-41" class="i">+  name VARCHAR NOT NULL
+</a><a href="#h13-0-42" id="h13-0-42" class="i">+)
+</a><a href="#h13-0-43" id="h13-0-43" class="i">+[Integer(1), String(&quot;Science Fiction&quot;)]
+</a><a href="#h13-0-44" id="h13-0-44" class="i">+[Integer(2), String(&quot;Action&quot;)]
+</a><a href="#h13-0-45" id="h13-0-45" class="i">+
+</a><a href="#h13-0-46" id="h13-0-46" class="i">+CREATE TABLE movies (
+</a><a href="#h13-0-47" id="h13-0-47" class="i">+  id INTEGER PRIMARY KEY NOT NULL,
+</a><a href="#h13-0-48" id="h13-0-48" class="i">+  title VARCHAR NOT NULL,
+</a><a href="#h13-0-49" id="h13-0-49" class="i">+  genre_id INTEGER NOT NULL,
+</a><a href="#h13-0-50" id="h13-0-50" class="i">+  released INTEGER NOT NULL,
+</a><a href="#h13-0-51" id="h13-0-51" class="i">+  rating FLOAT,
+</a><a href="#h13-0-52" id="h13-0-52" class="i">+  bluray BOOLEAN
+</a><a href="#h13-0-53" id="h13-0-53" class="i">+)
+</a><a href="#h13-0-54" id="h13-0-54" class="i">+[Integer(1), String(&quot;Stalker&quot;), Integer(1), Integer(1979), Float(8.2), Boolean(false)]
+</a><a href="#h13-0-55" id="h13-0-55" class="i">+[Integer(2), String(&quot;Sicario&quot;), Integer(2), Integer(2015), Float(7.6), Boolean(true)]
+</a><a href="#h13-0-56" id="h13-0-56" class="i">+[Integer(3), String(&quot;Primer&quot;), Integer(1), Integer(2004), Float(6.9), Null]
+</a><a href="#h13-0-57" id="h13-0-57" class="i">+[Integer(4), String(&quot;Heat&quot;), Integer(2), Integer(1995), Float(8.2), Boolean(true)]
+</a><a href="#h13-0-58" id="h13-0-58" class="i">+[Integer(5), String(&quot;The Fountain&quot;), Integer(1), Integer(2006), Float(7.2), Boolean(true)]
+</a><b>diff --git a/<a id="h14" href="../file/src/sql/testdata/delete_where_true.html">src/sql/testdata/delete_where_true</a> b/<a href="../file/src/sql/testdata/delete_where_true.html">src/sql/testdata/delete_where_true</a></b>
+<a href="#h14-0" id="h14-0" class="h">@@ -0,0 +1,58 @@
+</a><a href="#h14-0-0" id="h14-0-0" class="i">+Query: DELETE FROM movies WHERE TRUE
+</a><a href="#h14-0-1" id="h14-0-1" class="i">+
+</a><a href="#h14-0-2" id="h14-0-2" class="i">+Tokens:
+</a><a href="#h14-0-3" id="h14-0-3" class="i">+  Keyword(Delete)
+</a><a href="#h14-0-4" id="h14-0-4" class="i">+  Keyword(From)
+</a><a href="#h14-0-5" id="h14-0-5" class="i">+  Ident(&quot;movies&quot;)
+</a><a href="#h14-0-6" id="h14-0-6" class="i">+  Keyword(Where)
+</a><a href="#h14-0-7" id="h14-0-7" class="i">+  Keyword(True)
+</a><a href="#h14-0-8" id="h14-0-8" class="i">+
+</a><a href="#h14-0-9" id="h14-0-9" class="i">+AST: Delete {
+</a><a href="#h14-0-10" id="h14-0-10" class="i">+    table: &quot;movies&quot;,
+</a><a href="#h14-0-11" id="h14-0-11" class="i">+    where: Some(
+</a><a href="#h14-0-12" id="h14-0-12" class="i">+        WhereClause(
+</a><a href="#h14-0-13" id="h14-0-13" class="i">+            Literal(
+</a><a href="#h14-0-14" id="h14-0-14" class="i">+                Boolean(
+</a><a href="#h14-0-15" id="h14-0-15" class="i">+                    true,
+</a><a href="#h14-0-16" id="h14-0-16" class="i">+                ),
+</a><a href="#h14-0-17" id="h14-0-17" class="i">+            ),
+</a><a href="#h14-0-18" id="h14-0-18" class="i">+        ),
+</a><a href="#h14-0-19" id="h14-0-19" class="i">+    ),
+</a><a href="#h14-0-20" id="h14-0-20" class="i">+}
+</a><a href="#h14-0-21" id="h14-0-21" class="i">+
+</a><a href="#h14-0-22" id="h14-0-22" class="i">+Plan: Plan {
+</a><a href="#h14-0-23" id="h14-0-23" class="i">+    root: Delete {
+</a><a href="#h14-0-24" id="h14-0-24" class="i">+        table: &quot;movies&quot;,
+</a><a href="#h14-0-25" id="h14-0-25" class="i">+        source: Filter {
+</a><a href="#h14-0-26" id="h14-0-26" class="i">+            source: Scan {
+</a><a href="#h14-0-27" id="h14-0-27" class="i">+                table: &quot;movies&quot;,
+</a><a href="#h14-0-28" id="h14-0-28" class="i">+            },
+</a><a href="#h14-0-29" id="h14-0-29" class="i">+            predicate: Constant(
+</a><a href="#h14-0-30" id="h14-0-30" class="i">+                Boolean(
+</a><a href="#h14-0-31" id="h14-0-31" class="i">+                    true,
+</a><a href="#h14-0-32" id="h14-0-32" class="i">+                ),
+</a><a href="#h14-0-33" id="h14-0-33" class="i">+            ),
+</a><a href="#h14-0-34" id="h14-0-34" class="i">+        },
+</a><a href="#h14-0-35" id="h14-0-35" class="i">+    },
+</a><a href="#h14-0-36" id="h14-0-36" class="i">+}
+</a><a href="#h14-0-37" id="h14-0-37" class="i">+
+</a><a href="#h14-0-38" id="h14-0-38" class="i">+Query: DELETE FROM movies WHERE TRUE
+</a><a href="#h14-0-39" id="h14-0-39" class="i">+
+</a><a href="#h14-0-40" id="h14-0-40" class="i">+Result: &lt;none&gt;
+</a><a href="#h14-0-41" id="h14-0-41" class="i">+
+</a><a href="#h14-0-42" id="h14-0-42" class="i">+Storage:
+</a><a href="#h14-0-43" id="h14-0-43" class="i">+CREATE TABLE genres (
+</a><a href="#h14-0-44" id="h14-0-44" class="i">+  id INTEGER PRIMARY KEY NOT NULL,
+</a><a href="#h14-0-45" id="h14-0-45" class="i">+  name VARCHAR NOT NULL
+</a><a href="#h14-0-46" id="h14-0-46" class="i">+)
+</a><a href="#h14-0-47" id="h14-0-47" class="i">+[Integer(1), String(&quot;Science Fiction&quot;)]
+</a><a href="#h14-0-48" id="h14-0-48" class="i">+[Integer(2), String(&quot;Action&quot;)]
+</a><a href="#h14-0-49" id="h14-0-49" class="i">+
+</a><a href="#h14-0-50" id="h14-0-50" class="i">+CREATE TABLE movies (
+</a><a href="#h14-0-51" id="h14-0-51" class="i">+  id INTEGER PRIMARY KEY NOT NULL,
+</a><a href="#h14-0-52" id="h14-0-52" class="i">+  title VARCHAR NOT NULL,
+</a><a href="#h14-0-53" id="h14-0-53" class="i">+  genre_id INTEGER NOT NULL,
+</a><a href="#h14-0-54" id="h14-0-54" class="i">+  released INTEGER NOT NULL,
+</a><a href="#h14-0-55" id="h14-0-55" class="i">+  rating FLOAT,
+</a><a href="#h14-0-56" id="h14-0-56" class="i">+  bluray BOOLEAN
+</a><a href="#h14-0-57" id="h14-0-57" class="i">+)
+</a><b>diff --git a/<a id="h15" href="../file/src/sql/tests.rs.html">src/sql/tests.rs</a> b/<a href="../file/src/sql/tests.rs.html">src/sql/tests.rs</a></b>
+<a href="#h15-0" id="h15-0" class="h">@@ -217,6 +217,15 @@ test_sql! {
+</a>     create_table_error_pk_multiple: &quot;CREATE TABLE name (id INTEGER PRIMARY KEY, name VARCHAR PRIMARY KEY)&quot;,
+     create_table_error_pk_nullable: &quot;CREATE TABLE name (id INTEGER PRIMARY KEY NULL)&quot;,
+ 
+<a href="#h15-0-3" id="h15-0-3" class="i">+    delete_all: &quot;DELETE FROM movies&quot;,
+</a><a href="#h15-0-4" id="h15-0-4" class="i">+    delete_error_bare: &quot;DELETE FROM&quot;,
+</a><a href="#h15-0-5" id="h15-0-5" class="i">+    delete_error_multiple: &quot;DELETE FROM movies, genres&quot;,
+</a><a href="#h15-0-6" id="h15-0-6" class="i">+    delete_error_table: &quot;DELETE FROM missing&quot;,
+</a><a href="#h15-0-7" id="h15-0-7" class="i">+    delete_where: &quot;DELETE FROM movies WHERE released &gt;= 2000&quot;,
+</a><a href="#h15-0-8" id="h15-0-8" class="i">+    delete_where_false: &quot;DELETE FROM movies WHERE FALSE&quot;,
+</a><a href="#h15-0-9" id="h15-0-9" class="i">+    delete_where_null: &quot;DELETE FROM movies WHERE NULL&quot;,
+</a><a href="#h15-0-10" id="h15-0-10" class="i">+    delete_where_true: &quot;DELETE FROM movies WHERE TRUE&quot;,
+</a><a href="#h15-0-11" id="h15-0-11" class="i">+
+</a>     drop_table: &quot;DROP TABLE movies&quot;,
+     drop_table_error_bare: &quot;DROP TABLE&quot;,
+     drop_table_error_missing: &quot;DROP TABLE missing&quot;,
+</pre>
+</div>
+</body>
+</html>

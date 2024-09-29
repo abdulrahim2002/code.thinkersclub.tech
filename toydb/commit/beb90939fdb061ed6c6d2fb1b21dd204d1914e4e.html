@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>sql: use `Node` to look up names when formatting `Expression` - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/beb90939fdb061ed6c6d2fb1b21dd204d1914e4e.html">beb90939fdb061ed6c6d2fb1b21dd204d1914e4e</a>
+<b>parent</b> <a href="../commit/15367d549c1e7b6284289f39484f642384c7056e.html">15367d549c1e7b6284289f39484f642384c7056e</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Tue, 16 Jul 2024 22:29:58 +0200
+
+sql: use `Node` to look up names when formatting `Expression`
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/sql/planner/plan.rs</a></td><td> | </td><td class="num">40</td><td><span class="i">++++++++++++++++++++</span><span class="d">--------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/sql/types/expression.rs</a></td><td> | </td><td class="num">61</td><td><span class="i">++++++++++++++++++++++++++++++++</span><span class="d">-----------------------------</span></td></tr>
+</table></pre><pre>2 files changed, 52 insertions(+), 49 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/sql/planner/plan.rs.html">src/sql/planner/plan.rs</a> b/<a href="../file/src/sql/planner/plan.rs.html">src/sql/planner/plan.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -73,9 +73,6 @@ impl Plan {
+</a> }
+ 
+ /// A query plan node. These return row iterators and can be nested.
+<a href="#h0-0-3" id="h0-0-3" class="d">-///
+</a><a href="#h0-0-4" id="h0-0-4" class="d">-/// TODO: try to get rid of the labels. Can they be reconstructed by walking
+</a><a href="#h0-0-5" id="h0-0-5" class="d">-/// down the node tree?
+</a> #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+ pub enum Node {
+     /// Computes aggregate values for the given expressions and group_by buckets
+<a href="#h0-1" id="h0-1" class="h">@@ -373,7 +370,7 @@ impl std::fmt::Display for Plan {
+</a>             Self::Update { table, source, expressions, .. } =&gt; {
+                 let expressions = expressions
+                     .iter()
+<a href="#h0-1-3" id="h0-1-3" class="d">-                    .map(|(i, e)| format!(&quot;{}={e}&quot;, table.columns[*i].name))
+</a><a href="#h0-1-4" id="h0-1-4" class="i">+                    .map(|(i, e)| format!(&quot;{}={}&quot;, table.columns[*i].name, e.format(source)))
+</a>                     .join(&quot;, &quot;);
+                 let table = &amp;table.name;
+                 write!(f, &quot;Update: {table} ({expressions})&quot;)?;
+<a href="#h0-2" id="h0-2" class="h">@@ -423,14 +420,14 @@ impl Node {
+</a>             Self::Aggregate { source, aggregates, group_by } =&gt; {
+                 let aggregates = group_by
+                     .iter()
+<a href="#h0-2-3" id="h0-2-3" class="d">-                    .map(|group| group.to_string())
+</a><a href="#h0-2-4" id="h0-2-4" class="d">-                    .chain(aggregates.iter().map(|agg| agg.to_string()))
+</a><a href="#h0-2-5" id="h0-2-5" class="i">+                    .map(|group| group.format(source))
+</a><a href="#h0-2-6" id="h0-2-6" class="i">+                    .chain(aggregates.iter().map(|agg| agg.format(source)))
+</a>                     .join(&quot;, &quot;);
+                 write!(f, &quot;Aggregate: {aggregates}&quot;)?;
+                 source.format(f, prefix, false, true)?;
+             }
+             Self::Filter { source, predicate } =&gt; {
+<a href="#h0-2-12" id="h0-2-12" class="d">-                write!(f, &quot;Filter: {predicate}&quot;)?;
+</a><a href="#h0-2-13" id="h0-2-13" class="i">+                write!(f, &quot;Filter: {}&quot;, predicate.format(source))?;
+</a>                 source.format(f, prefix, false, true)?;
+             }
+             Self::HashJoin { left, left_field, right, right_field, outer } =&gt; {
+<a href="#h0-3" id="h0-3" class="h">@@ -478,7 +475,7 @@ impl Node {
+</a>             Self::NestedLoopJoin { left, right, predicate, outer, .. } =&gt; {
+                 write!(f, &quot;NestedLoopJoin: {}&quot;, if *outer { &quot;outer&quot; } else { &quot;inner&quot; })?;
+                 if let Some(expr) = predicate {
+<a href="#h0-3-3" id="h0-3-3" class="d">-                    write!(f, &quot; on {expr}&quot;)?;
+</a><a href="#h0-3-4" id="h0-3-4" class="i">+                    write!(f, &quot; on {}&quot;, expr.format(self))?;
+</a>                 }
+                 left.format(f, prefix.clone(), false, false)?;
+                 right.format(f, prefix, false, true)?;
+<a href="#h0-4" id="h0-4" class="h">@@ -491,7 +488,10 @@ impl Node {
+</a>                 source.format(f, prefix, false, true)?;
+             }
+             Self::Order { source, orders } =&gt; {
+<a href="#h0-4-3" id="h0-4-3" class="d">-                let orders = orders.iter().map(|(expr, dir)| format!(&quot;{expr} {dir}&quot;)).join(&quot;, &quot;);
+</a><a href="#h0-4-4" id="h0-4-4" class="i">+                let orders = orders
+</a><a href="#h0-4-5" id="h0-4-5" class="i">+                    .iter()
+</a><a href="#h0-4-6" id="h0-4-6" class="i">+                    .map(|(expr, dir)| format!(&quot;{} {dir}&quot;, expr.format(source)))
+</a><a href="#h0-4-7" id="h0-4-7" class="i">+                    .join(&quot;, &quot;);
+</a>                 write!(f, &quot;Order: {orders}&quot;)?;
+                 source.format(f, prefix, false, true)?;
+             }
+<a href="#h0-5" id="h0-5" class="h">@@ -500,8 +500,8 @@ impl Node {
+</a>                     .iter()
+                     .enumerate()
+                     .map(|(i, expr)| match aliases.get(i) {
+<a href="#h0-5-3" id="h0-5-3" class="d">-                        Some(Label::None) | None =&gt; format!(&quot;{expr}&quot;),
+</a><a href="#h0-5-4" id="h0-5-4" class="d">-                        Some(alias) =&gt; format!(&quot;{expr} as {alias}&quot;),
+</a><a href="#h0-5-5" id="h0-5-5" class="i">+                        Some(Label::None) | None =&gt; expr.format(source),
+</a><a href="#h0-5-6" id="h0-5-6" class="i">+                        Some(alias) =&gt; format!(&quot;{} as {alias}&quot;, expr.format(source)),
+</a>                     })
+                     .join(&quot;, &quot;);
+                 write!(f, &quot;Projection: {expressions}&quot;)?;
+<a href="#h0-6" id="h0-6" class="h">@@ -529,14 +529,14 @@ impl Node {
+</a>                     write!(f, &quot; as {alias}&quot;)?;
+                 }
+                 if let Some(expr) = filter {
+<a href="#h0-6-3" id="h0-6-3" class="d">-                    write!(f, &quot; ({expr})&quot;)?;
+</a><a href="#h0-6-4" id="h0-6-4" class="i">+                    write!(f, &quot; ({})&quot;, expr.format(self))?;
+</a>                 }
+             }
+             Self::Values { rows, .. } =&gt; {
+                 write!(f, &quot;Values: &quot;)?;
+                 match rows.len() {
+                     1 if rows[0].is_empty() =&gt; write!(f, &quot;blank row&quot;)?,
+<a href="#h0-6-11" id="h0-6-11" class="d">-                    1 =&gt; write!(f, &quot;{}&quot;, rows[0].iter().map(|e| e.to_string()).join(&quot;, &quot;))?,
+</a><a href="#h0-6-12" id="h0-6-12" class="i">+                    1 =&gt; write!(f, &quot;{}&quot;, rows[0].iter().map(|e| e.format(self)).join(&quot;, &quot;))?,
+</a>                     n =&gt; write!(f, &quot;{n} rows&quot;)?,
+                 }
+             }
+<a href="#h0-7" id="h0-7" class="h">@@ -555,14 +555,14 @@ pub enum Aggregate {
+</a>     Sum(Expression),
+ }
+ 
+<a href="#h0-7-3" id="h0-7-3" class="d">-impl std::fmt::Display for Aggregate {
+</a><a href="#h0-7-4" id="h0-7-4" class="d">-    fn fmt(&amp;self, f: &amp;mut std::fmt::Formatter&lt;&#39;_&gt;) -&gt; std::fmt::Result {
+</a><a href="#h0-7-5" id="h0-7-5" class="i">+impl Aggregate {
+</a><a href="#h0-7-6" id="h0-7-6" class="i">+    fn format(&amp;self, node: &amp;Node) -&gt; String {
+</a>         match self {
+<a href="#h0-7-8" id="h0-7-8" class="d">-            Self::Average(expr) =&gt; write!(f, &quot;avg({expr})&quot;),
+</a><a href="#h0-7-9" id="h0-7-9" class="d">-            Self::Count(expr) =&gt; write!(f, &quot;count({expr})&quot;),
+</a><a href="#h0-7-10" id="h0-7-10" class="d">-            Self::Max(expr) =&gt; write!(f, &quot;max({expr})&quot;),
+</a><a href="#h0-7-11" id="h0-7-11" class="d">-            Self::Min(expr) =&gt; write!(f, &quot;min({expr})&quot;),
+</a><a href="#h0-7-12" id="h0-7-12" class="d">-            Self::Sum(expr) =&gt; write!(f, &quot;sum({expr})&quot;),
+</a><a href="#h0-7-13" id="h0-7-13" class="i">+            Self::Average(expr) =&gt; format!(&quot;avg({})&quot;, expr.format(node)),
+</a><a href="#h0-7-14" id="h0-7-14" class="i">+            Self::Count(expr) =&gt; format!(&quot;count({})&quot;, expr.format(node)),
+</a><a href="#h0-7-15" id="h0-7-15" class="i">+            Self::Max(expr) =&gt; format!(&quot;max({})&quot;, expr.format(node)),
+</a><a href="#h0-7-16" id="h0-7-16" class="i">+            Self::Min(expr) =&gt; format!(&quot;min({})&quot;, expr.format(node)),
+</a><a href="#h0-7-17" id="h0-7-17" class="i">+            Self::Sum(expr) =&gt; format!(&quot;sum({})&quot;, expr.format(node)),
+</a>         }
+     }
+ }
+<b>diff --git a/<a id="h1" href="../file/src/sql/types/expression.rs.html">src/sql/types/expression.rs</a> b/<a href="../file/src/sql/types/expression.rs.html">src/sql/types/expression.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -1,6 +1,7 @@
+</a> use super::{Label, Row, Value};
+ use crate::errinput;
+ use crate::error::Result;
+<a href="#h1-0-3" id="h1-0-3" class="i">+use crate::sql::planner::Node;
+</a> 
+ use serde::{Deserialize, Serialize};
+ 
+<a href="#h1-1" id="h1-1" class="h">@@ -59,39 +60,41 @@ pub enum Expression {
+</a>     Like(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+ }
+ 
+<a href="#h1-1-3" id="h1-1-3" class="d">-impl std::fmt::Display for Expression {
+</a><a href="#h1-1-4" id="h1-1-4" class="d">-    fn fmt(&amp;self, f: &amp;mut std::fmt::Formatter&lt;&#39;_&gt;) -&gt; std::fmt::Result {
+</a><a href="#h1-1-5" id="h1-1-5" class="i">+impl Expression {
+</a><a href="#h1-1-6" id="h1-1-6" class="i">+    /// Formats the expression, using the given Node to look up column labels.
+</a><a href="#h1-1-7" id="h1-1-7" class="i">+    pub fn format(&amp;self, node: &amp;Node) -&gt; String {
+</a><a href="#h1-1-8" id="h1-1-8" class="i">+        let format = |expr: &amp;Expression| expr.format(node);
+</a>         match self {
+<a href="#h1-1-10" id="h1-1-10" class="d">-            Self::Constant(value) =&gt; write!(f, &quot;{value}&quot;),
+</a><a href="#h1-1-11" id="h1-1-11" class="d">-            Self::Field(index, Label::None) =&gt; write!(f, &quot;#{index}&quot;),
+</a><a href="#h1-1-12" id="h1-1-12" class="d">-            Self::Field(_, label) =&gt; write!(f, &quot;{label}&quot;),
+</a><a href="#h1-1-13" id="h1-1-13" class="d">-
+</a><a href="#h1-1-14" id="h1-1-14" class="d">-            Self::And(lhs, rhs) =&gt; write!(f, &quot;{lhs} AND {rhs}&quot;),
+</a><a href="#h1-1-15" id="h1-1-15" class="d">-            Self::Or(lhs, rhs) =&gt; write!(f, &quot;{lhs} OR {rhs}&quot;),
+</a><a href="#h1-1-16" id="h1-1-16" class="d">-            Self::Not(expr) =&gt; write!(f, &quot;NOT {expr}&quot;),
+</a><a href="#h1-1-17" id="h1-1-17" class="d">-
+</a><a href="#h1-1-18" id="h1-1-18" class="d">-            Self::Equal(lhs, rhs) =&gt; write!(f, &quot;{lhs} = {rhs}&quot;),
+</a><a href="#h1-1-19" id="h1-1-19" class="d">-            Self::GreaterThan(lhs, rhs) =&gt; write!(f, &quot;{lhs} &gt; {rhs}&quot;),
+</a><a href="#h1-1-20" id="h1-1-20" class="d">-            Self::LessThan(lhs, rhs) =&gt; write!(f, &quot;{lhs} &lt; {rhs}&quot;),
+</a><a href="#h1-1-21" id="h1-1-21" class="d">-            Self::IsNull(expr) =&gt; write!(f, &quot;{expr} IS NULL&quot;),
+</a><a href="#h1-1-22" id="h1-1-22" class="d">-            Self::IsNaN(expr) =&gt; write!(f, &quot;{expr} IS NAN&quot;),
+</a><a href="#h1-1-23" id="h1-1-23" class="d">-
+</a><a href="#h1-1-24" id="h1-1-24" class="d">-            Self::Add(lhs, rhs) =&gt; write!(f, &quot;{lhs} + {rhs}&quot;),
+</a><a href="#h1-1-25" id="h1-1-25" class="d">-            Self::Divide(lhs, rhs) =&gt; write!(f, &quot;{lhs} / {rhs}&quot;),
+</a><a href="#h1-1-26" id="h1-1-26" class="d">-            Self::Exponentiate(lhs, rhs) =&gt; write!(f, &quot;{lhs} ^ {rhs}&quot;),
+</a><a href="#h1-1-27" id="h1-1-27" class="d">-            Self::Factorial(expr) =&gt; write!(f, &quot;{expr}!&quot;),
+</a><a href="#h1-1-28" id="h1-1-28" class="d">-            Self::Identity(expr) =&gt; write!(f, &quot;{expr}&quot;),
+</a><a href="#h1-1-29" id="h1-1-29" class="d">-            Self::Modulo(lhs, rhs) =&gt; write!(f, &quot;{lhs} % {rhs}&quot;),
+</a><a href="#h1-1-30" id="h1-1-30" class="d">-            Self::Multiply(lhs, rhs) =&gt; write!(f, &quot;{lhs} * {rhs}&quot;),
+</a><a href="#h1-1-31" id="h1-1-31" class="d">-            Self::Negate(expr) =&gt; write!(f, &quot;-{expr}&quot;),
+</a><a href="#h1-1-32" id="h1-1-32" class="d">-            Self::Subtract(lhs, rhs) =&gt; write!(f, &quot;{lhs} - {rhs}&quot;),
+</a><a href="#h1-1-33" id="h1-1-33" class="d">-
+</a><a href="#h1-1-34" id="h1-1-34" class="d">-            Self::Like(lhs, rhs) =&gt; write!(f, &quot;{lhs} LIKE {rhs}&quot;),
+</a><a href="#h1-1-35" id="h1-1-35" class="i">+            Self::Field(index, _) =&gt; match node.column_label(*index) {
+</a><a href="#h1-1-36" id="h1-1-36" class="i">+                Label::None =&gt; format!(&quot;#{index}&quot;),
+</a><a href="#h1-1-37" id="h1-1-37" class="i">+                label =&gt; format!(&quot;{label}&quot;),
+</a><a href="#h1-1-38" id="h1-1-38" class="i">+            },
+</a><a href="#h1-1-39" id="h1-1-39" class="i">+            Self::Constant(value) =&gt; format!(&quot;{value}&quot;),
+</a><a href="#h1-1-40" id="h1-1-40" class="i">+
+</a><a href="#h1-1-41" id="h1-1-41" class="i">+            Self::And(lhs, rhs) =&gt; format!(&quot;{} AND {}&quot;, format(lhs), format(rhs)),
+</a><a href="#h1-1-42" id="h1-1-42" class="i">+            Self::Or(lhs, rhs) =&gt; format!(&quot;{} OR {}&quot;, format(lhs), format(rhs)),
+</a><a href="#h1-1-43" id="h1-1-43" class="i">+            Self::Not(expr) =&gt; format!(&quot;NOT {}&quot;, format(expr)),
+</a><a href="#h1-1-44" id="h1-1-44" class="i">+
+</a><a href="#h1-1-45" id="h1-1-45" class="i">+            Self::Equal(lhs, rhs) =&gt; format!(&quot;{} = {}&quot;, format(lhs), format(rhs)),
+</a><a href="#h1-1-46" id="h1-1-46" class="i">+            Self::GreaterThan(lhs, rhs) =&gt; format!(&quot;{} &gt; {}&quot;, format(lhs), format(rhs)),
+</a><a href="#h1-1-47" id="h1-1-47" class="i">+            Self::LessThan(lhs, rhs) =&gt; format!(&quot;{} &lt; {}&quot;, format(lhs), format(rhs)),
+</a><a href="#h1-1-48" id="h1-1-48" class="i">+            Self::IsNull(expr) =&gt; format!(&quot;{} IS NULL&quot;, format(expr)),
+</a><a href="#h1-1-49" id="h1-1-49" class="i">+            Self::IsNaN(expr) =&gt; format!(&quot;{} IS NAN&quot;, format(expr)),
+</a><a href="#h1-1-50" id="h1-1-50" class="i">+
+</a><a href="#h1-1-51" id="h1-1-51" class="i">+            Self::Add(lhs, rhs) =&gt; format!(&quot;{} + {}&quot;, format(lhs), format(rhs)),
+</a><a href="#h1-1-52" id="h1-1-52" class="i">+            Self::Divide(lhs, rhs) =&gt; format!(&quot;{} / {}&quot;, format(lhs), format(rhs)),
+</a><a href="#h1-1-53" id="h1-1-53" class="i">+            Self::Exponentiate(lhs, rhs) =&gt; format!(&quot;{} ^ {}&quot;, format(lhs), format(rhs)),
+</a><a href="#h1-1-54" id="h1-1-54" class="i">+            Self::Factorial(expr) =&gt; format!(&quot;{}!&quot;, format(expr)),
+</a><a href="#h1-1-55" id="h1-1-55" class="i">+            Self::Identity(expr) =&gt; format(expr),
+</a><a href="#h1-1-56" id="h1-1-56" class="i">+            Self::Modulo(lhs, rhs) =&gt; format!(&quot;{} % {}&quot;, format(lhs), format(rhs)),
+</a><a href="#h1-1-57" id="h1-1-57" class="i">+            Self::Multiply(lhs, rhs) =&gt; format!(&quot;{} * {}&quot;, format(lhs), format(rhs)),
+</a><a href="#h1-1-58" id="h1-1-58" class="i">+            Self::Negate(expr) =&gt; format!(&quot;-{}&quot;, format(expr)),
+</a><a href="#h1-1-59" id="h1-1-59" class="i">+            Self::Subtract(lhs, rhs) =&gt; format!(&quot;{} - {}&quot;, format(lhs), format(rhs)),
+</a><a href="#h1-1-60" id="h1-1-60" class="i">+
+</a><a href="#h1-1-61" id="h1-1-61" class="i">+            Self::Like(lhs, rhs) =&gt; format!(&quot;{} LIKE {}&quot;, format(lhs), format(rhs)),
+</a>         }
+     }
+<a href="#h1-1-64" id="h1-1-64" class="d">-}
+</a> 
+<a href="#h1-1-66" id="h1-1-66" class="d">-impl Expression {
+</a>     /// Evaluates an expression, returning a value. If a row is given, Field
+     /// references will look up the row value at the field index. If no row is
+     /// given, any field references yield NULL.
+</pre>
+</div>
+</body>
+</html>

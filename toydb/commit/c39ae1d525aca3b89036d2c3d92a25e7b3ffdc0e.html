@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>sql: add `OPTIMIZERS` constant with list of optimizers - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/c39ae1d525aca3b89036d2c3d92a25e7b3ffdc0e.html">c39ae1d525aca3b89036d2c3d92a25e7b3ffdc0e</a>
+<b>parent</b> <a href="../commit/aa593aa3b6a1ea5d775ba92cec2357731177cea1.html">aa593aa3b6a1ea5d775ba92cec2357731177cea1</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Wed,  3 Jul 2024 15:14:55 +0200
+
+sql: add `OPTIMIZERS` constant with list of optimizers
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/sql/planner/optimizer.rs</a></td><td> | </td><td class="num">12</td><td><span class="i">++++++++++++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/sql/planner/plan.rs</a></td><td> | </td><td class="num">18</td><td><span class="i">++++++++</span><span class="d">----------</span></td></tr>
+</table></pre><pre>2 files changed, 20 insertions(+), 10 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/sql/planner/optimizer.rs.html">src/sql/planner/optimizer.rs</a> b/<a href="../file/src/sql/planner/optimizer.rs.html">src/sql/planner/optimizer.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -4,6 +4,18 @@ use crate::sql::types::{Expression, Value};
+</a> 
+ use std::collections::HashMap;
+ 
+<a href="#h0-0-3" id="h0-0-3" class="i">+/// A plan optimizer, which takes a root node and recursively transforms it.
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+pub type Optimizer = fn(Node) -&gt; Result&lt;Node&gt;;
+</a><a href="#h0-0-5" id="h0-0-5" class="i">+
+</a><a href="#h0-0-6" id="h0-0-6" class="i">+/// The set of optimizers, and the order in which they are applied.
+</a><a href="#h0-0-7" id="h0-0-7" class="i">+pub static OPTIMIZERS: &amp;[(&amp;str, Optimizer)] = &amp;[
+</a><a href="#h0-0-8" id="h0-0-8" class="i">+    (&quot;Constant folding&quot;, fold_constants),
+</a><a href="#h0-0-9" id="h0-0-9" class="i">+    (&quot;Filter pushdown&quot;, push_filters),
+</a><a href="#h0-0-10" id="h0-0-10" class="i">+    (&quot;Index lookup&quot;, index_lookup),
+</a><a href="#h0-0-11" id="h0-0-11" class="i">+    (&quot;Join type&quot;, join_type),
+</a><a href="#h0-0-12" id="h0-0-12" class="i">+    (&quot;Short circuit&quot;, short_circuit),
+</a><a href="#h0-0-13" id="h0-0-13" class="i">+];
+</a><a href="#h0-0-14" id="h0-0-14" class="i">+
+</a> /// Folds constant (sub)expressions by pre-evaluating them, instead of
+ /// re-evaluating then for every row during execution.
+ pub(super) fn fold_constants(node: Node) -&gt; Result&lt;Node&gt; {
+<b>diff --git a/<a id="h1" href="../file/src/sql/planner/plan.rs.html">src/sql/planner/plan.rs</a> b/<a href="../file/src/sql/planner/plan.rs.html">src/sql/planner/plan.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -1,4 +1,4 @@
+</a><a href="#h1-0-0" id="h1-0-0" class="d">-use super::optimizer;
+</a><a href="#h1-0-1" id="h1-0-1" class="i">+use super::optimizer::OPTIMIZERS;
+</a> use super::planner::Planner;
+ use crate::error::Result;
+ use crate::sql::engine::{Catalog, Transaction};
+<a href="#h1-1" id="h1-1" class="h">@@ -13,7 +13,7 @@ use std::collections::HashMap;
+</a> /// A statement execution plan. Primarily made up of a tree of query plan Nodes,
+ /// which process and stream rows, but the root nodes can perform data
+ /// modifications or schema changes.
+<a href="#h1-1-3" id="h1-1-3" class="d">-#[derive(Debug, PartialEq, Serialize, Deserialize)]
+</a><a href="#h1-1-4" id="h1-1-4" class="i">+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+</a> pub enum Plan {
+     /// A CREATE TABLE plan. Creates a new table with the given schema. Errors
+     /// if the table already exists or the schema is invalid.
+<a href="#h1-2" id="h1-2" class="h">@@ -63,11 +63,9 @@ impl Plan {
+</a>     /// Optimizes the plan, consuming it.
+     pub fn optimize(self) -&gt; Result&lt;Self&gt; {
+         let optimize = |mut node| -&gt; Result&lt;Node&gt; {
+<a href="#h1-2-3" id="h1-2-3" class="d">-            node = optimizer::fold_constants(node)?;
+</a><a href="#h1-2-4" id="h1-2-4" class="d">-            node = optimizer::push_filters(node)?;
+</a><a href="#h1-2-5" id="h1-2-5" class="d">-            node = optimizer::index_lookup(node)?;
+</a><a href="#h1-2-6" id="h1-2-6" class="d">-            node = optimizer::join_type(node)?;
+</a><a href="#h1-2-7" id="h1-2-7" class="d">-            node = optimizer::short_circuit(node)?;
+</a><a href="#h1-2-8" id="h1-2-8" class="i">+            for (_, optimizer) in OPTIMIZERS {
+</a><a href="#h1-2-9" id="h1-2-9" class="i">+                node = optimizer(node)?;
+</a><a href="#h1-2-10" id="h1-2-10" class="i">+            }
+</a>             Ok(node)
+         };
+         Ok(match self {
+<a href="#h1-3" id="h1-3" class="h">@@ -84,7 +82,7 @@ impl Plan {
+</a> }
+ 
+ /// A query plan node. These return row iterators and can be nested.
+<a href="#h1-3-3" id="h1-3-3" class="d">-#[derive(Debug, PartialEq, Serialize, Deserialize)]
+</a><a href="#h1-3-4" id="h1-3-4" class="i">+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+</a> pub enum Node {
+     /// Aggregates the input rows by computing the given aggregates for the
+     /// corresponding source columns. Additional columns in source for which
+<a href="#h1-4" id="h1-4" class="h">@@ -446,7 +444,7 @@ impl Node {
+</a> }
+ 
+ /// An aggregation function.
+<a href="#h1-4-3" id="h1-4-3" class="d">-#[derive(Debug, PartialEq, Serialize, Deserialize)]
+</a><a href="#h1-4-4" id="h1-4-4" class="i">+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+</a> pub enum Aggregate {
+     Average,
+     Count,
+<a href="#h1-5" id="h1-5" class="h">@@ -481,7 +479,7 @@ impl Aggregate {
+</a> }
+ 
+ /// A sort order direction.
+<a href="#h1-5-3" id="h1-5-3" class="d">-#[derive(Debug, PartialEq, Serialize, Deserialize)]
+</a><a href="#h1-5-4" id="h1-5-4" class="i">+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+</a> pub enum Direction {
+     Ascending,
+     Descending,
+</pre>
+</div>
+</body>
+</html>

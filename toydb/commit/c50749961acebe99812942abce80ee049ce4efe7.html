@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>kv: more MVCC code cleanups - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/c50749961acebe99812942abce80ee049ce4efe7.html">c50749961acebe99812942abce80ee049ce4efe7</a>
+<b>parent</b> <a href="../commit/74474a57f25ea2272f5d52d29e22891d8e6ffaa4.html">74474a57f25ea2272f5d52d29e22891d8e6ffaa4</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Sun, 29 Dec 2019 16:57:37 +0100
+
+kv: more MVCC code cleanups
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/kv/mvcc.rs</a></td><td> | </td><td class="num">166</td><td><span class="i">++++++++++++++++++++++++++++++++++++</span><span class="d">-------------------------------------------</span></td></tr>
+</table></pre><pre>1 file changed, 75 insertions(+), 91 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/kv/mvcc.rs.html">src/kv/mvcc.rs</a> b/<a href="../file/src/kv/mvcc.rs.html">src/kv/mvcc.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -40,12 +40,12 @@ impl&lt;S: Storage&gt; MVCC&lt;S&gt; {
+</a> pub struct Transaction&lt;S: Storage&gt; {
+     /// The underlying storage for the transaction. Shared between transactions using a mutex.
+     storage: Arc&lt;RwLock&lt;S&gt;&gt;,
+<a href="#h0-0-3" id="h0-0-3" class="d">-    /// The snapshot that the transaction is running in.
+</a><a href="#h0-0-4" id="h0-0-4" class="d">-    snapshot: Snapshot,
+</a><a href="#h0-0-5" id="h0-0-5" class="d">-    /// The transaction mode.
+</a><a href="#h0-0-6" id="h0-0-6" class="d">-    mode: Mode,
+</a>     /// The unique transaction ID.
+     id: u64,
+<a href="#h0-0-9" id="h0-0-9" class="i">+    /// The transaction mode.
+</a><a href="#h0-0-10" id="h0-0-10" class="i">+    mode: Mode,
+</a><a href="#h0-0-11" id="h0-0-11" class="i">+    /// The snapshot that the transaction is running in.
+</a><a href="#h0-0-12" id="h0-0-12" class="i">+    snapshot: Snapshot,
+</a> }
+ 
+ impl&lt;S: Storage&gt; Transaction&lt;S&gt; {
+<a href="#h0-1" id="h0-1" class="h">@@ -69,20 +69,20 @@ impl&lt;S: Storage&gt; Transaction&lt;S&gt; {
+</a>             snapshot = Snapshot::restore(&amp;storage.read()?, *version)?
+         }
+ 
+<a href="#h0-1-3" id="h0-1-3" class="d">-        Ok(Self { storage, snapshot, mode, id })
+</a><a href="#h0-1-4" id="h0-1-4" class="i">+        Ok(Self { storage, id, mode, snapshot })
+</a>     }
+ 
+     /// Resumes an active transaction with the given ID. Errors if the transaction is not active.
+     fn resume(storage: Arc&lt;RwLock&lt;S&gt;&gt;, id: u64) -&gt; Result&lt;Self, Error&gt; {
+         let session = storage.read()?;
+         let mode = match session.read(&amp;Key::TxnActive(id).encode())? {
+<a href="#h0-1-11" id="h0-1-11" class="d">-            Some(ref v) =&gt; deserialize(v)?,
+</a><a href="#h0-1-12" id="h0-1-12" class="i">+            Some(v) =&gt; deserialize(&amp;v)?,
+</a>             None =&gt; return Err(Error::Value(format!(&quot;No active transaction {}&quot;, id))),
+         };
+<a href="#h0-1-15" id="h0-1-15" class="d">-        let snapshot = Snapshot::restore(
+</a><a href="#h0-1-16" id="h0-1-16" class="d">-            &amp;session,
+</a><a href="#h0-1-17" id="h0-1-17" class="d">-            if let Mode::Snapshot { version } = &amp;mode { *version } else { id },
+</a><a href="#h0-1-18" id="h0-1-18" class="d">-        )?;
+</a><a href="#h0-1-19" id="h0-1-19" class="i">+        let snapshot = match &amp;mode {
+</a><a href="#h0-1-20" id="h0-1-20" class="i">+            Mode::Snapshot { version } =&gt; Snapshot::restore(&amp;session, *version)?,
+</a><a href="#h0-1-21" id="h0-1-21" class="i">+            _ =&gt; Snapshot::restore(&amp;session, id)?,
+</a><a href="#h0-1-22" id="h0-1-22" class="i">+        };
+</a>         std::mem::drop(session);
+         Ok(Self { storage, id, mode, snapshot })
+     }
+<a href="#h0-2" id="h0-2" class="h">@@ -97,26 +97,26 @@ impl&lt;S: Storage&gt; Transaction&lt;S&gt; {
+</a>         self.mode.clone()
+     }
+ 
+<a href="#h0-2-3" id="h0-2-3" class="d">-    /// Commits the transaction.
+</a><a href="#h0-2-4" id="h0-2-4" class="i">+    /// Commits the transaction, by removing the txn from the active set.
+</a>     pub fn commit(self) -&gt; Result&lt;(), Error&gt; {
+         self.storage.write()?.remove(&amp;Key::TxnActive(self.id).encode())
+     }
+ 
+<a href="#h0-2-9" id="h0-2-9" class="d">-    /// Rolls back the transaction
+</a><a href="#h0-2-10" id="h0-2-10" class="i">+    /// Rolls back the transaction, by removing all updated entries.
+</a>     pub fn rollback(self) -&gt; Result&lt;(), Error&gt; {
+         let mut session = self.storage.write()?;
+<a href="#h0-2-13" id="h0-2-13" class="d">-        if self.mode.is_mutable() {
+</a><a href="#h0-2-14" id="h0-2-14" class="d">-            let mut keys: Vec&lt;Vec&lt;u8&gt;&gt; = Vec::new();
+</a><a href="#h0-2-15" id="h0-2-15" class="i">+        if self.mode.mutable() {
+</a><a href="#h0-2-16" id="h0-2-16" class="i">+            let mut keys = Vec::new();
+</a>             let mut scan = session.scan(
+                 &amp;Key::TxnUpdate(self.id, vec![]).encode()
+                     ..&amp;Key::TxnUpdate(self.id + 1, vec![]).encode(),
+             );
+             while let Some((key, _)) = scan.next().transpose()? {
+<a href="#h0-2-22" id="h0-2-22" class="d">-                keys.push(key.clone());
+</a><a href="#h0-2-23" id="h0-2-23" class="d">-                match Key::decode(key)? {
+</a><a href="#h0-2-24" id="h0-2-24" class="i">+                match Key::decode(&amp;key)? {
+</a>                     Key::TxnUpdate(_, k) =&gt; keys.push(k),
+                     _ =&gt; return Err(Error::Internal(&quot;Unexpected key, wanted TxnUpdated&quot;.into())),
+                 }
+<a href="#h0-2-28" id="h0-2-28" class="i">+                keys.push(key);
+</a>             }
+             std::mem::drop(scan);
+             for key in keys.into_iter() {
+<a href="#h0-3" id="h0-3" class="h">@@ -126,80 +126,65 @@ impl&lt;S: Storage&gt; Transaction&lt;S&gt; {
+</a>         session.remove(&amp;Key::TxnActive(self.id).encode())
+     }
+ 
+<a href="#h0-3-3" id="h0-3-3" class="d">-    /// Deletes a key
+</a><a href="#h0-3-4" id="h0-3-4" class="i">+    /// Deletes a key.
+</a>     pub fn delete(&amp;mut self, key: &amp;[u8]) -&gt; Result&lt;(), Error&gt; {
+<a href="#h0-3-6" id="h0-3-6" class="d">-        self.mode.assert_mutable()?;
+</a><a href="#h0-3-7" id="h0-3-7" class="d">-        let mut storage = self.storage.write()?;
+</a><a href="#h0-3-8" id="h0-3-8" class="d">-        if self.is_dirty(&amp;mut storage, key)? {
+</a><a href="#h0-3-9" id="h0-3-9" class="d">-            return Err(Error::Serialization);
+</a><a href="#h0-3-10" id="h0-3-10" class="d">-        }
+</a><a href="#h0-3-11" id="h0-3-11" class="d">-
+</a><a href="#h0-3-12" id="h0-3-12" class="d">-        let key = Key::Record(key.to_vec(), self.id).encode();
+</a><a href="#h0-3-13" id="h0-3-13" class="d">-        let update_key = Key::TxnUpdate(self.id, key.clone()).encode();
+</a><a href="#h0-3-14" id="h0-3-14" class="d">-        storage.write(&amp;update_key, Vec::new())?;
+</a><a href="#h0-3-15" id="h0-3-15" class="d">-        storage.write(&amp;key, serialize(&amp;None::&lt;Vec&lt;u8&gt;&gt;)?)?;
+</a><a href="#h0-3-16" id="h0-3-16" class="d">-        Ok(())
+</a><a href="#h0-3-17" id="h0-3-17" class="i">+        self.write(key, None)
+</a>     }
+ 
+<a href="#h0-3-20" id="h0-3-20" class="d">-    /// Fetches a key
+</a><a href="#h0-3-21" id="h0-3-21" class="i">+    /// Fetches a key.
+</a>     pub fn get(&amp;self, key: &amp;[u8]) -&gt; Result&lt;Option&lt;Vec&lt;u8&gt;&gt;, Error&gt; {
+<a href="#h0-3-23" id="h0-3-23" class="d">-        let from = Key::Record(key.to_vec(), 0).encode();
+</a><a href="#h0-3-24" id="h0-3-24" class="d">-        let to = Key::Record(key.to_vec(), self.id).encode();
+</a><a href="#h0-3-25" id="h0-3-25" class="d">-        let storage = self.storage.read()?;
+</a><a href="#h0-3-26" id="h0-3-26" class="d">-        let mut range = storage.scan(from..=to).rev();
+</a><a href="#h0-3-27" id="h0-3-27" class="d">-        while let Some((k, v)) = range.next().transpose()? {
+</a><a href="#h0-3-28" id="h0-3-28" class="d">-            let version = match Key::decode(k)? {
+</a><a href="#h0-3-29" id="h0-3-29" class="d">-                Key::Record(_, version) =&gt; version,
+</a><a href="#h0-3-30" id="h0-3-30" class="d">-                k =&gt; return Err(Error::Value(format!(&quot;Unexpected MVCC key {:?} &quot;, k))),
+</a><a href="#h0-3-31" id="h0-3-31" class="d">-            };
+</a><a href="#h0-3-32" id="h0-3-32" class="d">-            if !self.snapshot.is_visible(version) {
+</a><a href="#h0-3-33" id="h0-3-33" class="d">-                continue;
+</a><a href="#h0-3-34" id="h0-3-34" class="i">+        let session = self.storage.read()?;
+</a><a href="#h0-3-35" id="h0-3-35" class="i">+        let mut scan = session
+</a><a href="#h0-3-36" id="h0-3-36" class="i">+            .scan(
+</a><a href="#h0-3-37" id="h0-3-37" class="i">+                Key::Record(key.to_vec(), 0).encode()..=Key::Record(key.to_vec(), self.id).encode(),
+</a><a href="#h0-3-38" id="h0-3-38" class="i">+            )
+</a><a href="#h0-3-39" id="h0-3-39" class="i">+            .rev();
+</a><a href="#h0-3-40" id="h0-3-40" class="i">+        while let Some((k, v)) = scan.next().transpose()? {
+</a><a href="#h0-3-41" id="h0-3-41" class="i">+            if self.snapshot.is_visible(Key::decode(&amp;k)?.version()?) {
+</a><a href="#h0-3-42" id="h0-3-42" class="i">+                return deserialize(&amp;v);
+</a>             }
+<a href="#h0-3-44" id="h0-3-44" class="d">-            return deserialize(&amp;v);
+</a>         }
+         Ok(None)
+     }
+ 
+<a href="#h0-3-49" id="h0-3-49" class="d">-    /// Scans a key range
+</a><a href="#h0-3-50" id="h0-3-50" class="i">+    /// Scans a key range.
+</a>     pub fn scan(&amp;self, range: impl RangeBounds&lt;Vec&lt;u8&gt;&gt;) -&gt; Result&lt;Range, Error&gt; {
+         Ok(Box::new(Scan::new(self.storage.read()?, self.snapshot.clone(), range)?))
+     }
+ 
+<a href="#h0-3-55" id="h0-3-55" class="d">-    /// Sets a key
+</a><a href="#h0-3-56" id="h0-3-56" class="i">+    /// Sets a key.
+</a>     pub fn set(&amp;mut self, key: &amp;[u8], value: Vec&lt;u8&gt;) -&gt; Result&lt;(), Error&gt; {
+<a href="#h0-3-58" id="h0-3-58" class="d">-        self.mode.assert_mutable()?;
+</a><a href="#h0-3-59" id="h0-3-59" class="d">-        let mut storage = self.storage.write()?;
+</a><a href="#h0-3-60" id="h0-3-60" class="d">-        if self.is_dirty(&amp;mut storage, key)? {
+</a><a href="#h0-3-61" id="h0-3-61" class="d">-            return Err(Error::Serialization);
+</a><a href="#h0-3-62" id="h0-3-62" class="d">-        }
+</a><a href="#h0-3-63" id="h0-3-63" class="d">-        let key = Key::Record(key.to_vec(), self.id).encode();
+</a><a href="#h0-3-64" id="h0-3-64" class="d">-        let update_key = Key::TxnUpdate(self.id, key.clone()).encode();
+</a><a href="#h0-3-65" id="h0-3-65" class="d">-        storage.write(&amp;update_key, Vec::new())?;
+</a><a href="#h0-3-66" id="h0-3-66" class="d">-        storage.write(&amp;key, serialize(&amp;Some(value))?)?;
+</a><a href="#h0-3-67" id="h0-3-67" class="d">-        Ok(())
+</a><a href="#h0-3-68" id="h0-3-68" class="i">+        self.write(key, Some(value))
+</a>     }
+ 
+<a href="#h0-3-71" id="h0-3-71" class="d">-    /// Checks whether the key is dirty, i.e. if it has any uncommitted changes
+</a><a href="#h0-3-72" id="h0-3-72" class="d">-    fn is_dirty(&amp;self, storage: &amp;mut RwLockWriteGuard&lt;S&gt;, key: &amp;[u8]) -&gt; Result&lt;bool, Error&gt; {
+</a><a href="#h0-3-73" id="h0-3-73" class="d">-        let mut min = self.id + 1;
+</a><a href="#h0-3-74" id="h0-3-74" class="d">-        for id in self.snapshot.invisible.iter().cloned() {
+</a><a href="#h0-3-75" id="h0-3-75" class="d">-            if id &lt; min {
+</a><a href="#h0-3-76" id="h0-3-76" class="d">-                min = id
+</a><a href="#h0-3-77" id="h0-3-77" class="d">-            }
+</a><a href="#h0-3-78" id="h0-3-78" class="i">+    /// Writes a value for a key. None is used for deletion.
+</a><a href="#h0-3-79" id="h0-3-79" class="i">+    fn write(&amp;self, key: &amp;[u8], value: Option&lt;Vec&lt;u8&gt;&gt;) -&gt; Result&lt;(), Error&gt; {
+</a><a href="#h0-3-80" id="h0-3-80" class="i">+        if !self.mode.mutable() {
+</a><a href="#h0-3-81" id="h0-3-81" class="i">+            return Err(Error::ReadOnly);
+</a>         }
+<a href="#h0-3-83" id="h0-3-83" class="d">-        let from = Key::Record(key.to_vec(), min).encode();
+</a><a href="#h0-3-84" id="h0-3-84" class="d">-        let to = Key::Record(key.to_vec(), std::u64::MAX).encode();
+</a><a href="#h0-3-85" id="h0-3-85" class="d">-        let mut range = storage.scan(from..to);
+</a><a href="#h0-3-86" id="h0-3-86" class="d">-        while let Some((k, _)) = range.next().transpose()? {
+</a><a href="#h0-3-87" id="h0-3-87" class="d">-            let version = match Key::decode(k)? {
+</a><a href="#h0-3-88" id="h0-3-88" class="d">-                Key::Record(_, version) =&gt; version,
+</a><a href="#h0-3-89" id="h0-3-89" class="d">-                k =&gt; return Err(Error::Value(format!(&quot;Unexpected MVCC key {:?} &quot;, k))),
+</a><a href="#h0-3-90" id="h0-3-90" class="d">-            };
+</a><a href="#h0-3-91" id="h0-3-91" class="d">-            if !self.snapshot.is_visible(version) {
+</a><a href="#h0-3-92" id="h0-3-92" class="d">-                return Ok(true);
+</a><a href="#h0-3-93" id="h0-3-93" class="i">+        let mut session = self.storage.write()?;
+</a><a href="#h0-3-94" id="h0-3-94" class="i">+
+</a><a href="#h0-3-95" id="h0-3-95" class="i">+        // Check if the key is dirty, i.e. if it has any uncommitted changes, by scanning for any
+</a><a href="#h0-3-96" id="h0-3-96" class="i">+        // versions that aren&#39;t visible to us.
+</a><a href="#h0-3-97" id="h0-3-97" class="i">+        let min = self.snapshot.invisible.iter().min().cloned().unwrap_or(self.id + 1);
+</a><a href="#h0-3-98" id="h0-3-98" class="i">+        let mut scan = session
+</a><a href="#h0-3-99" id="h0-3-99" class="i">+            .scan(
+</a><a href="#h0-3-100" id="h0-3-100" class="i">+                Key::Record(key.to_vec(), min).encode()
+</a><a href="#h0-3-101" id="h0-3-101" class="i">+                    ..=Key::Record(key.to_vec(), std::u64::MAX).encode(),
+</a><a href="#h0-3-102" id="h0-3-102" class="i">+            )
+</a><a href="#h0-3-103" id="h0-3-103" class="i">+            .rev();
+</a><a href="#h0-3-104" id="h0-3-104" class="i">+        while let Some((k, _)) = scan.next().transpose()? {
+</a><a href="#h0-3-105" id="h0-3-105" class="i">+            if !self.snapshot.is_visible(Key::decode(&amp;k)?.version()?) {
+</a><a href="#h0-3-106" id="h0-3-106" class="i">+                return Err(Error::Serialization);
+</a>             }
+         }
+<a href="#h0-3-109" id="h0-3-109" class="d">-        Ok(false)
+</a><a href="#h0-3-110" id="h0-3-110" class="i">+        std::mem::drop(scan);
+</a><a href="#h0-3-111" id="h0-3-111" class="i">+
+</a><a href="#h0-3-112" id="h0-3-112" class="i">+        // Write the key
+</a><a href="#h0-3-113" id="h0-3-113" class="i">+        let key = Key::Record(key.to_vec(), self.id).encode();
+</a><a href="#h0-3-114" id="h0-3-114" class="i">+        let update = Key::TxnUpdate(self.id, key.clone()).encode();
+</a><a href="#h0-3-115" id="h0-3-115" class="i">+        session.write(&amp;update, vec![])?;
+</a><a href="#h0-3-116" id="h0-3-116" class="i">+        session.write(&amp;key, serialize(&amp;value)?)
+</a>     }
+ }
+ 
+<a href="#h0-4" id="h0-4" class="h">@@ -219,7 +204,7 @@ impl Snapshot {
+</a>         let mut snapshot = Self { version, invisible: HashSet::new() };
+         let mut scan = storage.scan(&amp;Key::TxnActive(0).encode()..&amp;Key::TxnActive(version).encode());
+         while let Some((key, _)) = scan.next().transpose()? {
+<a href="#h0-4-3" id="h0-4-3" class="d">-            match Key::decode(key)? {
+</a><a href="#h0-4-4" id="h0-4-4" class="i">+            match Key::decode(&amp;key)? {
+</a>                 Key::TxnActive(id) =&gt; snapshot.invisible.insert(id),
+                 _ =&gt; return Err(Error::Internal(&quot;Unexpected MVCC key, wanted TxnActive&quot;.into())),
+             };
+<a href="#h0-5" id="h0-5" class="h">@@ -259,17 +244,8 @@ pub enum Mode {
+</a> }
+ 
+ impl Mode {
+<a href="#h0-5-3" id="h0-5-3" class="d">-    /// Asserts that the mode can mutate data, otherwise throws `Error::ReadOnly`.
+</a><a href="#h0-5-4" id="h0-5-4" class="d">-    fn assert_mutable(&amp;self) -&gt; Result&lt;(), Error&gt; {
+</a><a href="#h0-5-5" id="h0-5-5" class="d">-        if self.is_mutable() {
+</a><a href="#h0-5-6" id="h0-5-6" class="d">-            Ok(())
+</a><a href="#h0-5-7" id="h0-5-7" class="d">-        } else {
+</a><a href="#h0-5-8" id="h0-5-8" class="d">-            Err(Error::ReadOnly)
+</a><a href="#h0-5-9" id="h0-5-9" class="d">-        }
+</a><a href="#h0-5-10" id="h0-5-10" class="d">-    }
+</a><a href="#h0-5-11" id="h0-5-11" class="d">-
+</a>     /// Checks whether the transaction mode can mutate data.
+<a href="#h0-5-13" id="h0-5-13" class="d">-    fn is_mutable(&amp;self) -&gt; bool {
+</a><a href="#h0-5-14" id="h0-5-14" class="i">+    fn mutable(&amp;self) -&gt; bool {
+</a>         match self {
+             Self::ReadWrite =&gt; true,
+             Self::ReadOnly =&gt; false,
+<a href="#h0-6" id="h0-6" class="h">@@ -329,7 +305,7 @@ impl&lt;&#39;a, S: Storage&gt; Iterator for Scan&lt;&#39;a, S&gt; {
+</a>             match r {
+                 Ok((k, v)) =&gt; {
+                     self.mark_front = Bound::Excluded(k.clone());
+<a href="#h0-6-3" id="h0-6-3" class="d">-                    let (key, version) = match Key::decode(k).unwrap() {
+</a><a href="#h0-6-4" id="h0-6-4" class="i">+                    let (key, version) = match Key::decode(&amp;k).unwrap() {
+</a>                         Key::Record(key, version) =&gt; (key, version),
+                         _ =&gt; panic!(&quot;Not implemented&quot;),
+                     };
+<a href="#h0-7" id="h0-7" class="h">@@ -382,7 +358,7 @@ impl&lt;&#39;a, S: Storage&gt; DoubleEndedIterator for Scan&lt;&#39;a, S&gt; {
+</a>             match r {
+                 Ok((k, v)) =&gt; {
+                     self.mark_back = Bound::Excluded(k.clone());
+<a href="#h0-7-3" id="h0-7-3" class="d">-                    let (key, version) = match Key::decode(k).unwrap() {
+</a><a href="#h0-7-4" id="h0-7-4" class="i">+                    let (key, version) = match Key::decode(&amp;k).unwrap() {
+</a>                         Key::Record(key, version) =&gt; (key, version),
+                         _ =&gt; panic!(&quot;Not implemented&quot;),
+                     };
+<a href="#h0-8" id="h0-8" class="h">@@ -431,13 +407,13 @@ enum Key {
+</a> 
+ impl Key {
+     /// Decodes a key from a byte representation.
+<a href="#h0-8-3" id="h0-8-3" class="d">-    fn decode(key: Vec&lt;u8&gt;) -&gt; Result&lt;Self, Error&gt; {
+</a><a href="#h0-8-4" id="h0-8-4" class="d">-        let mut iter = key.into_iter();
+</a><a href="#h0-8-5" id="h0-8-5" class="i">+    fn decode(key: &amp;[u8]) -&gt; Result&lt;Self, Error&gt; {
+</a><a href="#h0-8-6" id="h0-8-6" class="i">+        let mut iter = key.iter();
+</a>         match iter.next() {
+             Some(0x01) =&gt; Ok(Key::TxnNext),
+             Some(0x02) =&gt; Ok(Key::TxnActive(Self::decode_u64(&amp;mut iter)?)),
+             Some(0x03) =&gt; Ok(Key::TxnSnapshot(Self::decode_u64(&amp;mut iter)?)),
+<a href="#h0-8-11" id="h0-8-11" class="d">-            Some(0x04) =&gt; Ok(Key::TxnUpdate(Self::decode_u64(&amp;mut iter)?, iter.collect())),
+</a><a href="#h0-8-12" id="h0-8-12" class="i">+            Some(0x04) =&gt; Ok(Key::TxnUpdate(Self::decode_u64(&amp;mut iter)?, iter.cloned().collect())),
+</a>             Some(0xff) =&gt; {
+                 Ok(Self::Record(Self::decode_bytes(&amp;mut iter)?, Self::decode_u64(&amp;mut iter)?))
+             }
+<a href="#h0-9" id="h0-9" class="h">@@ -446,7 +422,7 @@ impl Key {
+</a>     }
+ 
+     /// Decodes a byte vector from a byte representation. See encode_bytes() for format.
+<a href="#h0-9-3" id="h0-9-3" class="d">-    fn decode_bytes&lt;I: Iterator&lt;Item = u8&gt;&gt;(iter: &amp;mut I) -&gt; Result&lt;Vec&lt;u8&gt;, Error&gt; {
+</a><a href="#h0-9-4" id="h0-9-4" class="i">+    fn decode_bytes&lt;&#39;a, I: Iterator&lt;Item = &amp;&#39;a u8&gt;&gt;(iter: &amp;mut I) -&gt; Result&lt;Vec&lt;u8&gt;, Error&gt; {
+</a>         let mut bytes = Vec::new();
+         loop {
+             match iter.next() {
+<a href="#h0-10" id="h0-10" class="h">@@ -455,7 +431,7 @@ impl Key {
+</a>                     Some(0xff) =&gt; bytes.push(0x00), // 0x00 0xff is escape sequence for 0x00
+                     b =&gt; return Err(Error::Value(format!(&quot;Unexpected 0x00 encoding {:?}&quot;, b))),
+                 },
+<a href="#h0-10-3" id="h0-10-3" class="d">-                Some(b) =&gt; bytes.push(b),
+</a><a href="#h0-10-4" id="h0-10-4" class="i">+                Some(b) =&gt; bytes.push(*b),
+</a>                 None =&gt; return Err(Error::Value(&quot;Unexpected end of input&quot;.into())),
+             }
+         }
+<a href="#h0-11" id="h0-11" class="h">@@ -463,8 +439,8 @@ impl Key {
+</a>     }
+ 
+     /// Decodes a u64 from a byte representation.
+<a href="#h0-11-3" id="h0-11-3" class="d">-    fn decode_u64&lt;I: Iterator&lt;Item = u8&gt;&gt;(iter: &amp;mut I) -&gt; Result&lt;u64, Error&gt; {
+</a><a href="#h0-11-4" id="h0-11-4" class="d">-        let bytes = iter.take(8).collect::&lt;Vec&lt;u8&gt;&gt;();
+</a><a href="#h0-11-5" id="h0-11-5" class="i">+    fn decode_u64&lt;&#39;a, I: Iterator&lt;Item = &amp;&#39;a u8&gt;&gt;(iter: &amp;mut I) -&gt; Result&lt;u64, Error&gt; {
+</a><a href="#h0-11-6" id="h0-11-6" class="i">+        let bytes = iter.take(8).cloned().collect::&lt;Vec&lt;u8&gt;&gt;();
+</a>         if bytes.len() &lt; 8 {
+             return Err(Error::Value(format!(&quot;Unable to decode u64, got {} bytes&quot;, bytes.len())));
+         }
+<a href="#h0-12" id="h0-12" class="h">@@ -504,6 +480,14 @@ impl Key {
+</a>     fn encode_u64(n: u64) -&gt; Vec&lt;u8&gt; {
+         n.to_be_bytes().to_vec()
+     }
+<a href="#h0-12-3" id="h0-12-3" class="i">+
+</a><a href="#h0-12-4" id="h0-12-4" class="i">+    /// Returns the version for a key, if it has one.
+</a><a href="#h0-12-5" id="h0-12-5" class="i">+    fn version(&amp;self) -&gt; Result&lt;u64, Error&gt; {
+</a><a href="#h0-12-6" id="h0-12-6" class="i">+        match self {
+</a><a href="#h0-12-7" id="h0-12-7" class="i">+            Self::Record(_, version) =&gt; Ok(*version),
+</a><a href="#h0-12-8" id="h0-12-8" class="i">+            key =&gt; Err(Error::Value(format!(&quot;Unexpected MVCC key {:?}&quot;, key))),
+</a><a href="#h0-12-9" id="h0-12-9" class="i">+        }
+</a><a href="#h0-12-10" id="h0-12-10" class="i">+    }
+</a> }
+ 
+ #[cfg(test)]
+</pre>
+</div>
+</body>
+</html>

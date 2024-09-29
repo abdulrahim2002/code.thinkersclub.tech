@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>sql: moved some Table methods into executors - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/d8a2d3e90980c139b62575125b69f74788a8a112.html">d8a2d3e90980c139b62575125b69f74788a8a112</a>
+<b>parent</b> <a href="../commit/6f43e5bb170cfdc04a0da7519ae393ffc8eedb94.html">6f43e5bb170cfdc04a0da7519ae393ffc8eedb94</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Thu,  4 Jun 2020 20:10:25 +0200
+
+sql: moved some Table methods into executors
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/sql/execution/mutation.rs</a></td><td> | </td><td class="num">57</td><td><span class="i">+++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d">------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/sql/schema.rs</a></td><td> | </td><td class="num">48</td><td><span class="i">+</span><span class="d">-----------------------------------------------</span></td></tr>
+</table></pre><pre>2 files changed, 52 insertions(+), 53 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/sql/execution/mutation.rs.html">src/sql/execution/mutation.rs</a> b/<a href="../file/src/sql/execution/mutation.rs.html">src/sql/execution/mutation.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -1,8 +1,11 @@
+</a> use super::super::engine::Transaction;
+<a href="#h0-0-1" id="h0-0-1" class="d">-use super::super::types::Expression;
+</a><a href="#h0-0-2" id="h0-0-2" class="i">+use super::super::schema::Table;
+</a><a href="#h0-0-3" id="h0-0-3" class="i">+use super::super::types::{Expression, Row, Value};
+</a> use super::{Executor, ResultSet};
+ use crate::error::{Error, Result};
+ 
+<a href="#h0-0-7" id="h0-0-7" class="i">+use std::collections::{BTreeMap, HashMap, HashSet};
+</a><a href="#h0-0-8" id="h0-0-8" class="i">+
+</a> /// An INSERT executor
+ pub struct Insert {
+     table: String,
+<a href="#h0-1" id="h0-1" class="h">@@ -14,6 +17,43 @@ impl Insert {
+</a>     pub fn new(table: String, columns: Vec&lt;String&gt;, rows: Vec&lt;Vec&lt;Expression&gt;&gt;) -&gt; Box&lt;Self&gt; {
+         Box::new(Self { table, columns, rows })
+     }
+<a href="#h0-1-3" id="h0-1-3" class="i">+
+</a><a href="#h0-1-4" id="h0-1-4" class="i">+    // Builds a row from a set of column names and values, padding it with default values.
+</a><a href="#h0-1-5" id="h0-1-5" class="i">+    pub fn make_row(table: &amp;Table, columns: &amp;[String], values: Vec&lt;Value&gt;) -&gt; Result&lt;Row&gt; {
+</a><a href="#h0-1-6" id="h0-1-6" class="i">+        if columns.len() != values.len() {
+</a><a href="#h0-1-7" id="h0-1-7" class="i">+            return Err(Error::Value(&quot;Column and value counts do not match&quot;.into()));
+</a><a href="#h0-1-8" id="h0-1-8" class="i">+        }
+</a><a href="#h0-1-9" id="h0-1-9" class="i">+        let mut inputs = HashMap::new();
+</a><a href="#h0-1-10" id="h0-1-10" class="i">+        for (c, v) in columns.iter().zip(values.into_iter()) {
+</a><a href="#h0-1-11" id="h0-1-11" class="i">+            table.get_column(c)?;
+</a><a href="#h0-1-12" id="h0-1-12" class="i">+            if inputs.insert(c.clone(), v).is_some() {
+</a><a href="#h0-1-13" id="h0-1-13" class="i">+                return Err(Error::Value(format!(&quot;Column {} given multiple times&quot;, c)));
+</a><a href="#h0-1-14" id="h0-1-14" class="i">+            }
+</a><a href="#h0-1-15" id="h0-1-15" class="i">+        }
+</a><a href="#h0-1-16" id="h0-1-16" class="i">+        let mut row = Row::new();
+</a><a href="#h0-1-17" id="h0-1-17" class="i">+        for column in table.columns.iter() {
+</a><a href="#h0-1-18" id="h0-1-18" class="i">+            if let Some(value) = inputs.get(&amp;column.name) {
+</a><a href="#h0-1-19" id="h0-1-19" class="i">+                row.push(value.clone())
+</a><a href="#h0-1-20" id="h0-1-20" class="i">+            } else if let Some(value) = &amp;column.default {
+</a><a href="#h0-1-21" id="h0-1-21" class="i">+                row.push(value.clone())
+</a><a href="#h0-1-22" id="h0-1-22" class="i">+            } else {
+</a><a href="#h0-1-23" id="h0-1-23" class="i">+                return Err(Error::Value(format!(&quot;No value given for column {}&quot;, column.name)));
+</a><a href="#h0-1-24" id="h0-1-24" class="i">+            }
+</a><a href="#h0-1-25" id="h0-1-25" class="i">+        }
+</a><a href="#h0-1-26" id="h0-1-26" class="i">+        Ok(row)
+</a><a href="#h0-1-27" id="h0-1-27" class="i">+    }
+</a><a href="#h0-1-28" id="h0-1-28" class="i">+
+</a><a href="#h0-1-29" id="h0-1-29" class="i">+    /// Pads a row with default values where possible.
+</a><a href="#h0-1-30" id="h0-1-30" class="i">+    fn pad_row(table: &amp;Table, mut row: Row) -&gt; Result&lt;Row&gt; {
+</a><a href="#h0-1-31" id="h0-1-31" class="i">+        for column in table.columns.iter().skip(row.len()) {
+</a><a href="#h0-1-32" id="h0-1-32" class="i">+            if let Some(default) = &amp;column.default {
+</a><a href="#h0-1-33" id="h0-1-33" class="i">+                row.push(default.clone())
+</a><a href="#h0-1-34" id="h0-1-34" class="i">+            } else {
+</a><a href="#h0-1-35" id="h0-1-35" class="i">+                return Err(Error::Value(format!(&quot;No default value for column {}&quot;, column.name)));
+</a><a href="#h0-1-36" id="h0-1-36" class="i">+            }
+</a><a href="#h0-1-37" id="h0-1-37" class="i">+        }
+</a><a href="#h0-1-38" id="h0-1-38" class="i">+        Ok(row)
+</a><a href="#h0-1-39" id="h0-1-39" class="i">+    }
+</a> }
+ 
+ impl&lt;T: Transaction&gt; Executor&lt;T&gt; for Insert {
+<a href="#h0-2" id="h0-2" class="h">@@ -24,9 +64,9 @@ impl&lt;T: Transaction&gt; Executor&lt;T&gt; for Insert {
+</a>             let mut row =
+                 expressions.into_iter().map(|expr| expr.evaluate(None)).collect::&lt;Result&lt;_&gt;&gt;()?;
+             if self.columns.is_empty() {
+<a href="#h0-2-3" id="h0-2-3" class="d">-                row = table.pad_row(row)?;
+</a><a href="#h0-2-4" id="h0-2-4" class="i">+                row = Self::pad_row(&amp;table, row)?;
+</a>             } else {
+<a href="#h0-2-6" id="h0-2-6" class="d">-                row = table.make_row(&amp;self.columns, row)?;
+</a><a href="#h0-2-7" id="h0-2-7" class="i">+                row = Self::make_row(&amp;table, &amp;self.columns, row)?;
+</a>             }
+             txn.create(&amp;table.name, row)?;
+             count += 1;
+<a href="#h0-3" id="h0-3" class="h">@@ -35,8 +75,6 @@ impl&lt;T: Transaction&gt; Executor&lt;T&gt; for Insert {
+</a>     }
+ }
+ 
+<a href="#h0-3-3" id="h0-3-3" class="d">-use std::collections::{BTreeMap, HashSet};
+</a><a href="#h0-3-4" id="h0-3-4" class="d">-
+</a> /// An UPDATE executor
+ pub struct Update&lt;T: Transaction&gt; {
+     table: String,
+<a href="#h0-4" id="h0-4" class="h">@@ -53,6 +91,13 @@ impl&lt;T: Transaction&gt; Update&lt;T&gt; {
+</a>     ) -&gt; Box&lt;Self&gt; {
+         Box::new(Self { table, source, expressions })
+     }
+<a href="#h0-4-3" id="h0-4-3" class="i">+
+</a><a href="#h0-4-4" id="h0-4-4" class="i">+    /// Sets a named row field to a value
+</a><a href="#h0-4-5" id="h0-4-5" class="i">+    pub fn set_row_field(table: &amp;Table, row: &amp;mut Row, field: &amp;str, value: Value) -&gt; Result&lt;()&gt; {
+</a><a href="#h0-4-6" id="h0-4-6" class="i">+        *row.get_mut(table.get_column_index(field)?)
+</a><a href="#h0-4-7" id="h0-4-7" class="i">+            .ok_or_else(|| Error::Value(format!(&quot;Field {} not found in row&quot;, field)))? = value;
+</a><a href="#h0-4-8" id="h0-4-8" class="i">+        Ok(())
+</a><a href="#h0-4-9" id="h0-4-9" class="i">+    }
+</a> }
+ 
+ impl&lt;T: Transaction&gt; Executor&lt;T&gt; for Update&lt;T&gt; {
+<a href="#h0-5" id="h0-5" class="h">@@ -76,7 +121,7 @@ impl&lt;T: Transaction&gt; Executor&lt;T&gt; for Update&lt;T&gt; {
+</a>                     }
+                     let mut new = row.clone();
+                     for (field, expr) in &amp;self.expressions {
+<a href="#h0-5-3" id="h0-5-3" class="d">-                        table.set_row_field(&amp;mut new, field, expr.evaluate(Some(&amp;row))?)?;
+</a><a href="#h0-5-4" id="h0-5-4" class="i">+                        Self::set_row_field(&amp;table, &amp;mut new, field, expr.evaluate(Some(&amp;row))?)?;
+</a>                     }
+                     txn.update(&amp;table.name, &amp;id, new)?;
+                     updated.insert(id);
+<b>diff --git a/<a id="h1" href="../file/src/sql/schema.rs.html">src/sql/schema.rs</a> b/<a href="../file/src/sql/schema.rs.html">src/sql/schema.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -1,10 +1,9 @@
+</a> use super::engine::Transaction;
+ use super::parser::format_ident;
+<a href="#h1-0-2" id="h1-0-2" class="d">-use super::types::{DataType, Row, Value};
+</a><a href="#h1-0-3" id="h1-0-3" class="i">+use super::types::{DataType, Value};
+</a> use crate::error::{Error, Result};
+ 
+ use serde_derive::{Deserialize, Serialize};
+<a href="#h1-0-7" id="h1-0-7" class="d">-use std::collections::HashMap;
+</a> use std::fmt::{self, Display};
+ 
+ /// The catalog stores schema information
+<a href="#h1-1" id="h1-1" class="h">@@ -95,51 +94,6 @@ impl Table {
+</a>         .ok_or_else(|| Error::Value(&quot;Primary key value not found for row&quot;.into()))
+     }
+ 
+<a href="#h1-1-3" id="h1-1-3" class="d">-    // Builds a row from a set of values, optionally with a set of column names, padding
+</a><a href="#h1-1-4" id="h1-1-4" class="d">-    // it with default values as necessary.
+</a><a href="#h1-1-5" id="h1-1-5" class="d">-    pub fn make_row(&amp;self, columns: &amp;[String], values: Vec&lt;Value&gt;) -&gt; Result&lt;Row&gt; {
+</a><a href="#h1-1-6" id="h1-1-6" class="d">-        if columns.len() != values.len() {
+</a><a href="#h1-1-7" id="h1-1-7" class="d">-            return Err(Error::Value(&quot;Column and value counts do not match&quot;.into()));
+</a><a href="#h1-1-8" id="h1-1-8" class="d">-        }
+</a><a href="#h1-1-9" id="h1-1-9" class="d">-        let mut inputs = HashMap::new();
+</a><a href="#h1-1-10" id="h1-1-10" class="d">-        for (c, v) in columns.iter().zip(values.into_iter()) {
+</a><a href="#h1-1-11" id="h1-1-11" class="d">-            self.get_column(c)?;
+</a><a href="#h1-1-12" id="h1-1-12" class="d">-            if inputs.insert(c.clone(), v).is_some() {
+</a><a href="#h1-1-13" id="h1-1-13" class="d">-                return Err(Error::Value(format!(&quot;Column {} given multiple times&quot;, c)));
+</a><a href="#h1-1-14" id="h1-1-14" class="d">-            }
+</a><a href="#h1-1-15" id="h1-1-15" class="d">-        }
+</a><a href="#h1-1-16" id="h1-1-16" class="d">-        let mut row = Row::new();
+</a><a href="#h1-1-17" id="h1-1-17" class="d">-        for column in self.columns.iter() {
+</a><a href="#h1-1-18" id="h1-1-18" class="d">-            if let Some(value) = inputs.get(&amp;column.name) {
+</a><a href="#h1-1-19" id="h1-1-19" class="d">-                row.push(value.clone())
+</a><a href="#h1-1-20" id="h1-1-20" class="d">-            } else if let Some(value) = &amp;column.default {
+</a><a href="#h1-1-21" id="h1-1-21" class="d">-                row.push(value.clone())
+</a><a href="#h1-1-22" id="h1-1-22" class="d">-            } else {
+</a><a href="#h1-1-23" id="h1-1-23" class="d">-                return Err(Error::Value(format!(&quot;No value given for column {}&quot;, column.name)));
+</a><a href="#h1-1-24" id="h1-1-24" class="d">-            }
+</a><a href="#h1-1-25" id="h1-1-25" class="d">-        }
+</a><a href="#h1-1-26" id="h1-1-26" class="d">-        Ok(row)
+</a><a href="#h1-1-27" id="h1-1-27" class="d">-    }
+</a><a href="#h1-1-28" id="h1-1-28" class="d">-
+</a><a href="#h1-1-29" id="h1-1-29" class="d">-    /// Pads a row with default values where possible
+</a><a href="#h1-1-30" id="h1-1-30" class="d">-    pub fn pad_row(&amp;self, mut row: Row) -&gt; Result&lt;Row&gt; {
+</a><a href="#h1-1-31" id="h1-1-31" class="d">-        for column in self.columns.iter().skip(row.len()) {
+</a><a href="#h1-1-32" id="h1-1-32" class="d">-            if let Some(default) = &amp;column.default {
+</a><a href="#h1-1-33" id="h1-1-33" class="d">-                row.push(default.clone())
+</a><a href="#h1-1-34" id="h1-1-34" class="d">-            } else {
+</a><a href="#h1-1-35" id="h1-1-35" class="d">-                return Err(Error::Value(format!(&quot;No default value for column {}&quot;, column.name)));
+</a><a href="#h1-1-36" id="h1-1-36" class="d">-            }
+</a><a href="#h1-1-37" id="h1-1-37" class="d">-        }
+</a><a href="#h1-1-38" id="h1-1-38" class="d">-        Ok(row)
+</a><a href="#h1-1-39" id="h1-1-39" class="d">-    }
+</a><a href="#h1-1-40" id="h1-1-40" class="d">-
+</a><a href="#h1-1-41" id="h1-1-41" class="d">-    /// Sets a named row field to a value
+</a><a href="#h1-1-42" id="h1-1-42" class="d">-    pub fn set_row_field(&amp;self, row: &amp;mut Row, field: &amp;str, value: Value) -&gt; Result&lt;()&gt; {
+</a><a href="#h1-1-43" id="h1-1-43" class="d">-        *row.get_mut(self.get_column_index(field)?)
+</a><a href="#h1-1-44" id="h1-1-44" class="d">-            .ok_or_else(|| Error::Value(format!(&quot;Field {} not found in row&quot;, field)))? = value;
+</a><a href="#h1-1-45" id="h1-1-45" class="d">-        Ok(())
+</a><a href="#h1-1-46" id="h1-1-46" class="d">-    }
+</a><a href="#h1-1-47" id="h1-1-47" class="d">-
+</a>     /// Validates the table schema
+     pub fn validate(&amp;self, txn: &amp;mut dyn Transaction) -&gt; Result&lt;()&gt; {
+         if self.columns.is_empty() {
+</pre>
+</div>
+</body>
+</html>

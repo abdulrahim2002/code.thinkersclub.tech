@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>sql: remove noop projections in short circuit optimizer - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/b4a6830f3eb25e0fd9b3278106c1222a8d4cba96.html">b4a6830f3eb25e0fd9b3278106c1222a8d4cba96</a>
+<b>parent</b> <a href="../commit/e5ed654327b641999be77eed45e14faed5081d98.html">e5ed654327b641999be77eed45e14faed5081d98</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Sun, 14 Jul 2024 18:53:34 +0200
+
+sql: remove noop projections in short circuit optimizer
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/sql/planner/optimizer.rs</a></td><td> | </td><td class="num">11</td><td><span class="i">+++++++++++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/sql/testscripts/optimizer/short_circuit</a></td><td> | </td><td class="num">38</td><td><span class="i">++++++++++++++++++++++++++++++++++++++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/sql/testscripts/queries/aggregate</a></td><td> | </td><td class="num">88</td><td><span class="i">+++++++++++++++++++++++++++++++</span><span class="d">------------------------------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">src/sql/testscripts/queries/group_by</a></td><td> | </td><td class="num">59</td><td><span class="i">++++++++++++++++++++++++</span><span class="d">-----------------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h4">src/sql/testscripts/queries/having</a></td><td> | </td><td class="num">15</td><td><span class="i">++++++</span><span class="d">---------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h5">src/sql/testscripts/queries/order</a></td><td> | </td><td class="num">5</td><td><span class="i">++</span><span class="d">---</span></td></tr>
+</table></pre><pre>6 files changed, 115 insertions(+), 101 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/sql/planner/optimizer.rs.html">src/sql/planner/optimizer.rs</a> b/<a href="../file/src/sql/planner/optimizer.rs.html">src/sql/planner/optimizer.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -340,6 +340,17 @@ pub(super) fn short_circuit(node: Node) -&gt; Result&lt;Node&gt; {
+</a>             Node::Nothing
+         }
+ 
+<a href="#h0-0-3" id="h0-0-3" class="i">+        // Remove noop projections that simply pass through the source columns.
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+        Node::Projection { source, expressions, .. }
+</a><a href="#h0-0-5" id="h0-0-5" class="i">+            if source.size() == expressions.len()
+</a><a href="#h0-0-6" id="h0-0-6" class="i">+                &amp;&amp; expressions
+</a><a href="#h0-0-7" id="h0-0-7" class="i">+                    .iter()
+</a><a href="#h0-0-8" id="h0-0-8" class="i">+                    .enumerate()
+</a><a href="#h0-0-9" id="h0-0-9" class="i">+                    .all(|(i, e)| matches!(e, Expression::Field(f, _) if i == *f)) =&gt;
+</a><a href="#h0-0-10" id="h0-0-10" class="i">+        {
+</a><a href="#h0-0-11" id="h0-0-11" class="i">+            *source
+</a><a href="#h0-0-12" id="h0-0-12" class="i">+        }
+</a><a href="#h0-0-13" id="h0-0-13" class="i">+
+</a>         node =&gt; node,
+     };
+ 
+<b>diff --git a/<a id="h1" href="../file/src/sql/testscripts/optimizer/short_circuit.html">src/sql/testscripts/optimizer/short_circuit</a> b/<a href="../file/src/sql/testscripts/optimizer/short_circuit.html">src/sql/testscripts/optimizer/short_circuit</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -164,6 +164,44 @@ Initial:
+</a> Short circuit:
+    Nothing
+ 
+<a href="#h1-0-3" id="h1-0-3" class="i">+# Remove projections that simply pass through source columns. Aliased
+</a><a href="#h1-0-4" id="h1-0-4" class="i">+# column names are retained.
+</a><a href="#h1-0-5" id="h1-0-5" class="i">+[opt]&gt; SELECT id, value FROM test
+</a><a href="#h1-0-6" id="h1-0-6" class="i">+---
+</a><a href="#h1-0-7" id="h1-0-7" class="i">+Initial:
+</a><a href="#h1-0-8" id="h1-0-8" class="i">+   Projection: id, value
+</a><a href="#h1-0-9" id="h1-0-9" class="i">+   └─ Scan: test
+</a><a href="#h1-0-10" id="h1-0-10" class="i">+Short circuit:
+</a><a href="#h1-0-11" id="h1-0-11" class="i">+   Scan: test
+</a><a href="#h1-0-12" id="h1-0-12" class="i">+1, a
+</a><a href="#h1-0-13" id="h1-0-13" class="i">+2, b
+</a><a href="#h1-0-14" id="h1-0-14" class="i">+3, c
+</a><a href="#h1-0-15" id="h1-0-15" class="i">+
+</a><a href="#h1-0-16" id="h1-0-16" class="i">+[opt,header]&gt; SELECT id AS foo, value AS bar FROM test
+</a><a href="#h1-0-17" id="h1-0-17" class="i">+---
+</a><a href="#h1-0-18" id="h1-0-18" class="i">+Initial:
+</a><a href="#h1-0-19" id="h1-0-19" class="i">+   Projection: id, value
+</a><a href="#h1-0-20" id="h1-0-20" class="i">+   └─ Scan: test
+</a><a href="#h1-0-21" id="h1-0-21" class="i">+Short circuit:
+</a><a href="#h1-0-22" id="h1-0-22" class="i">+   Scan: test
+</a><a href="#h1-0-23" id="h1-0-23" class="i">+foo, bar
+</a><a href="#h1-0-24" id="h1-0-24" class="i">+1, a
+</a><a href="#h1-0-25" id="h1-0-25" class="i">+2, b
+</a><a href="#h1-0-26" id="h1-0-26" class="i">+3, c
+</a><a href="#h1-0-27" id="h1-0-27" class="i">+
+</a><a href="#h1-0-28" id="h1-0-28" class="i">+[opt]&gt; SELECT id, MIN(id), MAX(id) FROM test GROUP BY id
+</a><a href="#h1-0-29" id="h1-0-29" class="i">+---
+</a><a href="#h1-0-30" id="h1-0-30" class="i">+Initial:
+</a><a href="#h1-0-31" id="h1-0-31" class="i">+   Projection: test.id, #1, #2
+</a><a href="#h1-0-32" id="h1-0-32" class="i">+   └─ Aggregate: min(id), max(id) group by id
+</a><a href="#h1-0-33" id="h1-0-33" class="i">+      └─ Scan: test
+</a><a href="#h1-0-34" id="h1-0-34" class="i">+Short circuit:
+</a><a href="#h1-0-35" id="h1-0-35" class="i">+   Aggregate: min(id), max(id) group by id
+</a><a href="#h1-0-36" id="h1-0-36" class="i">+   └─ Scan: test
+</a><a href="#h1-0-37" id="h1-0-37" class="i">+1, 1, 1
+</a><a href="#h1-0-38" id="h1-0-38" class="i">+2, 2, 2
+</a><a href="#h1-0-39" id="h1-0-39" class="i">+3, 3, 3
+</a><a href="#h1-0-40" id="h1-0-40" class="i">+
+</a> # Constant folding happens before short-circuiting.
+ [opt]&gt; SELECT * FROM test WHERE 1 != 1 OR 0 &gt; 3 AND NOT NULL
+ ---
+<b>diff --git a/<a id="h2" href="../file/src/sql/testscripts/queries/aggregate.html">src/sql/testscripts/queries/aggregate</a> b/<a href="../file/src/sql/testscripts/queries/aggregate.html">src/sql/testscripts/queries/aggregate</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -17,64 +17,54 @@
+</a> ok
+ 
+ # COUNT(*) returns the row count.
+<a href="#h2-0-3" id="h2-0-3" class="d">-# TODO: revisit the plan here. This can be eliminated by short-circuiting optimizer.
+</a> [plan]&gt; SELECT COUNT(*) FROM test
+ ---
+<a href="#h2-0-6" id="h2-0-6" class="d">-Projection: #0
+</a><a href="#h2-0-7" id="h2-0-7" class="d">-└─ Aggregate: count(TRUE)
+</a><a href="#h2-0-8" id="h2-0-8" class="d">-   └─ Scan: test
+</a><a href="#h2-0-9" id="h2-0-9" class="i">+Aggregate: count(TRUE)
+</a><a href="#h2-0-10" id="h2-0-10" class="i">+└─ Scan: test
+</a> 6
+ 
+ # COUNT works on constant values.
+<a href="#h2-0-14" id="h2-0-14" class="d">-# TODO: revisit the plan here. This can be eliminated by short-circuiting optimizer.
+</a> [plan,header]&gt; SELECT COUNT(NULL), COUNT(TRUE), COUNT(1), COUNT(3.14), COUNT(NAN), COUNT(&#39;&#39;)
+ ---
+<a href="#h2-0-17" id="h2-0-17" class="d">-Projection: #0, #1, #2, #3, #4, #5
+</a><a href="#h2-0-18" id="h2-0-18" class="d">-└─ Aggregate: count(NULL), count(TRUE), count(1), count(3.14), count(NaN), count()
+</a><a href="#h2-0-19" id="h2-0-19" class="d">-   └─ Values: blank row
+</a><a href="#h2-0-20" id="h2-0-20" class="i">+Aggregate: count(NULL), count(TRUE), count(1), count(3.14), count(NaN), count()
+</a><a href="#h2-0-21" id="h2-0-21" class="i">+└─ Values: blank row
+</a> , , , , , 
+ 0, 1, 1, 1, 1, 1
+ 
+ # COUNT works on no rows.
+ [plan]&gt; SELECT COUNT(id), COUNT(&quot;bool&quot;), COUNT(&quot;float&quot;), COUNT(&quot;string&quot;) FROM test WHERE false
+ ---
+<a href="#h2-0-28" id="h2-0-28" class="d">-Projection: #0, #1, #2, #3
+</a><a href="#h2-0-29" id="h2-0-29" class="d">-└─ Aggregate: count(id), count(bool), count(float), count(string)
+</a><a href="#h2-0-30" id="h2-0-30" class="d">-   └─ Nothing
+</a><a href="#h2-0-31" id="h2-0-31" class="i">+Aggregate: count(id), count(bool), count(float), count(string)
+</a><a href="#h2-0-32" id="h2-0-32" class="i">+└─ Nothing
+</a> 0, 0, 0, 0
+ 
+ # COUNT returns number of non-NULL values.
+<a href="#h2-0-36" id="h2-0-36" class="d">-# TODO: revisit the plan here. This can be eliminated by short-circuiting optimizer.
+</a> [plan,header]&gt; SELECT COUNT(id), COUNT(&quot;bool&quot;), COUNT(&quot;float&quot;), COUNT(&quot;string&quot;) FROM test
+ ---
+<a href="#h2-0-39" id="h2-0-39" class="d">-Projection: #0, #1, #2, #3
+</a><a href="#h2-0-40" id="h2-0-40" class="d">-└─ Aggregate: count(id), count(bool), count(float), count(string)
+</a><a href="#h2-0-41" id="h2-0-41" class="d">-   └─ Scan: test
+</a><a href="#h2-0-42" id="h2-0-42" class="i">+Aggregate: count(id), count(bool), count(float), count(string)
+</a><a href="#h2-0-43" id="h2-0-43" class="i">+└─ Scan: test
+</a> , , , 
+ 6, 3, 5, 4
+ 
+ # MAX works on constant values.
+ [plan]&gt; SELECT MAX(NULL), MAX(TRUE), MAX(1), MAX(3.14), MAX(NAN), MAX(&#39;foo&#39;) FROM test
+ ---
+<a href="#h2-0-50" id="h2-0-50" class="d">-Projection: #0, #1, #2, #3, #4, #5
+</a><a href="#h2-0-51" id="h2-0-51" class="d">-└─ Aggregate: max(NULL), max(TRUE), max(1), max(3.14), max(NaN), max(foo)
+</a><a href="#h2-0-52" id="h2-0-52" class="d">-   └─ Scan: test
+</a><a href="#h2-0-53" id="h2-0-53" class="i">+Aggregate: max(NULL), max(TRUE), max(1), max(3.14), max(NaN), max(foo)
+</a><a href="#h2-0-54" id="h2-0-54" class="i">+└─ Scan: test
+</a> NULL, TRUE, 1, 3.14, NaN, foo
+ 
+ # MAX works on no rows.
+ [plan]&gt; SELECT MAX(id), MAX(&quot;bool&quot;), MAX(&quot;float&quot;), MAX(&quot;string&quot;) FROM test WHERE false
+ ---
+<a href="#h2-0-60" id="h2-0-60" class="d">-Projection: #0, #1, #2, #3
+</a><a href="#h2-0-61" id="h2-0-61" class="d">-└─ Aggregate: max(id), max(bool), max(float), max(string)
+</a><a href="#h2-0-62" id="h2-0-62" class="d">-   └─ Nothing
+</a><a href="#h2-0-63" id="h2-0-63" class="i">+Aggregate: max(id), max(bool), max(float), max(string)
+</a><a href="#h2-0-64" id="h2-0-64" class="i">+└─ Nothing
+</a> NULL, NULL, NULL, NULL
+ 
+ # MAX returns the max value, or NULL if any value is NULL.
+ [plan]&gt; SELECT MAX(id) FROM test
+ ---
+<a href="#h2-0-70" id="h2-0-70" class="d">-Projection: #0
+</a><a href="#h2-0-71" id="h2-0-71" class="d">-└─ Aggregate: max(id)
+</a><a href="#h2-0-72" id="h2-0-72" class="d">-   └─ Scan: test
+</a><a href="#h2-0-73" id="h2-0-73" class="i">+Aggregate: max(id)
+</a><a href="#h2-0-74" id="h2-0-74" class="i">+└─ Scan: test
+</a> 5
+ 
+ &gt; SELECT MAX(&quot;bool&quot;) FROM test
+<a href="#h2-1" id="h2-1" class="h">@@ -98,25 +88,22 @@ inf
+</a> # MIN works on constant values.
+ [plan]&gt; SELECT MIN(NULL), MIN(TRUE), MIN(1), MIN(3.14), MIN(NAN), MIN(&#39;foo&#39;) FROM test
+ ---
+<a href="#h2-1-3" id="h2-1-3" class="d">-Projection: #0, #1, #2, #3, #4, #5
+</a><a href="#h2-1-4" id="h2-1-4" class="d">-└─ Aggregate: min(NULL), min(TRUE), min(1), min(3.14), min(NaN), min(foo)
+</a><a href="#h2-1-5" id="h2-1-5" class="d">-   └─ Scan: test
+</a><a href="#h2-1-6" id="h2-1-6" class="i">+Aggregate: min(NULL), min(TRUE), min(1), min(3.14), min(NaN), min(foo)
+</a><a href="#h2-1-7" id="h2-1-7" class="i">+└─ Scan: test
+</a> NULL, TRUE, 1, 3.14, NaN, foo
+ 
+ # MIN works on no rows.
+ [plan]&gt; SELECT MIN(id), MIN(&quot;bool&quot;), MIN(&quot;float&quot;), MIN(&quot;string&quot;) FROM test WHERE false
+ ---
+<a href="#h2-1-13" id="h2-1-13" class="d">-Projection: #0, #1, #2, #3
+</a><a href="#h2-1-14" id="h2-1-14" class="d">-└─ Aggregate: min(id), min(bool), min(float), min(string)
+</a><a href="#h2-1-15" id="h2-1-15" class="d">-   └─ Nothing
+</a><a href="#h2-1-16" id="h2-1-16" class="i">+Aggregate: min(id), min(bool), min(float), min(string)
+</a><a href="#h2-1-17" id="h2-1-17" class="i">+└─ Nothing
+</a> NULL, NULL, NULL, NULL
+ 
+ # MIN returns the min value, or NULL if any value is NULL.
+ [plan]&gt; SELECT MIN(id) FROM test
+ ---
+<a href="#h2-1-23" id="h2-1-23" class="d">-Projection: #0
+</a><a href="#h2-1-24" id="h2-1-24" class="d">-└─ Aggregate: min(id)
+</a><a href="#h2-1-25" id="h2-1-25" class="d">-   └─ Scan: test
+</a><a href="#h2-1-26" id="h2-1-26" class="i">+Aggregate: min(id)
+</a><a href="#h2-1-27" id="h2-1-27" class="i">+└─ Scan: test
+</a> 0
+ 
+ &gt; SELECT MIN(&quot;bool&quot;) FROM test
+<a href="#h2-2" id="h2-2" class="h">@@ -138,9 +125,8 @@ FALSE
+</a> # SUM works on constant values, but only numbers.
+ [plan]&gt; SELECT SUM(NULL), SUM(1), SUM(3.14), SUM(NAN) FROM test
+ ---
+<a href="#h2-2-3" id="h2-2-3" class="d">-Projection: #0, #1, #2, #3
+</a><a href="#h2-2-4" id="h2-2-4" class="d">-└─ Aggregate: sum(NULL), sum(1), sum(3.14), sum(NaN)
+</a><a href="#h2-2-5" id="h2-2-5" class="d">-   └─ Scan: test
+</a><a href="#h2-2-6" id="h2-2-6" class="i">+Aggregate: sum(NULL), sum(1), sum(3.14), sum(NaN)
+</a><a href="#h2-2-7" id="h2-2-7" class="i">+└─ Scan: test
+</a> NULL, 6, 18.84, NaN
+ 
+ !&gt; SELECT SUM(TRUE)
+<a href="#h2-3" id="h2-3" class="h">@@ -152,18 +138,16 @@ Error: invalid input: can&#39;t add 0 and foo
+</a> # SUM works on no rows.
+ [plan]&gt; SELECT SUM(id), SUM(&quot;bool&quot;), SUM(&quot;float&quot;), SUM(&quot;string&quot;) FROM test WHERE false
+ ---
+<a href="#h2-3-3" id="h2-3-3" class="d">-Projection: #0, #1, #2, #3
+</a><a href="#h2-3-4" id="h2-3-4" class="d">-└─ Aggregate: sum(id), sum(bool), sum(float), sum(string)
+</a><a href="#h2-3-5" id="h2-3-5" class="d">-   └─ Nothing
+</a><a href="#h2-3-6" id="h2-3-6" class="i">+Aggregate: sum(id), sum(bool), sum(float), sum(string)
+</a><a href="#h2-3-7" id="h2-3-7" class="i">+└─ Nothing
+</a> NULL, NULL, NULL, NULL
+ 
+ # SUM returns the sum, or NULL if any value is NULL. Errors
+ # on booleans or strings.
+ [plan]&gt; SELECT SUM(id) FROM test
+ ---
+<a href="#h2-3-14" id="h2-3-14" class="d">-Projection: #0
+</a><a href="#h2-3-15" id="h2-3-15" class="d">-└─ Aggregate: sum(id)
+</a><a href="#h2-3-16" id="h2-3-16" class="d">-   └─ Scan: test
+</a><a href="#h2-3-17" id="h2-3-17" class="i">+Aggregate: sum(id)
+</a><a href="#h2-3-18" id="h2-3-18" class="i">+└─ Scan: test
+</a> 15
+ 
+ !&gt; SELECT SUM(&quot;bool&quot;) FROM test
+<a href="#h2-4" id="h2-4" class="h">@@ -187,9 +171,8 @@ Error: invalid input: can&#39;t add 0 and
+</a> # AVG works on constant values, but only numbers.
+ [plan]&gt; SELECT AVG(NULL), AVG(1), AVG(3.14), AVG(NAN) FROM test
+ ---
+<a href="#h2-4-3" id="h2-4-3" class="d">-Projection: #0, #1, #2, #3
+</a><a href="#h2-4-4" id="h2-4-4" class="d">-└─ Aggregate: avg(NULL), avg(1), avg(3.14), avg(NaN)
+</a><a href="#h2-4-5" id="h2-4-5" class="d">-   └─ Scan: test
+</a><a href="#h2-4-6" id="h2-4-6" class="i">+Aggregate: avg(NULL), avg(1), avg(3.14), avg(NaN)
+</a><a href="#h2-4-7" id="h2-4-7" class="i">+└─ Scan: test
+</a> NULL, 1, 3.14, NaN
+ 
+ !&gt; SELECT AVG(TRUE)
+<a href="#h2-5" id="h2-5" class="h">@@ -201,18 +184,16 @@ Error: invalid input: can&#39;t add 0 and foo
+</a> # AVG works on no rows.
+ [plan]&gt; SELECT AVG(id), AVG(&quot;bool&quot;), AVG(&quot;float&quot;), AVG(&quot;string&quot;) FROM test WHERE false
+ ---
+<a href="#h2-5-3" id="h2-5-3" class="d">-Projection: #0, #1, #2, #3
+</a><a href="#h2-5-4" id="h2-5-4" class="d">-└─ Aggregate: avg(id), avg(bool), avg(float), avg(string)
+</a><a href="#h2-5-5" id="h2-5-5" class="d">-   └─ Nothing
+</a><a href="#h2-5-6" id="h2-5-6" class="i">+Aggregate: avg(id), avg(bool), avg(float), avg(string)
+</a><a href="#h2-5-7" id="h2-5-7" class="i">+└─ Nothing
+</a> NULL, NULL, NULL, NULL
+ 
+ # AVG returns the average, or NULL if any value is NULL. Errors
+ # on booleans or strings.
+ [plan]&gt; SELECT AVG(id) FROM test
+ ---
+<a href="#h2-5-14" id="h2-5-14" class="d">-Projection: #0
+</a><a href="#h2-5-15" id="h2-5-15" class="d">-└─ Aggregate: avg(id)
+</a><a href="#h2-5-16" id="h2-5-16" class="d">-   └─ Scan: test
+</a><a href="#h2-5-17" id="h2-5-17" class="i">+Aggregate: avg(id)
+</a><a href="#h2-5-18" id="h2-5-18" class="i">+└─ Scan: test
+</a> 2
+ 
+ !&gt; SELECT AVG(&quot;bool&quot;) FROM test
+<a href="#h2-6" id="h2-6" class="h">@@ -236,9 +217,8 @@ Error: invalid input: can&#39;t add 0 and
+</a> # Constant aggregates can be used with rows.
+ [plan]&gt; SELECT COUNT(1), MIN(1), MAX(1), SUM(1), AVG(1) FROM test
+ ---
+<a href="#h2-6-3" id="h2-6-3" class="d">-Projection: #0, #1, #2, #3, #4
+</a><a href="#h2-6-4" id="h2-6-4" class="d">-└─ Aggregate: count(1), min(1), max(1), sum(1), avg(1)
+</a><a href="#h2-6-5" id="h2-6-5" class="d">-   └─ Scan: test
+</a><a href="#h2-6-6" id="h2-6-6" class="i">+Aggregate: count(1), min(1), max(1), sum(1), avg(1)
+</a><a href="#h2-6-7" id="h2-6-7" class="i">+└─ Scan: test
+</a> 6, 1, 1, 6, 1
+ 
+ # Constant aggregates can&#39;t be used with value rows.
+<b>diff --git a/<a id="h3" href="../file/src/sql/testscripts/queries/group_by.html">src/sql/testscripts/queries/group_by</a> b/<a href="../file/src/sql/testscripts/queries/group_by.html">src/sql/testscripts/queries/group_by</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -31,9 +31,8 @@ Projection: #1, #2, #3, #4, #5
+</a> # Simple GROUP BY, including NULL group.
+ [plan]&gt; SELECT &quot;group&quot;, COUNT(*) FROM test GROUP BY &quot;group&quot;
+ ---
+<a href="#h3-0-3" id="h3-0-3" class="d">-Projection: test.group, #1
+</a><a href="#h3-0-4" id="h3-0-4" class="d">-└─ Aggregate: count(TRUE) group by group
+</a><a href="#h3-0-5" id="h3-0-5" class="d">-   └─ Scan: test
+</a><a href="#h3-0-6" id="h3-0-6" class="i">+Aggregate: count(TRUE) group by group
+</a><a href="#h3-0-7" id="h3-0-7" class="i">+└─ Scan: test
+</a> NULL, 1
+ a, 3
+ b, 3
+<a href="#h3-1" id="h3-1" class="h">@@ -41,9 +40,8 @@ b, 3
+</a> [plan]&gt; SELECT &quot;group&quot;, COUNT(*), MIN(&quot;bool&quot;), MAX(&quot;string&quot;), SUM(&quot;int&quot;), AVG(&quot;float&quot;) \
+     FROM test GROUP BY &quot;group&quot;
+ ---
+<a href="#h3-1-3" id="h3-1-3" class="d">-Projection: test.group, #1, #2, #3, #4, #5
+</a><a href="#h3-1-4" id="h3-1-4" class="d">-└─ Aggregate: count(TRUE), min(bool), max(string), sum(int), avg(float) group by group
+</a><a href="#h3-1-5" id="h3-1-5" class="d">-   └─ Scan: test
+</a><a href="#h3-1-6" id="h3-1-6" class="i">+Aggregate: count(TRUE), min(bool), max(string), sum(int), avg(float) group by group
+</a><a href="#h3-1-7" id="h3-1-7" class="i">+└─ Scan: test
+</a> NULL, 1, NULL, NULL, NULL, NULL
+ a, 3, FALSE, AB, 9, NaN
+ b, 3, FALSE, 👋, 41, NaN
+<a href="#h3-2" id="h3-2" class="h">@@ -51,9 +49,8 @@ b, 3, FALSE, 👋, 41, NaN
+</a> # GROUP BY works on booleans.
+ [plan]&gt; SELECT &quot;bool&quot;, COUNT(*) FROM test GROUP BY &quot;bool&quot;
+ ---
+<a href="#h3-2-3" id="h3-2-3" class="d">-Projection: test.bool, #1
+</a><a href="#h3-2-4" id="h3-2-4" class="d">-└─ Aggregate: count(TRUE) group by bool
+</a><a href="#h3-2-5" id="h3-2-5" class="d">-   └─ Scan: test
+</a><a href="#h3-2-6" id="h3-2-6" class="i">+Aggregate: count(TRUE) group by bool
+</a><a href="#h3-2-7" id="h3-2-7" class="i">+└─ Scan: test
+</a> NULL, 1
+ FALSE, 3
+ TRUE, 3
+<a href="#h3-3" id="h3-3" class="h">@@ -61,9 +58,8 @@ TRUE, 3
+</a> # GROUP BY works on integers.
+ [plan]&gt; SELECT &quot;int&quot;, COUNT(*) FROM test GROUP BY &quot;int&quot;
+ ---
+<a href="#h3-3-3" id="h3-3-3" class="d">-Projection: test.int, #1
+</a><a href="#h3-3-4" id="h3-3-4" class="d">-└─ Aggregate: count(TRUE) group by int
+</a><a href="#h3-3-5" id="h3-3-5" class="d">-   └─ Scan: test
+</a><a href="#h3-3-6" id="h3-3-6" class="i">+Aggregate: count(TRUE) group by int
+</a><a href="#h3-3-7" id="h3-3-7" class="i">+└─ Scan: test
+</a> NULL, 1
+ -1, 2
+ 0, 1
+<a href="#h3-4" id="h3-4" class="h">@@ -74,9 +70,8 @@ NULL, 1
+</a> # GROUP BY works with floats, including a NAN group and -0.0 and 0.0 being equal.
+ [plan]&gt; SELECT &quot;float&quot;, COUNT(*) FROM test GROUP BY &quot;float&quot;
+ ---
+<a href="#h3-4-3" id="h3-4-3" class="d">-Projection: test.float, #1
+</a><a href="#h3-4-4" id="h3-4-4" class="d">-└─ Aggregate: count(TRUE) group by float
+</a><a href="#h3-4-5" id="h3-4-5" class="d">-   └─ Scan: test
+</a><a href="#h3-4-6" id="h3-4-6" class="i">+Aggregate: count(TRUE) group by float
+</a><a href="#h3-4-7" id="h3-4-7" class="i">+└─ Scan: test
+</a> NULL, 1
+ 0, 2
+ 3.14, 1
+<a href="#h3-5" id="h3-5" class="h">@@ -86,9 +81,8 @@ NaN, 2
+</a> # GROUP BY works on strings.
+ [plan]&gt; SELECT &quot;string&quot;, COUNT(*) FROM test GROUP BY &quot;string&quot;
+ ---
+<a href="#h3-5-3" id="h3-5-3" class="d">-Projection: test.string, #1
+</a><a href="#h3-5-4" id="h3-5-4" class="d">-└─ Aggregate: count(TRUE) group by string
+</a><a href="#h3-5-5" id="h3-5-5" class="d">-   └─ Scan: test
+</a><a href="#h3-5-6" id="h3-5-6" class="i">+Aggregate: count(TRUE) group by string
+</a><a href="#h3-5-7" id="h3-5-7" class="i">+└─ Scan: test
+</a> NULL, 1
+ , 2
+ AB, 1
+<a href="#h3-6" id="h3-6" class="h">@@ -108,9 +102,8 @@ Projection: #1
+</a> # GROUP BY works when there is no aggregate function.
+ [plan]&gt; SELECT &quot;group&quot; FROM test GROUP BY &quot;group&quot;
+ ---
+<a href="#h3-6-3" id="h3-6-3" class="d">-Projection: test.group
+</a><a href="#h3-6-4" id="h3-6-4" class="d">-└─ Aggregate:  group by group
+</a><a href="#h3-6-5" id="h3-6-5" class="d">-   └─ Scan: test
+</a><a href="#h3-6-6" id="h3-6-6" class="i">+Aggregate:  group by group
+</a><a href="#h3-6-7" id="h3-6-7" class="i">+└─ Scan: test
+</a> NULL
+ a
+ b
+<a href="#h3-7" id="h3-7" class="h">@@ -122,9 +115,8 @@ Error: invalid input: unknown field g
+</a> 
+ [plan]&gt; SELECT &quot;group&quot;, COUNT(*) FROM test AS t GROUP BY t.&quot;group&quot;
+ ---
+<a href="#h3-7-3" id="h3-7-3" class="d">-Projection: group, #1
+</a><a href="#h3-7-4" id="h3-7-4" class="d">-└─ Aggregate: count(TRUE) group by t.group
+</a><a href="#h3-7-5" id="h3-7-5" class="d">-   └─ Scan: test as t
+</a><a href="#h3-7-6" id="h3-7-6" class="i">+Aggregate: count(TRUE) group by t.group
+</a><a href="#h3-7-7" id="h3-7-7" class="i">+└─ Scan: test as t
+</a> NULL, 1
+ a, 3
+ b, 3
+<a href="#h3-8" id="h3-8" class="h">@@ -164,9 +156,8 @@ Projection: #1
+</a> # GROUP BY can use an expression also used in the SELECT.
+ [plan]&gt; SELECT id % 2, COUNT(*) FROM test GROUP BY id % 2
+ ---
+<a href="#h3-8-3" id="h3-8-3" class="d">-Projection: #0, #1
+</a><a href="#h3-8-4" id="h3-8-4" class="d">-└─ Aggregate: count(TRUE) group by id % 2
+</a><a href="#h3-8-5" id="h3-8-5" class="d">-   └─ Scan: test
+</a><a href="#h3-8-6" id="h3-8-6" class="i">+Aggregate: count(TRUE) group by id % 2
+</a><a href="#h3-8-7" id="h3-8-7" class="i">+└─ Scan: test
+</a> 0, 4
+ 1, 3
+ 
+<a href="#h3-9" id="h3-9" class="h">@@ -183,9 +174,8 @@ Error: invalid input: unknown function min
+</a> # GROUP BY works with multiple groups.
+ [plan]&gt; SELECT &quot;group&quot;, &quot;bool&quot;, COUNT(*) FROM test GROUP BY &quot;group&quot;, &quot;bool&quot;
+ ---
+<a href="#h3-9-3" id="h3-9-3" class="d">-Projection: test.group, test.bool, #2
+</a><a href="#h3-9-4" id="h3-9-4" class="d">-└─ Aggregate: count(TRUE) group by group, bool
+</a><a href="#h3-9-5" id="h3-9-5" class="d">-   └─ Scan: test
+</a><a href="#h3-9-6" id="h3-9-6" class="i">+Aggregate: count(TRUE) group by group, bool
+</a><a href="#h3-9-7" id="h3-9-7" class="i">+└─ Scan: test
+</a> NULL, NULL, 1
+ a, FALSE, 1
+ a, TRUE, 2
+<a href="#h3-10" id="h3-10" class="h">@@ -195,9 +185,8 @@ b, TRUE, 1
+</a> # GROUP BY works with joins.
+ [plan]&gt; SELECT t.id % 2, COUNT(*) FROM test t JOIN other o ON t.id % 2 = o.id GROUP BY t.id % 2
+ ---
+<a href="#h3-10-3" id="h3-10-3" class="d">-Projection: #0, #1
+</a><a href="#h3-10-4" id="h3-10-4" class="d">-└─ Aggregate: count(TRUE) group by t.id % 2
+</a><a href="#h3-10-5" id="h3-10-5" class="d">-   └─ NestedLoopJoin: inner on t.id % 2 = o.id
+</a><a href="#h3-10-6" id="h3-10-6" class="d">-      ├─ Scan: test as t
+</a><a href="#h3-10-7" id="h3-10-7" class="d">-      └─ Scan: other as o
+</a><a href="#h3-10-8" id="h3-10-8" class="i">+Aggregate: count(TRUE) group by t.id % 2
+</a><a href="#h3-10-9" id="h3-10-9" class="i">+└─ NestedLoopJoin: inner on t.id % 2 = o.id
+</a><a href="#h3-10-10" id="h3-10-10" class="i">+   ├─ Scan: test as t
+</a><a href="#h3-10-11" id="h3-10-11" class="i">+   └─ Scan: other as o
+</a> 1, 3
+<b>diff --git a/<a id="h4" href="../file/src/sql/testscripts/queries/having.html">src/sql/testscripts/queries/having</a> b/<a href="../file/src/sql/testscripts/queries/having.html">src/sql/testscripts/queries/having</a></b>
+<a href="#h4-0" id="h4-0" class="h">@@ -52,9 +52,8 @@ b, 42
+</a> ---
+ Projection: #0
+ └─ Filter: #1 &gt; 10
+<a href="#h4-0-3" id="h4-0-3" class="d">-   └─ Projection: test.group, #1
+</a><a href="#h4-0-4" id="h4-0-4" class="d">-      └─ Aggregate: max(int) group by group
+</a><a href="#h4-0-5" id="h4-0-5" class="d">-         └─ Scan: test
+</a><a href="#h4-0-6" id="h4-0-6" class="i">+   └─ Aggregate: max(int) group by group
+</a><a href="#h4-0-7" id="h4-0-7" class="i">+      └─ Scan: test
+</a> b
+ 
+ [plan]&gt; SELECT &quot;group&quot;, MAX(&quot;int&quot;) FROM test GROUP BY &quot;group&quot; HAVING MAX(&quot;int&quot;) - MIN(&quot;int&quot;) &gt; 10
+<a href="#h4-1" id="h4-1" class="h">@@ -70,9 +69,8 @@ b, 42
+</a> [plan]&gt; SELECT &quot;group&quot;, MAX(&quot;int&quot;) AS m FROM test GROUP BY &quot;group&quot; HAVING m &gt; 10
+ ---
+ Filter: m &gt; 10
+<a href="#h4-1-3" id="h4-1-3" class="d">-└─ Projection: test.group, #1
+</a><a href="#h4-1-4" id="h4-1-4" class="d">-   └─ Aggregate: max(int) group by group
+</a><a href="#h4-1-5" id="h4-1-5" class="d">-      └─ Scan: test
+</a><a href="#h4-1-6" id="h4-1-6" class="i">+└─ Aggregate: max(int) group by group
+</a><a href="#h4-1-7" id="h4-1-7" class="i">+   └─ Scan: test
+</a> b, 42
+ 
+ # Having works with an aggregate function not in the SELECT clause.
+<a href="#h4-2" id="h4-2" class="h">@@ -80,9 +78,8 @@ b, 42
+</a> ---
+ Projection: #0, #1
+ └─ Filter: #2 &gt; 10
+<a href="#h4-2-3" id="h4-2-3" class="d">-   └─ Projection: test.group, #1, #2
+</a><a href="#h4-2-4" id="h4-2-4" class="d">-      └─ Aggregate: count(TRUE), max(int) group by group
+</a><a href="#h4-2-5" id="h4-2-5" class="d">-         └─ Scan: test
+</a><a href="#h4-2-6" id="h4-2-6" class="i">+   └─ Aggregate: count(TRUE), max(int) group by group
+</a><a href="#h4-2-7" id="h4-2-7" class="i">+      └─ Scan: test
+</a> b, 3
+ 
+ # Having works with compound expressions.
+<b>diff --git a/<a id="h5" href="../file/src/sql/testscripts/queries/order.html">src/sql/testscripts/queries/order</a> b/<a href="../file/src/sql/testscripts/queries/order.html">src/sql/testscripts/queries/order</a></b>
+<a href="#h5-0" id="h5-0" class="h">@@ -485,9 +485,8 @@ FALSE, -1
+</a> ---
+ Projection: #0
+ └─ Order: #1 desc
+<a href="#h5-0-3" id="h5-0-3" class="d">-   └─ Projection: test.bool, #1
+</a><a href="#h5-0-4" id="h5-0-4" class="d">-      └─ Aggregate: max(int) group by bool
+</a><a href="#h5-0-5" id="h5-0-5" class="d">-         └─ Scan: test
+</a><a href="#h5-0-6" id="h5-0-6" class="i">+   └─ Aggregate: max(int) group by bool
+</a><a href="#h5-0-7" id="h5-0-7" class="i">+      └─ Scan: test
+</a> NULL
+ TRUE
+ FALSE
+</pre>
+</div>
+</body>
+</html>

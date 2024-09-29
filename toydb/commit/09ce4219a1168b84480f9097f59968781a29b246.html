@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>remove a couple of buffered iterators - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/09ce4219a1168b84480f9097f59968781a29b246.html">09ce4219a1168b84480f9097f59968781a29b246</a>
+<b>parent</b> <a href="../commit/8b3b09e424af6fe66d01d7c5f8addec555fc44a2.html">8b3b09e424af6fe66d01d7c5f8addec555fc44a2</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Sun, 24 May 2020 10:58:34 +0200
+
+remove a couple of buffered iterators
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/sql/engine/kv.rs</a></td><td> | </td><td class="num">69</td><td><span class="i">+++++++++++++++++++++++++++++++++</span><span class="d">------------------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/storage/kv/mod.rs</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+</table></pre><pre>2 files changed, 34 insertions(+), 37 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/sql/engine/kv.rs.html">src/sql/engine/kv.rs</a> b/<a href="../file/src/sql/engine/kv.rs.html">src/sql/engine/kv.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -175,28 +175,26 @@ impl super::Transaction for Transaction {
+</a> 
+     fn scan(&amp;self, table: &amp;str, filter: Option&lt;Expression&gt;) -&gt; Result&lt;super::Scan&gt; {
+         let table = self.must_read_table(&amp;table)?;
+<a href="#h0-0-3" id="h0-0-3" class="d">-        let scan = self
+</a><a href="#h0-0-4" id="h0-0-4" class="d">-            .txn
+</a><a href="#h0-0-5" id="h0-0-5" class="d">-            .scan_prefix(&amp;Key::Row(table.name.clone().into(), None).encode())?
+</a><a href="#h0-0-6" id="h0-0-6" class="d">-            .map(|r| r.and_then(|(_, v)| deserialize(&amp;v)))
+</a><a href="#h0-0-7" id="h0-0-7" class="d">-            .filter_map(|r| match r {
+</a><a href="#h0-0-8" id="h0-0-8" class="d">-                Ok(row) =&gt; match &amp;filter {
+</a><a href="#h0-0-9" id="h0-0-9" class="d">-                    Some(filter) =&gt; match filter.evaluate(&amp;table.row_env(&amp;row)) {
+</a><a href="#h0-0-10" id="h0-0-10" class="d">-                        Ok(Value::Boolean(b)) if b =&gt; Some(Ok(row)),
+</a><a href="#h0-0-11" id="h0-0-11" class="d">-                        Ok(Value::Boolean(_)) | Ok(Value::Null) =&gt; None,
+</a><a href="#h0-0-12" id="h0-0-12" class="d">-                        Ok(v) =&gt; Some(Err(Error::Value(format!(
+</a><a href="#h0-0-13" id="h0-0-13" class="d">-                            &quot;Filter returned {}, expected boolean&quot;,
+</a><a href="#h0-0-14" id="h0-0-14" class="d">-                            v
+</a><a href="#h0-0-15" id="h0-0-15" class="d">-                        )))),
+</a><a href="#h0-0-16" id="h0-0-16" class="d">-                        Err(err) =&gt; Some(Err(err)),
+</a><a href="#h0-0-17" id="h0-0-17" class="i">+        Ok(Box::new(
+</a><a href="#h0-0-18" id="h0-0-18" class="i">+            self.txn
+</a><a href="#h0-0-19" id="h0-0-19" class="i">+                .scan_prefix(&amp;Key::Row((&amp;table.name).into(), None).encode())?
+</a><a href="#h0-0-20" id="h0-0-20" class="i">+                .map(|r| r.and_then(|(_, v)| deserialize(&amp;v)))
+</a><a href="#h0-0-21" id="h0-0-21" class="i">+                .filter_map(move |r| match r {
+</a><a href="#h0-0-22" id="h0-0-22" class="i">+                    Ok(row) =&gt; match &amp;filter {
+</a><a href="#h0-0-23" id="h0-0-23" class="i">+                        Some(filter) =&gt; match filter.evaluate(&amp;table.row_env(&amp;row)) {
+</a><a href="#h0-0-24" id="h0-0-24" class="i">+                            Ok(Value::Boolean(b)) if b =&gt; Some(Ok(row)),
+</a><a href="#h0-0-25" id="h0-0-25" class="i">+                            Ok(Value::Boolean(_)) | Ok(Value::Null) =&gt; None,
+</a><a href="#h0-0-26" id="h0-0-26" class="i">+                            Ok(v) =&gt; Some(Err(Error::Value(format!(
+</a><a href="#h0-0-27" id="h0-0-27" class="i">+                                &quot;Filter returned {}, expected boolean&quot;,
+</a><a href="#h0-0-28" id="h0-0-28" class="i">+                                v
+</a><a href="#h0-0-29" id="h0-0-29" class="i">+                            )))),
+</a><a href="#h0-0-30" id="h0-0-30" class="i">+                            Err(err) =&gt; Some(Err(err)),
+</a><a href="#h0-0-31" id="h0-0-31" class="i">+                        },
+</a><a href="#h0-0-32" id="h0-0-32" class="i">+                        None =&gt; Some(Ok(row)),
+</a>                     },
+<a href="#h0-0-34" id="h0-0-34" class="d">-                    None =&gt; Some(Ok(row)),
+</a><a href="#h0-0-35" id="h0-0-35" class="d">-                },
+</a><a href="#h0-0-36" id="h0-0-36" class="d">-                err =&gt; Some(err),
+</a><a href="#h0-0-37" id="h0-0-37" class="d">-            });
+</a><a href="#h0-0-38" id="h0-0-38" class="d">-
+</a><a href="#h0-0-39" id="h0-0-39" class="d">-        // FIXME We buffer results here, to avoid dealing with trait lifetimes right now
+</a><a href="#h0-0-40" id="h0-0-40" class="d">-        Ok(Box::new(scan.collect::&lt;Vec&lt;Result&lt;Row&gt;&gt;&gt;().into_iter()))
+</a><a href="#h0-0-41" id="h0-0-41" class="i">+                    err =&gt; Some(err),
+</a><a href="#h0-0-42" id="h0-0-42" class="i">+                }),
+</a><a href="#h0-0-43" id="h0-0-43" class="i">+        ))
+</a>     }
+ 
+     fn scan_index(&amp;self, table: &amp;str, column: &amp;str) -&gt; Result&lt;super::IndexScan&gt; {
+<a href="#h0-1" id="h0-1" class="h">@@ -205,21 +203,20 @@ impl super::Transaction for Transaction {
+</a>         if !column.index {
+             return Err(Error::Value(format!(&quot;No index for {}.{}&quot;, table.name, column.name)));
+         }
+<a href="#h0-1-3" id="h0-1-3" class="d">-
+</a><a href="#h0-1-4" id="h0-1-4" class="d">-        let scan = self
+</a><a href="#h0-1-5" id="h0-1-5" class="d">-            .txn
+</a><a href="#h0-1-6" id="h0-1-6" class="d">-            .scan_prefix(&amp;Key::Index((&amp;table.name).into(), (&amp;column.name).into(), None).encode())?
+</a><a href="#h0-1-7" id="h0-1-7" class="d">-            .map(|r| -&gt; Result&lt;(Value, HashSet&lt;Value&gt;)&gt; {
+</a><a href="#h0-1-8" id="h0-1-8" class="d">-                let (k, v) = r?;
+</a><a href="#h0-1-9" id="h0-1-9" class="d">-                let value = match Key::decode(&amp;k)? {
+</a><a href="#h0-1-10" id="h0-1-10" class="d">-                    Key::Index(_, _, Some(pk)) =&gt; pk.into_owned(),
+</a><a href="#h0-1-11" id="h0-1-11" class="d">-                    _ =&gt; return Err(Error::Internal(&quot;Invalid index key&quot;.into())),
+</a><a href="#h0-1-12" id="h0-1-12" class="d">-                };
+</a><a href="#h0-1-13" id="h0-1-13" class="d">-                Ok((value, deserialize(&amp;v)?))
+</a><a href="#h0-1-14" id="h0-1-14" class="d">-            });
+</a><a href="#h0-1-15" id="h0-1-15" class="d">-
+</a><a href="#h0-1-16" id="h0-1-16" class="d">-        // FIXME We buffer results here, to avoid dealing with trait lifetimes right now
+</a><a href="#h0-1-17" id="h0-1-17" class="d">-        Ok(Box::new(scan.collect::&lt;Vec&lt;Result&lt;(Value, HashSet&lt;Value&gt;)&gt;&gt;&gt;().into_iter()))
+</a><a href="#h0-1-18" id="h0-1-18" class="i">+        Ok(Box::new(
+</a><a href="#h0-1-19" id="h0-1-19" class="i">+            self.txn
+</a><a href="#h0-1-20" id="h0-1-20" class="i">+                .scan_prefix(
+</a><a href="#h0-1-21" id="h0-1-21" class="i">+                    &amp;Key::Index((&amp;table.name).into(), (&amp;column.name).into(), None).encode(),
+</a><a href="#h0-1-22" id="h0-1-22" class="i">+                )?
+</a><a href="#h0-1-23" id="h0-1-23" class="i">+                .map(|r| -&gt; Result&lt;(Value, HashSet&lt;Value&gt;)&gt; {
+</a><a href="#h0-1-24" id="h0-1-24" class="i">+                    let (k, v) = r?;
+</a><a href="#h0-1-25" id="h0-1-25" class="i">+                    let value = match Key::decode(&amp;k)? {
+</a><a href="#h0-1-26" id="h0-1-26" class="i">+                        Key::Index(_, _, Some(pk)) =&gt; pk.into_owned(),
+</a><a href="#h0-1-27" id="h0-1-27" class="i">+                        _ =&gt; return Err(Error::Internal(&quot;Invalid index key&quot;.into())),
+</a><a href="#h0-1-28" id="h0-1-28" class="i">+                    };
+</a><a href="#h0-1-29" id="h0-1-29" class="i">+                    Ok((value, deserialize(&amp;v)?))
+</a><a href="#h0-1-30" id="h0-1-30" class="i">+                }),
+</a><a href="#h0-1-31" id="h0-1-31" class="i">+        ))
+</a>     }
+ 
+     fn update(&amp;mut self, table: &amp;str, id: &amp;Value, row: Row) -&gt; Result&lt;()&gt; {
+<b>diff --git a/<a id="h1" href="../file/src/storage/kv/mod.rs.html">src/storage/kv/mod.rs</a> b/<a href="../file/src/storage/kv/mod.rs.html">src/storage/kv/mod.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -91,7 +91,7 @@ impl RangeBounds&lt;Vec&lt;u8&gt;&gt; for Range {
+</a> }
+ 
+ /// Iterator over a key/value range.
+<a href="#h1-0-3" id="h1-0-3" class="d">-pub type Scan = Box&lt;dyn DoubleEndedIterator&lt;Item = Result&lt;(Vec&lt;u8&gt;, Vec&lt;u8&gt;)&gt;&gt;&gt;;
+</a><a href="#h1-0-4" id="h1-0-4" class="i">+pub type Scan = Box&lt;dyn DoubleEndedIterator&lt;Item = Result&lt;(Vec&lt;u8&gt;, Vec&lt;u8&gt;)&gt;&gt; + Send&gt;;
+</a> 
+ #[cfg(test)]
+ trait TestSuite&lt;S: Store&gt; {
+</pre>
+</div>
+</body>
+</html>

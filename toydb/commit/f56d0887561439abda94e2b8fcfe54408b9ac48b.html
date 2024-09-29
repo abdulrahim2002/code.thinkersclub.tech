@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>sql: remove `EmptyRow` plan node - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/f56d0887561439abda94e2b8fcfe54408b9ac48b.html">f56d0887561439abda94e2b8fcfe54408b9ac48b</a>
+<b>parent</b> <a href="../commit/b9edc57dade36ed864fcb9a872c84dcac8db1ea0.html">b9edc57dade36ed864fcb9a872c84dcac8db1ea0</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Sun, 14 Jul 2024 18:30:42 +0200
+
+sql: remove `EmptyRow` plan node
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/sql/execution/execute.rs</a></td><td> | </td><td class="num">2</td><td><span class="i"></span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/sql/execution/source.rs</a></td><td> | </td><td class="num">9</td><td><span class="i">+</span><span class="d">--------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/sql/planner/plan.rs</a></td><td> | </td><td class="num">15</td><td><span class="i">++++++</span><span class="d">---------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">src/sql/planner/planner.rs</a></td><td> | </td><td class="num">4</td><td><span class="i">+++</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h4">src/sql/testscripts/optimizer/fold_constants</a></td><td> | </td><td class="num">4</td><td><span class="i">++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h5">src/sql/testscripts/optimizer/short_circuit</a></td><td> | </td><td class="num">8</td><td><span class="i">++++</span><span class="d">----</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h6">src/sql/testscripts/queries/aggregate</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h7">src/sql/testscripts/queries/limit</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h8">src/sql/testscripts/queries/offset</a></td><td> | </td><td class="num">4</td><td><span class="i">++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h9">src/sql/testscripts/queries/order</a></td><td> | </td><td class="num">4</td><td><span class="i">++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h10">src/sql/testscripts/queries/select</a></td><td> | </td><td class="num">4</td><td><span class="i">++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h11">src/sql/testscripts/writes/insert</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+</table></pre><pre>12 files changed, 25 insertions(+), 35 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/sql/execution/execute.rs.html">src/sql/execution/execute.rs</a> b/<a href="../file/src/sql/execution/execute.rs.html">src/sql/execution/execute.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -104,8 +104,6 @@ pub fn execute(node: Node, txn: &amp;impl Transaction) -&gt; Result&lt;Rows&gt; {
+</a> 
+         Node::Nothing =&gt; Ok(source::nothing()),
+ 
+<a href="#h0-0-3" id="h0-0-3" class="d">-        Node::EmptyRow =&gt; Ok(source::empty_row()),
+</a><a href="#h0-0-4" id="h0-0-4" class="d">-
+</a>         Node::Offset { source, offset } =&gt; {
+             let source = execute(*source, txn)?;
+             Ok(transform::offset(source, offset))
+<b>diff --git a/<a id="h1" href="../file/src/sql/execution/source.rs.html">src/sql/execution/source.rs</a> b/<a href="../file/src/sql/execution/source.rs.html">src/sql/execution/source.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -1,6 +1,6 @@
+</a> use crate::error::Result;
+ use crate::sql::engine::Transaction;
+<a href="#h1-0-2" id="h1-0-2" class="d">-use crate::sql::types::{Expression, Row, Rows, Table, Value};
+</a><a href="#h1-0-3" id="h1-0-3" class="i">+use crate::sql::types::{Expression, Rows, Table, Value};
+</a> 
+ /// A table scan source.
+ pub(super) fn scan(
+<a href="#h1-1" id="h1-1" class="h">@@ -32,13 +32,6 @@ pub(super) fn nothing() -&gt; Rows {
+</a>     Box::new(std::iter::empty())
+ }
+ 
+<a href="#h1-1-3" id="h1-1-3" class="d">-/// Produces a single empty row. Used for queries without a FROM clause, e.g.
+</a><a href="#h1-1-4" id="h1-1-4" class="d">-/// SELECT 1+1, in order to have something to project against.
+</a><a href="#h1-1-5" id="h1-1-5" class="d">-/// TODO: remove this.
+</a><a href="#h1-1-6" id="h1-1-6" class="d">-pub(super) fn empty_row() -&gt; Rows {
+</a><a href="#h1-1-7" id="h1-1-7" class="d">-    Box::new(std::iter::once(Ok(Row::new())))
+</a><a href="#h1-1-8" id="h1-1-8" class="d">-}
+</a><a href="#h1-1-9" id="h1-1-9" class="d">-
+</a> /// Emits predefined constant values.
+ pub(super) fn values(rows: Vec&lt;Vec&lt;Expression&gt;&gt;) -&gt; Rows {
+     Box::new(rows.into_iter().map(|row| row.into_iter().map(|expr| expr.evaluate(None)).collect()))
+<b>diff --git a/<a id="h2" href="../file/src/sql/planner/plan.rs.html">src/sql/planner/plan.rs</a> b/<a href="../file/src/sql/planner/plan.rs.html">src/sql/planner/plan.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -128,9 +128,6 @@ pub enum Node {
+</a>     },
+     /// Nothing does not emit anything.
+     Nothing,
+<a href="#h2-0-3" id="h2-0-3" class="d">-    /// Emits a single empty row. Used for SELECT queries with no FROM clause.
+</a><a href="#h2-0-4" id="h2-0-4" class="d">-    /// TODO: remove this.
+</a><a href="#h2-0-5" id="h2-0-5" class="d">-    EmptyRow,
+</a>     /// Discards the first offset rows from source, emits the rest.
+     Offset { source: Box&lt;Node&gt;, offset: usize },
+     /// Sorts the source rows by the given expression/direction pairs. Buffers
+<a href="#h2-1" id="h2-1" class="h">@@ -206,7 +203,6 @@ impl Node {
+</a> 
+             node @ (Self::IndexLookup { .. }
+             | Self::KeyLookup { .. }
+<a href="#h2-1-3" id="h2-1-3" class="d">-            | Self::EmptyRow
+</a>             | Self::Nothing
+             | Self::Scan { .. }
+             | Self::Values { .. }) =&gt; node,
+<a href="#h2-2" id="h2-2" class="h">@@ -273,7 +269,6 @@ impl Node {
+</a>             | Self::Limit { .. }
+             | Self::NestedLoopJoin { predicate: None, .. }
+             | Self::Nothing
+<a href="#h2-2-3" id="h2-2-3" class="d">-            | Self::EmptyRow
+</a>             | Self::Offset { .. }
+             | Self::Scan { filter: None, .. }) =&gt; node,
+         })
+<a href="#h2-3" id="h2-3" class="h">@@ -411,9 +406,6 @@ impl Node {
+</a>             Self::Nothing =&gt; {
+                 write!(f, &quot;Nothing&quot;)?;
+             }
+<a href="#h2-3-3" id="h2-3-3" class="d">-            Self::EmptyRow =&gt; {
+</a><a href="#h2-3-4" id="h2-3-4" class="d">-                write!(f, &quot;EmptyRow&quot;)?;
+</a><a href="#h2-3-5" id="h2-3-5" class="d">-            }
+</a>             Self::Offset { source, offset } =&gt; {
+                 write!(f, &quot;Offset: {offset}&quot;)?;
+                 source.format(f, prefix, false, true)?;
+<a href="#h2-4" id="h2-4" class="h">@@ -437,7 +429,12 @@ impl Node {
+</a>                 }
+             }
+             Self::Values { rows, .. } =&gt; {
+<a href="#h2-4-3" id="h2-4-3" class="d">-                write!(f, &quot;Values: {} rows&quot;, rows.len())?;
+</a><a href="#h2-4-4" id="h2-4-4" class="i">+                write!(f, &quot;Values: &quot;)?;
+</a><a href="#h2-4-5" id="h2-4-5" class="i">+                match rows.len() {
+</a><a href="#h2-4-6" id="h2-4-6" class="i">+                    1 if rows[0].is_empty() =&gt; write!(f, &quot;blank row&quot;)?,
+</a><a href="#h2-4-7" id="h2-4-7" class="i">+                    1 =&gt; write!(f, &quot;{}&quot;, rows[0].iter().map(|e| e.to_string()).join(&quot;, &quot;))?,
+</a><a href="#h2-4-8" id="h2-4-8" class="i">+                    n =&gt; write!(f, &quot;{n} rows&quot;)?,
+</a><a href="#h2-4-9" id="h2-4-9" class="i">+                }
+</a>             }
+         };
+         Ok(())
+<b>diff --git a/<a id="h3" href="../file/src/sql/planner/planner.rs.html">src/sql/planner/planner.rs</a> b/<a href="../file/src/sql/planner/planner.rs.html">src/sql/planner/planner.rs</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -165,7 +165,9 @@ impl&lt;&#39;a, C: Catalog&gt; Planner&lt;&#39;a, C&gt; {
+</a>         } else if select.is_empty() {
+             return errinput!(&quot;can&#39;t select * without a table&quot;);
+         } else {
+<a href="#h3-0-3" id="h3-0-3" class="d">-            Node::EmptyRow
+</a><a href="#h3-0-4" id="h3-0-4" class="i">+            // For a constant SELECT, emit a single empty row to project. This
+</a><a href="#h3-0-5" id="h3-0-5" class="i">+            // allows using both a WHERE predicate and aggregate functions.
+</a><a href="#h3-0-6" id="h3-0-6" class="i">+            Node::Values { rows: vec![vec![]] }
+</a>         };
+ 
+         // Build WHERE clause.
+<b>diff --git a/<a id="h4" href="../file/src/sql/testscripts/optimizer/fold_constants.html">src/sql/testscripts/optimizer/fold_constants</a> b/<a href="../file/src/sql/testscripts/optimizer/fold_constants.html">src/sql/testscripts/optimizer/fold_constants</a></b>
+<a href="#h4-0" id="h4-0" class="h">@@ -10,10 +10,10 @@ ok
+</a> ---
+ Initial:
+    Projection: 1 + 1
+<a href="#h4-0-3" id="h4-0-3" class="d">-   └─ EmptyRow
+</a><a href="#h4-0-4" id="h4-0-4" class="i">+   └─ Values: blank row
+</a> Constant folding:
+    Projection: 2
+<a href="#h4-0-7" id="h4-0-7" class="d">-   └─ EmptyRow
+</a><a href="#h4-0-8" id="h4-0-8" class="i">+   └─ Values: blank row
+</a> 2
+ 
+ [opt]&gt; SELECT 1+1 FROM test
+<b>diff --git a/<a id="h5" href="../file/src/sql/testscripts/optimizer/short_circuit.html">src/sql/testscripts/optimizer/short_circuit</a> b/<a href="../file/src/sql/testscripts/optimizer/short_circuit.html">src/sql/testscripts/optimizer/short_circuit</a></b>
+<a href="#h5-0" id="h5-0" class="h">@@ -26,10 +26,10 @@ Short circuit:
+</a> Initial:
+    Projection: 1, 2, 3
+    └─ Filter: TRUE
+<a href="#h5-0-3" id="h5-0-3" class="d">-      └─ EmptyRow
+</a><a href="#h5-0-4" id="h5-0-4" class="i">+      └─ Values: blank row
+</a> Short circuit:
+    Projection: 1, 2, 3
+<a href="#h5-0-7" id="h5-0-7" class="d">-   └─ EmptyRow
+</a><a href="#h5-0-8" id="h5-0-8" class="i">+   └─ Values: blank row
+</a> 1, 2, 3
+ 
+ [opt]&gt; SELECT * FROM test JOIN ref ON TRUE
+<a href="#h5-1" id="h5-1" class="h">@@ -72,7 +72,7 @@ Short circuit:
+</a> Initial:
+    Projection: 1, 2, 3
+    └─ Filter: FALSE
+<a href="#h5-1-3" id="h5-1-3" class="d">-      └─ EmptyRow
+</a><a href="#h5-1-4" id="h5-1-4" class="i">+      └─ Values: blank row
+</a> Short circuit:
+    Nothing
+ 
+<a href="#h5-2" id="h5-2" class="h">@@ -109,7 +109,7 @@ Short circuit:
+</a> Initial:
+    Projection: 1, 2, 3
+    └─ Filter: NULL
+<a href="#h5-2-3" id="h5-2-3" class="d">-      └─ EmptyRow
+</a><a href="#h5-2-4" id="h5-2-4" class="i">+      └─ Values: blank row
+</a> Short circuit:
+    Nothing
+ 
+<b>diff --git a/<a id="h6" href="../file/src/sql/testscripts/queries/aggregate.html">src/sql/testscripts/queries/aggregate</a> b/<a href="../file/src/sql/testscripts/queries/aggregate.html">src/sql/testscripts/queries/aggregate</a></b>
+<a href="#h6-0" id="h6-0" class="h">@@ -31,7 +31,7 @@ Projection: #0
+</a> ---
+ Projection: #0, #1, #2, #3, #4, #5
+ └─ Aggregate: count(NULL), count(TRUE), count(1), count(3.14), count(NaN), count()
+<a href="#h6-0-3" id="h6-0-3" class="d">-   └─ EmptyRow
+</a><a href="#h6-0-4" id="h6-0-4" class="i">+   └─ Values: blank row
+</a> , , , , , 
+ 0, 1, 1, 1, 1, 1
+ 
+<b>diff --git a/<a id="h7" href="../file/src/sql/testscripts/queries/limit.html">src/sql/testscripts/queries/limit</a> b/<a href="../file/src/sql/testscripts/queries/limit.html">src/sql/testscripts/queries/limit</a></b>
+<a href="#h7-0" id="h7-0" class="h">@@ -45,7 +45,7 @@ Nothing
+</a> ---
+ Limit: 1
+ └─ Projection: 1, 2, 3
+<a href="#h7-0-3" id="h7-0-3" class="d">-   └─ EmptyRow
+</a><a href="#h7-0-4" id="h7-0-4" class="i">+   └─ Values: blank row
+</a> 1, 2, 3
+ 
+ [plan]&gt; SELECT 1, 2, 3 LIMIT 0
+<b>diff --git a/<a id="h8" href="../file/src/sql/testscripts/queries/offset.html">src/sql/testscripts/queries/offset</a> b/<a href="../file/src/sql/testscripts/queries/offset.html">src/sql/testscripts/queries/offset</a></b>
+<a href="#h8-0" id="h8-0" class="h">@@ -42,13 +42,13 @@ ok
+</a> ---
+ Offset: 1
+ └─ Projection: 1, 2, 3
+<a href="#h8-0-3" id="h8-0-3" class="d">-   └─ EmptyRow
+</a><a href="#h8-0-4" id="h8-0-4" class="i">+   └─ Values: blank row
+</a> 
+ [plan]&gt; SELECT 1, 2, 3 OFFSET 0
+ ---
+ Offset: 0
+ └─ Projection: 1, 2, 3
+<a href="#h8-0-10" id="h8-0-10" class="d">-   └─ EmptyRow
+</a><a href="#h8-0-11" id="h8-0-11" class="i">+   └─ Values: blank row
+</a> 1, 2, 3
+ 
+ # Offsets can be expressions, but only constant ones.
+<b>diff --git a/<a id="h9" href="../file/src/sql/testscripts/queries/order.html">src/sql/testscripts/queries/order</a> b/<a href="../file/src/sql/testscripts/queries/order.html">src/sql/testscripts/queries/order</a></b>
+<a href="#h9-0" id="h9-0" class="h">@@ -30,14 +30,14 @@ ok
+</a> ---
+ Order: value asc
+ └─ Projection: 1
+<a href="#h9-0-3" id="h9-0-3" class="d">-   └─ EmptyRow
+</a><a href="#h9-0-4" id="h9-0-4" class="i">+   └─ Values: blank row
+</a> 1
+ 
+ [plan]&gt; SELECT 1 AS value ORDER BY value DESC
+ ---
+ Order: value desc
+ └─ Projection: 1
+<a href="#h9-0-11" id="h9-0-11" class="d">-   └─ EmptyRow
+</a><a href="#h9-0-12" id="h9-0-12" class="i">+   └─ Values: blank row
+</a> 1
+ 
+ # Order by primary key.
+<b>diff --git a/<a id="h10" href="../file/src/sql/testscripts/queries/select.html">src/sql/testscripts/queries/select</a> b/<a href="../file/src/sql/testscripts/queries/select.html">src/sql/testscripts/queries/select</a></b>
+<a href="#h10-0" id="h10-0" class="h">@@ -21,13 +21,13 @@ ok
+</a> [plan]&gt; select 1
+ ---
+ Projection: 1
+<a href="#h10-0-3" id="h10-0-3" class="d">-└─ EmptyRow
+</a><a href="#h10-0-4" id="h10-0-4" class="i">+└─ Values: blank row
+</a> 1
+ 
+ [plan]&gt; SELECT NULL, NOT FALSE, 2^2+1, 3.14*2, &#39;Hi 👋&#39;
+ ---
+ Projection: NULL, TRUE, 5, 6.28, Hi 👋
+<a href="#h10-0-10" id="h10-0-10" class="d">-└─ EmptyRow
+</a><a href="#h10-0-11" id="h10-0-11" class="i">+└─ Values: blank row
+</a> NULL, TRUE, 5, 6.28, Hi 👋
+ 
+ # Bare select errors, as does trailing comma and identifier without a table.
+<b>diff --git a/<a id="h11" href="../file/src/sql/testscripts/writes/insert.html">src/sql/testscripts/writes/insert</a> b/<a href="../file/src/sql/testscripts/writes/insert.html">src/sql/testscripts/writes/insert</a></b>
+<a href="#h11-0" id="h11-0" class="h">@@ -8,7 +8,7 @@ ok
+</a> [plan,result,ops]&gt; INSERT INTO name VALUES (1, &#39;a&#39;)
+ ---
+ Insert: name
+<a href="#h11-0-3" id="h11-0-3" class="d">-└─ Values: 1 rows
+</a><a href="#h11-0-4" id="h11-0-4" class="i">+└─ Values: 1, a
+</a> Insert { count: 1 }
+ storage set mvcc:NextVersion → 3 [&quot;\x00&quot; → &quot;\x03&quot;]
+ storage set mvcc:TxnActive(2) → &quot;&quot; [&quot;\x01\x00\x00\x00\x00\x00\x00\x00\x02&quot; → &quot;&quot;]
+</pre>
+</div>
+</body>
+</html>

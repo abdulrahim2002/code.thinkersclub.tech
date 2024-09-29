@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Clean up and improve MVCC writes. - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/54907419d6a86859abb631da5d5ab25787d4349c.html">54907419d6a86859abb631da5d5ab25787d4349c</a>
+<b>parent</b> <a href="../commit/17c8ec1b9b723804371563efbcc1f194afe54591.html">17c8ec1b9b723804371563efbcc1f194afe54591</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Wed,  6 Sep 2023 22:05:35 +0200
+
+Clean up and improve MVCC writes.
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/storage/mvcc.rs</a></td><td> | </td><td class="num">136</td><td><span class="i">++++++++++++++++++++++++++++++++++++++++++</span><span class="d">-------------------------------------</span></td></tr>
+</table></pre><pre>1 file changed, 73 insertions(+), 63 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/storage/mvcc.rs.html">src/storage/mvcc.rs</a> b/<a href="../file/src/storage/mvcc.rs.html">src/storage/mvcc.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -24,8 +24,9 @@ enum Key&lt;&#39;a&gt; {
+</a>     /// A snapshot of the active set at each version. Only written for
+     /// versions where the active set is non-empty (excluding itself).
+     TxnActiveSnapshot(Version),
+<a href="#h0-0-3" id="h0-0-3" class="d">-    /// Update marker for a version and key, used for rollback.
+</a><a href="#h0-0-4" id="h0-0-4" class="d">-    TxnUpdate(
+</a><a href="#h0-0-5" id="h0-0-5" class="i">+    /// Keeps track of all keys written to by an active transaction (identified
+</a><a href="#h0-0-6" id="h0-0-6" class="i">+    /// by its version), in case it needs to roll back.
+</a><a href="#h0-0-7" id="h0-0-7" class="i">+    TxnWrite(
+</a>         Version,
+         #[serde(with = &quot;serde_bytes&quot;)]
+         #[serde(borrow)]
+<a href="#h0-1" id="h0-1" class="h">@@ -65,7 +66,7 @@ enum KeyPrefix&lt;&#39;a&gt; {
+</a>     NextVersion,
+     TxnActive,
+     TxnActiveSnapshot,
+<a href="#h0-1-3" id="h0-1-3" class="d">-    TxnUpdate(Version),
+</a><a href="#h0-1-4" id="h0-1-4" class="i">+    TxnWrite(Version),
+</a>     Version(
+         #[serde(with = &quot;serde_bytes&quot;)]
+         #[serde(borrow)]
+<a href="#h0-2" id="h0-2" class="h">@@ -166,9 +167,10 @@ pub struct Transaction&lt;E: Engine&gt; {
+</a>     version: Version,
+     /// If true, the transaction is read only.
+     read_only: bool,
+<a href="#h0-2-3" id="h0-2-3" class="d">-    /// The set of concurrent active (uncommitted) transactions. Their writes
+</a><a href="#h0-2-4" id="h0-2-4" class="d">-    /// should be invisible to this transaction even if they&#39;re writing at a
+</a><a href="#h0-2-5" id="h0-2-5" class="d">-    /// lower version, since they&#39;re not committed yet.
+</a><a href="#h0-2-6" id="h0-2-6" class="i">+    /// The set of concurrent active (uncommitted) transactions, as of the start
+</a><a href="#h0-2-7" id="h0-2-7" class="i">+    /// of this transaction. Their writes should be invisible to this
+</a><a href="#h0-2-8" id="h0-2-8" class="i">+    /// transaction even if they&#39;re writing at a lower version, since they&#39;re
+</a><a href="#h0-2-9" id="h0-2-9" class="i">+    /// not committed yet.
+</a>     active: HashSet&lt;Version&gt;,
+ }
+ 
+<a href="#h0-3" id="h0-3" class="h">@@ -287,33 +289,86 @@ impl&lt;E: Engine&gt; Transaction&lt;E&gt; {
+</a>         }
+     }
+ 
+<a href="#h0-3-3" id="h0-3-3" class="d">-    /// Commits the transaction, by removing the txn from the active set.
+</a><a href="#h0-3-4" id="h0-3-4" class="i">+    /// Commits the transaction, by removing it from the active set. This will
+</a><a href="#h0-3-5" id="h0-3-5" class="i">+    /// immediately make its writes visible to subsequent transactions.
+</a>     pub fn commit(self) -&gt; Result&lt;()&gt; {
+<a href="#h0-3-7" id="h0-3-7" class="d">-        let mut session = self.engine.lock()?;
+</a><a href="#h0-3-8" id="h0-3-8" class="d">-        session.delete(&amp;Key::TxnActive(self.version).encode()?)?;
+</a><a href="#h0-3-9" id="h0-3-9" class="d">-        session.flush()
+</a><a href="#h0-3-10" id="h0-3-10" class="i">+        if self.read_only {
+</a><a href="#h0-3-11" id="h0-3-11" class="i">+            return Ok(());
+</a><a href="#h0-3-12" id="h0-3-12" class="i">+        }
+</a><a href="#h0-3-13" id="h0-3-13" class="i">+        self.engine.lock()?.delete(&amp;Key::TxnActive(self.version).encode()?)
+</a>     }
+ 
+<a href="#h0-3-16" id="h0-3-16" class="d">-    /// Rolls back the transaction, by removing all updated entries.
+</a><a href="#h0-3-17" id="h0-3-17" class="i">+    /// Rolls back the transaction, by undoing all written versions and removing
+</a><a href="#h0-3-18" id="h0-3-18" class="i">+    /// it from the active set. The active set snapshot is left behind, since
+</a><a href="#h0-3-19" id="h0-3-19" class="i">+    /// this is needed for time travel queries at this version.
+</a>     pub fn rollback(self) -&gt; Result&lt;()&gt; {
+         if self.read_only {
+             return Ok(());
+         }
+         let mut session = self.engine.lock()?;
+         let mut rollback = Vec::new();
+<a href="#h0-3-26" id="h0-3-26" class="d">-        let mut scan = session.scan_prefix(&amp;KeyPrefix::TxnUpdate(self.version).encode()?);
+</a><a href="#h0-3-27" id="h0-3-27" class="i">+        let mut scan = session.scan_prefix(&amp;KeyPrefix::TxnWrite(self.version).encode()?);
+</a>         while let Some((key, _)) = scan.next().transpose()? {
+             match Key::decode(&amp;key)? {
+<a href="#h0-3-30" id="h0-3-30" class="d">-                Key::TxnUpdate(_, updated_key) =&gt; rollback.push(updated_key.into_owned()),
+</a><a href="#h0-3-31" id="h0-3-31" class="d">-                k =&gt; return Err(Error::Internal(format!(&quot;Expected TxnUpdate, got {:?}&quot;, k))),
+</a><a href="#h0-3-32" id="h0-3-32" class="i">+                Key::TxnWrite(_, key) =&gt; {
+</a><a href="#h0-3-33" id="h0-3-33" class="i">+                    rollback.push(Key::Version(key, self.version).encode()?); // the written version
+</a><a href="#h0-3-34" id="h0-3-34" class="i">+                }
+</a><a href="#h0-3-35" id="h0-3-35" class="i">+                key =&gt; return Err(Error::Internal(format!(&quot;Expected TxnWrite, got {:?}&quot;, key))),
+</a>             };
+<a href="#h0-3-37" id="h0-3-37" class="d">-            rollback.push(key);
+</a><a href="#h0-3-38" id="h0-3-38" class="i">+            rollback.push(key); // the TxnWrite record
+</a>         }
+<a href="#h0-3-40" id="h0-3-40" class="d">-        std::mem::drop(scan);
+</a><a href="#h0-3-41" id="h0-3-41" class="i">+        drop(scan);
+</a>         for key in rollback.into_iter() {
+             session.delete(&amp;key)?;
+         }
+<a href="#h0-3-45" id="h0-3-45" class="d">-        session.delete(&amp;Key::TxnActive(self.version).encode()?)
+</a><a href="#h0-3-46" id="h0-3-46" class="i">+        session.delete(&amp;Key::TxnActive(self.version).encode()?) // remove from active set
+</a><a href="#h0-3-47" id="h0-3-47" class="i">+    }
+</a><a href="#h0-3-48" id="h0-3-48" class="i">+
+</a><a href="#h0-3-49" id="h0-3-49" class="i">+    /// Deletes a key.
+</a><a href="#h0-3-50" id="h0-3-50" class="i">+    pub fn delete(&amp;mut self, key: &amp;[u8]) -&gt; Result&lt;()&gt; {
+</a><a href="#h0-3-51" id="h0-3-51" class="i">+        self.write_version(key, None)
+</a><a href="#h0-3-52" id="h0-3-52" class="i">+    }
+</a><a href="#h0-3-53" id="h0-3-53" class="i">+
+</a><a href="#h0-3-54" id="h0-3-54" class="i">+    /// Sets a value for a key.
+</a><a href="#h0-3-55" id="h0-3-55" class="i">+    pub fn set(&amp;mut self, key: &amp;[u8], value: Vec&lt;u8&gt;) -&gt; Result&lt;()&gt; {
+</a><a href="#h0-3-56" id="h0-3-56" class="i">+        self.write_version(key, Some(value))
+</a><a href="#h0-3-57" id="h0-3-57" class="i">+    }
+</a><a href="#h0-3-58" id="h0-3-58" class="i">+
+</a><a href="#h0-3-59" id="h0-3-59" class="i">+    /// Writes a new version for a key at the transaction&#39;s version. None writes
+</a><a href="#h0-3-60" id="h0-3-60" class="i">+    /// a deletion tombstone. If a write conflict is found (either a newer or
+</a><a href="#h0-3-61" id="h0-3-61" class="i">+    /// uncommitted version), a serialization error is returned.  Replacing our
+</a><a href="#h0-3-62" id="h0-3-62" class="i">+    /// own uncommitted write is fine.
+</a><a href="#h0-3-63" id="h0-3-63" class="i">+    fn write_version(&amp;self, key: &amp;[u8], value: Option&lt;Vec&lt;u8&gt;&gt;) -&gt; Result&lt;()&gt; {
+</a><a href="#h0-3-64" id="h0-3-64" class="i">+        if self.read_only {
+</a><a href="#h0-3-65" id="h0-3-65" class="i">+            return Err(Error::ReadOnly);
+</a><a href="#h0-3-66" id="h0-3-66" class="i">+        }
+</a><a href="#h0-3-67" id="h0-3-67" class="i">+        let mut session = self.engine.lock()?;
+</a><a href="#h0-3-68" id="h0-3-68" class="i">+
+</a><a href="#h0-3-69" id="h0-3-69" class="i">+        // Check for write conflicts, i.e. if the latest key is invisible to us
+</a><a href="#h0-3-70" id="h0-3-70" class="i">+        // (either a newer version, or an uncommitted version in our past). We
+</a><a href="#h0-3-71" id="h0-3-71" class="i">+        // can only conflict with the latest key, since all transactions enforce
+</a><a href="#h0-3-72" id="h0-3-72" class="i">+        // the same invariant.
+</a><a href="#h0-3-73" id="h0-3-73" class="i">+        let from =
+</a><a href="#h0-3-74" id="h0-3-74" class="i">+            Key::Version(key.into(), self.active.iter().min().copied().unwrap_or(self.version + 1))
+</a><a href="#h0-3-75" id="h0-3-75" class="i">+                .encode()?;
+</a><a href="#h0-3-76" id="h0-3-76" class="i">+        let to = Key::Version(key.into(), u64::MAX).encode()?;
+</a><a href="#h0-3-77" id="h0-3-77" class="i">+        if let Some((k, _)) = session.scan(from..=to).last().transpose()? {
+</a><a href="#h0-3-78" id="h0-3-78" class="i">+            match Key::decode(&amp;k)? {
+</a><a href="#h0-3-79" id="h0-3-79" class="i">+                Key::Version(_, version) =&gt; {
+</a><a href="#h0-3-80" id="h0-3-80" class="i">+                    if !self.is_visible(version) {
+</a><a href="#h0-3-81" id="h0-3-81" class="i">+                        return Err(Error::Serialization);
+</a><a href="#h0-3-82" id="h0-3-82" class="i">+                    }
+</a><a href="#h0-3-83" id="h0-3-83" class="i">+                }
+</a><a href="#h0-3-84" id="h0-3-84" class="i">+                k =&gt; return Err(Error::Internal(format!(&quot;Expected Key::Version, got {:?}&quot;, k))),
+</a><a href="#h0-3-85" id="h0-3-85" class="i">+            }
+</a><a href="#h0-3-86" id="h0-3-86" class="i">+        }
+</a><a href="#h0-3-87" id="h0-3-87" class="i">+
+</a><a href="#h0-3-88" id="h0-3-88" class="i">+        // Write the new version and its write record.
+</a><a href="#h0-3-89" id="h0-3-89" class="i">+        //
+</a><a href="#h0-3-90" id="h0-3-90" class="i">+        // NB: TxnWrite contains the provided user key, not the encoded engine
+</a><a href="#h0-3-91" id="h0-3-91" class="i">+        // key, since we can construct the engine key using the version.
+</a><a href="#h0-3-92" id="h0-3-92" class="i">+        session.set(&amp;Key::TxnWrite(self.version, key.into()).encode()?, vec![])?;
+</a><a href="#h0-3-93" id="h0-3-93" class="i">+        session.set(&amp;Key::Version(key.into(), self.version).encode()?, bincode::serialize(&amp;value)?)
+</a>     }
+ 
+     /// Checks whether the given version is visible to this transaction.
+<a href="#h0-4" id="h0-4" class="h">@@ -327,11 +382,6 @@ impl&lt;E: Engine&gt; Transaction&lt;E&gt; {
+</a>         }
+     }
+ 
+<a href="#h0-4-3" id="h0-4-3" class="d">-    /// Deletes a key.
+</a><a href="#h0-4-4" id="h0-4-4" class="d">-    pub fn delete(&amp;mut self, key: &amp;[u8]) -&gt; Result&lt;()&gt; {
+</a><a href="#h0-4-5" id="h0-4-5" class="d">-        self.write(key, None)
+</a><a href="#h0-4-6" id="h0-4-6" class="d">-    }
+</a><a href="#h0-4-7" id="h0-4-7" class="d">-
+</a>     /// Fetches a key.
+     pub fn get(&amp;self, key: &amp;[u8]) -&gt; Result&lt;Option&lt;Vec&lt;u8&gt;&gt;&gt; {
+         let mut session = self.engine.lock()?;
+<a href="#h0-5" id="h0-5" class="h">@@ -383,46 +433,6 @@ impl&lt;E: Engine&gt; Transaction&lt;E&gt; {
+</a>             Box::new(self.engine.lock()?.scan_prefix(prefix).collect::&lt;Vec&lt;_&gt;&gt;().into_iter());
+         Ok(Box::new(Scan::new(scan, self.version, self.read_only, self.active.clone())))
+     }
+<a href="#h0-5-3" id="h0-5-3" class="d">-
+</a><a href="#h0-5-4" id="h0-5-4" class="d">-    /// Sets a key.
+</a><a href="#h0-5-5" id="h0-5-5" class="d">-    pub fn set(&amp;mut self, key: &amp;[u8], value: Vec&lt;u8&gt;) -&gt; Result&lt;()&gt; {
+</a><a href="#h0-5-6" id="h0-5-6" class="d">-        self.write(key, Some(value))
+</a><a href="#h0-5-7" id="h0-5-7" class="d">-    }
+</a><a href="#h0-5-8" id="h0-5-8" class="d">-
+</a><a href="#h0-5-9" id="h0-5-9" class="d">-    /// Writes a value for a key. None is used for deletion.
+</a><a href="#h0-5-10" id="h0-5-10" class="d">-    fn write(&amp;self, key: &amp;[u8], value: Option&lt;Vec&lt;u8&gt;&gt;) -&gt; Result&lt;()&gt; {
+</a><a href="#h0-5-11" id="h0-5-11" class="d">-        if self.read_only {
+</a><a href="#h0-5-12" id="h0-5-12" class="d">-            return Err(Error::ReadOnly);
+</a><a href="#h0-5-13" id="h0-5-13" class="d">-        }
+</a><a href="#h0-5-14" id="h0-5-14" class="d">-        let mut session = self.engine.lock()?;
+</a><a href="#h0-5-15" id="h0-5-15" class="d">-
+</a><a href="#h0-5-16" id="h0-5-16" class="d">-        // Check if the key is dirty, i.e. if it has any uncommitted changes, by scanning for any
+</a><a href="#h0-5-17" id="h0-5-17" class="d">-        // versions that aren&#39;t visible to us.
+</a><a href="#h0-5-18" id="h0-5-18" class="d">-        let min = self.active.iter().min().cloned().unwrap_or(self.version + 1);
+</a><a href="#h0-5-19" id="h0-5-19" class="d">-        let mut scan = session
+</a><a href="#h0-5-20" id="h0-5-20" class="d">-            .scan(
+</a><a href="#h0-5-21" id="h0-5-21" class="d">-                Key::Version(key.into(), min).encode()?
+</a><a href="#h0-5-22" id="h0-5-22" class="d">-                    ..=Key::Version(key.into(), u64::MAX).encode()?,
+</a><a href="#h0-5-23" id="h0-5-23" class="d">-            )
+</a><a href="#h0-5-24" id="h0-5-24" class="d">-            .rev();
+</a><a href="#h0-5-25" id="h0-5-25" class="d">-        while let Some((k, _)) = scan.next().transpose()? {
+</a><a href="#h0-5-26" id="h0-5-26" class="d">-            match Key::decode(&amp;k)? {
+</a><a href="#h0-5-27" id="h0-5-27" class="d">-                Key::Version(_, version) =&gt; {
+</a><a href="#h0-5-28" id="h0-5-28" class="d">-                    if !self.is_visible(version) {
+</a><a href="#h0-5-29" id="h0-5-29" class="d">-                        return Err(Error::Serialization);
+</a><a href="#h0-5-30" id="h0-5-30" class="d">-                    }
+</a><a href="#h0-5-31" id="h0-5-31" class="d">-                }
+</a><a href="#h0-5-32" id="h0-5-32" class="d">-                k =&gt; return Err(Error::Internal(format!(&quot;Expected Txn::Record, got {:?}&quot;, k))),
+</a><a href="#h0-5-33" id="h0-5-33" class="d">-            };
+</a><a href="#h0-5-34" id="h0-5-34" class="d">-        }
+</a><a href="#h0-5-35" id="h0-5-35" class="d">-        std::mem::drop(scan);
+</a><a href="#h0-5-36" id="h0-5-36" class="d">-
+</a><a href="#h0-5-37" id="h0-5-37" class="d">-        // Write the key and its update record.
+</a><a href="#h0-5-38" id="h0-5-38" class="d">-        let key = Key::Version(key.into(), self.version).encode()?;
+</a><a href="#h0-5-39" id="h0-5-39" class="d">-        let update = Key::TxnUpdate(self.version, (&amp;key).into()).encode()?;
+</a><a href="#h0-5-40" id="h0-5-40" class="d">-        session.set(&amp;update, vec![])?;
+</a><a href="#h0-5-41" id="h0-5-41" class="d">-        session.set(&amp;key, bincode::serialize(&amp;value)?)
+</a><a href="#h0-5-42" id="h0-5-42" class="d">-    }
+</a> }
+ 
+ pub type ScanIterator&lt;&#39;a&gt; =
+<a href="#h0-6" id="h0-6" class="h">@@ -549,7 +559,7 @@ pub mod tests {
+</a>             (KeyPrefix::NextVersion, Key::NextVersion),
+             (KeyPrefix::TxnActive, Key::TxnActive(1)),
+             (KeyPrefix::TxnActiveSnapshot, Key::TxnActiveSnapshot(1)),
+<a href="#h0-6-3" id="h0-6-3" class="d">-            (KeyPrefix::TxnUpdate(1), Key::TxnUpdate(1, b&quot;foo&quot;.as_slice().into())),
+</a><a href="#h0-6-4" id="h0-6-4" class="i">+            (KeyPrefix::TxnWrite(1), Key::TxnWrite(1, b&quot;foo&quot;.as_slice().into())),
+</a>             (
+                 KeyPrefix::Version(b&quot;foo&quot;.as_slice().into()),
+                 Key::Version(b&quot;foo&quot;.as_slice().into(), 1),
+</pre>
+</div>
+</body>
+</html>

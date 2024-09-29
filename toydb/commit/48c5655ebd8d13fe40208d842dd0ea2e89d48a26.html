@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Tweak Raft leader replication logic. - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/48c5655ebd8d13fe40208d842dd0ea2e89d48a26.html">48c5655ebd8d13fe40208d842dd0ea2e89d48a26</a>
+<b>parent</b> <a href="../commit/52fe6a7914ab52ce74dd566977ae2b814eb51813.html">52fe6a7914ab52ce74dd566977ae2b814eb51813</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Sun, 19 Nov 2023 18:04:01 +0100
+
+Tweak Raft leader replication logic.
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/raft/node/leader.rs</a></td><td> | </td><td class="num">191</td><td><span class="i">++++++++++++++++++++++++++++++++++++++++++</span><span class="d">-------------------------------------</span></td></tr>
+</table></pre><pre>1 file changed, 102 insertions(+), 89 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/raft/node/leader.rs.html">src/raft/node/leader.rs</a> b/<a href="../file/src/raft/node/leader.rs.html">src/raft/node/leader.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -5,30 +5,30 @@ use crate::error::{Error, Result};
+</a> use ::log::{debug, error, info};
+ use std::collections::{HashMap, HashSet};
+ 
+<a href="#h0-0-3" id="h0-0-3" class="i">+/// Peer replication progress.
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+#[derive(Debug)]
+</a><a href="#h0-0-5" id="h0-0-5" class="i">+struct Progress {
+</a><a href="#h0-0-6" id="h0-0-6" class="i">+    /// The next index to replicate to the peer.
+</a><a href="#h0-0-7" id="h0-0-7" class="i">+    next: Index,
+</a><a href="#h0-0-8" id="h0-0-8" class="i">+    /// The last index known to be replicated to the peer.
+</a><a href="#h0-0-9" id="h0-0-9" class="i">+    last: Index,
+</a><a href="#h0-0-10" id="h0-0-10" class="i">+}
+</a><a href="#h0-0-11" id="h0-0-11" class="i">+
+</a> // A leader serves requests and replicates the log to followers.
+ #[derive(Debug)]
+ pub struct Leader {
+<a href="#h0-0-15" id="h0-0-15" class="i">+    /// Peer replication progress.
+</a><a href="#h0-0-16" id="h0-0-16" class="i">+    progress: HashMap&lt;NodeID, Progress&gt;,
+</a>     /// Number of ticks since last periodic heartbeat.
+     since_heartbeat: Ticks,
+<a href="#h0-0-19" id="h0-0-19" class="d">-    /// The next index to replicate to a peer.
+</a><a href="#h0-0-20" id="h0-0-20" class="d">-    peer_next_index: HashMap&lt;NodeID, Index&gt;,
+</a><a href="#h0-0-21" id="h0-0-21" class="d">-    /// The last index known to be replicated on a peer.
+</a><a href="#h0-0-22" id="h0-0-22" class="d">-    peer_last_index: HashMap&lt;NodeID, Index&gt;,
+</a> }
+ 
+ impl Leader {
+     /// Creates a new leader role.
+     pub fn new(peers: HashSet&lt;NodeID&gt;, last_index: Index) -&gt; Self {
+<a href="#h0-0-28" id="h0-0-28" class="d">-        let mut leader = Self {
+</a><a href="#h0-0-29" id="h0-0-29" class="d">-            since_heartbeat: 0,
+</a><a href="#h0-0-30" id="h0-0-30" class="d">-            peer_next_index: HashMap::new(),
+</a><a href="#h0-0-31" id="h0-0-31" class="d">-            peer_last_index: HashMap::new(),
+</a><a href="#h0-0-32" id="h0-0-32" class="d">-        };
+</a><a href="#h0-0-33" id="h0-0-33" class="d">-        for peer in peers {
+</a><a href="#h0-0-34" id="h0-0-34" class="d">-            leader.peer_next_index.insert(peer, last_index + 1);
+</a><a href="#h0-0-35" id="h0-0-35" class="d">-            leader.peer_last_index.insert(peer, 0);
+</a><a href="#h0-0-36" id="h0-0-36" class="d">-        }
+</a><a href="#h0-0-37" id="h0-0-37" class="d">-        leader
+</a><a href="#h0-0-38" id="h0-0-38" class="i">+        let next = last_index + 1;
+</a><a href="#h0-0-39" id="h0-0-39" class="i">+        let progress = peers.into_iter().map(|p| (p, Progress { next, last: 0 })).collect();
+</a><a href="#h0-0-40" id="h0-0-40" class="i">+        Self { progress, since_heartbeat: 0 }
+</a>     }
+ }
+ 
+<a href="#h0-1" id="h0-1" class="h">@@ -90,22 +90,33 @@ impl RoleNode&lt;Leader&gt; {
+</a>                 }
+             }
+ 
+<a href="#h0-1-3" id="h0-1-3" class="d">-            // A follower appended log entries we sent it.
+</a><a href="#h0-1-4" id="h0-1-4" class="i">+            // A follower appended log entries we sent it. Record its progress
+</a><a href="#h0-1-5" id="h0-1-5" class="i">+            // and attempt to commit new entries.
+</a>             Event::AcceptEntries { last_index } =&gt; {
+<a href="#h0-1-7" id="h0-1-7" class="i">+                assert!(
+</a><a href="#h0-1-8" id="h0-1-8" class="i">+                    last_index &lt;= self.log.get_last_index().0,
+</a><a href="#h0-1-9" id="h0-1-9" class="i">+                    &quot;Follower accepted entries after last index&quot;
+</a><a href="#h0-1-10" id="h0-1-10" class="i">+                );
+</a><a href="#h0-1-11" id="h0-1-11" class="i">+
+</a>                 let from = msg.from.unwrap();
+<a href="#h0-1-13" id="h0-1-13" class="d">-                self.role.peer_last_index.insert(from, last_index);
+</a><a href="#h0-1-14" id="h0-1-14" class="d">-                self.role.peer_next_index.insert(from, last_index + 1);
+</a><a href="#h0-1-15" id="h0-1-15" class="i">+                self.role.progress.entry(from).and_modify(|p| {
+</a><a href="#h0-1-16" id="h0-1-16" class="i">+                    p.last = last_index;
+</a><a href="#h0-1-17" id="h0-1-17" class="i">+                    p.next = last_index + 1;
+</a><a href="#h0-1-18" id="h0-1-18" class="i">+                });
+</a>                 self.maybe_commit()?;
+             }
+ 
+             // A follower rejected log entries we sent it, typically because it
+<a href="#h0-1-23" id="h0-1-23" class="d">-            // does not have the base index in its log. Try from the previous
+</a><a href="#h0-1-24" id="h0-1-24" class="d">-            // entry.
+</a><a href="#h0-1-25" id="h0-1-25" class="i">+            // does not have the base index in its log. Try to replicate from
+</a><a href="#h0-1-26" id="h0-1-26" class="i">+            // the previous entry.
+</a><a href="#h0-1-27" id="h0-1-27" class="i">+            //
+</a><a href="#h0-1-28" id="h0-1-28" class="i">+            // This linear probing, as described in the Raft paper, can be very
+</a><a href="#h0-1-29" id="h0-1-29" class="i">+            // slow with long divergent logs, but we keep it simple.
+</a>             Event::RejectEntries =&gt; {
+                 let from = msg.from.unwrap();
+<a href="#h0-1-32" id="h0-1-32" class="d">-                self.role.peer_next_index.entry(from).and_modify(|i| {
+</a><a href="#h0-1-33" id="h0-1-33" class="d">-                    if *i &gt; 1 {
+</a><a href="#h0-1-34" id="h0-1-34" class="d">-                        *i -= 1
+</a><a href="#h0-1-35" id="h0-1-35" class="i">+                self.role.progress.entry(from).and_modify(|p| {
+</a><a href="#h0-1-36" id="h0-1-36" class="i">+                    if p.next &gt; 1 {
+</a><a href="#h0-1-37" id="h0-1-37" class="i">+                        p.next -= 1
+</a>                     }
+                 });
+                 self.send_log(from)?;
+<a href="#h0-2" id="h0-2" class="h">@@ -139,17 +150,22 @@ impl RoleNode&lt;Leader&gt; {
+</a> 
+             Event::ClientRequest { id, request: Request::Status } =&gt; {
+                 let engine_status = self.log.status()?;
+<a href="#h0-2-3" id="h0-2-3" class="d">-                let mut status = Box::new(Status {
+</a><a href="#h0-2-4" id="h0-2-4" class="i">+                let status = Box::new(Status {
+</a>                     server: self.id,
+                     leader: self.id,
+                     term: self.term,
+<a href="#h0-2-8" id="h0-2-8" class="d">-                    node_last_index: self.role.peer_last_index.clone(),
+</a><a href="#h0-2-9" id="h0-2-9" class="i">+                    node_last_index: self
+</a><a href="#h0-2-10" id="h0-2-10" class="i">+                        .role
+</a><a href="#h0-2-11" id="h0-2-11" class="i">+                        .progress
+</a><a href="#h0-2-12" id="h0-2-12" class="i">+                        .iter()
+</a><a href="#h0-2-13" id="h0-2-13" class="i">+                        .map(|(id, p)| (*id, p.last))
+</a><a href="#h0-2-14" id="h0-2-14" class="i">+                        .chain(std::iter::once((self.id, self.log.get_last_index().0)))
+</a><a href="#h0-2-15" id="h0-2-15" class="i">+                        .collect(),
+</a>                     commit_index: self.log.get_commit_index().0,
+                     apply_index: 0,
+                     storage: engine_status.name.clone(),
+                     storage_size: engine_status.size,
+                 });
+<a href="#h0-2-21" id="h0-2-21" class="d">-                status.node_last_index.insert(self.id, self.log.get_last_index().0);
+</a>                 self.state_tx.send(Instruction::Status { id, address: msg.from, status })?
+             }
+ 
+<a href="#h0-3" id="h0-3" class="h">@@ -197,45 +213,68 @@ impl RoleNode&lt;Leader&gt; {
+</a>         Ok(index)
+     }
+ 
+<a href="#h0-3-3" id="h0-3-3" class="d">-    /// Commits any pending log entries, if possible.
+</a><a href="#h0-3-4" id="h0-3-4" class="i">+    /// Commits any new log entries that have been replicated to a quorum,
+</a><a href="#h0-3-5" id="h0-3-5" class="i">+    /// and schedules them for state machine application.
+</a>     fn maybe_commit(&amp;mut self) -&gt; Result&lt;Index&gt; {
+<a href="#h0-3-7" id="h0-3-7" class="d">-        let mut last_indexes = vec![self.log.get_last_index().0];
+</a><a href="#h0-3-8" id="h0-3-8" class="d">-        last_indexes.extend(self.role.peer_last_index.values());
+</a><a href="#h0-3-9" id="h0-3-9" class="i">+        // Determine the new commit index, i.e. the last index replicated to a
+</a><a href="#h0-3-10" id="h0-3-10" class="i">+        // quorum of peers.
+</a><a href="#h0-3-11" id="h0-3-11" class="i">+        let mut last_indexes = self
+</a><a href="#h0-3-12" id="h0-3-12" class="i">+            .role
+</a><a href="#h0-3-13" id="h0-3-13" class="i">+            .progress
+</a><a href="#h0-3-14" id="h0-3-14" class="i">+            .values()
+</a><a href="#h0-3-15" id="h0-3-15" class="i">+            .map(|p| p.last)
+</a><a href="#h0-3-16" id="h0-3-16" class="i">+            .chain(std::iter::once(self.log.get_last_index().0))
+</a><a href="#h0-3-17" id="h0-3-17" class="i">+            .collect::&lt;Vec&lt;_&gt;&gt;();
+</a>         last_indexes.sort_unstable();
+         last_indexes.reverse();
+<a href="#h0-3-20" id="h0-3-20" class="d">-        let quorum_index = last_indexes[self.quorum() as usize - 1];
+</a><a href="#h0-3-21" id="h0-3-21" class="d">-
+</a><a href="#h0-3-22" id="h0-3-22" class="d">-        // We can only safely commit up to an entry from our own term, see figure 8 in Raft paper.
+</a><a href="#h0-3-23" id="h0-3-23" class="d">-        let (commit_index, _) = self.log.get_commit_index();
+</a><a href="#h0-3-24" id="h0-3-24" class="d">-        if quorum_index &gt; commit_index {
+</a><a href="#h0-3-25" id="h0-3-25" class="d">-            if let Some(entry) = self.log.get(quorum_index)? {
+</a><a href="#h0-3-26" id="h0-3-26" class="d">-                if entry.term == self.term {
+</a><a href="#h0-3-27" id="h0-3-27" class="d">-                    self.log.commit(quorum_index)?;
+</a><a href="#h0-3-28" id="h0-3-28" class="d">-                    let mut scan = self.log.scan((commit_index + 1)..=quorum_index)?;
+</a><a href="#h0-3-29" id="h0-3-29" class="d">-                    while let Some(entry) = scan.next().transpose()? {
+</a><a href="#h0-3-30" id="h0-3-30" class="d">-                        self.state_tx.send(Instruction::Apply { entry })?;
+</a><a href="#h0-3-31" id="h0-3-31" class="d">-                    }
+</a><a href="#h0-3-32" id="h0-3-32" class="d">-                }
+</a><a href="#h0-3-33" id="h0-3-33" class="i">+        let commit_index = last_indexes[self.quorum() as usize - 1];
+</a><a href="#h0-3-34" id="h0-3-34" class="i">+
+</a><a href="#h0-3-35" id="h0-3-35" class="i">+        // A 0 commit index means we haven&#39;t committed anything yet.
+</a><a href="#h0-3-36" id="h0-3-36" class="i">+        if commit_index == 0 {
+</a><a href="#h0-3-37" id="h0-3-37" class="i">+            return Ok(commit_index);
+</a><a href="#h0-3-38" id="h0-3-38" class="i">+        }
+</a><a href="#h0-3-39" id="h0-3-39" class="i">+
+</a><a href="#h0-3-40" id="h0-3-40" class="i">+        // Make sure the commit index does not regress.
+</a><a href="#h0-3-41" id="h0-3-41" class="i">+        let (prev_commit_index, _) = self.log.get_commit_index();
+</a><a href="#h0-3-42" id="h0-3-42" class="i">+        assert!(
+</a><a href="#h0-3-43" id="h0-3-43" class="i">+            commit_index &gt;= prev_commit_index,
+</a><a href="#h0-3-44" id="h0-3-44" class="i">+            &quot;Commit index regression {} -&gt; {}&quot;,
+</a><a href="#h0-3-45" id="h0-3-45" class="i">+            prev_commit_index,
+</a><a href="#h0-3-46" id="h0-3-46" class="i">+            commit_index
+</a><a href="#h0-3-47" id="h0-3-47" class="i">+        );
+</a><a href="#h0-3-48" id="h0-3-48" class="i">+
+</a><a href="#h0-3-49" id="h0-3-49" class="i">+        // We can only safely commit up to an entry from our own term, see
+</a><a href="#h0-3-50" id="h0-3-50" class="i">+        // figure 8 in Raft paper.
+</a><a href="#h0-3-51" id="h0-3-51" class="i">+        match self.log.get(commit_index)? {
+</a><a href="#h0-3-52" id="h0-3-52" class="i">+            Some(entry) if entry.term == self.term =&gt; {}
+</a><a href="#h0-3-53" id="h0-3-53" class="i">+            Some(_) =&gt; return Ok(prev_commit_index),
+</a><a href="#h0-3-54" id="h0-3-54" class="i">+            None =&gt; return Err(Error::Internal(format!(&quot;Commit index {} missing&quot;, commit_index))),
+</a><a href="#h0-3-55" id="h0-3-55" class="i">+        };
+</a><a href="#h0-3-56" id="h0-3-56" class="i">+
+</a><a href="#h0-3-57" id="h0-3-57" class="i">+        // Commit and apply the new entries.
+</a><a href="#h0-3-58" id="h0-3-58" class="i">+        if commit_index &gt; prev_commit_index {
+</a><a href="#h0-3-59" id="h0-3-59" class="i">+            self.log.commit(commit_index)?;
+</a><a href="#h0-3-60" id="h0-3-60" class="i">+            // TODO: Move application elsewhere, but needs access to applied index.
+</a><a href="#h0-3-61" id="h0-3-61" class="i">+            let mut scan = self.log.scan((prev_commit_index + 1)..=commit_index)?;
+</a><a href="#h0-3-62" id="h0-3-62" class="i">+            while let Some(entry) = scan.next().transpose()? {
+</a><a href="#h0-3-63" id="h0-3-63" class="i">+                self.state_tx.send(Instruction::Apply { entry })?;
+</a>             }
+         }
+<a href="#h0-3-66" id="h0-3-66" class="d">-        Ok(quorum_index)
+</a><a href="#h0-3-67" id="h0-3-67" class="i">+        Ok(commit_index)
+</a>     }
+ 
+     /// Sends pending log entries to a peer.
+     fn send_log(&amp;mut self, peer: NodeID) -&gt; Result&lt;()&gt; {
+<a href="#h0-3-72" id="h0-3-72" class="d">-        let peer_next = self
+</a><a href="#h0-3-73" id="h0-3-73" class="d">-            .role
+</a><a href="#h0-3-74" id="h0-3-74" class="d">-            .peer_next_index
+</a><a href="#h0-3-75" id="h0-3-75" class="d">-            .get(&amp;peer)
+</a><a href="#h0-3-76" id="h0-3-76" class="d">-            .cloned()
+</a><a href="#h0-3-77" id="h0-3-77" class="d">-            .ok_or_else(|| Error::Internal(format!(&quot;Unknown peer {}&quot;, peer)))?;
+</a><a href="#h0-3-78" id="h0-3-78" class="d">-        let base_index = if peer_next &gt; 0 { peer_next - 1 } else { 0 };
+</a><a href="#h0-3-79" id="h0-3-79" class="d">-        let base_term = match self.log.get(base_index)? {
+</a><a href="#h0-3-80" id="h0-3-80" class="d">-            Some(base) =&gt; base.term,
+</a><a href="#h0-3-81" id="h0-3-81" class="d">-            None if base_index == 0 =&gt; 0,
+</a><a href="#h0-3-82" id="h0-3-82" class="d">-            None =&gt; return Err(Error::Internal(format!(&quot;Missing base entry {}&quot;, base_index))),
+</a><a href="#h0-3-83" id="h0-3-83" class="i">+        let (base_index, base_term) = match self.role.progress.get(&amp;peer) {
+</a><a href="#h0-3-84" id="h0-3-84" class="i">+            Some(Progress { next, .. }) if *next &gt; 1 =&gt; match self.log.get(next - 1)? {
+</a><a href="#h0-3-85" id="h0-3-85" class="i">+                Some(entry) =&gt; (entry.index, entry.term),
+</a><a href="#h0-3-86" id="h0-3-86" class="i">+                None =&gt; return Err(Error::Internal(format!(&quot;Missing base entry {}&quot;, next - 1))),
+</a><a href="#h0-3-87" id="h0-3-87" class="i">+            },
+</a><a href="#h0-3-88" id="h0-3-88" class="i">+            Some(_) =&gt; (0, 0),
+</a><a href="#h0-3-89" id="h0-3-89" class="i">+            None =&gt; return Err(Error::Internal(format!(&quot;Unknown peer {}&quot;, peer))),
+</a>         };
+<a href="#h0-3-91" id="h0-3-91" class="d">-        let entries = self.log.scan(peer_next..)?.collect::&lt;Result&lt;Vec&lt;_&gt;&gt;&gt;()?;
+</a><a href="#h0-3-92" id="h0-3-92" class="i">+
+</a><a href="#h0-3-93" id="h0-3-93" class="i">+        let entries = self.log.scan((base_index + 1)..)?.collect::&lt;Result&lt;Vec&lt;_&gt;&gt;&gt;()?;
+</a>         debug!(&quot;Replicating {} entries at base {} to {}&quot;, entries.len(), base_index, peer);
+         self.send(Address::Node(peer), Event::AppendEntries { base_index, base_term, entries })?;
+         Ok(())
+<a href="#h0-4" id="h0-4" class="h">@@ -486,44 +525,18 @@ mod tests {
+</a>     }
+ 
+     #[test]
+<a href="#h0-4-3" id="h0-4-3" class="d">-    // AcceptEntries quorum for missing future entry
+</a><a href="#h0-4-4" id="h0-4-4" class="d">-    fn step_acceptentries_future_index() -&gt; Result&lt;()&gt; {
+</a><a href="#h0-4-5" id="h0-4-5" class="d">-        let (leader, mut node_rx, mut state_rx) = setup()?;
+</a><a href="#h0-4-6" id="h0-4-6" class="d">-        let peers = leader.peers.clone();
+</a><a href="#h0-4-7" id="h0-4-7" class="d">-        let mut node: Node = leader.into();
+</a><a href="#h0-4-8" id="h0-4-8" class="d">-
+</a><a href="#h0-4-9" id="h0-4-9" class="d">-        for (i, peer) in peers.into_iter().enumerate() {
+</a><a href="#h0-4-10" id="h0-4-10" class="d">-            node = node.step(Message {
+</a><a href="#h0-4-11" id="h0-4-11" class="d">-                from: Address::Node(peer),
+</a><a href="#h0-4-12" id="h0-4-12" class="i">+    #[should_panic(expected = &quot;Follower accepted entries after last index&quot;)]
+</a><a href="#h0-4-13" id="h0-4-13" class="i">+    // AcceptEntries panics if last_index is beyond leader&#39;s log.
+</a><a href="#h0-4-14" id="h0-4-14" class="i">+    fn step_acceptentries_future_index() {
+</a><a href="#h0-4-15" id="h0-4-15" class="i">+        let (leader, _, _) = setup().unwrap();
+</a><a href="#h0-4-16" id="h0-4-16" class="i">+        leader
+</a><a href="#h0-4-17" id="h0-4-17" class="i">+            .step(Message {
+</a><a href="#h0-4-18" id="h0-4-18" class="i">+                from: Address::Node(2),
+</a>                 to: Address::Node(1),
+                 term: 3,
+                 event: Event::AcceptEntries { last_index: 7 },
+<a href="#h0-4-22" id="h0-4-22" class="d">-            })?;
+</a><a href="#h0-4-23" id="h0-4-23" class="d">-            // The local leader will cast a vote to commit 5, thus when we have votes 2x7, 1x5, 2x0
+</a><a href="#h0-4-24" id="h0-4-24" class="d">-            // we will commit index 5. However, we will correctly ignore the following votes for7.
+</a><a href="#h0-4-25" id="h0-4-25" class="d">-            let c = if i == 0 { 2 } else { 5 };
+</a><a href="#h0-4-26" id="h0-4-26" class="d">-            assert_node(&amp;mut node).is_leader().term(3).committed(c).last(5);
+</a><a href="#h0-4-27" id="h0-4-27" class="d">-            assert_messages(&amp;mut node_rx, vec![]);
+</a><a href="#h0-4-28" id="h0-4-28" class="d">-            if i == 1 {
+</a><a href="#h0-4-29" id="h0-4-29" class="d">-                assert_messages(
+</a><a href="#h0-4-30" id="h0-4-30" class="d">-                    &amp;mut state_rx,
+</a><a href="#h0-4-31" id="h0-4-31" class="d">-                    vec![
+</a><a href="#h0-4-32" id="h0-4-32" class="d">-                        Instruction::Apply {
+</a><a href="#h0-4-33" id="h0-4-33" class="d">-                            entry: Entry { index: 3, term: 2, command: Some(vec![0x03]) },
+</a><a href="#h0-4-34" id="h0-4-34" class="d">-                        },
+</a><a href="#h0-4-35" id="h0-4-35" class="d">-                        Instruction::Apply {
+</a><a href="#h0-4-36" id="h0-4-36" class="d">-                            entry: Entry { index: 4, term: 3, command: Some(vec![0x04]) },
+</a><a href="#h0-4-37" id="h0-4-37" class="d">-                        },
+</a><a href="#h0-4-38" id="h0-4-38" class="d">-                        Instruction::Apply {
+</a><a href="#h0-4-39" id="h0-4-39" class="d">-                            entry: Entry { index: 5, term: 3, command: Some(vec![0x05]) },
+</a><a href="#h0-4-40" id="h0-4-40" class="d">-                        },
+</a><a href="#h0-4-41" id="h0-4-41" class="d">-                    ],
+</a><a href="#h0-4-42" id="h0-4-42" class="d">-                );
+</a><a href="#h0-4-43" id="h0-4-43" class="d">-            } else {
+</a><a href="#h0-4-44" id="h0-4-44" class="d">-                assert_messages(&amp;mut state_rx, vec![]);
+</a><a href="#h0-4-45" id="h0-4-45" class="d">-            }
+</a><a href="#h0-4-46" id="h0-4-46" class="d">-        }
+</a><a href="#h0-4-47" id="h0-4-47" class="d">-        Ok(())
+</a><a href="#h0-4-48" id="h0-4-48" class="i">+            })
+</a><a href="#h0-4-49" id="h0-4-49" class="i">+            .unwrap();
+</a>     }
+ 
+     #[test]
+</pre>
+</div>
+</body>
+</html>

@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Move Raft node construction onto `RawNode` - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/64e3ef8c6d779e5da42447940f91dc23f5e0df21.html">64e3ef8c6d779e5da42447940f91dc23f5e0df21</a>
+<b>parent</b> <a href="../commit/4e69511418bdc7f64d45316bc3ace4eb2996cad9.html">4e69511418bdc7f64d45316bc3ace4eb2996cad9</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Sun,  7 Jan 2024 12:54:20 +0100
+
+Move Raft node construction onto `RawNode`
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/raft/node/follower.rs</a></td><td> | </td><td class="num">16</td><td><span class="i">+++++++++++++++</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/raft/node/mod.rs</a></td><td> | </td><td class="num">16</td><td><span class="i">++++</span><span class="d">------------</span></td></tr>
+</table></pre><pre>2 files changed, 19 insertions(+), 13 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/raft/node/follower.rs.html">src/raft/node/follower.rs</a> b/<a href="../file/src/raft/node/follower.rs.html">src/raft/node/follower.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -1,9 +1,10 @@
+</a><a href="#h0-0-0" id="h0-0-0" class="d">-use super::super::{Address, Event, Instruction, Message, RequestID, Response};
+</a><a href="#h0-0-1" id="h0-0-1" class="i">+use super::super::{Address, Event, Instruction, Log, Message, RequestID, Response};
+</a> use super::{rand_election_timeout, Candidate, Node, NodeID, RawNode, Role, Term, Ticks};
+ use crate::error::{Error, Result};
+ 
+ use ::log::{debug, error, info, warn};
+ use std::collections::HashSet;
+<a href="#h0-0-7" id="h0-0-7" class="i">+use tokio::sync::mpsc;
+</a> 
+ // A follower replicates state from a leader.
+ #[derive(Clone, Debug, PartialEq)]
+<a href="#h0-1" id="h0-1" class="h">@@ -37,6 +38,19 @@ impl Follower {
+</a> impl Role for Follower {}
+ 
+ impl RawNode&lt;Follower&gt; {
+<a href="#h0-1-3" id="h0-1-3" class="i">+    /// Creates a new node as a leaderless follower.
+</a><a href="#h0-1-4" id="h0-1-4" class="i">+    pub fn new(
+</a><a href="#h0-1-5" id="h0-1-5" class="i">+        id: NodeID,
+</a><a href="#h0-1-6" id="h0-1-6" class="i">+        peers: HashSet&lt;NodeID&gt;,
+</a><a href="#h0-1-7" id="h0-1-7" class="i">+        mut log: Log,
+</a><a href="#h0-1-8" id="h0-1-8" class="i">+        node_tx: mpsc::UnboundedSender&lt;Message&gt;,
+</a><a href="#h0-1-9" id="h0-1-9" class="i">+        state_tx: mpsc::UnboundedSender&lt;Instruction&gt;,
+</a><a href="#h0-1-10" id="h0-1-10" class="i">+    ) -&gt; Result&lt;Self&gt; {
+</a><a href="#h0-1-11" id="h0-1-11" class="i">+        let (term, voted_for) = log.get_term()?;
+</a><a href="#h0-1-12" id="h0-1-12" class="i">+        let role = Follower::new(None, voted_for);
+</a><a href="#h0-1-13" id="h0-1-13" class="i">+        Ok(Self { id, peers, term, log, node_tx, state_tx, role })
+</a><a href="#h0-1-14" id="h0-1-14" class="i">+    }
+</a><a href="#h0-1-15" id="h0-1-15" class="i">+
+</a>     /// Asserts internal invariants.
+     fn assert(&amp;mut self) -&gt; Result&lt;()&gt; {
+         self.assert_node()?;
+<b>diff --git a/<a id="h1" href="../file/src/raft/node/mod.rs.html">src/raft/node/mod.rs</a> b/<a href="../file/src/raft/node/mod.rs.html">src/raft/node/mod.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -56,7 +56,8 @@ pub enum Node {
+</a> }
+ 
+ impl Node {
+<a href="#h1-0-3" id="h1-0-3" class="d">-    /// Creates a new Raft node, starting as a leaderless follower.
+</a><a href="#h1-0-4" id="h1-0-4" class="i">+    /// Creates a new Raft node, starting as a leaderless follower, or leader if
+</a><a href="#h1-0-5" id="h1-0-5" class="i">+    /// there are no peers.
+</a>     pub async fn new(
+         id: NodeID,
+         peers: HashSet&lt;NodeID&gt;,
+<a href="#h1-1" id="h1-1" class="h">@@ -69,16 +70,7 @@ impl Node {
+</a>         driver.apply_log(&amp;mut *state, &amp;mut log)?;
+         tokio::spawn(driver.drive(state));
+ 
+<a href="#h1-1-3" id="h1-1-3" class="d">-        let (term, voted_for) = log.get_term()?;
+</a><a href="#h1-1-4" id="h1-1-4" class="d">-        let node = RawNode {
+</a><a href="#h1-1-5" id="h1-1-5" class="d">-            id,
+</a><a href="#h1-1-6" id="h1-1-6" class="d">-            peers,
+</a><a href="#h1-1-7" id="h1-1-7" class="d">-            term,
+</a><a href="#h1-1-8" id="h1-1-8" class="d">-            log,
+</a><a href="#h1-1-9" id="h1-1-9" class="d">-            node_tx,
+</a><a href="#h1-1-10" id="h1-1-10" class="d">-            state_tx,
+</a><a href="#h1-1-11" id="h1-1-11" class="d">-            role: Follower::new(None, voted_for),
+</a><a href="#h1-1-12" id="h1-1-12" class="d">-        };
+</a><a href="#h1-1-13" id="h1-1-13" class="i">+        let node = RawNode::new(id, peers, log, node_tx, state_tx)?;
+</a>         if node.peers.is_empty() {
+             // If there are no peers, become leader immediately.
+             return Ok(node.become_candidate()?.become_leader()?.into());
+<a href="#h1-2" id="h1-2" class="h">@@ -137,7 +129,7 @@ impl From&lt;RawNode&lt;Leader&gt;&gt; for Node {
+</a> pub trait Role: Clone + std::fmt::Debug + PartialEq {}
+ 
+ // A Raft node with role R
+<a href="#h1-2-3" id="h1-2-3" class="d">-pub struct RawNode&lt;R: Role&gt; {
+</a><a href="#h1-2-4" id="h1-2-4" class="i">+pub struct RawNode&lt;R: Role = Follower&gt; {
+</a>     id: NodeID,
+     peers: HashSet&lt;NodeID&gt;,
+     term: Term,
+</pre>
+</div>
+</body>
+</html>

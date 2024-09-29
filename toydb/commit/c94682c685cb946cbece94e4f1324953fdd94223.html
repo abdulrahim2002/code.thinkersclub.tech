@@ -1,0 +1,620 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>raft: track reads on leader - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/c94682c685cb946cbece94e4f1324953fdd94223.html">c94682c685cb946cbece94e4f1324953fdd94223</a>
+<b>parent</b> <a href="../commit/1eb3acd3f1059ee9b64b412e4aa55de1408f8d02.html">1eb3acd3f1059ee9b64b412e4aa55de1408f8d02</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Sun, 19 Nov 2023 22:27:04 +0100
+
+raft: track reads on leader
+
+This is in preparation for moving state machine application into the
+Raft loop. This patch only tracks the reads, without actually responding
+to clients.
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/raft/message.rs</a></td><td> | </td><td class="num">9</td><td><span class="i">+++++++++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/raft/mod.rs</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/raft/node/candidate.rs</a></td><td> | </td><td class="num">12</td><td><span class="i">++++++</span><span class="d">------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">src/raft/node/follower.rs</a></td><td> | </td><td class="num">51</td><td><span class="i">+++++++++++++++++++++++++++++++</span><span class="d">--------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h4">src/raft/node/leader.rs</a></td><td> | </td><td class="num">126</td><td><span class="i">+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d">----------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h5">src/raft/node/mod.rs</a></td><td> | </td><td class="num">7</td><td><span class="i">+++++</span><span class="d">--</span></td></tr>
+</table></pre><pre>6 files changed, 163 insertions(+), 44 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/raft/message.rs.html">src/raft/message.rs</a> b/<a href="../file/src/raft/message.rs.html">src/raft/message.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -51,15 +51,21 @@ pub enum Event {
+</a>         commit_index: Index,
+         /// The term of the leader&#39;s last committed log entry.
+         commit_term: Term,
+<a href="#h0-0-3" id="h0-0-3" class="i">+        /// The latest read sequence number of the leader.
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+        read_seq: ReadSequence,
+</a>     },
+     /// Followers confirm loyalty to leader after heartbeats.
+     ConfirmLeader {
+         /// The commit_index of the original leader heartbeat, to confirm
+         /// read requests.
+<a href="#h0-0-10" id="h0-0-10" class="i">+        ///
+</a><a href="#h0-0-11" id="h0-0-11" class="i">+        /// TODO: remove this when migrated to read_seq.
+</a>         commit_index: Index,
+         /// If false, the follower does not have the entry at commit_index
+         /// and would like the leader to replicate it.
+         has_committed: bool,
+<a href="#h0-0-16" id="h0-0-16" class="i">+        /// The read sequence number of the heartbeat we&#39;re responding to.
+</a><a href="#h0-0-17" id="h0-0-17" class="i">+        read_seq: ReadSequence,
+</a>     },
+ 
+     /// Candidates solicit votes from all peers when campaigning for leadership.
+<a href="#h0-1" id="h0-1" class="h">@@ -115,6 +121,9 @@ pub enum Event {
+</a> /// A client request ID.
+ pub type RequestID = Vec&lt;u8&gt;;
+ 
+<a href="#h0-1-3" id="h0-1-3" class="i">+/// A read sequence number, used to confirm leadership for linearizable reads.
+</a><a href="#h0-1-4" id="h0-1-4" class="i">+pub type ReadSequence = u64;
+</a><a href="#h0-1-5" id="h0-1-5" class="i">+
+</a> /// A client request.
+ #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+ pub enum Request {
+<b>diff --git a/<a id="h1" href="../file/src/raft/mod.rs.html">src/raft/mod.rs</a> b/<a href="../file/src/raft/mod.rs.html">src/raft/mod.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -5,7 +5,7 @@ mod server;
+</a> mod state;
+ 
+ pub use self::log::{Entry, Index, Log};
+<a href="#h1-0-3" id="h1-0-3" class="d">-pub use message::{Address, Event, Message, Request, RequestID, Response, Status};
+</a><a href="#h1-0-4" id="h1-0-4" class="i">+pub use message::{Address, Event, Message, ReadSequence, Request, RequestID, Response, Status};
+</a> pub use node::{Node, NodeID, Term};
+ pub use server::Server;
+ pub use state::{Driver, Instruction, State};
+<b>diff --git a/<a id="h2" href="../file/src/raft/node/candidate.rs.html">src/raft/node/candidate.rs</a> b/<a href="../file/src/raft/node/candidate.rs.html">src/raft/node/candidate.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -210,7 +210,7 @@ mod tests {
+</a>             from: Address::Node(2),
+             to: Address::Node(1),
+             term: 3,
+<a href="#h2-0-3" id="h2-0-3" class="d">-            event: Event::Heartbeat { commit_index: 2, commit_term: 1 },
+</a><a href="#h2-0-4" id="h2-0-4" class="i">+            event: Event::Heartbeat { commit_index: 2, commit_term: 1, read_seq: 7 },
+</a>         })?;
+         assert_node(&amp;mut node).is_follower().term(3);
+         assert_messages(
+<a href="#h2-1" id="h2-1" class="h">@@ -219,7 +219,7 @@ mod tests {
+</a>                 from: Address::Node(1),
+                 to: Address::Node(2),
+                 term: 3,
+<a href="#h2-1-3" id="h2-1-3" class="d">-                event: Event::ConfirmLeader { commit_index: 2, has_committed: true },
+</a><a href="#h2-1-4" id="h2-1-4" class="i">+                event: Event::ConfirmLeader { commit_index: 2, has_committed: true, read_seq: 7 },
+</a>             }],
+         );
+         assert_messages(&amp;mut state_rx, vec![]);
+<a href="#h2-2" id="h2-2" class="h">@@ -235,7 +235,7 @@ mod tests {
+</a>             from: Address::Node(2),
+             to: Address::Node(1),
+             term: 4,
+<a href="#h2-2-3" id="h2-2-3" class="d">-            event: Event::Heartbeat { commit_index: 2, commit_term: 1 },
+</a><a href="#h2-2-4" id="h2-2-4" class="i">+            event: Event::Heartbeat { commit_index: 2, commit_term: 1, read_seq: 7 },
+</a>         })?;
+         assert_node(&amp;mut node).is_follower().term(4);
+         assert_messages(
+<a href="#h2-3" id="h2-3" class="h">@@ -244,7 +244,7 @@ mod tests {
+</a>                 from: Address::Node(1),
+                 to: Address::Node(2),
+                 term: 4,
+<a href="#h2-3-3" id="h2-3-3" class="d">-                event: Event::ConfirmLeader { commit_index: 2, has_committed: true },
+</a><a href="#h2-3-4" id="h2-3-4" class="i">+                event: Event::ConfirmLeader { commit_index: 2, has_committed: true, read_seq: 7 },
+</a>             }],
+         );
+         assert_messages(&amp;mut state_rx, vec![]);
+<a href="#h2-4" id="h2-4" class="h">@@ -259,7 +259,7 @@ mod tests {
+</a>             from: Address::Node(2),
+             to: Address::Node(1),
+             term: 2,
+<a href="#h2-4-3" id="h2-4-3" class="d">-            event: Event::Heartbeat { commit_index: 1, commit_term: 1 },
+</a><a href="#h2-4-4" id="h2-4-4" class="i">+            event: Event::Heartbeat { commit_index: 1, commit_term: 1, read_seq: 7 },
+</a>         })?;
+         assert_node(&amp;mut node).is_candidate().term(3);
+         assert_messages(&amp;mut node_rx, vec![]);
+<a href="#h2-5" id="h2-5" class="h">@@ -299,7 +299,7 @@ mod tests {
+</a>                 from: Address::Node(1),
+                 to: Address::Broadcast,
+                 term: 3,
+<a href="#h2-5-3" id="h2-5-3" class="d">-                event: Event::Heartbeat { commit_index: 2, commit_term: 1 },
+</a><a href="#h2-5-4" id="h2-5-4" class="i">+                event: Event::Heartbeat { commit_index: 2, commit_term: 1, read_seq: 0 },
+</a>             },
+         );
+ 
+<b>diff --git a/<a id="h3" href="../file/src/raft/node/follower.rs.html">src/raft/node/follower.rs</a> b/<a href="../file/src/raft/node/follower.rs.html">src/raft/node/follower.rs</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -142,7 +142,7 @@ impl RawNode&lt;Follower&gt; {
+</a>             // The leader will send periodic heartbeats. If we don&#39;t have a
+             // leader in this term yet, follow it. If the commit_index advances,
+             // apply state transitions.
+<a href="#h3-0-3" id="h3-0-3" class="d">-            Event::Heartbeat { commit_index, commit_term } =&gt; {
+</a><a href="#h3-0-4" id="h3-0-4" class="i">+            Event::Heartbeat { commit_index, commit_term, read_seq } =&gt; {
+</a>                 // Check that the heartbeat is from our leader.
+                 let from = msg.from.unwrap();
+                 match self.role.leader {
+<a href="#h3-1" id="h3-1" class="h">@@ -160,7 +160,10 @@ impl RawNode&lt;Follower&gt; {
+</a>                         self.state_tx.send(Instruction::Apply { entry })?;
+                     }
+                 }
+<a href="#h3-1-3" id="h3-1-3" class="d">-                self.send(msg.from, Event::ConfirmLeader { commit_index, has_committed })?;
+</a><a href="#h3-1-4" id="h3-1-4" class="i">+                self.send(
+</a><a href="#h3-1-5" id="h3-1-5" class="i">+                    msg.from,
+</a><a href="#h3-1-6" id="h3-1-6" class="i">+                    Event::ConfirmLeader { commit_index, has_committed, read_seq },
+</a><a href="#h3-1-7" id="h3-1-7" class="i">+                )?;
+</a>             }
+ 
+             // Replicate entries from the leader. If we don&#39;t have a leader in
+<a href="#h3-2" id="h3-2" class="h">@@ -329,7 +332,7 @@ pub mod tests {
+</a>             from: Address::Node(2),
+             to: Address::Node(1),
+             term: 3,
+<a href="#h3-2-3" id="h3-2-3" class="d">-            event: Event::Heartbeat { commit_index: 3, commit_term: 2 },
+</a><a href="#h3-2-4" id="h3-2-4" class="i">+            event: Event::Heartbeat { commit_index: 3, commit_term: 2, read_seq: 7 },
+</a>         })?;
+         assert_node(&amp;mut node).is_follower().term(3).leader(Some(2)).voted_for(None).committed(3);
+         assert_messages(
+<a href="#h3-3" id="h3-3" class="h">@@ -338,7 +341,7 @@ pub mod tests {
+</a>                 from: Address::Node(1),
+                 to: Address::Node(2),
+                 term: 3,
+<a href="#h3-3-3" id="h3-3-3" class="d">-                event: Event::ConfirmLeader { commit_index: 3, has_committed: true },
+</a><a href="#h3-3-4" id="h3-3-4" class="i">+                event: Event::ConfirmLeader { commit_index: 3, has_committed: true, read_seq: 7 },
+</a>             }],
+         );
+         assert_messages(
+<a href="#h3-4" id="h3-4" class="h">@@ -358,7 +361,7 @@ pub mod tests {
+</a>             from: Address::Node(2),
+             to: Address::Node(1),
+             term: 3,
+<a href="#h3-4-3" id="h3-4-3" class="d">-            event: Event::Heartbeat { commit_index: 3, commit_term: 3 },
+</a><a href="#h3-4-4" id="h3-4-4" class="i">+            event: Event::Heartbeat { commit_index: 3, commit_term: 3, read_seq: 7 },
+</a>         })?;
+         assert_node(&amp;mut node).is_follower().term(3).leader(Some(2)).voted_for(None).committed(2);
+         assert_messages(
+<a href="#h3-5" id="h3-5" class="h">@@ -367,7 +370,7 @@ pub mod tests {
+</a>                 from: Address::Node(1),
+                 to: Address::Node(2),
+                 term: 3,
+<a href="#h3-5-3" id="h3-5-3" class="d">-                event: Event::ConfirmLeader { commit_index: 3, has_committed: false },
+</a><a href="#h3-5-4" id="h3-5-4" class="i">+                event: Event::ConfirmLeader { commit_index: 3, has_committed: false, read_seq: 7 },
+</a>             }],
+         );
+         assert_messages(&amp;mut state_rx, vec![]);
+<a href="#h3-6" id="h3-6" class="h">@@ -382,7 +385,7 @@ pub mod tests {
+</a>             from: Address::Node(2),
+             to: Address::Node(1),
+             term: 3,
+<a href="#h3-6-3" id="h3-6-3" class="d">-            event: Event::Heartbeat { commit_index: 5, commit_term: 3 },
+</a><a href="#h3-6-4" id="h3-6-4" class="i">+            event: Event::Heartbeat { commit_index: 5, commit_term: 3, read_seq: 7 },
+</a>         })?;
+         assert_node(&amp;mut node).is_follower().term(3).leader(Some(2)).voted_for(None).committed(2);
+         assert_messages(
+<a href="#h3-7" id="h3-7" class="h">@@ -391,7 +394,7 @@ pub mod tests {
+</a>                 from: Address::Node(1),
+                 to: Address::Node(2),
+                 term: 3,
+<a href="#h3-7-3" id="h3-7-3" class="d">-                event: Event::ConfirmLeader { commit_index: 5, has_committed: false },
+</a><a href="#h3-7-4" id="h3-7-4" class="i">+                event: Event::ConfirmLeader { commit_index: 5, has_committed: false, read_seq: 7 },
+</a>             }],
+         );
+         assert_messages(&amp;mut state_rx, vec![]);
+<a href="#h3-8" id="h3-8" class="h">@@ -408,7 +411,7 @@ pub mod tests {
+</a>                 from: Address::Node(3),
+                 to: Address::Node(1),
+                 term: 3,
+<a href="#h3-8-3" id="h3-8-3" class="d">-                event: Event::Heartbeat { commit_index: 5, commit_term: 3 },
+</a><a href="#h3-8-4" id="h3-8-4" class="i">+                event: Event::Heartbeat { commit_index: 5, commit_term: 3, read_seq: 7 },
+</a>             })
+             .unwrap();
+     }
+<a href="#h3-9" id="h3-9" class="h">@@ -422,7 +425,7 @@ pub mod tests {
+</a>             from: Address::Node(3),
+             to: Address::Node(1),
+             term: 3,
+<a href="#h3-9-3" id="h3-9-3" class="d">-            event: Event::Heartbeat { commit_index: 3, commit_term: 2 },
+</a><a href="#h3-9-4" id="h3-9-4" class="i">+            event: Event::Heartbeat { commit_index: 3, commit_term: 2, read_seq: 7 },
+</a>         })?;
+         assert_node(&amp;mut node).is_follower().term(3).leader(Some(3)).voted_for(None).committed(3);
+         assert_messages(
+<a href="#h3-10" id="h3-10" class="h">@@ -431,7 +434,7 @@ pub mod tests {
+</a>                 from: Address::Node(1),
+                 to: Address::Node(3),
+                 term: 3,
+<a href="#h3-10-3" id="h3-10-3" class="d">-                event: Event::ConfirmLeader { commit_index: 3, has_committed: true },
+</a><a href="#h3-10-4" id="h3-10-4" class="i">+                event: Event::ConfirmLeader { commit_index: 3, has_committed: true, read_seq: 7 },
+</a>             }],
+         );
+         assert_messages(
+<a href="#h3-11" id="h3-11" class="h">@@ -451,7 +454,7 @@ pub mod tests {
+</a>             from: Address::Node(2),
+             to: Address::Node(1),
+             term: 3,
+<a href="#h3-11-3" id="h3-11-3" class="d">-            event: Event::Heartbeat { commit_index: 1, commit_term: 1 },
+</a><a href="#h3-11-4" id="h3-11-4" class="i">+            event: Event::Heartbeat { commit_index: 1, commit_term: 1, read_seq: 7 },
+</a>         })?;
+         assert_node(&amp;mut node).is_follower().term(3).leader(Some(2)).voted_for(None).committed(2);
+         assert_messages(
+<a href="#h3-12" id="h3-12" class="h">@@ -460,7 +463,7 @@ pub mod tests {
+</a>                 from: Address::Node(1),
+                 to: Address::Node(2),
+                 term: 3,
+<a href="#h3-12-3" id="h3-12-3" class="d">-                event: Event::ConfirmLeader { commit_index: 1, has_committed: true },
+</a><a href="#h3-12-4" id="h3-12-4" class="i">+                event: Event::ConfirmLeader { commit_index: 1, has_committed: true, read_seq: 7 },
+</a>             }],
+         );
+         assert_messages(&amp;mut state_rx, vec![]);
+<a href="#h3-13" id="h3-13" class="h">@@ -475,7 +478,7 @@ pub mod tests {
+</a>             from: Address::Node(3),
+             to: Address::Node(1),
+             term: 4,
+<a href="#h3-13-3" id="h3-13-3" class="d">-            event: Event::Heartbeat { commit_index: 3, commit_term: 2 },
+</a><a href="#h3-13-4" id="h3-13-4" class="i">+            event: Event::Heartbeat { commit_index: 3, commit_term: 2, read_seq: 7 },
+</a>         })?;
+         assert_node(&amp;mut node).is_follower().term(4).leader(Some(3)).voted_for(None);
+         assert_messages(
+<a href="#h3-14" id="h3-14" class="h">@@ -484,7 +487,7 @@ pub mod tests {
+</a>                 from: Address::Node(1),
+                 to: Address::Node(3),
+                 term: 4,
+<a href="#h3-14-3" id="h3-14-3" class="d">-                event: Event::ConfirmLeader { commit_index: 3, has_committed: true },
+</a><a href="#h3-14-4" id="h3-14-4" class="i">+                event: Event::ConfirmLeader { commit_index: 3, has_committed: true, read_seq: 7 },
+</a>             }],
+         );
+         assert_messages(
+<a href="#h3-15" id="h3-15" class="h">@@ -504,7 +507,7 @@ pub mod tests {
+</a>             from: Address::Node(2),
+             to: Address::Node(1),
+             term: 2,
+<a href="#h3-15-3" id="h3-15-3" class="d">-            event: Event::Heartbeat { commit_index: 3, commit_term: 2 },
+</a><a href="#h3-15-4" id="h3-15-4" class="i">+            event: Event::Heartbeat { commit_index: 3, commit_term: 2, read_seq: 7 },
+</a>         })?;
+         assert_node(&amp;mut node).is_follower().term(3).leader(Some(2)).voted_for(None).committed(2);
+         assert_messages(&amp;mut node_rx, vec![]);
+<a href="#h3-16" id="h3-16" class="h">@@ -989,7 +992,7 @@ pub mod tests {
+</a>             from: Address::Node(3),
+             to: Address::Node(1),
+             term: 4,
+<a href="#h3-16-3" id="h3-16-3" class="d">-            event: Event::Heartbeat { commit_index: 3, commit_term: 2 },
+</a><a href="#h3-16-4" id="h3-16-4" class="i">+            event: Event::Heartbeat { commit_index: 3, commit_term: 2, read_seq: 7 },
+</a>         })?;
+         assert_node(&amp;mut node).is_follower().term(4).leader(Some(3)).forwarded(vec![]);
+         assert_messages(
+<a href="#h3-17" id="h3-17" class="h">@@ -1005,7 +1008,11 @@ pub mod tests {
+</a>                     from: Address::Node(1),
+                     to: Address::Node(3),
+                     term: 4,
+<a href="#h3-17-3" id="h3-17-3" class="d">-                    event: Event::ConfirmLeader { commit_index: 3, has_committed: true },
+</a><a href="#h3-17-4" id="h3-17-4" class="i">+                    event: Event::ConfirmLeader {
+</a><a href="#h3-17-5" id="h3-17-5" class="i">+                        commit_index: 3,
+</a><a href="#h3-17-6" id="h3-17-6" class="i">+                        has_committed: true,
+</a><a href="#h3-17-7" id="h3-17-7" class="i">+                        read_seq: 7,
+</a><a href="#h3-17-8" id="h3-17-8" class="i">+                    },
+</a>                 },
+             ],
+         );
+<a href="#h3-18" id="h3-18" class="h">@@ -1033,7 +1040,7 @@ pub mod tests {
+</a>                 from: Address::Node(2),
+                 to: Address::Node(1),
+                 term: 3,
+<a href="#h3-18-3" id="h3-18-3" class="d">-                event: Event::Heartbeat { commit_index: 2, commit_term: 1 },
+</a><a href="#h3-18-4" id="h3-18-4" class="i">+                event: Event::Heartbeat { commit_index: 2, commit_term: 1, read_seq: 7 },
+</a>             })?;
+             assert_messages(
+                 &amp;mut node_rx,
+<a href="#h3-19" id="h3-19" class="h">@@ -1041,7 +1048,11 @@ pub mod tests {
+</a>                     from: Address::Node(1),
+                     to: Address::Node(2),
+                     term: 3,
+<a href="#h3-19-3" id="h3-19-3" class="d">-                    event: Event::ConfirmLeader { commit_index: 2, has_committed: true },
+</a><a href="#h3-19-4" id="h3-19-4" class="i">+                    event: Event::ConfirmLeader {
+</a><a href="#h3-19-5" id="h3-19-5" class="i">+                        commit_index: 2,
+</a><a href="#h3-19-6" id="h3-19-6" class="i">+                        has_committed: true,
+</a><a href="#h3-19-7" id="h3-19-7" class="i">+                        read_seq: 7,
+</a><a href="#h3-19-8" id="h3-19-8" class="i">+                    },
+</a>                 }],
+             )
+         }
+<b>diff --git a/<a id="h4" href="../file/src/raft/node/leader.rs.html">src/raft/node/leader.rs</a> b/<a href="../file/src/raft/node/leader.rs.html">src/raft/node/leader.rs</a></b>
+<a href="#h4-0" id="h4-0" class="h">@@ -1,9 +1,11 @@
+</a><a href="#h4-0-0" id="h4-0-0" class="d">-use super::super::{Address, Event, Index, Instruction, Message, Request, RequestID, Status};
+</a><a href="#h4-0-1" id="h4-0-1" class="i">+use super::super::{
+</a><a href="#h4-0-2" id="h4-0-2" class="i">+    Address, Event, Index, Instruction, Message, ReadSequence, Request, RequestID, Status,
+</a><a href="#h4-0-3" id="h4-0-3" class="i">+};
+</a> use super::{Follower, Node, NodeID, RawNode, Role, Term, Ticks, HEARTBEAT_INTERVAL};
+ use crate::error::{Error, Result};
+ 
+ use ::log::{debug, info};
+<a href="#h4-0-8" id="h4-0-8" class="d">-use std::collections::{HashMap, HashSet};
+</a><a href="#h4-0-9" id="h4-0-9" class="i">+use std::collections::{HashMap, HashSet, VecDeque};
+</a> 
+ /// Peer replication progress.
+ #[derive(Clone, Debug, PartialEq)]
+<a href="#h4-1" id="h4-1" class="h">@@ -12,6 +14,8 @@ struct Progress {
+</a>     next: Index,
+     /// The last index known to be replicated to the peer.
+     last: Index,
+<a href="#h4-1-3" id="h4-1-3" class="i">+    /// The last read sequence number confirmed by the peer.
+</a><a href="#h4-1-4" id="h4-1-4" class="i">+    read_seq: ReadSequence,
+</a> }
+ 
+ /// A pending client write request.
+<a href="#h4-2" id="h4-2" class="h">@@ -23,6 +27,19 @@ struct Write {
+</a>     id: RequestID,
+ }
+ 
+<a href="#h4-2-3" id="h4-2-3" class="i">+/// A pending client read request.
+</a><a href="#h4-2-4" id="h4-2-4" class="i">+#[derive(Clone, Debug, PartialEq)]
+</a><a href="#h4-2-5" id="h4-2-5" class="i">+struct Read {
+</a><a href="#h4-2-6" id="h4-2-6" class="i">+    /// The sequence number of this read.
+</a><a href="#h4-2-7" id="h4-2-7" class="i">+    seq: ReadSequence,
+</a><a href="#h4-2-8" id="h4-2-8" class="i">+    /// The client or node which submitted the read.
+</a><a href="#h4-2-9" id="h4-2-9" class="i">+    from: Address,
+</a><a href="#h4-2-10" id="h4-2-10" class="i">+    /// The read request ID.
+</a><a href="#h4-2-11" id="h4-2-11" class="i">+    id: RequestID,
+</a><a href="#h4-2-12" id="h4-2-12" class="i">+    /// The read command.
+</a><a href="#h4-2-13" id="h4-2-13" class="i">+    command: Vec&lt;u8&gt;,
+</a><a href="#h4-2-14" id="h4-2-14" class="i">+}
+</a><a href="#h4-2-15" id="h4-2-15" class="i">+
+</a> // A leader serves requests and replicates the log to followers.
+ #[derive(Clone, Debug, PartialEq)]
+ pub struct Leader {
+<a href="#h4-3" id="h4-3" class="h">@@ -38,6 +55,18 @@ pub struct Leader {
+</a>     ///
+     /// TODO: Actually return responses when applied.
+     writes: HashMap&lt;Index, Write&gt;,
+<a href="#h4-3-3" id="h4-3-3" class="i">+    /// Keeps track of pending read requests. To guarantee linearizability, read
+</a><a href="#h4-3-4" id="h4-3-4" class="i">+    /// requests are assigned a sequence number and registered here when
+</a><a href="#h4-3-5" id="h4-3-5" class="i">+    /// received, but only executed once a quorum of nodes have confirmed the
+</a><a href="#h4-3-6" id="h4-3-6" class="i">+    /// current leader by responding to heartbeats with the sequence number.
+</a><a href="#h4-3-7" id="h4-3-7" class="i">+    ///
+</a><a href="#h4-3-8" id="h4-3-8" class="i">+    /// If we lose leadership before the command is processed, all pending read
+</a><a href="#h4-3-9" id="h4-3-9" class="i">+    /// requests are aborted by returning Error::Abort.
+</a><a href="#h4-3-10" id="h4-3-10" class="i">+    reads: VecDeque&lt;Read&gt;,
+</a><a href="#h4-3-11" id="h4-3-11" class="i">+    /// The read sequence number used for the last read. Incremented for every
+</a><a href="#h4-3-12" id="h4-3-12" class="i">+    /// read command, and reset when we lose leadership (thus only valid for
+</a><a href="#h4-3-13" id="h4-3-13" class="i">+    /// this term).
+</a><a href="#h4-3-14" id="h4-3-14" class="i">+    read_seq: ReadSequence,
+</a>     /// Number of ticks since last periodic heartbeat.
+     since_heartbeat: Ticks,
+ }
+<a href="#h4-4" id="h4-4" class="h">@@ -46,8 +75,15 @@ impl Leader {
+</a>     /// Creates a new leader role.
+     pub fn new(peers: HashSet&lt;NodeID&gt;, last_index: Index) -&gt; Self {
+         let next = last_index + 1;
+<a href="#h4-4-3" id="h4-4-3" class="d">-        let progress = peers.into_iter().map(|p| (p, Progress { next, last: 0 })).collect();
+</a><a href="#h4-4-4" id="h4-4-4" class="d">-        Self { progress, writes: HashMap::new(), since_heartbeat: 0 }
+</a><a href="#h4-4-5" id="h4-4-5" class="i">+        let progress =
+</a><a href="#h4-4-6" id="h4-4-6" class="i">+            peers.into_iter().map(|p| (p, Progress { next, last: 0, read_seq: 0 })).collect();
+</a><a href="#h4-4-7" id="h4-4-7" class="i">+        Self {
+</a><a href="#h4-4-8" id="h4-4-8" class="i">+            progress,
+</a><a href="#h4-4-9" id="h4-4-9" class="i">+            writes: HashMap::new(),
+</a><a href="#h4-4-10" id="h4-4-10" class="i">+            reads: VecDeque::new(),
+</a><a href="#h4-4-11" id="h4-4-11" class="i">+            read_seq: 0,
+</a><a href="#h4-4-12" id="h4-4-12" class="i">+            since_heartbeat: 0,
+</a><a href="#h4-4-13" id="h4-4-13" class="i">+        }
+</a>     }
+ }
+ 
+<a href="#h4-5" id="h4-5" class="h">@@ -81,6 +117,12 @@ impl RawNode&lt;Leader&gt; {
+</a>                 Event::ClientResponse { id: write.id, response: Err(Error::Abort) },
+             )?;
+         }
+<a href="#h4-5-3" id="h4-5-3" class="i">+        for read in std::mem::take(&amp;mut self.role.reads).into_iter() {
+</a><a href="#h4-5-4" id="h4-5-4" class="i">+            self.send(
+</a><a href="#h4-5-5" id="h4-5-5" class="i">+                read.from,
+</a><a href="#h4-5-6" id="h4-5-6" class="i">+                Event::ClientResponse { id: read.id, response: Err(Error::Abort) },
+</a><a href="#h4-5-7" id="h4-5-7" class="i">+            )?;
+</a><a href="#h4-5-8" id="h4-5-8" class="i">+        }
+</a> 
+         self.term = term;
+         self.log.set_term(term, None)?;
+<a href="#h4-6" id="h4-6" class="h">@@ -113,14 +155,24 @@ impl RawNode&lt;Leader&gt; {
+</a> 
+             // A follower received one of our heartbeats and confirms that we
+             // are its leader. If it doesn&#39;t have the commit index in its local
+<a href="#h4-6-3" id="h4-6-3" class="d">-            // log, replicate the log to it.
+</a><a href="#h4-6-4" id="h4-6-4" class="d">-            Event::ConfirmLeader { commit_index, has_committed } =&gt; {
+</a><a href="#h4-6-5" id="h4-6-5" class="i">+            // log, replicate the log to it. If the peer&#39;s read sequence number
+</a><a href="#h4-6-6" id="h4-6-6" class="i">+            // increased, process any pending reads.
+</a><a href="#h4-6-7" id="h4-6-7" class="i">+            Event::ConfirmLeader { commit_index, has_committed, read_seq } =&gt; {
+</a><a href="#h4-6-8" id="h4-6-8" class="i">+                assert!(read_seq &lt;= self.role.read_seq, &quot;Future read sequence number&quot;);
+</a><a href="#h4-6-9" id="h4-6-9" class="i">+
+</a>                 let from = msg.from.unwrap();
+                 self.state_tx.send(Instruction::Vote {
+                     term: msg.term,
+                     index: commit_index,
+                     address: msg.from,
+                 })?;
+<a href="#h4-6-16" id="h4-6-16" class="i">+
+</a><a href="#h4-6-17" id="h4-6-17" class="i">+                let progress = self.role.progress.get_mut(&amp;from).unwrap();
+</a><a href="#h4-6-18" id="h4-6-18" class="i">+                if read_seq &gt; progress.read_seq {
+</a><a href="#h4-6-19" id="h4-6-19" class="i">+                    progress.read_seq = read_seq;
+</a><a href="#h4-6-20" id="h4-6-20" class="i">+                    self.maybe_read()?;
+</a><a href="#h4-6-21" id="h4-6-21" class="i">+                }
+</a><a href="#h4-6-22" id="h4-6-22" class="i">+
+</a>                 if !has_committed {
+                     self.send_log(from)?;
+                 }
+<a href="#h4-7" id="h4-7" class="h">@@ -159,7 +211,18 @@ impl RawNode&lt;Leader&gt; {
+</a>                 self.send_log(from)?;
+             }
+ 
+<a href="#h4-7-3" id="h4-7-3" class="i">+            // A client submitted a read command. To ensure linearizability, we
+</a><a href="#h4-7-4" id="h4-7-4" class="i">+            // must confirm that we are still the leader by sending a heartbeat
+</a><a href="#h4-7-5" id="h4-7-5" class="i">+            // with the read&#39;s sequence number and wait for confirmation from a
+</a><a href="#h4-7-6" id="h4-7-6" class="i">+            // quorum before executing the read.
+</a>             Event::ClientRequest { id, request: Request::Query(command) } =&gt; {
+<a href="#h4-7-8" id="h4-7-8" class="i">+                self.role.read_seq += 1;
+</a><a href="#h4-7-9" id="h4-7-9" class="i">+                self.role.reads.push_back(Read {
+</a><a href="#h4-7-10" id="h4-7-10" class="i">+                    seq: self.role.read_seq,
+</a><a href="#h4-7-11" id="h4-7-11" class="i">+                    from: msg.from,
+</a><a href="#h4-7-12" id="h4-7-12" class="i">+                    id: id.clone(),
+</a><a href="#h4-7-13" id="h4-7-13" class="i">+                    command: command.clone(),
+</a><a href="#h4-7-14" id="h4-7-14" class="i">+                });
+</a>                 let (commit_index, _) = self.log.get_commit_index();
+                 self.state_tx.send(Instruction::Query {
+                     id,
+<a href="#h4-8" id="h4-8" class="h">@@ -174,6 +237,9 @@ impl RawNode&lt;Leader&gt; {
+</a>                     index: commit_index,
+                     address: Address::Node(self.id),
+                 })?;
+<a href="#h4-8-3" id="h4-8-3" class="i">+                if self.peers.is_empty() {
+</a><a href="#h4-8-4" id="h4-8-4" class="i">+                    self.maybe_read()?;
+</a><a href="#h4-8-5" id="h4-8-5" class="i">+                }
+</a>                 self.heartbeat()?;
+             }
+ 
+<a href="#h4-9" id="h4-9" class="h">@@ -233,7 +299,8 @@ impl RawNode&lt;Leader&gt; {
+</a>     /// Broadcasts a heartbeat to all peers.
+     pub(super) fn heartbeat(&amp;mut self) -&gt; Result&lt;()&gt; {
+         let (commit_index, commit_term) = self.log.get_commit_index();
+<a href="#h4-9-3" id="h4-9-3" class="d">-        self.send(Address::Broadcast, Event::Heartbeat { commit_index, commit_term })?;
+</a><a href="#h4-9-4" id="h4-9-4" class="i">+        let read_seq = self.role.read_seq;
+</a><a href="#h4-9-5" id="h4-9-5" class="i">+        self.send(Address::Broadcast, Event::Heartbeat { commit_index, commit_term, read_seq })?;
+</a>         // NB: We don&#39;t reset self.since_heartbeat here, because we want to send
+         // periodic heartbeats regardless of any on-demand heartbeats.
+         Ok(())
+<a href="#h4-10" id="h4-10" class="h">@@ -300,6 +367,35 @@ impl RawNode&lt;Leader&gt; {
+</a>         Ok(commit_index)
+     }
+ 
+<a href="#h4-10-3" id="h4-10-3" class="i">+    /// Executes any pending read requests that are now ready after quorum
+</a><a href="#h4-10-4" id="h4-10-4" class="i">+    /// confirmation of their sequence number.
+</a><a href="#h4-10-5" id="h4-10-5" class="i">+    fn maybe_read(&amp;mut self) -&gt; Result&lt;()&gt; {
+</a><a href="#h4-10-6" id="h4-10-6" class="i">+        if self.role.reads.is_empty() {
+</a><a href="#h4-10-7" id="h4-10-7" class="i">+            return Ok(());
+</a><a href="#h4-10-8" id="h4-10-8" class="i">+        }
+</a><a href="#h4-10-9" id="h4-10-9" class="i">+
+</a><a href="#h4-10-10" id="h4-10-10" class="i">+        // Determine the maximum read sequence confirmed by quorum.
+</a><a href="#h4-10-11" id="h4-10-11" class="i">+        let read_seq = self.quorum_value(
+</a><a href="#h4-10-12" id="h4-10-12" class="i">+            self.role
+</a><a href="#h4-10-13" id="h4-10-13" class="i">+                .progress
+</a><a href="#h4-10-14" id="h4-10-14" class="i">+                .values()
+</a><a href="#h4-10-15" id="h4-10-15" class="i">+                .map(|p| p.read_seq)
+</a><a href="#h4-10-16" id="h4-10-16" class="i">+                .chain(std::iter::once(self.role.read_seq))
+</a><a href="#h4-10-17" id="h4-10-17" class="i">+                .collect(),
+</a><a href="#h4-10-18" id="h4-10-18" class="i">+        );
+</a><a href="#h4-10-19" id="h4-10-19" class="i">+
+</a><a href="#h4-10-20" id="h4-10-20" class="i">+        // Execute the ready reads.
+</a><a href="#h4-10-21" id="h4-10-21" class="i">+        while let Some(read) = self.role.reads.front() {
+</a><a href="#h4-10-22" id="h4-10-22" class="i">+            if read.seq &gt; read_seq {
+</a><a href="#h4-10-23" id="h4-10-23" class="i">+                break;
+</a><a href="#h4-10-24" id="h4-10-24" class="i">+            }
+</a><a href="#h4-10-25" id="h4-10-25" class="i">+            self.role.reads.pop_front().unwrap();
+</a><a href="#h4-10-26" id="h4-10-26" class="i">+            // TODO: Actually execute the reads.
+</a><a href="#h4-10-27" id="h4-10-27" class="i">+        }
+</a><a href="#h4-10-28" id="h4-10-28" class="i">+
+</a><a href="#h4-10-29" id="h4-10-29" class="i">+        Ok(())
+</a><a href="#h4-10-30" id="h4-10-30" class="i">+    }
+</a><a href="#h4-10-31" id="h4-10-31" class="i">+
+</a>     /// Sends pending log entries to a peer.
+     fn send_log(&amp;mut self, peer: NodeID) -&gt; Result&lt;()&gt; {
+         let (base_index, base_term) = match self.role.progress.get(&amp;peer) {
+<a href="#h4-11" id="h4-11" class="h">@@ -367,7 +463,7 @@ mod tests {
+</a>             from: Address::Node(2),
+             to: Address::Node(1),
+             term: 3,
+<a href="#h4-11-3" id="h4-11-3" class="d">-            event: Event::ConfirmLeader { commit_index: 2, has_committed: true },
+</a><a href="#h4-11-4" id="h4-11-4" class="i">+            event: Event::ConfirmLeader { commit_index: 2, has_committed: true, read_seq: 0 },
+</a>         })?;
+         assert_node(&amp;mut node).is_leader().term(3).committed(2);
+         assert_messages(&amp;mut node_rx, vec![]);
+<a href="#h4-12" id="h4-12" class="h">@@ -388,7 +484,7 @@ mod tests {
+</a>             from: Address::Node(2),
+             to: Address::Node(1),
+             term: 3,
+<a href="#h4-12-3" id="h4-12-3" class="d">-            event: Event::ConfirmLeader { commit_index: 2, has_committed: false },
+</a><a href="#h4-12-4" id="h4-12-4" class="i">+            event: Event::ConfirmLeader { commit_index: 2, has_committed: false, read_seq: 0 },
+</a>         })?;
+         assert_node(&amp;mut node).is_leader().term(3).committed(2);
+         assert_messages(
+<a href="#h4-13" id="h4-13" class="h">@@ -417,7 +513,7 @@ mod tests {
+</a>                 from: Address::Node(2),
+                 to: Address::Node(1),
+                 term: 3,
+<a href="#h4-13-3" id="h4-13-3" class="d">-                event: Event::Heartbeat { commit_index: 5, commit_term: 3 },
+</a><a href="#h4-13-4" id="h4-13-4" class="i">+                event: Event::Heartbeat { commit_index: 5, commit_term: 3, read_seq: 7 },
+</a>             })
+             .unwrap();
+     }
+<a href="#h4-14" id="h4-14" class="h">@@ -432,7 +528,7 @@ mod tests {
+</a>             from: Address::Node(2),
+             to: Address::Node(1),
+             term: 4,
+<a href="#h4-14-3" id="h4-14-3" class="d">-            event: Event::Heartbeat { commit_index: 7, commit_term: 4 },
+</a><a href="#h4-14-4" id="h4-14-4" class="i">+            event: Event::Heartbeat { commit_index: 7, commit_term: 4, read_seq: 7 },
+</a>         })?;
+         assert_node(&amp;mut node).is_follower().term(4).leader(Some(2)).committed(2);
+         assert_messages(
+<a href="#h4-15" id="h4-15" class="h">@@ -441,7 +537,7 @@ mod tests {
+</a>                 from: Address::Node(1),
+                 to: Address::Node(2),
+                 term: 4,
+<a href="#h4-15-3" id="h4-15-3" class="d">-                event: Event::ConfirmLeader { commit_index: 7, has_committed: false },
+</a><a href="#h4-15-4" id="h4-15-4" class="i">+                event: Event::ConfirmLeader { commit_index: 7, has_committed: false, read_seq: 7 },
+</a>             }],
+         );
+         assert_messages(&amp;mut state_rx, vec![Instruction::Abort]);
+<a href="#h4-16" id="h4-16" class="h">@@ -458,7 +554,7 @@ mod tests {
+</a>             from: Address::Node(2),
+             to: Address::Node(1),
+             term: 2,
+<a href="#h4-16-3" id="h4-16-3" class="d">-            event: Event::Heartbeat { commit_index: 3, commit_term: 2 },
+</a><a href="#h4-16-4" id="h4-16-4" class="i">+            event: Event::Heartbeat { commit_index: 3, commit_term: 2, read_seq: 7 },
+</a>         })?;
+         assert_node(&amp;mut node).is_leader().term(3).committed(2);
+         assert_messages(&amp;mut node_rx, vec![]);
+<a href="#h4-17" id="h4-17" class="h">@@ -633,7 +729,7 @@ mod tests {
+</a>                 from: Address::Node(1),
+                 to: Address::Broadcast,
+                 term: 3,
+<a href="#h4-17-3" id="h4-17-3" class="d">-                event: Event::Heartbeat { commit_index: 2, commit_term: 1 },
+</a><a href="#h4-17-4" id="h4-17-4" class="i">+                event: Event::Heartbeat { commit_index: 2, commit_term: 1, read_seq: 1 },
+</a>             }],
+         );
+         assert_messages(
+<a href="#h4-18" id="h4-18" class="h">@@ -755,7 +851,7 @@ mod tests {
+</a>                     from: Address::Node(1),
+                     to: Address::Broadcast,
+                     term: 3,
+<a href="#h4-18-3" id="h4-18-3" class="d">-                    event: Event::Heartbeat { commit_index: 2, commit_term: 1 },
+</a><a href="#h4-18-4" id="h4-18-4" class="i">+                    event: Event::Heartbeat { commit_index: 2, commit_term: 1, read_seq: 0 },
+</a>                 }
+             );
+         }
+<b>diff --git a/<a id="h5" href="../file/src/raft/node/mod.rs.html">src/raft/node/mod.rs</a> b/<a href="../file/src/raft/node/mod.rs.html">src/raft/node/mod.rs</a></b>
+<a href="#h5-0" id="h5-0" class="h">@@ -528,14 +528,17 @@ mod tests {
+</a>     #[test]
+     fn send() -&gt; Result&lt;()&gt; {
+         let (node, mut rx) = setup_rolenode()?;
+<a href="#h5-0-3" id="h5-0-3" class="d">-        node.send(Address::Node(2), Event::Heartbeat { commit_index: 1, commit_term: 1 })?;
+</a><a href="#h5-0-4" id="h5-0-4" class="i">+        node.send(
+</a><a href="#h5-0-5" id="h5-0-5" class="i">+            Address::Node(2),
+</a><a href="#h5-0-6" id="h5-0-6" class="i">+            Event::Heartbeat { commit_index: 1, commit_term: 1, read_seq: 7 },
+</a><a href="#h5-0-7" id="h5-0-7" class="i">+        )?;
+</a>         assert_messages(
+             &amp;mut rx,
+             vec![Message {
+                 from: Address::Node(1),
+                 to: Address::Node(2),
+                 term: 1,
+<a href="#h5-0-14" id="h5-0-14" class="d">-                event: Event::Heartbeat { commit_index: 1, commit_term: 1 },
+</a><a href="#h5-0-15" id="h5-0-15" class="i">+                event: Event::Heartbeat { commit_index: 1, commit_term: 1, read_seq: 7 },
+</a>             }],
+         );
+         Ok(())
+</pre>
+</div>
+</body>
+</html>

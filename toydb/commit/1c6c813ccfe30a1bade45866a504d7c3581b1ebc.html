@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>raft: include last index and term in heartbeat response - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/1c6c813ccfe30a1bade45866a504d7c3581b1ebc.html">1c6c813ccfe30a1bade45866a504d7c3581b1ebc</a>
+<b>parent</b> <a href="../commit/0b24345e19416b29d96bc910d91ca0d9e867f1c2.html">0b24345e19416b29d96bc910d91ca0d9e867f1c2</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Sat, 13 Apr 2024 13:42:08 +0200
+
+raft: include last index and term in heartbeat response
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/raft/message.rs</a></td><td> | </td><td class="num">9</td><td><span class="i">++++</span><span class="d">-----</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/raft/node/candidate.rs</a></td><td> | </td><td class="num">4</td><td><span class="i">++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/raft/node/follower.rs</a></td><td> | </td><td class="num">42</td><td><span class="i">++++++++++++++++++++++++++</span><span class="d">----------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">src/raft/node/leader.rs</a></td><td> | </td><td class="num">39</td><td><span class="i">+++++++++++</span><span class="d">----------------------------</span></td></tr>
+</table></pre><pre>4 files changed, 43 insertions(+), 51 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/raft/message.rs.html">src/raft/message.rs</a> b/<a href="../file/src/raft/message.rs.html">src/raft/message.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -33,11 +33,10 @@ pub enum Message {
+</a> 
+     /// Followers confirm leader heartbeats.
+     HeartbeatResponse {
+<a href="#h0-0-3" id="h0-0-3" class="d">-        /// If false, the follower does not have the entry at commit_index
+</a><a href="#h0-0-4" id="h0-0-4" class="d">-        /// and would like the leader to replicate it.
+</a><a href="#h0-0-5" id="h0-0-5" class="d">-        ///
+</a><a href="#h0-0-6" id="h0-0-6" class="d">-        /// TODO: consider responding with last_index/term instead.
+</a><a href="#h0-0-7" id="h0-0-7" class="d">-        has_committed: bool,
+</a><a href="#h0-0-8" id="h0-0-8" class="i">+        /// The index of the follower&#39;s last log entry.
+</a><a href="#h0-0-9" id="h0-0-9" class="i">+        last_index: Index,
+</a><a href="#h0-0-10" id="h0-0-10" class="i">+        /// The term of the follower&#39;s last log entry.
+</a><a href="#h0-0-11" id="h0-0-11" class="i">+        last_term: Term,
+</a>         /// The read sequence number of the heartbeat we&#39;re responding to.
+         read_seq: ReadSequence,
+     },
+<b>diff --git a/<a id="h1" href="../file/src/raft/node/candidate.rs.html">src/raft/node/candidate.rs</a> b/<a href="../file/src/raft/node/candidate.rs.html">src/raft/node/candidate.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -219,7 +219,7 @@ mod tests {
+</a>                 from: 1,
+                 to: 2,
+                 term: 3,
+<a href="#h1-0-3" id="h1-0-3" class="d">-                message: Message::HeartbeatResponse { has_committed: true, read_seq: 7 },
+</a><a href="#h1-0-4" id="h1-0-4" class="i">+                message: Message::HeartbeatResponse { last_index: 3, last_term: 2, read_seq: 7 },
+</a>             }],
+         );
+         Ok(())
+<a href="#h1-1" id="h1-1" class="h">@@ -242,7 +242,7 @@ mod tests {
+</a>                 from: 1,
+                 to: 2,
+                 term: 4,
+<a href="#h1-1-3" id="h1-1-3" class="d">-                message: Message::HeartbeatResponse { has_committed: true, read_seq: 7 },
+</a><a href="#h1-1-4" id="h1-1-4" class="i">+                message: Message::HeartbeatResponse { last_index: 3, last_term: 2, read_seq: 7 },
+</a>             }],
+         );
+         Ok(())
+<b>diff --git a/<a id="h2" href="../file/src/raft/node/follower.rs.html">src/raft/node/follower.rs</a> b/<a href="../file/src/raft/node/follower.rs.html">src/raft/node/follower.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -146,20 +146,22 @@ impl RawNode&lt;Follower&gt; {
+</a>             // apply state transitions.
+             Message::Heartbeat { commit_index, commit_term, read_seq } =&gt; {
+                 // Check that the heartbeat is from our leader.
+<a href="#h2-0-3" id="h2-0-3" class="d">-                let from = msg.from;
+</a>                 match self.role.leader {
+<a href="#h2-0-5" id="h2-0-5" class="d">-                    Some(leader) =&gt; assert_eq!(from, leader, &quot;Multiple leaders in term&quot;),
+</a><a href="#h2-0-6" id="h2-0-6" class="d">-                    None =&gt; self = self.into_follower(Some(from), msg.term)?,
+</a><a href="#h2-0-7" id="h2-0-7" class="i">+                    Some(leader) =&gt; assert_eq!(msg.from, leader, &quot;Multiple leaders in term&quot;),
+</a><a href="#h2-0-8" id="h2-0-8" class="i">+                    None =&gt; self = self.into_follower(Some(msg.from), msg.term)?,
+</a>                 }
+ 
+                 // Respond to the heartbeat.
+<a href="#h2-0-12" id="h2-0-12" class="d">-                //
+</a><a href="#h2-0-13" id="h2-0-13" class="d">-                // TODO: this should return the last index and term.
+</a><a href="#h2-0-14" id="h2-0-14" class="d">-                let has_committed = self.log.has(commit_index, commit_term)?;
+</a><a href="#h2-0-15" id="h2-0-15" class="d">-                self.send(msg.from, Message::HeartbeatResponse { has_committed, read_seq })?;
+</a><a href="#h2-0-16" id="h2-0-16" class="i">+                let (last_index, last_term) = self.log.get_last_index();
+</a><a href="#h2-0-17" id="h2-0-17" class="i">+                self.send(
+</a><a href="#h2-0-18" id="h2-0-18" class="i">+                    msg.from,
+</a><a href="#h2-0-19" id="h2-0-19" class="i">+                    Message::HeartbeatResponse { last_index, last_term, read_seq },
+</a><a href="#h2-0-20" id="h2-0-20" class="i">+                )?;
+</a> 
+                 // Advance commit index and apply entries.
+<a href="#h2-0-23" id="h2-0-23" class="d">-                if has_committed &amp;&amp; commit_index &gt; self.log.get_commit_index().0 {
+</a><a href="#h2-0-24" id="h2-0-24" class="i">+                if self.log.has(commit_index, commit_term)?
+</a><a href="#h2-0-25" id="h2-0-25" class="i">+                    &amp;&amp; commit_index &gt; self.log.get_commit_index().0
+</a><a href="#h2-0-26" id="h2-0-26" class="i">+                {
+</a>                     self.log.commit(commit_index)?;
+                     self.maybe_apply()?;
+                 }
+<a href="#h2-1" id="h2-1" class="h">@@ -331,7 +333,7 @@ pub mod tests {
+</a>                 from: 1,
+                 to: 2,
+                 term: 3,
+<a href="#h2-1-3" id="h2-1-3" class="d">-                message: Message::HeartbeatResponse { has_committed: true, read_seq: 7 },
+</a><a href="#h2-1-4" id="h2-1-4" class="i">+                message: Message::HeartbeatResponse { last_index: 3, last_term: 2, read_seq: 7 },
+</a>             }],
+         );
+         Ok(())
+<a href="#h2-2" id="h2-2" class="h">@@ -354,7 +356,7 @@ pub mod tests {
+</a>                 from: 1,
+                 to: 2,
+                 term: 3,
+<a href="#h2-2-3" id="h2-2-3" class="d">-                message: Message::HeartbeatResponse { has_committed: false, read_seq: 7 },
+</a><a href="#h2-2-4" id="h2-2-4" class="i">+                message: Message::HeartbeatResponse { last_index: 3, last_term: 2, read_seq: 7 },
+</a>             }],
+         );
+         Ok(())
+<a href="#h2-3" id="h2-3" class="h">@@ -377,7 +379,7 @@ pub mod tests {
+</a>                 from: 1,
+                 to: 2,
+                 term: 3,
+<a href="#h2-3-3" id="h2-3-3" class="d">-                message: Message::HeartbeatResponse { has_committed: false, read_seq: 7 },
+</a><a href="#h2-3-4" id="h2-3-4" class="i">+                message: Message::HeartbeatResponse { last_index: 3, last_term: 2, read_seq: 7 },
+</a>             }],
+         );
+         Ok(())
+<a href="#h2-4" id="h2-4" class="h">@@ -416,7 +418,7 @@ pub mod tests {
+</a>                 from: 1,
+                 to: 3,
+                 term: 3,
+<a href="#h2-4-3" id="h2-4-3" class="d">-                message: Message::HeartbeatResponse { has_committed: true, read_seq: 7 },
+</a><a href="#h2-4-4" id="h2-4-4" class="i">+                message: Message::HeartbeatResponse { last_index: 3, last_term: 2, read_seq: 7 },
+</a>             }],
+         );
+         Ok(())
+<a href="#h2-5" id="h2-5" class="h">@@ -439,7 +441,7 @@ pub mod tests {
+</a>                 from: 1,
+                 to: 2,
+                 term: 3,
+<a href="#h2-5-3" id="h2-5-3" class="d">-                message: Message::HeartbeatResponse { has_committed: true, read_seq: 7 },
+</a><a href="#h2-5-4" id="h2-5-4" class="i">+                message: Message::HeartbeatResponse { last_index: 3, last_term: 2, read_seq: 7 },
+</a>             }],
+         );
+         Ok(())
+<a href="#h2-6" id="h2-6" class="h">@@ -462,7 +464,7 @@ pub mod tests {
+</a>                 from: 1,
+                 to: 3,
+                 term: 4,
+<a href="#h2-6-3" id="h2-6-3" class="d">-                message: Message::HeartbeatResponse { has_committed: true, read_seq: 7 },
+</a><a href="#h2-6-4" id="h2-6-4" class="i">+                message: Message::HeartbeatResponse { last_index: 3, last_term: 2, read_seq: 7 },
+</a>             }],
+         );
+         Ok(())
+<a href="#h2-7" id="h2-7" class="h">@@ -985,7 +987,11 @@ pub mod tests {
+</a>                     from: 1,
+                     to: 3,
+                     term: 4,
+<a href="#h2-7-3" id="h2-7-3" class="d">-                    message: Message::HeartbeatResponse { has_committed: true, read_seq: 7 },
+</a><a href="#h2-7-4" id="h2-7-4" class="i">+                    message: Message::HeartbeatResponse {
+</a><a href="#h2-7-5" id="h2-7-5" class="i">+                        last_index: 3,
+</a><a href="#h2-7-6" id="h2-7-6" class="i">+                        last_term: 2,
+</a><a href="#h2-7-7" id="h2-7-7" class="i">+                        read_seq: 7,
+</a><a href="#h2-7-8" id="h2-7-8" class="i">+                    },
+</a>                 },
+             ],
+         );
+<a href="#h2-8" id="h2-8" class="h">@@ -1016,7 +1022,11 @@ pub mod tests {
+</a>                     from: 1,
+                     to: 2,
+                     term: 3,
+<a href="#h2-8-3" id="h2-8-3" class="d">-                    message: Message::HeartbeatResponse { has_committed: true, read_seq: 7 },
+</a><a href="#h2-8-4" id="h2-8-4" class="i">+                    message: Message::HeartbeatResponse {
+</a><a href="#h2-8-5" id="h2-8-5" class="i">+                        last_index: 3,
+</a><a href="#h2-8-6" id="h2-8-6" class="i">+                        last_term: 2,
+</a><a href="#h2-8-7" id="h2-8-7" class="i">+                        read_seq: 7,
+</a><a href="#h2-8-8" id="h2-8-8" class="i">+                    },
+</a>                 }],
+             )
+         }
+<b>diff --git a/<a id="h3" href="../file/src/raft/node/leader.rs.html">src/raft/node/leader.rs</a> b/<a href="../file/src/raft/node/leader.rs.html">src/raft/node/leader.rs</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -152,21 +152,21 @@ impl RawNode&lt;Leader&gt; {
+</a>             }
+ 
+             // A follower received one of our heartbeats and confirms that we
+<a href="#h3-0-3" id="h3-0-3" class="d">-            // are its leader. If it doesn&#39;t have the commit index in its local
+</a><a href="#h3-0-4" id="h3-0-4" class="d">-            // log, replicate the log to it. If the peer&#39;s read sequence number
+</a><a href="#h3-0-5" id="h3-0-5" class="d">-            // increased, process any pending reads.
+</a><a href="#h3-0-6" id="h3-0-6" class="d">-            Message::HeartbeatResponse { has_committed, read_seq } =&gt; {
+</a><a href="#h3-0-7" id="h3-0-7" class="i">+            // are its leader. If its log is incomplete, append entries. If the
+</a><a href="#h3-0-8" id="h3-0-8" class="i">+            // peer&#39;s read sequence number increased, process any pending reads.
+</a><a href="#h3-0-9" id="h3-0-9" class="i">+            Message::HeartbeatResponse { last_index, last_term, read_seq } =&gt; {
+</a>                 assert!(read_seq &lt;= self.role.read_seq, &quot;Future read sequence number&quot;);
+ 
+<a href="#h3-0-12" id="h3-0-12" class="d">-                let from = msg.from;
+</a><a href="#h3-0-13" id="h3-0-13" class="d">-                let progress = self.role.progress.get_mut(&amp;from).unwrap();
+</a><a href="#h3-0-14" id="h3-0-14" class="i">+                let progress = self.role.progress.get_mut(&amp;msg.from).unwrap();
+</a>                 if read_seq &gt; progress.read_seq {
+                     progress.read_seq = read_seq;
+                     self.maybe_read()?;
+                 }
+ 
+<a href="#h3-0-20" id="h3-0-20" class="d">-                if !has_committed {
+</a><a href="#h3-0-21" id="h3-0-21" class="d">-                    self.send_log(from)?;
+</a><a href="#h3-0-22" id="h3-0-22" class="i">+                if last_index &lt; self.log.get_last_index().0
+</a><a href="#h3-0-23" id="h3-0-23" class="i">+                    || !self.log.has(last_index, last_term)?
+</a><a href="#h3-0-24" id="h3-0-24" class="i">+                {
+</a><a href="#h3-0-25" id="h3-0-25" class="i">+                    self.send_log(msg.from)?;
+</a>                 }
+             }
+ 
+<a href="#h3-1" id="h3-1" class="h">@@ -438,24 +438,7 @@ mod tests {
+</a>     }
+ 
+     #[test]
+<a href="#h3-1-3" id="h3-1-3" class="d">-    // ConfirmLeader triggers vote
+</a><a href="#h3-1-4" id="h3-1-4" class="d">-    fn step_confirmleader_vote() -&gt; Result&lt;()&gt; {
+</a><a href="#h3-1-5" id="h3-1-5" class="d">-        let (leader, mut node_rx) = setup()?;
+</a><a href="#h3-1-6" id="h3-1-6" class="d">-        let mut node: Node = leader.into();
+</a><a href="#h3-1-7" id="h3-1-7" class="d">-
+</a><a href="#h3-1-8" id="h3-1-8" class="d">-        node = node.step(Envelope {
+</a><a href="#h3-1-9" id="h3-1-9" class="d">-            from: 2,
+</a><a href="#h3-1-10" id="h3-1-10" class="d">-            to: 1,
+</a><a href="#h3-1-11" id="h3-1-11" class="d">-            term: 3,
+</a><a href="#h3-1-12" id="h3-1-12" class="d">-            message: Message::HeartbeatResponse { has_committed: true, read_seq: 0 },
+</a><a href="#h3-1-13" id="h3-1-13" class="d">-        })?;
+</a><a href="#h3-1-14" id="h3-1-14" class="d">-        assert_node(&amp;mut node).is_leader().term(3).committed(2);
+</a><a href="#h3-1-15" id="h3-1-15" class="d">-        assert_messages(&amp;mut node_rx, vec![]);
+</a><a href="#h3-1-16" id="h3-1-16" class="d">-        Ok(())
+</a><a href="#h3-1-17" id="h3-1-17" class="d">-    }
+</a><a href="#h3-1-18" id="h3-1-18" class="d">-
+</a><a href="#h3-1-19" id="h3-1-19" class="d">-    #[test]
+</a><a href="#h3-1-20" id="h3-1-20" class="d">-    // ConfirmLeader without has_committed triggers replication
+</a><a href="#h3-1-21" id="h3-1-21" class="i">+    // HeartbeatResponse with old log triggers replication.
+</a>     fn step_confirmleader_replicate() -&gt; Result&lt;()&gt; {
+         let (leader, mut node_rx) = setup()?;
+         let mut node: Node = leader.into();
+<a href="#h3-2" id="h3-2" class="h">@@ -464,7 +447,7 @@ mod tests {
+</a>             from: 2,
+             to: 1,
+             term: 3,
+<a href="#h3-2-3" id="h3-2-3" class="d">-            message: Message::HeartbeatResponse { has_committed: false, read_seq: 0 },
+</a><a href="#h3-2-4" id="h3-2-4" class="i">+            message: Message::HeartbeatResponse { last_index: 3, last_term: 2, read_seq: 0 },
+</a>         })?;
+         assert_node(&amp;mut node).is_leader().term(3).committed(2);
+         assert_messages(
+<a href="#h3-3" id="h3-3" class="h">@@ -513,7 +496,7 @@ mod tests {
+</a>                 from: 1,
+                 to: 2,
+                 term: 4,
+<a href="#h3-3-3" id="h3-3-3" class="d">-                message: Message::HeartbeatResponse { has_committed: false, read_seq: 7 },
+</a><a href="#h3-3-4" id="h3-3-4" class="i">+                message: Message::HeartbeatResponse { last_index: 5, last_term: 3, read_seq: 7 },
+</a>             }],
+         );
+         Ok(())
+</pre>
+</div>
+</body>
+</html>

@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>sql: tightened up comparison operators and added docs - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/648cc55a2a94e09f80cd9e5263219a8e67438f36.html">648cc55a2a94e09f80cd9e5263219a8e67438f36</a>
+<b>parent</b> <a href="../commit/1dcf9105b5e630bfadd46ff28548898dd1d8b025.html">1dcf9105b5e630bfadd46ff28548898dd1d8b025</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Thu,  2 Jan 2020 14:29:40 +0100
+
+sql: tightened up comparison operators and added docs
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">docs/README.md</a></td><td> | </td><td class="num">11</td><td><span class="i">+++++++++++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/sql/tests/expression.rs</a></td><td> | </td><td class="num">186</td><td><span class="i">+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d">--------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/sql/types/expression.rs</a></td><td> | </td><td class="num">40</td><td><span class="i">++++++++++++++++++++++++++++</span><span class="d">------------</span></td></tr>
+</table></pre><pre>3 files changed, 206 insertions(+), 31 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/docs/README.md.html">docs/README.md</a> b/<a href="../file/docs/README.md.html">docs/README.md</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -85,6 +85,17 @@ The complete truth tables are:
+</a> | **`FALSE`** | `TRUE`  |
+ | **`NULL`**  | `NULL`  |
+ 
+<a href="#h0-0-3" id="h0-0-3" class="i">+#### Comparison operators
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+
+</a><a href="#h0-0-5" id="h0-0-5" class="i">+Comparison operators compare values of the same data type, and return `TRUE` if the comparison holds, otherwise `FALSE`. `INTEGER` and `FLOAT` values are interchangeable. `STRING` comparisons are byte-wise, i.e. case-sensitive with `B` considered lesser than `a` due to their UTF-8 code points. `FALSE` is considered lesser than `TRUE`. Comparison with `NULL` always yields `NULL` (even `NULL = NULL`).
+</a><a href="#h0-0-6" id="h0-0-6" class="i">+
+</a><a href="#h0-0-7" id="h0-0-7" class="i">+* `=`: equality, e.g. `1 = 1` yields `TRUE`.
+</a><a href="#h0-0-8" id="h0-0-8" class="i">+* `!=`: inequality, e.g. `1 != 2` yields `TRUE`.
+</a><a href="#h0-0-9" id="h0-0-9" class="i">+* `&gt;`: greater than, e.g. `2 &gt; 1` yields `TRUE`.
+</a><a href="#h0-0-10" id="h0-0-10" class="i">+* `&gt;=`: greater than or equal, e.g. `1 &gt;= 1` yields `TRUE`.
+</a><a href="#h0-0-11" id="h0-0-11" class="i">+* `&lt;`: lesser than, e.g. `1 &lt; 2` yields `TRUE`.
+</a><a href="#h0-0-12" id="h0-0-12" class="i">+* `&lt;=`: lesser than or equal, e.g. `1 &lt;= 1` yields `TRUE`.
+</a><a href="#h0-0-13" id="h0-0-13" class="i">+
+</a> #### Mathematical operators
+ 
+ Mathematical operators apply standard math operations on numeric (`INTEGER` or `FLOAT`) operands. If either operand is a `FLOAT`, both operands are converted to `FLOAT` and the result is a `FLOAT`. The special values `INFINITY` and `NAN` are handled according to the IEEE 754 `binary64` spec.
+<b>diff --git a/<a id="h1" href="../file/src/sql/tests/expression.rs.html">src/sql/tests/expression.rs</a> b/<a href="../file/src/sql/tests/expression.rs.html">src/sql/tests/expression.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -109,31 +109,179 @@ test_expr! {
+</a>     op_or_error_string: &quot;&#39;a&#39; OR &#39;b&#39;&quot; =&gt; Err(Error::Value(&quot;Can&#39;t or a and b&quot;.into())),
+ 
+     // Comparison operators
+<a href="#h1-0-3" id="h1-0-3" class="d">-    op_eq_bool_false_false: &quot;FALSE = FALSE&quot; =&gt; Ok(Boolean(true)),
+</a><a href="#h1-0-4" id="h1-0-4" class="d">-    op_eq_bool_true_false: &quot;TRUE = FALSE&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-5" id="h1-0-5" class="d">-    op_eq_bool_true_true: &quot;TRUE = TRUE&quot; =&gt; Ok(Boolean(true)),
+</a><a href="#h1-0-6" id="h1-0-6" class="i">+    op_eq_bool: &quot;TRUE = TRUE&quot; =&gt; Ok(Boolean(true)),
+</a><a href="#h1-0-7" id="h1-0-7" class="i">+    op_eq_bool_not: &quot;TRUE = FALSE&quot; =&gt; Ok(Boolean(false)),
+</a>     op_eq_float: &quot;3.14 = 3.14&quot; =&gt; Ok(Boolean(true)),
+<a href="#h1-0-9" id="h1-0-9" class="d">-    op_eq_float_neq: &quot;3.14 = 2.718&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-10" id="h1-0-10" class="i">+    op_eq_float_not: &quot;3.14 = 2.718&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-11" id="h1-0-11" class="i">+    op_eq_float_infinity: &quot;INFINITY = INFINITY&quot; =&gt; Ok(Boolean(true)),
+</a><a href="#h1-0-12" id="h1-0-12" class="i">+    op_eq_float_nan: &quot;NAN = NAN&quot; =&gt; Ok(Boolean(false)),
+</a>     op_eq_float_int: &quot;3.0 = 3&quot; =&gt; Ok(Boolean(true)),
+<a href="#h1-0-14" id="h1-0-14" class="d">-    op_eq_float_int_neq: &quot;3.01 = 3&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-15" id="h1-0-15" class="i">+    op_eq_float_int_not: &quot;3.01 = 3&quot; =&gt; Ok(Boolean(false)),
+</a>     op_eq_int: &quot;1 = 1&quot; =&gt; Ok(Boolean(true)),
+<a href="#h1-0-17" id="h1-0-17" class="d">-    op_eq_int_neq: &quot;1 = 2&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-18" id="h1-0-18" class="d">-    op_eq_str: &quot;&#39;abc&#39; = &#39;abc&#39;&quot; =&gt; Ok(Boolean(true)),
+</a><a href="#h1-0-19" id="h1-0-19" class="d">-    op_eq_str_case: &quot;&#39;abc&#39; = &#39;ABC&#39;&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-20" id="h1-0-20" class="d">-    op_eq_str_neq: &quot;&#39;abc&#39; = &#39;xyz&#39;&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-21" id="h1-0-21" class="i">+    op_eq_int_not: &quot;1 = 2&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-22" id="h1-0-22" class="i">+    op_eq_int_float: &quot;3 = 3.0&quot; =&gt; Ok(Boolean(true)),
+</a><a href="#h1-0-23" id="h1-0-23" class="i">+    op_eq_int_float_not: &quot;3 = 3.01&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-24" id="h1-0-24" class="i">+    op_eq_null: &quot;NULL = NULL&quot; =&gt; Ok(Null),
+</a><a href="#h1-0-25" id="h1-0-25" class="i">+    op_eq_null_int: &quot;NULL = 1&quot; =&gt; Ok(Null),
+</a><a href="#h1-0-26" id="h1-0-26" class="i">+    op_eq_int_null: &quot;1 = NULL&quot; =&gt; Ok(Null),
+</a><a href="#h1-0-27" id="h1-0-27" class="i">+    op_eq_string: &quot;&#39;abc&#39; = &#39;abc&#39;&quot; =&gt; Ok(Boolean(true)),
+</a><a href="#h1-0-28" id="h1-0-28" class="i">+    op_eq_string_not: &quot;&#39;abc&#39; = &#39;xyz&#39;&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-29" id="h1-0-29" class="i">+    op_eq_string_case: &quot;&#39;abc&#39; = &#39;ABC&#39;&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-30" id="h1-0-30" class="i">+    op_eq_string_unicode: &quot;&#39;😀&#39; = &#39;😀&#39;&quot; =&gt; Ok(Boolean(true)),
+</a><a href="#h1-0-31" id="h1-0-31" class="i">+    op_eq_string_unicode_not: &quot;&#39;😀&#39; = &#39;🙁&#39;&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-32" id="h1-0-32" class="i">+    op_eq_conflict: &quot;1 = &#39;a&#39;&quot; =&gt; Err(Error::Value(&quot;Can&#39;t compare 1 and a&quot;.into())),
+</a> 
+<a href="#h1-0-34" id="h1-0-34" class="d">-    op_neq_bool_false_false: &quot;FALSE != FALSE&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-35" id="h1-0-35" class="d">-    op_neq_bool_true_false: &quot;TRUE != FALSE&quot; =&gt; Ok(Boolean(true)),
+</a><a href="#h1-0-36" id="h1-0-36" class="d">-    op_neq_bool_true_true: &quot;TRUE != TRUE&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-37" id="h1-0-37" class="i">+    op_neq_bool: &quot;TRUE != FALSE&quot; =&gt; Ok(Boolean(true)),
+</a><a href="#h1-0-38" id="h1-0-38" class="i">+    op_neq_bool_not: &quot;TRUE != TRUE&quot; =&gt; Ok(Boolean(false)),
+</a>     op_neq_float: &quot;3.14 != 2.718&quot; =&gt; Ok(Boolean(true)),
+<a href="#h1-0-40" id="h1-0-40" class="d">-    op_neq_float_eq: &quot;3.14 != 3.14&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-41" id="h1-0-41" class="d">-    op_neq_float_int: &quot;3.01 != 3&quot; =&gt; Ok(Boolean(true)),
+</a><a href="#h1-0-42" id="h1-0-42" class="d">-    op_neq_float_int_eq: &quot;3.0 != 3&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-43" id="h1-0-43" class="i">+    op_neq_float_not: &quot;3.14 != 3.14&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-44" id="h1-0-44" class="i">+    op_neq_float_infinity: &quot;INFINITY != INFINITY&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-45" id="h1-0-45" class="i">+    op_neq_float_nan: &quot;NAN != NAN&quot; =&gt; Ok(Boolean(true)),
+</a><a href="#h1-0-46" id="h1-0-46" class="i">+    op_neq_float_int: &quot;3.0 != 4&quot; =&gt; Ok(Boolean(true)),
+</a><a href="#h1-0-47" id="h1-0-47" class="i">+    op_neq_float_int_not: &quot;3.0 != 3&quot; =&gt; Ok(Boolean(false)),
+</a>     op_neq_int: &quot;1 != 2&quot; =&gt; Ok(Boolean(true)),
+<a href="#h1-0-49" id="h1-0-49" class="d">-    op_neq_int_eq: &quot;1 != 1&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-50" id="h1-0-50" class="d">-    op_neq_str: &quot;&#39;abc&#39; != &#39;xyz&#39;&quot; =&gt; Ok(Boolean(true)),
+</a><a href="#h1-0-51" id="h1-0-51" class="d">-    op_neq_str_case: &quot;&#39;abc&#39; != &#39;ABC&#39;&quot; =&gt; Ok(Boolean(true)),
+</a><a href="#h1-0-52" id="h1-0-52" class="d">-    op_neq_str_eq: &quot;&#39;abc&#39; != &#39;abc&#39;&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-53" id="h1-0-53" class="i">+    op_neq_int_not: &quot;1 != 1&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-54" id="h1-0-54" class="i">+    op_neq_int_float: &quot;3 != 3.01&quot; =&gt; Ok(Boolean(true)),
+</a><a href="#h1-0-55" id="h1-0-55" class="i">+    op_neq_int_float_not: &quot;3 != 3.0&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-56" id="h1-0-56" class="i">+    op_neq_null: &quot;NULL != NULL&quot; =&gt; Ok(Null),
+</a><a href="#h1-0-57" id="h1-0-57" class="i">+    op_neq_null_int: &quot;NULL != 1&quot; =&gt; Ok(Null),
+</a><a href="#h1-0-58" id="h1-0-58" class="i">+    op_neq_int_null: &quot;1 != NULL&quot; =&gt; Ok(Null),
+</a><a href="#h1-0-59" id="h1-0-59" class="i">+    op_neq_string: &quot;&#39;abc&#39; != &#39;xyz&#39;&quot; =&gt; Ok(Boolean(true)),
+</a><a href="#h1-0-60" id="h1-0-60" class="i">+    op_neq_string_not: &quot;&#39;abc&#39; != &#39;abc&#39;&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-61" id="h1-0-61" class="i">+    op_neq_string_case: &quot;&#39;abc&#39; != &#39;ABC&#39;&quot; =&gt; Ok(Boolean(true)),
+</a><a href="#h1-0-62" id="h1-0-62" class="i">+    op_neq_string_unicode: &quot;&#39;😀&#39; != &#39;🙁&#39;&quot; =&gt; Ok(Boolean(true)),
+</a><a href="#h1-0-63" id="h1-0-63" class="i">+    op_neq_string_unicode_not: &quot;&#39;😀&#39; != &#39;😀&#39;&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-64" id="h1-0-64" class="i">+    op_neq_conflict: &quot;1 != &#39;a&#39;&quot; =&gt; Err(Error::Value(&quot;Can&#39;t compare 1 and a&quot;.into())),
+</a><a href="#h1-0-65" id="h1-0-65" class="i">+
+</a><a href="#h1-0-66" id="h1-0-66" class="i">+    op_gt_bool: &quot;TRUE &gt; FALSE&quot; =&gt; Ok(Boolean(true)),
+</a><a href="#h1-0-67" id="h1-0-67" class="i">+    op_gt_bool_eq: &quot;TRUE &gt; TRUE&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-68" id="h1-0-68" class="i">+    op_gt_bool_not: &quot;FALSE &gt; TRUE&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-69" id="h1-0-69" class="i">+    op_gt_float: &quot;3.14 &gt; 3.13&quot; =&gt; Ok(Boolean(true)),
+</a><a href="#h1-0-70" id="h1-0-70" class="i">+    op_gt_float_eq: &quot;3.14 &gt; 3.14&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-71" id="h1-0-71" class="i">+    op_gt_float_not: &quot;3.14 &gt; 3.15&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-72" id="h1-0-72" class="i">+    op_gt_float_infinity: &quot;INFINITY &gt; INFINITY&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-73" id="h1-0-73" class="i">+    op_gt_float_nan: &quot;NAN &gt; NAN&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-74" id="h1-0-74" class="i">+    op_gt_float_int: &quot;3.01 &gt; 3&quot; =&gt; Ok(Boolean(true)),
+</a><a href="#h1-0-75" id="h1-0-75" class="i">+    op_gt_float_int_eq: &quot;3.0 &gt; 3&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-76" id="h1-0-76" class="i">+    op_gt_float_int_not: &quot;2.99 &gt; 3&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-77" id="h1-0-77" class="i">+    op_gt_int: &quot;2 &gt; 1&quot; =&gt; Ok(Boolean(true)),
+</a><a href="#h1-0-78" id="h1-0-78" class="i">+    op_gt_int_eq: &quot;1 &gt; 1&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-79" id="h1-0-79" class="i">+    op_gt_int_not: &quot;1 &gt; 2&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-80" id="h1-0-80" class="i">+    op_gt_int_float: &quot;3 &gt; 2.99&quot; =&gt; Ok(Boolean(true)),
+</a><a href="#h1-0-81" id="h1-0-81" class="i">+    op_gt_int_float_eq: &quot;3 &gt; 3.00&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-82" id="h1-0-82" class="i">+    op_gt_int_float_not: &quot;3 &gt; 3.01&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-83" id="h1-0-83" class="i">+    op_gt_null: &quot;NULL &gt; NULL&quot; =&gt; Ok(Null),
+</a><a href="#h1-0-84" id="h1-0-84" class="i">+    op_gt_null_int: &quot;NULL &gt; 1&quot; =&gt; Ok(Null),
+</a><a href="#h1-0-85" id="h1-0-85" class="i">+    op_gt_int_null: &quot;1 &gt; NULL&quot; =&gt; Ok(Null),
+</a><a href="#h1-0-86" id="h1-0-86" class="i">+    op_gt_string: &quot;&#39;xyz&#39; &gt; &#39;abc&#39;&quot; =&gt; Ok(Boolean(true)),
+</a><a href="#h1-0-87" id="h1-0-87" class="i">+    op_gt_string_eq: &quot;&#39;abc&#39; &gt; &#39;abc&#39;&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-88" id="h1-0-88" class="i">+    op_gt_string_not: &quot;&#39;abc&#39; &gt; &#39;xyz&#39;&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-89" id="h1-0-89" class="i">+    op_gt_string_case: &quot;&#39;b&#39; &gt; &#39;A&#39;&quot; =&gt; Ok(Boolean(true)),
+</a><a href="#h1-0-90" id="h1-0-90" class="i">+    op_gt_string_case_eq: &quot;&#39;A&#39; &gt; &#39;a&#39;&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-91" id="h1-0-91" class="i">+    op_gt_string_case_not: &quot;&#39;B&#39; &gt; &#39;a&#39;&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-92" id="h1-0-92" class="i">+    op_gt_string_prefix: &quot;&#39;abcde&#39; &gt; &#39;abc&#39;&quot; =&gt; Ok(Boolean(true)),
+</a><a href="#h1-0-93" id="h1-0-93" class="i">+    op_gt_string_prefix_not: &quot;&#39;abc&#39; &gt; &#39;abcde&#39;&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-94" id="h1-0-94" class="i">+    op_gt_string_unicode: &quot;&#39;🙁&#39; &gt; &#39;😀&#39;&quot; =&gt; Ok(Boolean(true)),
+</a><a href="#h1-0-95" id="h1-0-95" class="i">+    op_gt_string_unicode_eq: &quot;&#39;😀&#39; &gt; &#39;😀&#39;&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-96" id="h1-0-96" class="i">+    op_gt_string_unicode_not: &quot;&#39;😀&#39; &gt; &#39;🙁&#39;&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-97" id="h1-0-97" class="i">+    op_gt_conflict: &quot;1 &gt; &#39;a&#39;&quot; =&gt; Err(Error::Value(&quot;Can&#39;t compare 1 and a&quot;.into())),
+</a><a href="#h1-0-98" id="h1-0-98" class="i">+
+</a><a href="#h1-0-99" id="h1-0-99" class="i">+    op_gte_bool: &quot;TRUE &gt;= TRUE&quot; =&gt; Ok(Boolean(true)),
+</a><a href="#h1-0-100" id="h1-0-100" class="i">+    op_gte_bool_gt: &quot;TRUE &gt;= FALSE&quot; =&gt; Ok(Boolean(true)),
+</a><a href="#h1-0-101" id="h1-0-101" class="i">+    op_gte_bool_not: &quot;FALSE &gt;= TRUE&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-102" id="h1-0-102" class="i">+    op_gte_float: &quot;3.14 &gt;= 3.14&quot; =&gt; Ok(Boolean(true)),
+</a><a href="#h1-0-103" id="h1-0-103" class="i">+    op_gte_float_gt: &quot;3.15 &gt;= 3.14&quot; =&gt; Ok(Boolean(true)),
+</a><a href="#h1-0-104" id="h1-0-104" class="i">+    op_gte_float_not: &quot;3.14 &gt;= 3.15&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-105" id="h1-0-105" class="i">+    op_gte_float_infinity: &quot;INFINITY &gt;= INFINITY&quot; =&gt; Ok(Boolean(true)),
+</a><a href="#h1-0-106" id="h1-0-106" class="i">+    op_gte_float_nan: &quot;NAN &gt;= NAN&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-107" id="h1-0-107" class="i">+    op_gte_float_int: &quot;3.0 &gt;= 3&quot; =&gt; Ok(Boolean(true)),
+</a><a href="#h1-0-108" id="h1-0-108" class="i">+    op_gte_float_int_gt: &quot;3.01 &gt;= 3&quot; =&gt; Ok(Boolean(true)),
+</a><a href="#h1-0-109" id="h1-0-109" class="i">+    op_gte_float_int_not: &quot;2.99 &gt;= 3&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-110" id="h1-0-110" class="i">+    op_gte_int: &quot;1 &gt;= 1&quot; =&gt; Ok(Boolean(true)),
+</a><a href="#h1-0-111" id="h1-0-111" class="i">+    op_gte_int_gt: &quot;2 &gt;= 1&quot; =&gt; Ok(Boolean(true)),
+</a><a href="#h1-0-112" id="h1-0-112" class="i">+    op_gte_int_not: &quot;1 &gt;= 2&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-113" id="h1-0-113" class="i">+    op_gte_int_float: &quot;3 &gt;= 3.0&quot; =&gt; Ok(Boolean(true)),
+</a><a href="#h1-0-114" id="h1-0-114" class="i">+    op_gte_int_float_gt: &quot;3 &gt;= 2.99&quot; =&gt; Ok(Boolean(true)),
+</a><a href="#h1-0-115" id="h1-0-115" class="i">+    op_gte_int_float_not: &quot;3 &gt;= 3.01&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-116" id="h1-0-116" class="i">+    op_gte_null: &quot;NULL &gt;= NULL&quot; =&gt; Ok(Null),
+</a><a href="#h1-0-117" id="h1-0-117" class="i">+    op_gte_null_int: &quot;NULL &gt;= 1&quot; =&gt; Ok(Null),
+</a><a href="#h1-0-118" id="h1-0-118" class="i">+    op_gte_int_null: &quot;1 &gt;= NULL&quot; =&gt; Ok(Null),
+</a><a href="#h1-0-119" id="h1-0-119" class="i">+    op_gte_string: &quot;&#39;abc&#39; &gt;= &#39;abc&#39;&quot; =&gt; Ok(Boolean(true)),
+</a><a href="#h1-0-120" id="h1-0-120" class="i">+    op_gte_string_gt: &quot;&#39;b&#39; &gt;= &#39;abc&#39;&quot; =&gt; Ok(Boolean(true)),
+</a><a href="#h1-0-121" id="h1-0-121" class="i">+    op_gte_string_not: &quot;&#39;abc&#39; &gt;= &#39;xyz&#39;&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-122" id="h1-0-122" class="i">+    op_gte_string_case: &quot;&#39;ABC&#39; &gt;= &#39;abc&#39;&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-123" id="h1-0-123" class="i">+    op_gte_string_case_not: &quot;&#39;B&#39; &gt;= &#39;a&#39;&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-124" id="h1-0-124" class="i">+    op_gte_string_prefix: &quot;&#39;abcde&#39; &gt;= &#39;abc&#39;&quot; =&gt; Ok(Boolean(true)),
+</a><a href="#h1-0-125" id="h1-0-125" class="i">+    op_gte_string_prefix_not: &quot;&#39;abc&#39; &gt;= &#39;abcde&#39;&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-126" id="h1-0-126" class="i">+    op_gte_string_unicode: &quot;&#39;😀&#39; &gt;= &#39;😀&#39;&quot; =&gt; Ok(Boolean(true)),
+</a><a href="#h1-0-127" id="h1-0-127" class="i">+    op_gte_string_unicode_gt: &quot;&#39;🙁&#39; &gt;= &#39;😀&#39;&quot; =&gt; Ok(Boolean(true)),
+</a><a href="#h1-0-128" id="h1-0-128" class="i">+    op_gte_string_unicode_not: &quot;&#39;😀&#39; &gt;= &#39;🙁&#39;&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-129" id="h1-0-129" class="i">+    op_gte_conflict: &quot;1 &gt;= &#39;a&#39;&quot; =&gt; Err(Error::Value(&quot;Can&#39;t compare 1 and a&quot;.into())),
+</a><a href="#h1-0-130" id="h1-0-130" class="i">+
+</a><a href="#h1-0-131" id="h1-0-131" class="i">+    op_lt_bool: &quot;FALSE &lt; TRUE&quot; =&gt; Ok(Boolean(true)),
+</a><a href="#h1-0-132" id="h1-0-132" class="i">+    op_lt_bool_eq: &quot;TRUE &lt; TRUE&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-133" id="h1-0-133" class="i">+    op_lt_bool_not: &quot;TRUE &lt; FALSE&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-134" id="h1-0-134" class="i">+    op_lt_float: &quot;3.13 &lt; 3.14&quot; =&gt; Ok(Boolean(true)),
+</a><a href="#h1-0-135" id="h1-0-135" class="i">+    op_lt_float_eq: &quot;3.14 &lt; 3.14&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-136" id="h1-0-136" class="i">+    op_lt_float_not: &quot;3.15 &lt; 3.14&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-137" id="h1-0-137" class="i">+    op_lt_float_infinity: &quot;INFINITY &lt; INFINITY&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-138" id="h1-0-138" class="i">+    op_lt_float_nan: &quot;NAN &lt; NAN&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-139" id="h1-0-139" class="i">+    op_lt_float_int: &quot;2.99 &lt; 3&quot; =&gt; Ok(Boolean(true)),
+</a><a href="#h1-0-140" id="h1-0-140" class="i">+    op_lt_float_int_eq: &quot;3.0 &lt; 3&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-141" id="h1-0-141" class="i">+    op_lt_float_int_not: &quot;3.01 &lt; 3&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-142" id="h1-0-142" class="i">+    op_lt_int: &quot;1 &lt; 2&quot; =&gt; Ok(Boolean(true)),
+</a><a href="#h1-0-143" id="h1-0-143" class="i">+    op_lt_int_eq: &quot;1 &lt; 1&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-144" id="h1-0-144" class="i">+    op_lt_int_not: &quot;2 &lt; 1&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-145" id="h1-0-145" class="i">+    op_lt_int_float: &quot;3 &lt; 3.1&quot; =&gt; Ok(Boolean(true)),
+</a><a href="#h1-0-146" id="h1-0-146" class="i">+    op_lt_int_float_eq: &quot;3 &lt; 3.00&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-147" id="h1-0-147" class="i">+    op_lt_int_float_not: &quot;3 &lt; 2.99&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-148" id="h1-0-148" class="i">+    op_lt_null: &quot;NULL &lt; NULL&quot; =&gt; Ok(Null),
+</a><a href="#h1-0-149" id="h1-0-149" class="i">+    op_lt_null_int: &quot;NULL &lt; 1&quot; =&gt; Ok(Null),
+</a><a href="#h1-0-150" id="h1-0-150" class="i">+    op_lt_int_null: &quot;1 &lt; NULL&quot; =&gt; Ok(Null),
+</a><a href="#h1-0-151" id="h1-0-151" class="i">+    op_lt_string: &quot;&#39;abc&#39; &lt; &#39;xyz&#39;&quot; =&gt; Ok(Boolean(true)),
+</a><a href="#h1-0-152" id="h1-0-152" class="i">+    op_lt_string_eq: &quot;&#39;abc&#39; &lt; &#39;abc&#39;&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-153" id="h1-0-153" class="i">+    op_lt_string_not: &quot;&#39;xyz&#39; &lt; &#39;abc&#39;&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-154" id="h1-0-154" class="i">+    op_lt_string_case: &quot;&#39;A&#39; &lt; &#39;b&#39;&quot; =&gt; Ok(Boolean(true)),
+</a><a href="#h1-0-155" id="h1-0-155" class="i">+    op_lt_string_case_eq: &quot;&#39;a&#39; &lt; &#39;A&#39;&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-156" id="h1-0-156" class="i">+    op_lt_string_case_not: &quot;&#39;a&#39; &lt; &#39;B&#39;&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-157" id="h1-0-157" class="i">+    op_lt_string_prefix: &quot;&#39;abc&#39; &lt; &#39;abcde&#39;&quot; =&gt; Ok(Boolean(true)),
+</a><a href="#h1-0-158" id="h1-0-158" class="i">+    op_lt_string_prefix_not: &quot;&#39;abcde&#39; &lt; &#39;abc&#39;&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-159" id="h1-0-159" class="i">+    op_lt_string_unicode: &quot;&#39;😀&#39; &lt; &#39;🙁&#39;&quot; =&gt; Ok(Boolean(true)),
+</a><a href="#h1-0-160" id="h1-0-160" class="i">+    op_lt_string_unicode_eq: &quot;&#39;😀&#39; &lt; &#39;😀&#39;&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-161" id="h1-0-161" class="i">+    op_lt_string_unicode_not: &quot;&#39;🙁&#39; &lt; &#39;😀&#39;&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-162" id="h1-0-162" class="i">+    op_lt_conflict: &quot;1 &lt; &#39;a&#39;&quot; =&gt; Err(Error::Value(&quot;Can&#39;t compare 1 and a&quot;.into())),
+</a><a href="#h1-0-163" id="h1-0-163" class="i">+
+</a><a href="#h1-0-164" id="h1-0-164" class="i">+    op_lte_bool: &quot;TRUE &lt;= TRUE&quot; =&gt; Ok(Boolean(true)),
+</a><a href="#h1-0-165" id="h1-0-165" class="i">+    op_lte_bool_lt: &quot;FALSE &lt;= TRUE&quot; =&gt; Ok(Boolean(true)),
+</a><a href="#h1-0-166" id="h1-0-166" class="i">+    op_lte_bool_not: &quot;TRUE &lt;= FALSE&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-167" id="h1-0-167" class="i">+    op_lte_float: &quot;3.14 &lt;= 3.14&quot; =&gt; Ok(Boolean(true)),
+</a><a href="#h1-0-168" id="h1-0-168" class="i">+    op_lte_float_lt: &quot;3.14 &lt;= 3.15&quot; =&gt; Ok(Boolean(true)),
+</a><a href="#h1-0-169" id="h1-0-169" class="i">+    op_lte_float_not: &quot;3.15 &lt;= 3.14&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-170" id="h1-0-170" class="i">+    op_lte_float_infinity: &quot;INFINITY &lt;= INFINITY&quot; =&gt; Ok(Boolean(true)),
+</a><a href="#h1-0-171" id="h1-0-171" class="i">+    op_lte_float_nan: &quot;NAN &lt;= NAN&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-172" id="h1-0-172" class="i">+    op_lte_float_int: &quot;3.0 &lt;= 3&quot; =&gt; Ok(Boolean(true)),
+</a><a href="#h1-0-173" id="h1-0-173" class="i">+    op_lte_float_int_lt: &quot;3.01 &lt;= 4&quot; =&gt; Ok(Boolean(true)),
+</a><a href="#h1-0-174" id="h1-0-174" class="i">+    op_lte_float_int_not: &quot;3.01 &lt;= 3&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-175" id="h1-0-175" class="i">+    op_lte_int: &quot;1 &lt;= 1&quot; =&gt; Ok(Boolean(true)),
+</a><a href="#h1-0-176" id="h1-0-176" class="i">+    op_lte_int_lt: &quot;1 &lt;= 2&quot; =&gt; Ok(Boolean(true)),
+</a><a href="#h1-0-177" id="h1-0-177" class="i">+    op_lte_int_not: &quot;2 &lt;= 1&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-178" id="h1-0-178" class="i">+    op_lte_int_float: &quot;3 &lt;= 3.0&quot; =&gt; Ok(Boolean(true)),
+</a><a href="#h1-0-179" id="h1-0-179" class="i">+    op_lte_int_float_lt: &quot;3 &lt;= 3.01&quot; =&gt; Ok(Boolean(true)),
+</a><a href="#h1-0-180" id="h1-0-180" class="i">+    op_lte_int_float_not: &quot;3 &lt;= 2.99&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-181" id="h1-0-181" class="i">+    op_lte_null: &quot;NULL &lt;= NULL&quot; =&gt; Ok(Null),
+</a><a href="#h1-0-182" id="h1-0-182" class="i">+    op_lte_null_int: &quot;NULL &lt;= 1&quot; =&gt; Ok(Null),
+</a><a href="#h1-0-183" id="h1-0-183" class="i">+    op_lte_int_null: &quot;1 &lt;= NULL&quot; =&gt; Ok(Null),
+</a><a href="#h1-0-184" id="h1-0-184" class="i">+    op_lte_string: &quot;&#39;abc&#39; &lt;= &#39;abc&#39;&quot; =&gt; Ok(Boolean(true)),
+</a><a href="#h1-0-185" id="h1-0-185" class="i">+    op_lte_string_lt: &quot;&#39;a&#39; &lt;= &#39;abc&#39;&quot; =&gt; Ok(Boolean(true)),
+</a><a href="#h1-0-186" id="h1-0-186" class="i">+    op_lte_string_not: &quot;&#39;xyz&#39; &lt;= &#39;abc&#39;&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-187" id="h1-0-187" class="i">+    op_lte_string_case: &quot;&#39;abc&#39; &lt;= &#39;ABC&#39;&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-188" id="h1-0-188" class="i">+    op_lte_string_case_not: &quot;&#39;a&#39; &lt;= &#39;B&#39;&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-189" id="h1-0-189" class="i">+    op_lte_string_prefix: &quot;&#39;abc&#39; &lt;= &#39;abcde&#39;&quot; =&gt; Ok(Boolean(true)),
+</a><a href="#h1-0-190" id="h1-0-190" class="i">+    op_lte_string_prefix_not: &quot;&#39;abcde&#39; &lt;= &#39;abc&#39;&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-191" id="h1-0-191" class="i">+    op_lte_string_unicode: &quot;&#39;😀&#39; &lt;= &#39;😀&#39;&quot; =&gt; Ok(Boolean(true)),
+</a><a href="#h1-0-192" id="h1-0-192" class="i">+    op_lte_string_unicode_lt: &quot;&#39;😀&#39; &lt;= &#39;🙁&#39;&quot; =&gt; Ok(Boolean(true)),
+</a><a href="#h1-0-193" id="h1-0-193" class="i">+    op_lte_string_unicode_not: &quot;&#39;🙁&#39; &lt;= &#39;😀&#39;&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h1-0-194" id="h1-0-194" class="i">+    op_lte_conflict: &quot;1 &lt;= &#39;a&#39;&quot; =&gt; Err(Error::Value(&quot;Can&#39;t compare 1 and a&quot;.into())),
+</a> 
+     // Math operators
+     op_add_float_float: &quot;3.1 + 2.71&quot; =&gt; Ok(Float(3.1 + 2.71)),
+<b>diff --git a/<a id="h2" href="../file/src/sql/types/expression.rs.html">src/sql/types/expression.rs</a> b/<a href="../file/src/sql/types/expression.rs.html">src/sql/types/expression.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -81,54 +81,70 @@ impl Expression {
+</a>                 (Float(lhs), Integer(rhs)) =&gt; Boolean(lhs == rhs as f64),
+                 (Float(lhs), Float(rhs)) =&gt; Boolean(lhs == rhs),
+                 (String(lhs), String(rhs)) =&gt; Boolean(lhs == rhs),
+<a href="#h2-0-3" id="h2-0-3" class="i">+                (Null, _) | (_, Null) =&gt; Null,
+</a><a href="#h2-0-4" id="h2-0-4" class="i">+                (lhs, rhs) =&gt; {
+</a><a href="#h2-0-5" id="h2-0-5" class="i">+                    return Err(Error::Value(format!(&quot;Can&#39;t compare {} and {}&quot;, lhs, rhs)))
+</a><a href="#h2-0-6" id="h2-0-6" class="i">+                }
+</a><a href="#h2-0-7" id="h2-0-7" class="i">+            },
+</a><a href="#h2-0-8" id="h2-0-8" class="i">+            #[allow(clippy::float_cmp)] // Up to the user if they want to compare or not
+</a><a href="#h2-0-9" id="h2-0-9" class="i">+            Self::CompareNE(lhs, rhs) =&gt; match (lhs.evaluate(e)?, rhs.evaluate(e)?) {
+</a><a href="#h2-0-10" id="h2-0-10" class="i">+                (Boolean(lhs), Boolean(rhs)) =&gt; Boolean(lhs != rhs),
+</a><a href="#h2-0-11" id="h2-0-11" class="i">+                (Integer(lhs), Integer(rhs)) =&gt; Boolean(lhs != rhs),
+</a><a href="#h2-0-12" id="h2-0-12" class="i">+                (Integer(lhs), Float(rhs)) =&gt; Boolean(lhs as f64 != rhs),
+</a><a href="#h2-0-13" id="h2-0-13" class="i">+                (Float(lhs), Integer(rhs)) =&gt; Boolean(lhs != rhs as f64),
+</a><a href="#h2-0-14" id="h2-0-14" class="i">+                (Float(lhs), Float(rhs)) =&gt; Boolean(lhs != rhs),
+</a><a href="#h2-0-15" id="h2-0-15" class="i">+                (String(lhs), String(rhs)) =&gt; Boolean(lhs != rhs),
+</a><a href="#h2-0-16" id="h2-0-16" class="i">+                (Null, _) | (_, Null) =&gt; Null,
+</a>                 (lhs, rhs) =&gt; {
+                     return Err(Error::Value(format!(&quot;Can&#39;t compare {} and {}&quot;, lhs, rhs)))
+                 }
+             },
+             Self::CompareGT(lhs, rhs) =&gt; match (lhs.evaluate(e)?, rhs.evaluate(e)?) {
+<a href="#h2-0-22" id="h2-0-22" class="i">+                #[allow(clippy::bool_comparison)]
+</a><a href="#h2-0-23" id="h2-0-23" class="i">+                (Boolean(lhs), Boolean(rhs)) =&gt; Boolean(lhs &gt; rhs),
+</a>                 (Integer(lhs), Integer(rhs)) =&gt; Boolean(lhs &gt; rhs),
+                 (Integer(lhs), Float(rhs)) =&gt; Boolean(lhs as f64 &gt; rhs),
+                 (Float(lhs), Integer(rhs)) =&gt; Boolean(lhs &gt; rhs as f64),
+                 (Float(lhs), Float(rhs)) =&gt; Boolean(lhs &gt; rhs),
+<a href="#h2-0-28" id="h2-0-28" class="i">+                (String(lhs), String(rhs)) =&gt; Boolean(lhs &gt; rhs),
+</a><a href="#h2-0-29" id="h2-0-29" class="i">+                (Null, _) | (_, Null) =&gt; Null,
+</a>                 (lhs, rhs) =&gt; {
+                     return Err(Error::Value(format!(&quot;Can&#39;t compare {} and {}&quot;, lhs, rhs)))
+                 }
+             },
+             Self::CompareGTE(lhs, rhs) =&gt; match (lhs.evaluate(e)?, rhs.evaluate(e)?) {
+<a href="#h2-0-35" id="h2-0-35" class="i">+                (Boolean(lhs), Boolean(rhs)) =&gt; Boolean(lhs &gt;= rhs),
+</a>                 (Integer(lhs), Integer(rhs)) =&gt; Boolean(lhs &gt;= rhs),
+                 (Integer(lhs), Float(rhs)) =&gt; Boolean(lhs as f64 &gt;= rhs),
+                 (Float(lhs), Integer(rhs)) =&gt; Boolean(lhs &gt;= rhs as f64),
+                 (Float(lhs), Float(rhs)) =&gt; Boolean(lhs &gt;= rhs),
+<a href="#h2-0-40" id="h2-0-40" class="i">+                (String(lhs), String(rhs)) =&gt; Boolean(lhs &gt;= rhs),
+</a><a href="#h2-0-41" id="h2-0-41" class="i">+                (Null, _) | (_, Null) =&gt; Null,
+</a>                 (lhs, rhs) =&gt; {
+                     return Err(Error::Value(format!(&quot;Can&#39;t compare {} and {}&quot;, lhs, rhs)))
+                 }
+             },
+             Self::CompareLT(lhs, rhs) =&gt; match (lhs.evaluate(e)?, rhs.evaluate(e)?) {
+<a href="#h2-0-47" id="h2-0-47" class="i">+                #[allow(clippy::bool_comparison)]
+</a><a href="#h2-0-48" id="h2-0-48" class="i">+                (Boolean(lhs), Boolean(rhs)) =&gt; Boolean(lhs &lt; rhs),
+</a>                 (Integer(lhs), Integer(rhs)) =&gt; Boolean(lhs &lt; rhs),
+                 (Integer(lhs), Float(rhs)) =&gt; Boolean((lhs as f64) &lt; rhs),
+                 (Float(lhs), Integer(rhs)) =&gt; Boolean(lhs &lt; rhs as f64),
+                 (Float(lhs), Float(rhs)) =&gt; Boolean(lhs &lt; rhs),
+<a href="#h2-0-53" id="h2-0-53" class="i">+                (String(lhs), String(rhs)) =&gt; Boolean(lhs &lt; rhs),
+</a><a href="#h2-0-54" id="h2-0-54" class="i">+                (Null, _) | (_, Null) =&gt; Null,
+</a>                 (lhs, rhs) =&gt; {
+                     return Err(Error::Value(format!(&quot;Can&#39;t compare {} and {}&quot;, lhs, rhs)))
+                 }
+             },
+             Self::CompareLTE(lhs, rhs) =&gt; match (lhs.evaluate(e)?, rhs.evaluate(e)?) {
+<a href="#h2-0-60" id="h2-0-60" class="i">+                (Boolean(lhs), Boolean(rhs)) =&gt; Boolean(lhs &lt;= rhs),
+</a>                 (Integer(lhs), Integer(rhs)) =&gt; Boolean(lhs &lt;= rhs),
+                 (Integer(lhs), Float(rhs)) =&gt; Boolean((lhs as f64) &lt;= rhs),
+                 (Float(lhs), Integer(rhs)) =&gt; Boolean(lhs &lt;= rhs as f64),
+                 (Float(lhs), Float(rhs)) =&gt; Boolean(lhs &lt;= rhs),
+<a href="#h2-0-65" id="h2-0-65" class="d">-                (lhs, rhs) =&gt; {
+</a><a href="#h2-0-66" id="h2-0-66" class="d">-                    return Err(Error::Value(format!(&quot;Can&#39;t compare {} and {}&quot;, lhs, rhs)))
+</a><a href="#h2-0-67" id="h2-0-67" class="d">-                }
+</a><a href="#h2-0-68" id="h2-0-68" class="d">-            },
+</a><a href="#h2-0-69" id="h2-0-69" class="d">-            #[allow(clippy::float_cmp)] // Up to the user if they want to compare or not
+</a><a href="#h2-0-70" id="h2-0-70" class="d">-            Self::CompareNE(lhs, rhs) =&gt; match (lhs.evaluate(e)?, rhs.evaluate(e)?) {
+</a><a href="#h2-0-71" id="h2-0-71" class="d">-                (Boolean(lhs), Boolean(rhs)) =&gt; Boolean(lhs != rhs),
+</a><a href="#h2-0-72" id="h2-0-72" class="d">-                (Integer(lhs), Integer(rhs)) =&gt; Boolean(lhs != rhs),
+</a><a href="#h2-0-73" id="h2-0-73" class="d">-                (Integer(lhs), Float(rhs)) =&gt; Boolean(lhs as f64 != rhs),
+</a><a href="#h2-0-74" id="h2-0-74" class="d">-                (Float(lhs), Integer(rhs)) =&gt; Boolean(lhs != rhs as f64),
+</a><a href="#h2-0-75" id="h2-0-75" class="d">-                (Float(lhs), Float(rhs)) =&gt; Boolean(lhs != rhs),
+</a><a href="#h2-0-76" id="h2-0-76" class="d">-                (String(lhs), String(rhs)) =&gt; Boolean(lhs != rhs),
+</a><a href="#h2-0-77" id="h2-0-77" class="i">+                (String(lhs), String(rhs)) =&gt; Boolean(lhs &lt;= rhs),
+</a><a href="#h2-0-78" id="h2-0-78" class="i">+                (Null, _) | (_, Null) =&gt; Null,
+</a>                 (lhs, rhs) =&gt; {
+                     return Err(Error::Value(format!(&quot;Can&#39;t compare {} and {}&quot;, lhs, rhs)))
+                 }
+</pre>
+</div>
+</body>
+</html>

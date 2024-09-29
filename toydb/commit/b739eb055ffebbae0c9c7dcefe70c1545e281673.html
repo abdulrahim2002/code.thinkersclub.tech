@@ -1,0 +1,1165 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>raft: use goldenscript for log tests - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/b739eb055ffebbae0c9c7dcefe70c1545e281673.html">b739eb055ffebbae0c9c7dcefe70c1545e281673</a>
+<b>parent</b> <a href="../commit/267a57036487225b7347c670cde4d2547448bb8e.html">267a57036487225b7347c670cde4d2547448bb8e</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Tue, 28 May 2024 13:07:59 +0200
+
+raft: use goldenscript for log tests
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/raft/log.rs</a></td><td> | </td><td class="num">516</td><td><span class="i">+++++++++++++++++++++++++++++++</span><span class="d">------------------------------------------------</span></td></tr>
+<tr><td class="A">A</td><td><a href="#h1">src/raft/testscripts/log/append</a></td><td> | </td><td class="num">63</td><td><span class="i">+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d"></span></td></tr>
+<tr><td class="A">A</td><td><a href="#h2">src/raft/testscripts/log/commit</a></td><td> | </td><td class="num">67</td><td><span class="i">+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d"></span></td></tr>
+<tr><td class="A">A</td><td><a href="#h3">src/raft/testscripts/log/get</a></td><td> | </td><td class="num">26</td><td><span class="i">++++++++++++++++++++++++++</span><span class="d"></span></td></tr>
+<tr><td class="A">A</td><td><a href="#h4">src/raft/testscripts/log/has</a></td><td> | </td><td class="num">33</td><td><span class="i">+++++++++++++++++++++++++++++++++</span><span class="d"></span></td></tr>
+<tr><td class="A">A</td><td><a href="#h5">src/raft/testscripts/log/scan</a></td><td> | </td><td class="num">91</td><td><span class="i">+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d"></span></td></tr>
+<tr><td class="A">A</td><td><a href="#h6">src/raft/testscripts/log/splice</a></td><td> | </td><td class="num">161</td><td><span class="i">+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d"></span></td></tr>
+<tr><td class="A">A</td><td><a href="#h7">src/raft/testscripts/log/status</a></td><td> | </td><td class="num">35</td><td><span class="i">+++++++++++++++++++++++++++++++++++</span><span class="d"></span></td></tr>
+<tr><td class="A">A</td><td><a href="#h8">src/raft/testscripts/log/term</a></td><td> | </td><td class="num">45</td><td><span class="i">+++++++++++++++++++++++++++++++++++++++++++++</span><span class="d"></span></td></tr>
+</table></pre><pre>9 files changed, 724 insertions(+), 313 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/raft/log.rs.html">src/raft/log.rs</a> b/<a href="../file/src/raft/log.rs.html">src/raft/log.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -1,3 +1,4 @@
+</a><a href="#h0-0-0" id="h0-0-0" class="i">+use super::{NodeID, Term};
+</a> use crate::encoding::{bincode, keycode};
+ use crate::error::{Error, Result};
+ use crate::storage;
+<a href="#h0-1" id="h0-1" class="h">@@ -5,8 +6,6 @@ use crate::storage;
+</a> use ::log::debug;
+ use serde::{Deserialize, Serialize};
+ 
+<a href="#h0-1-3" id="h0-1-3" class="d">-use super::{NodeID, Term};
+</a><a href="#h0-1-4" id="h0-1-4" class="d">-
+</a> /// A log index.
+ pub type Index = u64;
+ 
+<a href="#h0-2" id="h0-2" class="h">@@ -43,6 +42,8 @@ impl Key {
+</a> }
+ 
+ /// Log key prefixes, used for prefix scans.
+<a href="#h0-2-3" id="h0-2-3" class="i">+///
+</a><a href="#h0-2-4" id="h0-2-4" class="i">+/// TODO: consider handling this in Key somehow.
+</a> #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+ enum KeyPrefix {
+     Entry,
+<a href="#h0-3" id="h0-3" class="h">@@ -55,6 +56,7 @@ impl KeyPrefix {
+</a>         keycode::serialize(self)
+     }
+ }
+<a href="#h0-3-3" id="h0-3-3" class="i">+
+</a> /// A Raft log.
+ pub struct Log {
+     /// The underlying storage engine. Uses a trait object instead of generics,
+<a href="#h0-4" id="h0-4" class="h">@@ -70,6 +72,7 @@ pub struct Log {
+</a>     /// The term of the last committed entry.
+     commit_term: Term,
+     /// Whether to sync writes to disk.
+<a href="#h0-4-3" id="h0-4-3" class="i">+    /// TODO: remove this and always sync when necessary.
+</a>     sync: bool,
+ }
+ 
+<a href="#h0-5" id="h0-5" class="h">@@ -142,6 +145,8 @@ impl Log {
+</a>     }
+ 
+     /// Sets the most recent term, and cast vote (if any).
+<a href="#h0-5-3" id="h0-5-3" class="i">+    ///
+</a><a href="#h0-5-4" id="h0-5-4" class="i">+    /// TODO: rename voted_for to vote.
+</a>     pub fn set_term(&amp;mut self, term: Term, voted_for: Option&lt;NodeID&gt;) -&gt; Result&lt;()&gt; {
+         self.engine.set(&amp;Key::TermVote.encode()?, bincode::serialize(&amp;(term, voted_for))?)?;
+         self.maybe_flush()
+<a href="#h0-6" id="h0-6" class="h">@@ -168,6 +173,9 @@ impl Log {
+</a> 
+     /// Commits entries up to and including the given index. The index must
+     /// exist, and must be at or after the current commit index.
+<a href="#h0-6-3" id="h0-6-3" class="i">+    ///
+</a><a href="#h0-6-4" id="h0-6-4" class="i">+    /// TODO: this should take and verify the term as well, to ensure followers
+</a><a href="#h0-6-5" id="h0-6-5" class="i">+    /// don&#39;t commit an entry for a divergent log.
+</a>     pub fn commit(&amp;mut self, index: Index) -&gt; Result&lt;Index&gt; {
+         if index &lt; self.commit_index {
+             return Err(Error::Internal(format!(
+<a href="#h0-7" id="h0-7" class="h">@@ -230,7 +238,11 @@ impl Log {
+</a>     /// and the first entry must be at most last_index+1. If an entry does not
+     /// exist, append it. If an existing entry has a term mismatch, replace it
+     /// and all following entries.
+<a href="#h0-7-3" id="h0-7-3" class="i">+    ///
+</a><a href="#h0-7-4" id="h0-7-4" class="i">+    /// TODO: this shouldn&#39;t truncate the log if it overlaps with an infix,
+</a><a href="#h0-7-5" id="h0-7-5" class="i">+    /// since message reordering can lead to data loss of committed entries.
+</a>     pub fn splice(&amp;mut self, entries: Vec&lt;Entry&gt;) -&gt; Result&lt;Index&gt; {
+<a href="#h0-7-7" id="h0-7-7" class="i">+        // TODO: don&#39;t allow empty entries.
+</a>         if entries.is_empty() {
+             return Ok(self.last_index);
+         }
+<a href="#h0-8" id="h0-8" class="h">@@ -277,327 +289,205 @@ impl Log {
+</a> #[cfg(test)]
+ mod tests {
+     use super::*;
+<a href="#h0-8-3" id="h0-8-3" class="d">-    use crate::storage::Memory;
+</a><a href="#h0-8-4" id="h0-8-4" class="d">-    use pretty_assertions::assert_eq;
+</a><a href="#h0-8-5" id="h0-8-5" class="d">-
+</a><a href="#h0-8-6" id="h0-8-6" class="d">-    fn setup() -&gt; Log {
+</a><a href="#h0-8-7" id="h0-8-7" class="d">-        Log::new(Memory::new(), false).expect(&quot;empty engine should never fail to open&quot;)
+</a><a href="#h0-8-8" id="h0-8-8" class="d">-    }
+</a><a href="#h0-8-9" id="h0-8-9" class="d">-
+</a><a href="#h0-8-10" id="h0-8-10" class="d">-    #[test]
+</a><a href="#h0-8-11" id="h0-8-11" class="d">-    fn new() -&gt; Result&lt;()&gt; {
+</a><a href="#h0-8-12" id="h0-8-12" class="d">-        let mut l = setup();
+</a><a href="#h0-8-13" id="h0-8-13" class="d">-        assert_eq!((0, 0), l.get_commit_index());
+</a><a href="#h0-8-14" id="h0-8-14" class="d">-        assert_eq!((0, 0), l.get_last_index());
+</a><a href="#h0-8-15" id="h0-8-15" class="d">-        assert_eq!(None, l.get(1)?);
+</a><a href="#h0-8-16" id="h0-8-16" class="d">-        Ok(())
+</a><a href="#h0-8-17" id="h0-8-17" class="d">-    }
+</a><a href="#h0-8-18" id="h0-8-18" class="d">-
+</a><a href="#h0-8-19" id="h0-8-19" class="d">-    #[test]
+</a><a href="#h0-8-20" id="h0-8-20" class="d">-    fn append() -&gt; Result&lt;()&gt; {
+</a><a href="#h0-8-21" id="h0-8-21" class="d">-        let mut l = setup();
+</a><a href="#h0-8-22" id="h0-8-22" class="d">-        assert_eq!(l.get(1), Ok(None));
+</a><a href="#h0-8-23" id="h0-8-23" class="d">-
+</a><a href="#h0-8-24" id="h0-8-24" class="d">-        assert_eq!(l.append(3, Some(vec![0x01]))?, 1,);
+</a><a href="#h0-8-25" id="h0-8-25" class="d">-        assert_eq!(l.get(1)?, Some(Entry { index: 1, term: 3, command: Some(vec![0x01]) }));
+</a><a href="#h0-8-26" id="h0-8-26" class="d">-        assert_eq!(l.get(2)?, None);
+</a><a href="#h0-8-27" id="h0-8-27" class="d">-
+</a><a href="#h0-8-28" id="h0-8-28" class="d">-        assert_eq!(l.get_last_index(), (1, 3));
+</a><a href="#h0-8-29" id="h0-8-29" class="d">-        assert_eq!(l.get_commit_index(), (0, 0));
+</a><a href="#h0-8-30" id="h0-8-30" class="d">-
+</a><a href="#h0-8-31" id="h0-8-31" class="d">-        assert_eq!(l.append(3, None)?, 2);
+</a><a href="#h0-8-32" id="h0-8-32" class="d">-        assert_eq!(l.get(2)?, Some(Entry { index: 2, term: 3, command: None }));
+</a><a href="#h0-8-33" id="h0-8-33" class="d">-        assert_eq!(l.get_last_index(), (2, 3));
+</a><a href="#h0-8-34" id="h0-8-34" class="d">-        assert_eq!(l.get_commit_index(), (0, 0));
+</a><a href="#h0-8-35" id="h0-8-35" class="d">-        Ok(())
+</a><a href="#h0-8-36" id="h0-8-36" class="d">-    }
+</a><a href="#h0-8-37" id="h0-8-37" class="d">-
+</a><a href="#h0-8-38" id="h0-8-38" class="d">-    #[test]
+</a><a href="#h0-8-39" id="h0-8-39" class="d">-    fn commit() -&gt; Result&lt;()&gt; {
+</a><a href="#h0-8-40" id="h0-8-40" class="d">-        let mut l = setup();
+</a><a href="#h0-8-41" id="h0-8-41" class="d">-        l.append(1, Some(vec![0x01]))?;
+</a><a href="#h0-8-42" id="h0-8-42" class="d">-        l.append(2, None)?;
+</a><a href="#h0-8-43" id="h0-8-43" class="d">-        l.append(2, Some(vec![0x03]))?;
+</a><a href="#h0-8-44" id="h0-8-44" class="d">-
+</a><a href="#h0-8-45" id="h0-8-45" class="d">-        // Committing a missing entry should error.
+</a><a href="#h0-8-46" id="h0-8-46" class="d">-        assert_eq!(
+</a><a href="#h0-8-47" id="h0-8-47" class="d">-            l.commit(0),
+</a><a href="#h0-8-48" id="h0-8-48" class="d">-            Err(Error::Internal(&quot;Can&#39;t commit non-existant index 0&quot;.to_string()))
+</a><a href="#h0-8-49" id="h0-8-49" class="d">-        );
+</a><a href="#h0-8-50" id="h0-8-50" class="d">-        assert_eq!(
+</a><a href="#h0-8-51" id="h0-8-51" class="d">-            l.commit(4),
+</a><a href="#h0-8-52" id="h0-8-52" class="d">-            Err(Error::Internal(&quot;Can&#39;t commit non-existant index 4&quot;.to_string()))
+</a><a href="#h0-8-53" id="h0-8-53" class="d">-        );
+</a><a href="#h0-8-54" id="h0-8-54" class="d">-
+</a><a href="#h0-8-55" id="h0-8-55" class="d">-        // Committing an existing index works, and is idempotent.
+</a><a href="#h0-8-56" id="h0-8-56" class="d">-        l.commit(2)?;
+</a><a href="#h0-8-57" id="h0-8-57" class="d">-        assert_eq!(l.get_commit_index(), (2, 2));
+</a><a href="#h0-8-58" id="h0-8-58" class="d">-        l.commit(2)?;
+</a><a href="#h0-8-59" id="h0-8-59" class="d">-        assert_eq!(l.get_commit_index(), (2, 2));
+</a><a href="#h0-8-60" id="h0-8-60" class="d">-
+</a><a href="#h0-8-61" id="h0-8-61" class="d">-        // Regressing the commit index should error.
+</a><a href="#h0-8-62" id="h0-8-62" class="d">-        assert_eq!(l.commit(1), Err(Error::Internal(&quot;Commit index regression 2 -&gt; 1&quot;.to_string())));
+</a><a href="#h0-8-63" id="h0-8-63" class="d">-
+</a><a href="#h0-8-64" id="h0-8-64" class="d">-        // Committing a later index works.
+</a><a href="#h0-8-65" id="h0-8-65" class="d">-        l.commit(3)?;
+</a><a href="#h0-8-66" id="h0-8-66" class="d">-        assert_eq!(l.get_commit_index(), (3, 2));
+</a><a href="#h0-8-67" id="h0-8-67" class="d">-
+</a><a href="#h0-8-68" id="h0-8-68" class="d">-        Ok(())
+</a><a href="#h0-8-69" id="h0-8-69" class="d">-    }
+</a><a href="#h0-8-70" id="h0-8-70" class="i">+    use std::{error::Error, result::Result};
+</a><a href="#h0-8-71" id="h0-8-71" class="i">+    use test_each_file::test_each_path;
+</a> 
+<a href="#h0-8-73" id="h0-8-73" class="d">-    #[test]
+</a><a href="#h0-8-74" id="h0-8-74" class="d">-    fn get() -&gt; Result&lt;()&gt; {
+</a><a href="#h0-8-75" id="h0-8-75" class="d">-        let mut l = setup();
+</a><a href="#h0-8-76" id="h0-8-76" class="d">-        assert_eq!(l.get(1)?, None);
+</a><a href="#h0-8-77" id="h0-8-77" class="i">+    // Run goldenscript tests in src/raft/testscripts/log.
+</a><a href="#h0-8-78" id="h0-8-78" class="i">+    test_each_path! { in &quot;src/raft/testscripts/log&quot; as scripts =&gt; test_goldenscript }
+</a> 
+<a href="#h0-8-80" id="h0-8-80" class="d">-        l.append(3, Some(vec![0x01]))?;
+</a><a href="#h0-8-81" id="h0-8-81" class="d">-        assert_eq!(l.get(1)?, Some(Entry { index: 1, term: 3, command: Some(vec![0x01]) }));
+</a><a href="#h0-8-82" id="h0-8-82" class="d">-        assert_eq!(l.get(2)?, None);
+</a><a href="#h0-8-83" id="h0-8-83" class="d">-        Ok(())
+</a><a href="#h0-8-84" id="h0-8-84" class="i">+    fn test_goldenscript(path: &amp;std::path::Path) {
+</a><a href="#h0-8-85" id="h0-8-85" class="i">+        goldenscript::run(&amp;mut TestRunner::new(), path).expect(&quot;goldenscript failed&quot;)
+</a>     }
+ 
+<a href="#h0-8-88" id="h0-8-88" class="d">-    #[test]
+</a><a href="#h0-8-89" id="h0-8-89" class="d">-    fn has() -&gt; Result&lt;()&gt; {
+</a><a href="#h0-8-90" id="h0-8-90" class="d">-        let mut l = setup();
+</a><a href="#h0-8-91" id="h0-8-91" class="d">-        l.append(2, Some(vec![0x01]))?;
+</a><a href="#h0-8-92" id="h0-8-92" class="d">-
+</a><a href="#h0-8-93" id="h0-8-93" class="d">-        assert!(l.has(1, 2)?);
+</a><a href="#h0-8-94" id="h0-8-94" class="d">-        assert!(l.has(0, 0)?);
+</a><a href="#h0-8-95" id="h0-8-95" class="d">-        assert!(!l.has(0, 1)?);
+</a><a href="#h0-8-96" id="h0-8-96" class="d">-        assert!(!l.has(1, 0)?);
+</a><a href="#h0-8-97" id="h0-8-97" class="d">-        assert!(!l.has(1, 3)?);
+</a><a href="#h0-8-98" id="h0-8-98" class="d">-        assert!(!l.has(2, 0)?);
+</a><a href="#h0-8-99" id="h0-8-99" class="d">-        assert!(!l.has(2, 1)?);
+</a><a href="#h0-8-100" id="h0-8-100" class="d">-        Ok(())
+</a><a href="#h0-8-101" id="h0-8-101" class="i">+    /// Runs Raft log goldenscript tests. For available commands, see run().
+</a><a href="#h0-8-102" id="h0-8-102" class="i">+    struct TestRunner {
+</a><a href="#h0-8-103" id="h0-8-103" class="i">+        log: Log,
+</a>     }
+ 
+<a href="#h0-8-106" id="h0-8-106" class="d">-    #[test]
+</a><a href="#h0-8-107" id="h0-8-107" class="d">-    fn scan() -&gt; Result&lt;()&gt; {
+</a><a href="#h0-8-108" id="h0-8-108" class="d">-        let mut l = setup();
+</a><a href="#h0-8-109" id="h0-8-109" class="d">-        l.append(1, Some(vec![0x01]))?;
+</a><a href="#h0-8-110" id="h0-8-110" class="d">-        l.append(1, Some(vec![0x02]))?;
+</a><a href="#h0-8-111" id="h0-8-111" class="d">-        l.append(1, Some(vec![0x03]))?;
+</a><a href="#h0-8-112" id="h0-8-112" class="d">-
+</a><a href="#h0-8-113" id="h0-8-113" class="d">-        assert_eq!(
+</a><a href="#h0-8-114" id="h0-8-114" class="d">-            l.scan(..)?.collect::&lt;Result&lt;Vec&lt;_&gt;&gt;&gt;()?,
+</a><a href="#h0-8-115" id="h0-8-115" class="d">-            vec![
+</a><a href="#h0-8-116" id="h0-8-116" class="d">-                Entry { index: 1, term: 1, command: Some(vec![0x01]) },
+</a><a href="#h0-8-117" id="h0-8-117" class="d">-                Entry { index: 2, term: 1, command: Some(vec![0x02]) },
+</a><a href="#h0-8-118" id="h0-8-118" class="d">-                Entry { index: 3, term: 1, command: Some(vec![0x03]) },
+</a><a href="#h0-8-119" id="h0-8-119" class="d">-            ],
+</a><a href="#h0-8-120" id="h0-8-120" class="d">-        );
+</a><a href="#h0-8-121" id="h0-8-121" class="d">-        assert_eq!(
+</a><a href="#h0-8-122" id="h0-8-122" class="d">-            l.scan(2..=2)?.collect::&lt;Result&lt;Vec&lt;_&gt;&gt;&gt;()?,
+</a><a href="#h0-8-123" id="h0-8-123" class="d">-            vec![Entry { index: 2, term: 1, command: Some(vec![0x02]) },],
+</a><a href="#h0-8-124" id="h0-8-124" class="d">-        );
+</a><a href="#h0-8-125" id="h0-8-125" class="d">-        assert!(l.scan(4..)?.collect::&lt;Result&lt;Vec&lt;_&gt;&gt;&gt;()?.is_empty());
+</a><a href="#h0-8-126" id="h0-8-126" class="d">-        Ok(())
+</a><a href="#h0-8-127" id="h0-8-127" class="i">+    impl goldenscript::Runner for TestRunner {
+</a><a href="#h0-8-128" id="h0-8-128" class="i">+        fn run(&amp;mut self, command: &amp;goldenscript::Command) -&gt; Result&lt;String, Box&lt;dyn Error&gt;&gt; {
+</a><a href="#h0-8-129" id="h0-8-129" class="i">+            let mut output = String::new();
+</a><a href="#h0-8-130" id="h0-8-130" class="i">+            match command.name.as_str() {
+</a><a href="#h0-8-131" id="h0-8-131" class="i">+                // append TERM [COMMAND]
+</a><a href="#h0-8-132" id="h0-8-132" class="i">+                &quot;append&quot; =&gt; {
+</a><a href="#h0-8-133" id="h0-8-133" class="i">+                    let mut args = command.consume_args();
+</a><a href="#h0-8-134" id="h0-8-134" class="i">+                    let term = args.next_pos().ok_or(&quot;term not given&quot;)?.parse()?;
+</a><a href="#h0-8-135" id="h0-8-135" class="i">+                    let command = args.next_pos().map(|a| a.value.as_bytes().to_vec());
+</a><a href="#h0-8-136" id="h0-8-136" class="i">+                    args.reject_rest()?;
+</a><a href="#h0-8-137" id="h0-8-137" class="i">+                    let index = self.log.append(term, command)?;
+</a><a href="#h0-8-138" id="h0-8-138" class="i">+                    let entry = self.log.get(index)?.expect(&quot;entry not found&quot;);
+</a><a href="#h0-8-139" id="h0-8-139" class="i">+                    output.push_str(&amp;format!(&quot;append → {}\n&quot;, Self::format_entry(&amp;entry)));
+</a><a href="#h0-8-140" id="h0-8-140" class="i">+                }
+</a><a href="#h0-8-141" id="h0-8-141" class="i">+
+</a><a href="#h0-8-142" id="h0-8-142" class="i">+                // commit INDEX
+</a><a href="#h0-8-143" id="h0-8-143" class="i">+                &quot;commit&quot; =&gt; {
+</a><a href="#h0-8-144" id="h0-8-144" class="i">+                    let mut args = command.consume_args();
+</a><a href="#h0-8-145" id="h0-8-145" class="i">+                    let index = args.next_pos().ok_or(&quot;index not given&quot;)?.parse()?;
+</a><a href="#h0-8-146" id="h0-8-146" class="i">+                    args.reject_rest()?;
+</a><a href="#h0-8-147" id="h0-8-147" class="i">+                    let index = self.log.commit(index)?;
+</a><a href="#h0-8-148" id="h0-8-148" class="i">+                    let entry = self.log.get(index)?.expect(&quot;entry not found&quot;);
+</a><a href="#h0-8-149" id="h0-8-149" class="i">+                    output.push_str(&amp;format!(&quot;commit → {}\n&quot;, Self::format_entry(&amp;entry)));
+</a><a href="#h0-8-150" id="h0-8-150" class="i">+                }
+</a><a href="#h0-8-151" id="h0-8-151" class="i">+
+</a><a href="#h0-8-152" id="h0-8-152" class="i">+                // get INDEX...
+</a><a href="#h0-8-153" id="h0-8-153" class="i">+                &quot;get&quot; =&gt; {
+</a><a href="#h0-8-154" id="h0-8-154" class="i">+                    let mut args = command.consume_args();
+</a><a href="#h0-8-155" id="h0-8-155" class="i">+                    let indexes: Vec&lt;Index&gt; =
+</a><a href="#h0-8-156" id="h0-8-156" class="i">+                        args.rest_pos().iter().map(|a| a.parse()).collect::&lt;Result&lt;_, _&gt;&gt;()?;
+</a><a href="#h0-8-157" id="h0-8-157" class="i">+                    args.reject_rest()?;
+</a><a href="#h0-8-158" id="h0-8-158" class="i">+                    for index in indexes {
+</a><a href="#h0-8-159" id="h0-8-159" class="i">+                        let result = match self.log.get(index)? {
+</a><a href="#h0-8-160" id="h0-8-160" class="i">+                            Some(entry) =&gt; Self::format_entry(&amp;entry),
+</a><a href="#h0-8-161" id="h0-8-161" class="i">+                            None =&gt; &quot;None&quot;.to_string(),
+</a><a href="#h0-8-162" id="h0-8-162" class="i">+                        };
+</a><a href="#h0-8-163" id="h0-8-163" class="i">+                        output.push_str(&amp;format!(&quot;{result}\n&quot;));
+</a><a href="#h0-8-164" id="h0-8-164" class="i">+                    }
+</a><a href="#h0-8-165" id="h0-8-165" class="i">+                }
+</a><a href="#h0-8-166" id="h0-8-166" class="i">+
+</a><a href="#h0-8-167" id="h0-8-167" class="i">+                // get_term
+</a><a href="#h0-8-168" id="h0-8-168" class="i">+                &quot;get_term&quot; =&gt; {
+</a><a href="#h0-8-169" id="h0-8-169" class="i">+                    command.consume_args().reject_rest()?;
+</a><a href="#h0-8-170" id="h0-8-170" class="i">+                    let (term, vote) = self.log.get_term()?;
+</a><a href="#h0-8-171" id="h0-8-171" class="i">+                    output.push_str(&amp;format!(&quot;term={term} vote={vote:?}\n&quot;));
+</a><a href="#h0-8-172" id="h0-8-172" class="i">+                }
+</a><a href="#h0-8-173" id="h0-8-173" class="i">+
+</a><a href="#h0-8-174" id="h0-8-174" class="i">+                // has INDEX@TERM...
+</a><a href="#h0-8-175" id="h0-8-175" class="i">+                &quot;has&quot; =&gt; {
+</a><a href="#h0-8-176" id="h0-8-176" class="i">+                    let mut args = command.consume_args();
+</a><a href="#h0-8-177" id="h0-8-177" class="i">+                    let indexes: Vec&lt;(Index, Term)&gt; = args
+</a><a href="#h0-8-178" id="h0-8-178" class="i">+                        .rest_pos()
+</a><a href="#h0-8-179" id="h0-8-179" class="i">+                        .iter()
+</a><a href="#h0-8-180" id="h0-8-180" class="i">+                        .map(|a| Self::parse_index_term(&amp;a.value))
+</a><a href="#h0-8-181" id="h0-8-181" class="i">+                        .collect::&lt;Result&lt;_, _&gt;&gt;()?;
+</a><a href="#h0-8-182" id="h0-8-182" class="i">+                    args.reject_rest()?;
+</a><a href="#h0-8-183" id="h0-8-183" class="i">+                    for (index, term) in indexes {
+</a><a href="#h0-8-184" id="h0-8-184" class="i">+                        let has = self.log.has(index, term)?;
+</a><a href="#h0-8-185" id="h0-8-185" class="i">+                        output.push_str(&amp;format!(&quot;{has}\n&quot;));
+</a><a href="#h0-8-186" id="h0-8-186" class="i">+                    }
+</a><a href="#h0-8-187" id="h0-8-187" class="i">+                }
+</a><a href="#h0-8-188" id="h0-8-188" class="i">+
+</a><a href="#h0-8-189" id="h0-8-189" class="i">+                // raw
+</a><a href="#h0-8-190" id="h0-8-190" class="i">+                &quot;raw&quot; =&gt; {
+</a><a href="#h0-8-191" id="h0-8-191" class="i">+                    command.consume_args().reject_rest()?;
+</a><a href="#h0-8-192" id="h0-8-192" class="i">+                    let range = (std::ops::Bound::Unbounded, std::ops::Bound::Unbounded);
+</a><a href="#h0-8-193" id="h0-8-193" class="i">+                    let mut scan = self.log.engine.scan_dyn(range);
+</a><a href="#h0-8-194" id="h0-8-194" class="i">+                    while let Some((key, value)) = scan.next().transpose()? {
+</a><a href="#h0-8-195" id="h0-8-195" class="i">+                        output.push_str(&amp;format!(
+</a><a href="#h0-8-196" id="h0-8-196" class="i">+                            &quot;{:?} 0x{} = 0x{}\n&quot;,
+</a><a href="#h0-8-197" id="h0-8-197" class="i">+                            Key::decode(&amp;key)?,
+</a><a href="#h0-8-198" id="h0-8-198" class="i">+                            hex::encode(&amp;key),
+</a><a href="#h0-8-199" id="h0-8-199" class="i">+                            hex::encode(&amp;value)
+</a><a href="#h0-8-200" id="h0-8-200" class="i">+                        ));
+</a><a href="#h0-8-201" id="h0-8-201" class="i">+                    }
+</a><a href="#h0-8-202" id="h0-8-202" class="i">+                }
+</a><a href="#h0-8-203" id="h0-8-203" class="i">+
+</a><a href="#h0-8-204" id="h0-8-204" class="i">+                // scan [RANGE]
+</a><a href="#h0-8-205" id="h0-8-205" class="i">+                &quot;scan&quot; =&gt; {
+</a><a href="#h0-8-206" id="h0-8-206" class="i">+                    let mut args = command.consume_args();
+</a><a href="#h0-8-207" id="h0-8-207" class="i">+                    let range = Self::parse_index_range(
+</a><a href="#h0-8-208" id="h0-8-208" class="i">+                        args.next_pos().map_or(&quot;..&quot;, |a| a.value.as_str()),
+</a><a href="#h0-8-209" id="h0-8-209" class="i">+                    )?;
+</a><a href="#h0-8-210" id="h0-8-210" class="i">+                    args.reject_rest()?;
+</a><a href="#h0-8-211" id="h0-8-211" class="i">+                    let mut scan = self.log.scan(range)?;
+</a><a href="#h0-8-212" id="h0-8-212" class="i">+                    while let Some(entry) = scan.next().transpose()? {
+</a><a href="#h0-8-213" id="h0-8-213" class="i">+                        output.push_str(&amp;format!(&quot;{}\n&quot;, Self::format_entry(&amp;entry)));
+</a><a href="#h0-8-214" id="h0-8-214" class="i">+                    }
+</a><a href="#h0-8-215" id="h0-8-215" class="i">+                    if output.is_empty() {
+</a><a href="#h0-8-216" id="h0-8-216" class="i">+                        output.push_str(&quot;&lt;empty&gt;&quot;);
+</a><a href="#h0-8-217" id="h0-8-217" class="i">+                    }
+</a><a href="#h0-8-218" id="h0-8-218" class="i">+                }
+</a><a href="#h0-8-219" id="h0-8-219" class="i">+
+</a><a href="#h0-8-220" id="h0-8-220" class="i">+                // set_term TERM [VOTE]
+</a><a href="#h0-8-221" id="h0-8-221" class="i">+                &quot;set_term&quot; =&gt; {
+</a><a href="#h0-8-222" id="h0-8-222" class="i">+                    let mut args = command.consume_args();
+</a><a href="#h0-8-223" id="h0-8-223" class="i">+                    let term = args.next_pos().ok_or(&quot;term not given&quot;)?.parse()?;
+</a><a href="#h0-8-224" id="h0-8-224" class="i">+                    let vote = args.next_pos().map(|a| a.parse()).transpose()?;
+</a><a href="#h0-8-225" id="h0-8-225" class="i">+                    args.reject_rest()?;
+</a><a href="#h0-8-226" id="h0-8-226" class="i">+                    self.log.set_term(term, vote)?;
+</a><a href="#h0-8-227" id="h0-8-227" class="i">+                }
+</a><a href="#h0-8-228" id="h0-8-228" class="i">+
+</a><a href="#h0-8-229" id="h0-8-229" class="i">+                // splice [INDEX@TERM=COMMAND...]
+</a><a href="#h0-8-230" id="h0-8-230" class="i">+                &quot;splice&quot; =&gt; {
+</a><a href="#h0-8-231" id="h0-8-231" class="i">+                    let mut args = command.consume_args();
+</a><a href="#h0-8-232" id="h0-8-232" class="i">+                    let mut entries = Vec::new();
+</a><a href="#h0-8-233" id="h0-8-233" class="i">+                    for arg in args.rest_key() {
+</a><a href="#h0-8-234" id="h0-8-234" class="i">+                        let (index, term) = Self::parse_index_term(arg.key.as_deref().unwrap())?;
+</a><a href="#h0-8-235" id="h0-8-235" class="i">+                        let command = match arg.value.as_str() {
+</a><a href="#h0-8-236" id="h0-8-236" class="i">+                            &quot;&quot; =&gt; None,
+</a><a href="#h0-8-237" id="h0-8-237" class="i">+                            value =&gt; Some(value.as_bytes().to_vec()),
+</a><a href="#h0-8-238" id="h0-8-238" class="i">+                        };
+</a><a href="#h0-8-239" id="h0-8-239" class="i">+                        entries.push(Entry { index, term, command });
+</a><a href="#h0-8-240" id="h0-8-240" class="i">+                    }
+</a><a href="#h0-8-241" id="h0-8-241" class="i">+                    args.reject_rest()?;
+</a><a href="#h0-8-242" id="h0-8-242" class="i">+                    let index = self.log.splice(entries)?;
+</a><a href="#h0-8-243" id="h0-8-243" class="i">+                    let entry = self.log.get(index)?.expect(&quot;entry not found&quot;);
+</a><a href="#h0-8-244" id="h0-8-244" class="i">+                    output.push_str(&amp;format!(&quot;splice → {}\n&quot;, Self::format_entry(&amp;entry)));
+</a><a href="#h0-8-245" id="h0-8-245" class="i">+                }
+</a><a href="#h0-8-246" id="h0-8-246" class="i">+
+</a><a href="#h0-8-247" id="h0-8-247" class="i">+                // status [engine=BOOL]
+</a><a href="#h0-8-248" id="h0-8-248" class="i">+                &quot;status&quot; =&gt; {
+</a><a href="#h0-8-249" id="h0-8-249" class="i">+                    let mut args = command.consume_args();
+</a><a href="#h0-8-250" id="h0-8-250" class="i">+                    let engine = args.lookup_parse(&quot;engine&quot;)?.unwrap_or(false);
+</a><a href="#h0-8-251" id="h0-8-251" class="i">+                    args.reject_rest()?;
+</a><a href="#h0-8-252" id="h0-8-252" class="i">+                    let (commit_index, commit_term) = self.log.get_commit_index();
+</a><a href="#h0-8-253" id="h0-8-253" class="i">+                    let (last_index, last_term) = self.log.get_last_index();
+</a><a href="#h0-8-254" id="h0-8-254" class="i">+                    output.push_str(&amp;format!(
+</a><a href="#h0-8-255" id="h0-8-255" class="i">+                        &quot;last={last_index}@{last_term} commit={commit_index}@{commit_term}&quot;
+</a><a href="#h0-8-256" id="h0-8-256" class="i">+                    ));
+</a><a href="#h0-8-257" id="h0-8-257" class="i">+                    if engine {
+</a><a href="#h0-8-258" id="h0-8-258" class="i">+                        output.push_str(&amp;format!(&quot; engine={:#?}&quot;, self.log.status()?));
+</a><a href="#h0-8-259" id="h0-8-259" class="i">+                    }
+</a><a href="#h0-8-260" id="h0-8-260" class="i">+                    output.push(&#39;\n&#39;);
+</a><a href="#h0-8-261" id="h0-8-261" class="i">+                }
+</a><a href="#h0-8-262" id="h0-8-262" class="i">+
+</a><a href="#h0-8-263" id="h0-8-263" class="i">+                name =&gt; return Err(format!(&quot;unknown command {name}&quot;).into()),
+</a><a href="#h0-8-264" id="h0-8-264" class="i">+            }
+</a><a href="#h0-8-265" id="h0-8-265" class="i">+            Ok(output)
+</a><a href="#h0-8-266" id="h0-8-266" class="i">+        }
+</a>     }
+ 
+<a href="#h0-8-269" id="h0-8-269" class="d">-    #[test]
+</a><a href="#h0-8-270" id="h0-8-270" class="d">-    fn set_get_term() -&gt; Result&lt;()&gt; {
+</a><a href="#h0-8-271" id="h0-8-271" class="d">-        let mut l = setup();
+</a><a href="#h0-8-272" id="h0-8-272" class="d">-        assert_eq!(l.get_term()?, (0, None));
+</a><a href="#h0-8-273" id="h0-8-273" class="d">-
+</a><a href="#h0-8-274" id="h0-8-274" class="d">-        l.set_term(1, Some(1))?;
+</a><a href="#h0-8-275" id="h0-8-275" class="d">-        assert_eq!(l.get_term()?, (1, Some(1)));
+</a><a href="#h0-8-276" id="h0-8-276" class="i">+    impl TestRunner {
+</a><a href="#h0-8-277" id="h0-8-277" class="i">+        fn new() -&gt; Self {
+</a><a href="#h0-8-278" id="h0-8-278" class="i">+            let log = Log::new(crate::storage::Memory::new(), false).expect(&quot;log failed&quot;);
+</a><a href="#h0-8-279" id="h0-8-279" class="i">+            Self { log }
+</a><a href="#h0-8-280" id="h0-8-280" class="i">+        }
+</a> 
+<a href="#h0-8-282" id="h0-8-282" class="d">-        l.set_term(0, None)?;
+</a><a href="#h0-8-283" id="h0-8-283" class="d">-        assert_eq!(l.get_term()?, (0, None));
+</a><a href="#h0-8-284" id="h0-8-284" class="d">-        Ok(())
+</a><a href="#h0-8-285" id="h0-8-285" class="d">-    }
+</a><a href="#h0-8-286" id="h0-8-286" class="i">+        /// Formats a log entry.
+</a><a href="#h0-8-287" id="h0-8-287" class="i">+        fn format_entry(entry: &amp;Entry) -&gt; String {
+</a><a href="#h0-8-288" id="h0-8-288" class="i">+            let command = match entry.command.as_ref() {
+</a><a href="#h0-8-289" id="h0-8-289" class="i">+                Some(raw) =&gt; std::str::from_utf8(raw).expect(&quot;invalid command&quot;),
+</a><a href="#h0-8-290" id="h0-8-290" class="i">+                None =&gt; &quot;None&quot;,
+</a><a href="#h0-8-291" id="h0-8-291" class="i">+            };
+</a><a href="#h0-8-292" id="h0-8-292" class="i">+            format!(&quot;{}@{} {command}&quot;, entry.index, entry.term)
+</a><a href="#h0-8-293" id="h0-8-293" class="i">+        }
+</a> 
+<a href="#h0-8-295" id="h0-8-295" class="d">-    #[test]
+</a><a href="#h0-8-296" id="h0-8-296" class="d">-    fn splice() -&gt; Result&lt;()&gt; {
+</a><a href="#h0-8-297" id="h0-8-297" class="d">-        let mut l = setup();
+</a><a href="#h0-8-298" id="h0-8-298" class="d">-
+</a><a href="#h0-8-299" id="h0-8-299" class="d">-        // Splicing an empty vec should return the current last_index.
+</a><a href="#h0-8-300" id="h0-8-300" class="d">-        assert_eq!(l.splice(vec![])?, 0);
+</a><a href="#h0-8-301" id="h0-8-301" class="d">-
+</a><a href="#h0-8-302" id="h0-8-302" class="d">-        // It should error if the first index is not 1.
+</a><a href="#h0-8-303" id="h0-8-303" class="d">-        assert!(l.splice(vec![Entry { index: 0, term: 1, command: None }]).is_err());
+</a><a href="#h0-8-304" id="h0-8-304" class="d">-        assert!(l.splice(vec![Entry { index: 2, term: 1, command: None }]).is_err());
+</a><a href="#h0-8-305" id="h0-8-305" class="d">-
+</a><a href="#h0-8-306" id="h0-8-306" class="d">-        // ...or the entries are not contiguous.
+</a><a href="#h0-8-307" id="h0-8-307" class="d">-        assert!(l
+</a><a href="#h0-8-308" id="h0-8-308" class="d">-            .splice(vec![
+</a><a href="#h0-8-309" id="h0-8-309" class="d">-                Entry { index: 1, term: 1, command: Some(vec![0x01]) },
+</a><a href="#h0-8-310" id="h0-8-310" class="d">-                Entry { index: 3, term: 2, command: Some(vec![0x03]) },
+</a><a href="#h0-8-311" id="h0-8-311" class="d">-            ])
+</a><a href="#h0-8-312" id="h0-8-312" class="d">-            .is_err());
+</a><a href="#h0-8-313" id="h0-8-313" class="d">-
+</a><a href="#h0-8-314" id="h0-8-314" class="d">-        // Splicing into an empty log should be fine.
+</a><a href="#h0-8-315" id="h0-8-315" class="d">-        assert_eq!(
+</a><a href="#h0-8-316" id="h0-8-316" class="d">-            l.splice(vec![
+</a><a href="#h0-8-317" id="h0-8-317" class="d">-                Entry { index: 1, term: 1, command: Some(vec![0x01]) },
+</a><a href="#h0-8-318" id="h0-8-318" class="d">-                Entry { index: 2, term: 1, command: Some(vec![0x02]) },
+</a><a href="#h0-8-319" id="h0-8-319" class="d">-            ])?,
+</a><a href="#h0-8-320" id="h0-8-320" class="d">-            2
+</a><a href="#h0-8-321" id="h0-8-321" class="d">-        );
+</a><a href="#h0-8-322" id="h0-8-322" class="d">-        assert_eq!(
+</a><a href="#h0-8-323" id="h0-8-323" class="d">-            l.scan(..)?.collect::&lt;Result&lt;Vec&lt;_&gt;&gt;&gt;()?,
+</a><a href="#h0-8-324" id="h0-8-324" class="d">-            vec![
+</a><a href="#h0-8-325" id="h0-8-325" class="d">-                Entry { index: 1, term: 1, command: Some(vec![0x01]) },
+</a><a href="#h0-8-326" id="h0-8-326" class="d">-                Entry { index: 2, term: 1, command: Some(vec![0x02]) },
+</a><a href="#h0-8-327" id="h0-8-327" class="d">-            ]
+</a><a href="#h0-8-328" id="h0-8-328" class="d">-        );
+</a><a href="#h0-8-329" id="h0-8-329" class="d">-
+</a><a href="#h0-8-330" id="h0-8-330" class="d">-        // Splicing an empty vec should be fine, and return the last index
+</a><a href="#h0-8-331" id="h0-8-331" class="d">-        // without affecting data.
+</a><a href="#h0-8-332" id="h0-8-332" class="d">-        assert_eq!(l.splice(vec![])?, 2);
+</a><a href="#h0-8-333" id="h0-8-333" class="d">-        assert_eq!(
+</a><a href="#h0-8-334" id="h0-8-334" class="d">-            l.scan(..)?.collect::&lt;Result&lt;Vec&lt;_&gt;&gt;&gt;()?,
+</a><a href="#h0-8-335" id="h0-8-335" class="d">-            vec![
+</a><a href="#h0-8-336" id="h0-8-336" class="d">-                Entry { index: 1, term: 1, command: Some(vec![0x01]) },
+</a><a href="#h0-8-337" id="h0-8-337" class="d">-                Entry { index: 2, term: 1, command: Some(vec![0x02]) },
+</a><a href="#h0-8-338" id="h0-8-338" class="d">-            ]
+</a><a href="#h0-8-339" id="h0-8-339" class="d">-        );
+</a><a href="#h0-8-340" id="h0-8-340" class="d">-
+</a><a href="#h0-8-341" id="h0-8-341" class="d">-        // Splicing with a gap after the last_index should error.
+</a><a href="#h0-8-342" id="h0-8-342" class="d">-        assert!(l
+</a><a href="#h0-8-343" id="h0-8-343" class="d">-            .splice(vec![
+</a><a href="#h0-8-344" id="h0-8-344" class="d">-                Entry { index: 4, term: 1, command: Some(vec![0x04]) },
+</a><a href="#h0-8-345" id="h0-8-345" class="d">-                Entry { index: 5, term: 1, command: Some(vec![0x05]) },
+</a><a href="#h0-8-346" id="h0-8-346" class="d">-            ])
+</a><a href="#h0-8-347" id="h0-8-347" class="d">-            .is_err());
+</a><a href="#h0-8-348" id="h0-8-348" class="d">-
+</a><a href="#h0-8-349" id="h0-8-349" class="d">-        // Splicing after the last index should be fine.
+</a><a href="#h0-8-350" id="h0-8-350" class="d">-        assert_eq!(
+</a><a href="#h0-8-351" id="h0-8-351" class="d">-            l.splice(vec![
+</a><a href="#h0-8-352" id="h0-8-352" class="d">-                Entry { index: 3, term: 1, command: Some(vec![0x03]) },
+</a><a href="#h0-8-353" id="h0-8-353" class="d">-                Entry { index: 4, term: 1, command: Some(vec![0x04]) },
+</a><a href="#h0-8-354" id="h0-8-354" class="d">-            ])?,
+</a><a href="#h0-8-355" id="h0-8-355" class="d">-            4
+</a><a href="#h0-8-356" id="h0-8-356" class="d">-        );
+</a><a href="#h0-8-357" id="h0-8-357" class="d">-        assert_eq!(
+</a><a href="#h0-8-358" id="h0-8-358" class="d">-            l.scan(..)?.collect::&lt;Result&lt;Vec&lt;_&gt;&gt;&gt;()?,
+</a><a href="#h0-8-359" id="h0-8-359" class="d">-            vec![
+</a><a href="#h0-8-360" id="h0-8-360" class="d">-                Entry { index: 1, term: 1, command: Some(vec![0x01]) },
+</a><a href="#h0-8-361" id="h0-8-361" class="d">-                Entry { index: 2, term: 1, command: Some(vec![0x02]) },
+</a><a href="#h0-8-362" id="h0-8-362" class="d">-                Entry { index: 3, term: 1, command: Some(vec![0x03]) },
+</a><a href="#h0-8-363" id="h0-8-363" class="d">-                Entry { index: 4, term: 1, command: Some(vec![0x04]) },
+</a><a href="#h0-8-364" id="h0-8-364" class="d">-            ]
+</a><a href="#h0-8-365" id="h0-8-365" class="d">-        );
+</a><a href="#h0-8-366" id="h0-8-366" class="d">-
+</a><a href="#h0-8-367" id="h0-8-367" class="d">-        // Splicing with overlap should be a noop.
+</a><a href="#h0-8-368" id="h0-8-368" class="d">-        assert_eq!(
+</a><a href="#h0-8-369" id="h0-8-369" class="d">-            l.splice(vec![
+</a><a href="#h0-8-370" id="h0-8-370" class="d">-                Entry { index: 3, term: 1, command: Some(vec![0x03]) },
+</a><a href="#h0-8-371" id="h0-8-371" class="d">-                Entry { index: 4, term: 1, command: Some(vec![0x04]) },
+</a><a href="#h0-8-372" id="h0-8-372" class="d">-            ])?,
+</a><a href="#h0-8-373" id="h0-8-373" class="d">-            4
+</a><a href="#h0-8-374" id="h0-8-374" class="d">-        );
+</a><a href="#h0-8-375" id="h0-8-375" class="d">-        assert_eq!(
+</a><a href="#h0-8-376" id="h0-8-376" class="d">-            l.scan(..)?.collect::&lt;Result&lt;Vec&lt;_&gt;&gt;&gt;()?,
+</a><a href="#h0-8-377" id="h0-8-377" class="d">-            vec![
+</a><a href="#h0-8-378" id="h0-8-378" class="d">-                Entry { index: 1, term: 1, command: Some(vec![0x01]) },
+</a><a href="#h0-8-379" id="h0-8-379" class="d">-                Entry { index: 2, term: 1, command: Some(vec![0x02]) },
+</a><a href="#h0-8-380" id="h0-8-380" class="d">-                Entry { index: 3, term: 1, command: Some(vec![0x03]) },
+</a><a href="#h0-8-381" id="h0-8-381" class="d">-                Entry { index: 4, term: 1, command: Some(vec![0x04]) },
+</a><a href="#h0-8-382" id="h0-8-382" class="d">-            ]
+</a><a href="#h0-8-383" id="h0-8-383" class="d">-        );
+</a><a href="#h0-8-384" id="h0-8-384" class="d">-
+</a><a href="#h0-8-385" id="h0-8-385" class="d">-        assert_eq!(
+</a><a href="#h0-8-386" id="h0-8-386" class="d">-            l.splice(vec![
+</a><a href="#h0-8-387" id="h0-8-387" class="d">-                Entry { index: 1, term: 1, command: Some(vec![0x01]) },
+</a><a href="#h0-8-388" id="h0-8-388" class="d">-                Entry { index: 2, term: 1, command: Some(vec![0x02]) },
+</a><a href="#h0-8-389" id="h0-8-389" class="d">-                Entry { index: 3, term: 1, command: Some(vec![0x03]) },
+</a><a href="#h0-8-390" id="h0-8-390" class="d">-                Entry { index: 4, term: 1, command: Some(vec![0x04]) },
+</a><a href="#h0-8-391" id="h0-8-391" class="d">-            ])?,
+</a><a href="#h0-8-392" id="h0-8-392" class="d">-            4
+</a><a href="#h0-8-393" id="h0-8-393" class="d">-        );
+</a><a href="#h0-8-394" id="h0-8-394" class="d">-        assert_eq!(
+</a><a href="#h0-8-395" id="h0-8-395" class="d">-            l.scan(..)?.collect::&lt;Result&lt;Vec&lt;_&gt;&gt;&gt;()?,
+</a><a href="#h0-8-396" id="h0-8-396" class="d">-            vec![
+</a><a href="#h0-8-397" id="h0-8-397" class="d">-                Entry { index: 1, term: 1, command: Some(vec![0x01]) },
+</a><a href="#h0-8-398" id="h0-8-398" class="d">-                Entry { index: 2, term: 1, command: Some(vec![0x02]) },
+</a><a href="#h0-8-399" id="h0-8-399" class="d">-                Entry { index: 3, term: 1, command: Some(vec![0x03]) },
+</a><a href="#h0-8-400" id="h0-8-400" class="d">-                Entry { index: 4, term: 1, command: Some(vec![0x04]) },
+</a><a href="#h0-8-401" id="h0-8-401" class="d">-            ]
+</a><a href="#h0-8-402" id="h0-8-402" class="d">-        );
+</a><a href="#h0-8-403" id="h0-8-403" class="d">-
+</a><a href="#h0-8-404" id="h0-8-404" class="d">-        // Splicing in the middle should truncate the rest, even if the
+</a><a href="#h0-8-405" id="h0-8-405" class="d">-        // entries match.
+</a><a href="#h0-8-406" id="h0-8-406" class="d">-        assert_eq!(
+</a><a href="#h0-8-407" id="h0-8-407" class="d">-            l.splice(vec![
+</a><a href="#h0-8-408" id="h0-8-408" class="d">-                Entry { index: 2, term: 1, command: Some(vec![0x02]) },
+</a><a href="#h0-8-409" id="h0-8-409" class="d">-                Entry { index: 3, term: 1, command: Some(vec![0x03]) },
+</a><a href="#h0-8-410" id="h0-8-410" class="d">-            ])?,
+</a><a href="#h0-8-411" id="h0-8-411" class="d">-            3
+</a><a href="#h0-8-412" id="h0-8-412" class="d">-        );
+</a><a href="#h0-8-413" id="h0-8-413" class="d">-        assert_eq!(
+</a><a href="#h0-8-414" id="h0-8-414" class="d">-            l.scan(..)?.collect::&lt;Result&lt;Vec&lt;_&gt;&gt;&gt;()?,
+</a><a href="#h0-8-415" id="h0-8-415" class="d">-            vec![
+</a><a href="#h0-8-416" id="h0-8-416" class="d">-                Entry { index: 1, term: 1, command: Some(vec![0x01]) },
+</a><a href="#h0-8-417" id="h0-8-417" class="d">-                Entry { index: 2, term: 1, command: Some(vec![0x02]) },
+</a><a href="#h0-8-418" id="h0-8-418" class="d">-                Entry { index: 3, term: 1, command: Some(vec![0x03]) },
+</a><a href="#h0-8-419" id="h0-8-419" class="d">-            ]
+</a><a href="#h0-8-420" id="h0-8-420" class="d">-        );
+</a><a href="#h0-8-421" id="h0-8-421" class="d">-
+</a><a href="#h0-8-422" id="h0-8-422" class="d">-        // Splicing at the start should truncate the rest, even if the
+</a><a href="#h0-8-423" id="h0-8-423" class="d">-        // entries match.
+</a><a href="#h0-8-424" id="h0-8-424" class="d">-        assert_eq!(
+</a><a href="#h0-8-425" id="h0-8-425" class="d">-            l.splice(vec![
+</a><a href="#h0-8-426" id="h0-8-426" class="d">-                Entry { index: 1, term: 1, command: Some(vec![0x01]) },
+</a><a href="#h0-8-427" id="h0-8-427" class="d">-                Entry { index: 2, term: 1, command: Some(vec![0x02]) },
+</a><a href="#h0-8-428" id="h0-8-428" class="d">-            ])?,
+</a><a href="#h0-8-429" id="h0-8-429" class="d">-            2
+</a><a href="#h0-8-430" id="h0-8-430" class="d">-        );
+</a><a href="#h0-8-431" id="h0-8-431" class="d">-        assert_eq!(
+</a><a href="#h0-8-432" id="h0-8-432" class="d">-            l.scan(..)?.collect::&lt;Result&lt;Vec&lt;_&gt;&gt;&gt;()?,
+</a><a href="#h0-8-433" id="h0-8-433" class="d">-            vec![
+</a><a href="#h0-8-434" id="h0-8-434" class="d">-                Entry { index: 1, term: 1, command: Some(vec![0x01]) },
+</a><a href="#h0-8-435" id="h0-8-435" class="d">-                Entry { index: 2, term: 1, command: Some(vec![0x02]) },
+</a><a href="#h0-8-436" id="h0-8-436" class="d">-            ]
+</a><a href="#h0-8-437" id="h0-8-437" class="d">-        );
+</a><a href="#h0-8-438" id="h0-8-438" class="d">-
+</a><a href="#h0-8-439" id="h0-8-439" class="d">-        // Splicing a different command does nothing.
+</a><a href="#h0-8-440" id="h0-8-440" class="d">-        assert_eq!(l.splice(vec![Entry { index: 2, term: 1, command: Some(vec![0x00]) },])?, 2);
+</a><a href="#h0-8-441" id="h0-8-441" class="d">-        assert_eq!(
+</a><a href="#h0-8-442" id="h0-8-442" class="d">-            l.scan(..)?.collect::&lt;Result&lt;Vec&lt;_&gt;&gt;&gt;()?,
+</a><a href="#h0-8-443" id="h0-8-443" class="d">-            vec![
+</a><a href="#h0-8-444" id="h0-8-444" class="d">-                Entry { index: 1, term: 1, command: Some(vec![0x01]) },
+</a><a href="#h0-8-445" id="h0-8-445" class="d">-                Entry { index: 2, term: 1, command: Some(vec![0x02]) },
+</a><a href="#h0-8-446" id="h0-8-446" class="d">-            ]
+</a><a href="#h0-8-447" id="h0-8-447" class="d">-        );
+</a><a href="#h0-8-448" id="h0-8-448" class="d">-
+</a><a href="#h0-8-449" id="h0-8-449" class="d">-        // Splicing with overlap beyond the end works.
+</a><a href="#h0-8-450" id="h0-8-450" class="d">-        assert_eq!(
+</a><a href="#h0-8-451" id="h0-8-451" class="d">-            l.splice(vec![
+</a><a href="#h0-8-452" id="h0-8-452" class="d">-                Entry { index: 2, term: 1, command: Some(vec![0x02]) },
+</a><a href="#h0-8-453" id="h0-8-453" class="d">-                Entry { index: 3, term: 1, command: Some(vec![0x03]) },
+</a><a href="#h0-8-454" id="h0-8-454" class="d">-                Entry { index: 4, term: 1, command: Some(vec![0x04]) },
+</a><a href="#h0-8-455" id="h0-8-455" class="d">-            ])?,
+</a><a href="#h0-8-456" id="h0-8-456" class="d">-            4
+</a><a href="#h0-8-457" id="h0-8-457" class="d">-        );
+</a><a href="#h0-8-458" id="h0-8-458" class="d">-        assert_eq!(
+</a><a href="#h0-8-459" id="h0-8-459" class="d">-            l.scan(..)?.collect::&lt;Result&lt;Vec&lt;_&gt;&gt;&gt;()?,
+</a><a href="#h0-8-460" id="h0-8-460" class="d">-            vec![
+</a><a href="#h0-8-461" id="h0-8-461" class="d">-                Entry { index: 1, term: 1, command: Some(vec![0x01]) },
+</a><a href="#h0-8-462" id="h0-8-462" class="d">-                Entry { index: 2, term: 1, command: Some(vec![0x02]) },
+</a><a href="#h0-8-463" id="h0-8-463" class="d">-                Entry { index: 3, term: 1, command: Some(vec![0x03]) },
+</a><a href="#h0-8-464" id="h0-8-464" class="d">-                Entry { index: 4, term: 1, command: Some(vec![0x04]) },
+</a><a href="#h0-8-465" id="h0-8-465" class="d">-            ]
+</a><a href="#h0-8-466" id="h0-8-466" class="d">-        );
+</a><a href="#h0-8-467" id="h0-8-467" class="d">-
+</a><a href="#h0-8-468" id="h0-8-468" class="d">-        // Splicing with a different term replaces.
+</a><a href="#h0-8-469" id="h0-8-469" class="d">-        assert_eq!(
+</a><a href="#h0-8-470" id="h0-8-470" class="d">-            l.splice(vec![
+</a><a href="#h0-8-471" id="h0-8-471" class="d">-                Entry { index: 3, term: 2, command: Some(vec![0x03]) },
+</a><a href="#h0-8-472" id="h0-8-472" class="d">-                Entry { index: 4, term: 2, command: Some(vec![0x04]) },
+</a><a href="#h0-8-473" id="h0-8-473" class="d">-            ])?,
+</a><a href="#h0-8-474" id="h0-8-474" class="d">-            4
+</a><a href="#h0-8-475" id="h0-8-475" class="d">-        );
+</a><a href="#h0-8-476" id="h0-8-476" class="d">-        assert_eq!(
+</a><a href="#h0-8-477" id="h0-8-477" class="d">-            l.scan(..)?.collect::&lt;Result&lt;Vec&lt;_&gt;&gt;&gt;()?,
+</a><a href="#h0-8-478" id="h0-8-478" class="d">-            vec![
+</a><a href="#h0-8-479" id="h0-8-479" class="d">-                Entry { index: 1, term: 1, command: Some(vec![0x01]) },
+</a><a href="#h0-8-480" id="h0-8-480" class="d">-                Entry { index: 2, term: 1, command: Some(vec![0x02]) },
+</a><a href="#h0-8-481" id="h0-8-481" class="d">-                Entry { index: 3, term: 2, command: Some(vec![0x03]) },
+</a><a href="#h0-8-482" id="h0-8-482" class="d">-                Entry { index: 4, term: 2, command: Some(vec![0x04]) },
+</a><a href="#h0-8-483" id="h0-8-483" class="d">-            ]
+</a><a href="#h0-8-484" id="h0-8-484" class="d">-        );
+</a><a href="#h0-8-485" id="h0-8-485" class="i">+        /// Parses an index@term pair.
+</a><a href="#h0-8-486" id="h0-8-486" class="i">+        fn parse_index_term(s: &amp;str) -&gt; Result&lt;(Index, Term), Box&lt;dyn Error&gt;&gt; {
+</a><a href="#h0-8-487" id="h0-8-487" class="i">+            let re = regex::Regex::new(r&quot;^(\d+)@(\d+)$&quot;).expect(&quot;invalid regex&quot;);
+</a><a href="#h0-8-488" id="h0-8-488" class="i">+            let groups = re.captures(s).ok_or_else(|| format!(&quot;invalid index/term {s}&quot;))?;
+</a><a href="#h0-8-489" id="h0-8-489" class="i">+            let index = groups.get(1).unwrap().as_str().parse()?;
+</a><a href="#h0-8-490" id="h0-8-490" class="i">+            let term = groups.get(2).unwrap().as_str().parse()?;
+</a><a href="#h0-8-491" id="h0-8-491" class="i">+            Ok((index, term))
+</a><a href="#h0-8-492" id="h0-8-492" class="i">+        }
+</a> 
+<a href="#h0-8-494" id="h0-8-494" class="d">-        Ok(())
+</a><a href="#h0-8-495" id="h0-8-495" class="i">+        /// Parses an index range, in Rust range syntax.
+</a><a href="#h0-8-496" id="h0-8-496" class="i">+        fn parse_index_range(s: &amp;str) -&gt; Result&lt;impl std::ops::RangeBounds&lt;Index&gt;, Box&lt;dyn Error&gt;&gt; {
+</a><a href="#h0-8-497" id="h0-8-497" class="i">+            let mut bound =
+</a><a href="#h0-8-498" id="h0-8-498" class="i">+                (std::ops::Bound::&lt;Index&gt;::Unbounded, std::ops::Bound::&lt;Index&gt;::Unbounded);
+</a><a href="#h0-8-499" id="h0-8-499" class="i">+            let re = regex::Regex::new(r&quot;^(\d+)?\.\.(=)?(\d+)?&quot;).expect(&quot;invalid regex&quot;);
+</a><a href="#h0-8-500" id="h0-8-500" class="i">+            let groups = re.captures(s).ok_or_else(|| format!(&quot;invalid range {s}&quot;))?;
+</a><a href="#h0-8-501" id="h0-8-501" class="i">+            if let Some(start) = groups.get(1) {
+</a><a href="#h0-8-502" id="h0-8-502" class="i">+                bound.0 = std::ops::Bound::Included(start.as_str().parse()?);
+</a><a href="#h0-8-503" id="h0-8-503" class="i">+            }
+</a><a href="#h0-8-504" id="h0-8-504" class="i">+            if let Some(end) = groups.get(3) {
+</a><a href="#h0-8-505" id="h0-8-505" class="i">+                let end = end.as_str().parse()?;
+</a><a href="#h0-8-506" id="h0-8-506" class="i">+                if groups.get(2).is_some() {
+</a><a href="#h0-8-507" id="h0-8-507" class="i">+                    bound.1 = std::ops::Bound::Included(end)
+</a><a href="#h0-8-508" id="h0-8-508" class="i">+                } else {
+</a><a href="#h0-8-509" id="h0-8-509" class="i">+                    bound.1 = std::ops::Bound::Excluded(end)
+</a><a href="#h0-8-510" id="h0-8-510" class="i">+                }
+</a><a href="#h0-8-511" id="h0-8-511" class="i">+            }
+</a><a href="#h0-8-512" id="h0-8-512" class="i">+            Ok(bound)
+</a><a href="#h0-8-513" id="h0-8-513" class="i">+        }
+</a>     }
+ }
+<b>diff --git a/<a id="h1" href="../file/src/raft/testscripts/log/append.html">src/raft/testscripts/log/append</a> b/<a href="../file/src/raft/testscripts/log/append.html">src/raft/testscripts/log/append</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -0,0 +1,63 @@
+</a><a href="#h1-0-0" id="h1-0-0" class="i">+# Appending to an empty log works. The term doesn&#39;t have to be 1, and doesn&#39;t
+</a><a href="#h1-0-1" id="h1-0-1" class="i">+# have to match get_term().
+</a><a href="#h1-0-2" id="h1-0-2" class="i">+#
+</a><a href="#h1-0-3" id="h1-0-3" class="i">+# TODO: test that append flushes to disk.
+</a><a href="#h1-0-4" id="h1-0-4" class="i">+append 2 foo
+</a><a href="#h1-0-5" id="h1-0-5" class="i">+scan
+</a><a href="#h1-0-6" id="h1-0-6" class="i">+---
+</a><a href="#h1-0-7" id="h1-0-7" class="i">+append → 1@2 foo
+</a><a href="#h1-0-8" id="h1-0-8" class="i">+1@2 foo
+</a><a href="#h1-0-9" id="h1-0-9" class="i">+
+</a><a href="#h1-0-10" id="h1-0-10" class="i">+# Appending a noop entry (no command) works.
+</a><a href="#h1-0-11" id="h1-0-11" class="i">+append 2
+</a><a href="#h1-0-12" id="h1-0-12" class="i">+scan
+</a><a href="#h1-0-13" id="h1-0-13" class="i">+---
+</a><a href="#h1-0-14" id="h1-0-14" class="i">+append → 2@2 None
+</a><a href="#h1-0-15" id="h1-0-15" class="i">+1@2 foo
+</a><a href="#h1-0-16" id="h1-0-16" class="i">+2@2 None
+</a><a href="#h1-0-17" id="h1-0-17" class="i">+
+</a><a href="#h1-0-18" id="h1-0-18" class="i">+# The last index/term should be updated, the commit index shouldn&#39;t.
+</a><a href="#h1-0-19" id="h1-0-19" class="i">+status
+</a><a href="#h1-0-20" id="h1-0-20" class="i">+---
+</a><a href="#h1-0-21" id="h1-0-21" class="i">+last=2@2 commit=0@0
+</a><a href="#h1-0-22" id="h1-0-22" class="i">+
+</a><a href="#h1-0-23" id="h1-0-23" class="i">+# Check the raw encoding.
+</a><a href="#h1-0-24" id="h1-0-24" class="i">+raw
+</a><a href="#h1-0-25" id="h1-0-25" class="i">+---
+</a><a href="#h1-0-26" id="h1-0-26" class="i">+Entry(1) 0x000000000000000001 = 0x020103666f6f
+</a><a href="#h1-0-27" id="h1-0-27" class="i">+Entry(2) 0x000000000000000002 = 0x0200
+</a><a href="#h1-0-28" id="h1-0-28" class="i">+
+</a><a href="#h1-0-29" id="h1-0-29" class="i">+# Bumping the term with a command is allowed. Skipping a term and omitting the
+</a><a href="#h1-0-30" id="h1-0-30" class="i">+# command is also allowed.
+</a><a href="#h1-0-31" id="h1-0-31" class="i">+append 3 command
+</a><a href="#h1-0-32" id="h1-0-32" class="i">+append 5
+</a><a href="#h1-0-33" id="h1-0-33" class="i">+---
+</a><a href="#h1-0-34" id="h1-0-34" class="i">+append → 3@3 command
+</a><a href="#h1-0-35" id="h1-0-35" class="i">+append → 4@5 None
+</a><a href="#h1-0-36" id="h1-0-36" class="i">+
+</a><a href="#h1-0-37" id="h1-0-37" class="i">+# A term regression is allowed, as is a 0 term.
+</a><a href="#h1-0-38" id="h1-0-38" class="i">+# TODO: it shouldn&#39;t be.
+</a><a href="#h1-0-39" id="h1-0-39" class="i">+append 1 old
+</a><a href="#h1-0-40" id="h1-0-40" class="i">+append 0
+</a><a href="#h1-0-41" id="h1-0-41" class="i">+---
+</a><a href="#h1-0-42" id="h1-0-42" class="i">+append → 5@1 old
+</a><a href="#h1-0-43" id="h1-0-43" class="i">+append → 6@0 None
+</a><a href="#h1-0-44" id="h1-0-44" class="i">+
+</a><a href="#h1-0-45" id="h1-0-45" class="i">+# Dump the final status and data.
+</a><a href="#h1-0-46" id="h1-0-46" class="i">+status
+</a><a href="#h1-0-47" id="h1-0-47" class="i">+scan
+</a><a href="#h1-0-48" id="h1-0-48" class="i">+raw
+</a><a href="#h1-0-49" id="h1-0-49" class="i">+---
+</a><a href="#h1-0-50" id="h1-0-50" class="i">+last=6@0 commit=0@0
+</a><a href="#h1-0-51" id="h1-0-51" class="i">+1@2 foo
+</a><a href="#h1-0-52" id="h1-0-52" class="i">+2@2 None
+</a><a href="#h1-0-53" id="h1-0-53" class="i">+3@3 command
+</a><a href="#h1-0-54" id="h1-0-54" class="i">+4@5 None
+</a><a href="#h1-0-55" id="h1-0-55" class="i">+5@1 old
+</a><a href="#h1-0-56" id="h1-0-56" class="i">+6@0 None
+</a><a href="#h1-0-57" id="h1-0-57" class="i">+Entry(1) 0x000000000000000001 = 0x020103666f6f
+</a><a href="#h1-0-58" id="h1-0-58" class="i">+Entry(2) 0x000000000000000002 = 0x0200
+</a><a href="#h1-0-59" id="h1-0-59" class="i">+Entry(3) 0x000000000000000003 = 0x030107636f6d6d616e64
+</a><a href="#h1-0-60" id="h1-0-60" class="i">+Entry(4) 0x000000000000000004 = 0x0500
+</a><a href="#h1-0-61" id="h1-0-61" class="i">+Entry(5) 0x000000000000000005 = 0x0101036f6c64
+</a><a href="#h1-0-62" id="h1-0-62" class="i">+Entry(6) 0x000000000000000006 = 0x0000
+</a><b>diff --git a/<a id="h2" href="../file/src/raft/testscripts/log/commit.html">src/raft/testscripts/log/commit</a> b/<a href="../file/src/raft/testscripts/log/commit.html">src/raft/testscripts/log/commit</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -0,0 +1,67 @@
+</a><a href="#h2-0-0" id="h2-0-0" class="i">+# Committing fails on an empty engine.
+</a><a href="#h2-0-1" id="h2-0-1" class="i">+!commit 1
+</a><a href="#h2-0-2" id="h2-0-2" class="i">+---
+</a><a href="#h2-0-3" id="h2-0-3" class="i">+Error: Can&#39;t commit non-existant index 1
+</a><a href="#h2-0-4" id="h2-0-4" class="i">+
+</a><a href="#h2-0-5" id="h2-0-5" class="i">+# Add some entries.
+</a><a href="#h2-0-6" id="h2-0-6" class="i">+append 1
+</a><a href="#h2-0-7" id="h2-0-7" class="i">+append 1 foo
+</a><a href="#h2-0-8" id="h2-0-8" class="i">+append 2 bar
+</a><a href="#h2-0-9" id="h2-0-9" class="i">+---
+</a><a href="#h2-0-10" id="h2-0-10" class="i">+append → 1@1 None
+</a><a href="#h2-0-11" id="h2-0-11" class="i">+append → 2@1 foo
+</a><a href="#h2-0-12" id="h2-0-12" class="i">+append → 3@2 bar
+</a><a href="#h2-0-13" id="h2-0-13" class="i">+
+</a><a href="#h2-0-14" id="h2-0-14" class="i">+# Committing entry 0 fails.
+</a><a href="#h2-0-15" id="h2-0-15" class="i">+!commit 0
+</a><a href="#h2-0-16" id="h2-0-16" class="i">+---
+</a><a href="#h2-0-17" id="h2-0-17" class="i">+Error: Can&#39;t commit non-existant index 0
+</a><a href="#h2-0-18" id="h2-0-18" class="i">+
+</a><a href="#h2-0-19" id="h2-0-19" class="i">+# Committing entry 1 works, and updates the commit index. Dump the
+</a><a href="#h2-0-20" id="h2-0-20" class="i">+# raw value too.
+</a><a href="#h2-0-21" id="h2-0-21" class="i">+commit 1
+</a><a href="#h2-0-22" id="h2-0-22" class="i">+status
+</a><a href="#h2-0-23" id="h2-0-23" class="i">+raw
+</a><a href="#h2-0-24" id="h2-0-24" class="i">+---
+</a><a href="#h2-0-25" id="h2-0-25" class="i">+commit → 1@1 None
+</a><a href="#h2-0-26" id="h2-0-26" class="i">+last=3@2 commit=1@1
+</a><a href="#h2-0-27" id="h2-0-27" class="i">+Entry(1) 0x000000000000000001 = 0x0100
+</a><a href="#h2-0-28" id="h2-0-28" class="i">+Entry(2) 0x000000000000000002 = 0x010103666f6f
+</a><a href="#h2-0-29" id="h2-0-29" class="i">+Entry(3) 0x000000000000000003 = 0x020103626172
+</a><a href="#h2-0-30" id="h2-0-30" class="i">+CommitIndex 0x02 = 0x0101
+</a><a href="#h2-0-31" id="h2-0-31" class="i">+
+</a><a href="#h2-0-32" id="h2-0-32" class="i">+# Commits are idempotent.
+</a><a href="#h2-0-33" id="h2-0-33" class="i">+commit 1
+</a><a href="#h2-0-34" id="h2-0-34" class="i">+status
+</a><a href="#h2-0-35" id="h2-0-35" class="i">+---
+</a><a href="#h2-0-36" id="h2-0-36" class="i">+commit → 1@1 None
+</a><a href="#h2-0-37" id="h2-0-37" class="i">+last=3@2 commit=1@1
+</a><a href="#h2-0-38" id="h2-0-38" class="i">+
+</a><a href="#h2-0-39" id="h2-0-39" class="i">+# Commits can skip an entry.
+</a><a href="#h2-0-40" id="h2-0-40" class="i">+commit 3
+</a><a href="#h2-0-41" id="h2-0-41" class="i">+status
+</a><a href="#h2-0-42" id="h2-0-42" class="i">+---
+</a><a href="#h2-0-43" id="h2-0-43" class="i">+commit → 3@2 bar
+</a><a href="#h2-0-44" id="h2-0-44" class="i">+last=3@2 commit=3@2
+</a><a href="#h2-0-45" id="h2-0-45" class="i">+
+</a><a href="#h2-0-46" id="h2-0-46" class="i">+# Commit regressions error.
+</a><a href="#h2-0-47" id="h2-0-47" class="i">+!commit 2
+</a><a href="#h2-0-48" id="h2-0-48" class="i">+status
+</a><a href="#h2-0-49" id="h2-0-49" class="i">+---
+</a><a href="#h2-0-50" id="h2-0-50" class="i">+Error: Commit index regression 3 -&gt; 2
+</a><a href="#h2-0-51" id="h2-0-51" class="i">+last=3@2 commit=3@2
+</a><a href="#h2-0-52" id="h2-0-52" class="i">+
+</a><a href="#h2-0-53" id="h2-0-53" class="i">+# Committing non-existant indexes error.
+</a><a href="#h2-0-54" id="h2-0-54" class="i">+!commit 4
+</a><a href="#h2-0-55" id="h2-0-55" class="i">+status
+</a><a href="#h2-0-56" id="h2-0-56" class="i">+---
+</a><a href="#h2-0-57" id="h2-0-57" class="i">+Error: Can&#39;t commit non-existant index 4
+</a><a href="#h2-0-58" id="h2-0-58" class="i">+last=3@2 commit=3@2
+</a><a href="#h2-0-59" id="h2-0-59" class="i">+
+</a><a href="#h2-0-60" id="h2-0-60" class="i">+# Dump the raw value.
+</a><a href="#h2-0-61" id="h2-0-61" class="i">+raw
+</a><a href="#h2-0-62" id="h2-0-62" class="i">+---
+</a><a href="#h2-0-63" id="h2-0-63" class="i">+Entry(1) 0x000000000000000001 = 0x0100
+</a><a href="#h2-0-64" id="h2-0-64" class="i">+Entry(2) 0x000000000000000002 = 0x010103666f6f
+</a><a href="#h2-0-65" id="h2-0-65" class="i">+Entry(3) 0x000000000000000003 = 0x020103626172
+</a><a href="#h2-0-66" id="h2-0-66" class="i">+CommitIndex 0x02 = 0x0302
+</a><b>diff --git a/<a id="h3" href="../file/src/raft/testscripts/log/get.html">src/raft/testscripts/log/get</a> b/<a href="../file/src/raft/testscripts/log/get.html">src/raft/testscripts/log/get</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -0,0 +1,26 @@
+</a><a href="#h3-0-0" id="h3-0-0" class="i">+# get returns None on an empty engine.
+</a><a href="#h3-0-1" id="h3-0-1" class="i">+get 1
+</a><a href="#h3-0-2" id="h3-0-2" class="i">+---
+</a><a href="#h3-0-3" id="h3-0-3" class="i">+None
+</a><a href="#h3-0-4" id="h3-0-4" class="i">+
+</a><a href="#h3-0-5" id="h3-0-5" class="i">+# Append a few entries.
+</a><a href="#h3-0-6" id="h3-0-6" class="i">+append 1
+</a><a href="#h3-0-7" id="h3-0-7" class="i">+append 1 foo
+</a><a href="#h3-0-8" id="h3-0-8" class="i">+append 2 bar
+</a><a href="#h3-0-9" id="h3-0-9" class="i">+---
+</a><a href="#h3-0-10" id="h3-0-10" class="i">+append → 1@1 None
+</a><a href="#h3-0-11" id="h3-0-11" class="i">+append → 2@1 foo
+</a><a href="#h3-0-12" id="h3-0-12" class="i">+append → 3@2 bar
+</a><a href="#h3-0-13" id="h3-0-13" class="i">+
+</a><a href="#h3-0-14" id="h3-0-14" class="i">+# get returns noop entries and regular entries.
+</a><a href="#h3-0-15" id="h3-0-15" class="i">+get 1 2
+</a><a href="#h3-0-16" id="h3-0-16" class="i">+---
+</a><a href="#h3-0-17" id="h3-0-17" class="i">+1@1 None
+</a><a href="#h3-0-18" id="h3-0-18" class="i">+2@1 foo
+</a><a href="#h3-0-19" id="h3-0-19" class="i">+
+</a><a href="#h3-0-20" id="h3-0-20" class="i">+# get returns None for missing entries, and for index 0.
+</a><a href="#h3-0-21" id="h3-0-21" class="i">+# TODO: consider erroring on index 0.
+</a><a href="#h3-0-22" id="h3-0-22" class="i">+get 4 0
+</a><a href="#h3-0-23" id="h3-0-23" class="i">+---
+</a><a href="#h3-0-24" id="h3-0-24" class="i">+None
+</a><a href="#h3-0-25" id="h3-0-25" class="i">+None
+</a><b>diff --git a/<a id="h4" href="../file/src/raft/testscripts/log/has.html">src/raft/testscripts/log/has</a> b/<a href="../file/src/raft/testscripts/log/has.html">src/raft/testscripts/log/has</a></b>
+<a href="#h4-0" id="h4-0" class="h">@@ -0,0 +1,33 @@
+</a><a href="#h4-0-0" id="h4-0-0" class="i">+# has returns false on an empty engine.
+</a><a href="#h4-0-1" id="h4-0-1" class="i">+has 1@1
+</a><a href="#h4-0-2" id="h4-0-2" class="i">+---
+</a><a href="#h4-0-3" id="h4-0-3" class="i">+false
+</a><a href="#h4-0-4" id="h4-0-4" class="i">+
+</a><a href="#h4-0-5" id="h4-0-5" class="i">+# Append a few entries.
+</a><a href="#h4-0-6" id="h4-0-6" class="i">+append 1
+</a><a href="#h4-0-7" id="h4-0-7" class="i">+append 1 foo
+</a><a href="#h4-0-8" id="h4-0-8" class="i">+append 2 bar
+</a><a href="#h4-0-9" id="h4-0-9" class="i">+---
+</a><a href="#h4-0-10" id="h4-0-10" class="i">+append → 1@1 None
+</a><a href="#h4-0-11" id="h4-0-11" class="i">+append → 2@1 foo
+</a><a href="#h4-0-12" id="h4-0-12" class="i">+append → 3@2 bar
+</a><a href="#h4-0-13" id="h4-0-13" class="i">+
+</a><a href="#h4-0-14" id="h4-0-14" class="i">+# has returns true both for noop entries and regular entries.
+</a><a href="#h4-0-15" id="h4-0-15" class="i">+has 1@1 2@1
+</a><a href="#h4-0-16" id="h4-0-16" class="i">+---
+</a><a href="#h4-0-17" id="h4-0-17" class="i">+true
+</a><a href="#h4-0-18" id="h4-0-18" class="i">+true
+</a><a href="#h4-0-19" id="h4-0-19" class="i">+
+</a><a href="#h4-0-20" id="h4-0-20" class="i">+# has returns false for missing entries, but true for index 0.
+</a><a href="#h4-0-21" id="h4-0-21" class="i">+# TODO: consider erroring or returning false on index 0.
+</a><a href="#h4-0-22" id="h4-0-22" class="i">+has 4@2 0@0
+</a><a href="#h4-0-23" id="h4-0-23" class="i">+---
+</a><a href="#h4-0-24" id="h4-0-24" class="i">+false
+</a><a href="#h4-0-25" id="h4-0-25" class="i">+true
+</a><a href="#h4-0-26" id="h4-0-26" class="i">+
+</a><a href="#h4-0-27" id="h4-0-27" class="i">+# has returns false for term mismatches.
+</a><a href="#h4-0-28" id="h4-0-28" class="i">+has 1@2 3@1 0@1
+</a><a href="#h4-0-29" id="h4-0-29" class="i">+---
+</a><a href="#h4-0-30" id="h4-0-30" class="i">+false
+</a><a href="#h4-0-31" id="h4-0-31" class="i">+false
+</a><a href="#h4-0-32" id="h4-0-32" class="i">+false
+</a><b>diff --git a/<a id="h5" href="../file/src/raft/testscripts/log/scan.html">src/raft/testscripts/log/scan</a> b/<a href="../file/src/raft/testscripts/log/scan.html">src/raft/testscripts/log/scan</a></b>
+<a href="#h5-0" id="h5-0" class="h">@@ -0,0 +1,91 @@
+</a><a href="#h5-0-0" id="h5-0-0" class="i">+# scan works on an empty engine, even when given indexes.
+</a><a href="#h5-0-1" id="h5-0-1" class="i">+scan
+</a><a href="#h5-0-2" id="h5-0-2" class="i">+scan 3..7
+</a><a href="#h5-0-3" id="h5-0-3" class="i">+---
+</a><a href="#h5-0-4" id="h5-0-4" class="i">+&lt;empty&gt;
+</a><a href="#h5-0-5" id="h5-0-5" class="i">+&lt;empty&gt;
+</a><a href="#h5-0-6" id="h5-0-6" class="i">+
+</a><a href="#h5-0-7" id="h5-0-7" class="i">+# Append a few entries.
+</a><a href="#h5-0-8" id="h5-0-8" class="i">+append 1
+</a><a href="#h5-0-9" id="h5-0-9" class="i">+append 1 foo
+</a><a href="#h5-0-10" id="h5-0-10" class="i">+append 2 bar
+</a><a href="#h5-0-11" id="h5-0-11" class="i">+---
+</a><a href="#h5-0-12" id="h5-0-12" class="i">+append → 1@1 None
+</a><a href="#h5-0-13" id="h5-0-13" class="i">+append → 2@1 foo
+</a><a href="#h5-0-14" id="h5-0-14" class="i">+append → 3@2 bar
+</a><a href="#h5-0-15" id="h5-0-15" class="i">+
+</a><a href="#h5-0-16" id="h5-0-16" class="i">+# Full scan.
+</a><a href="#h5-0-17" id="h5-0-17" class="i">+scan
+</a><a href="#h5-0-18" id="h5-0-18" class="i">+---
+</a><a href="#h5-0-19" id="h5-0-19" class="i">+1@1 None
+</a><a href="#h5-0-20" id="h5-0-20" class="i">+2@1 foo
+</a><a href="#h5-0-21" id="h5-0-21" class="i">+3@2 bar
+</a><a href="#h5-0-22" id="h5-0-22" class="i">+
+</a><a href="#h5-0-23" id="h5-0-23" class="i">+# Start bound.
+</a><a href="#h5-0-24" id="h5-0-24" class="i">+scan 2..
+</a><a href="#h5-0-25" id="h5-0-25" class="i">+---
+</a><a href="#h5-0-26" id="h5-0-26" class="i">+2@1 foo
+</a><a href="#h5-0-27" id="h5-0-27" class="i">+3@2 bar
+</a><a href="#h5-0-28" id="h5-0-28" class="i">+
+</a><a href="#h5-0-29" id="h5-0-29" class="i">+scan 4..
+</a><a href="#h5-0-30" id="h5-0-30" class="i">+---
+</a><a href="#h5-0-31" id="h5-0-31" class="i">+&lt;empty&gt;
+</a><a href="#h5-0-32" id="h5-0-32" class="i">+
+</a><a href="#h5-0-33" id="h5-0-33" class="i">+scan 0..
+</a><a href="#h5-0-34" id="h5-0-34" class="i">+---
+</a><a href="#h5-0-35" id="h5-0-35" class="i">+1@1 None
+</a><a href="#h5-0-36" id="h5-0-36" class="i">+2@1 foo
+</a><a href="#h5-0-37" id="h5-0-37" class="i">+3@2 bar
+</a><a href="#h5-0-38" id="h5-0-38" class="i">+
+</a><a href="#h5-0-39" id="h5-0-39" class="i">+# End bound.
+</a><a href="#h5-0-40" id="h5-0-40" class="i">+scan &quot;..2&quot;
+</a><a href="#h5-0-41" id="h5-0-41" class="i">+---
+</a><a href="#h5-0-42" id="h5-0-42" class="i">+1@1 None
+</a><a href="#h5-0-43" id="h5-0-43" class="i">+
+</a><a href="#h5-0-44" id="h5-0-44" class="i">+scan &quot;..=2&quot;
+</a><a href="#h5-0-45" id="h5-0-45" class="i">+---
+</a><a href="#h5-0-46" id="h5-0-46" class="i">+1@1 None
+</a><a href="#h5-0-47" id="h5-0-47" class="i">+2@1 foo
+</a><a href="#h5-0-48" id="h5-0-48" class="i">+
+</a><a href="#h5-0-49" id="h5-0-49" class="i">+scan &quot;..7&quot;
+</a><a href="#h5-0-50" id="h5-0-50" class="i">+---
+</a><a href="#h5-0-51" id="h5-0-51" class="i">+1@1 None
+</a><a href="#h5-0-52" id="h5-0-52" class="i">+2@1 foo
+</a><a href="#h5-0-53" id="h5-0-53" class="i">+3@2 bar
+</a><a href="#h5-0-54" id="h5-0-54" class="i">+
+</a><a href="#h5-0-55" id="h5-0-55" class="i">+scan &quot;..1&quot;
+</a><a href="#h5-0-56" id="h5-0-56" class="i">+---
+</a><a href="#h5-0-57" id="h5-0-57" class="i">+&lt;empty&gt;
+</a><a href="#h5-0-58" id="h5-0-58" class="i">+
+</a><a href="#h5-0-59" id="h5-0-59" class="i">+scan &quot;..0&quot;
+</a><a href="#h5-0-60" id="h5-0-60" class="i">+---
+</a><a href="#h5-0-61" id="h5-0-61" class="i">+&lt;empty&gt;
+</a><a href="#h5-0-62" id="h5-0-62" class="i">+
+</a><a href="#h5-0-63" id="h5-0-63" class="i">+# Both bounds.
+</a><a href="#h5-0-64" id="h5-0-64" class="i">+scan 1..2
+</a><a href="#h5-0-65" id="h5-0-65" class="i">+---
+</a><a href="#h5-0-66" id="h5-0-66" class="i">+1@1 None
+</a><a href="#h5-0-67" id="h5-0-67" class="i">+
+</a><a href="#h5-0-68" id="h5-0-68" class="i">+scan &quot;1..=2&quot;
+</a><a href="#h5-0-69" id="h5-0-69" class="i">+---
+</a><a href="#h5-0-70" id="h5-0-70" class="i">+1@1 None
+</a><a href="#h5-0-71" id="h5-0-71" class="i">+2@1 foo
+</a><a href="#h5-0-72" id="h5-0-72" class="i">+
+</a><a href="#h5-0-73" id="h5-0-73" class="i">+scan 0..7
+</a><a href="#h5-0-74" id="h5-0-74" class="i">+---
+</a><a href="#h5-0-75" id="h5-0-75" class="i">+1@1 None
+</a><a href="#h5-0-76" id="h5-0-76" class="i">+2@1 foo
+</a><a href="#h5-0-77" id="h5-0-77" class="i">+3@2 bar
+</a><a href="#h5-0-78" id="h5-0-78" class="i">+
+</a><a href="#h5-0-79" id="h5-0-79" class="i">+scan 1..1
+</a><a href="#h5-0-80" id="h5-0-80" class="i">+---
+</a><a href="#h5-0-81" id="h5-0-81" class="i">+&lt;empty&gt;
+</a><a href="#h5-0-82" id="h5-0-82" class="i">+
+</a><a href="#h5-0-83" id="h5-0-83" class="i">+# Bounds panics.
+</a><a href="#h5-0-84" id="h5-0-84" class="i">+!scan 1..0
+</a><a href="#h5-0-85" id="h5-0-85" class="i">+---
+</a><a href="#h5-0-86" id="h5-0-86" class="i">+Panic: range start is greater than range end in BTreeMap
+</a><a href="#h5-0-87" id="h5-0-87" class="i">+
+</a><a href="#h5-0-88" id="h5-0-88" class="i">+!scan 7..3
+</a><a href="#h5-0-89" id="h5-0-89" class="i">+---
+</a><a href="#h5-0-90" id="h5-0-90" class="i">+Panic: range start is greater than range end in BTreeMap
+</a><b>diff --git a/<a id="h6" href="../file/src/raft/testscripts/log/splice.html">src/raft/testscripts/log/splice</a> b/<a href="../file/src/raft/testscripts/log/splice.html">src/raft/testscripts/log/splice</a></b>
+<a href="#h6-0" id="h6-0" class="h">@@ -0,0 +1,161 @@
+</a><a href="#h6-0-0" id="h6-0-0" class="i">+# Splicing at index 0 should fail.
+</a><a href="#h6-0-1" id="h6-0-1" class="i">+!splice 0@1=foo
+</a><a href="#h6-0-2" id="h6-0-2" class="i">+---
+</a><a href="#h6-0-3" id="h6-0-3" class="i">+Error: Spliced entries must begin before last index
+</a><a href="#h6-0-4" id="h6-0-4" class="i">+
+</a><a href="#h6-0-5" id="h6-0-5" class="i">+# Splicing at index 2 should fail (not contiguous).
+</a><a href="#h6-0-6" id="h6-0-6" class="i">+!splice 2@1=foo
+</a><a href="#h6-0-7" id="h6-0-7" class="i">+---
+</a><a href="#h6-0-8" id="h6-0-8" class="i">+Error: Spliced entries must begin before last index
+</a><a href="#h6-0-9" id="h6-0-9" class="i">+
+</a><a href="#h6-0-10" id="h6-0-10" class="i">+# Splicing entries at start should work, both with and without
+</a><a href="#h6-0-11" id="h6-0-11" class="i">+# commands, and starting at a term after 1. It should also update
+</a><a href="#h6-0-12" id="h6-0-12" class="i">+# the state.
+</a><a href="#h6-0-13" id="h6-0-13" class="i">+# TODO: test that this flushes.
+</a><a href="#h6-0-14" id="h6-0-14" class="i">+splice 1@2= 2@2=command
+</a><a href="#h6-0-15" id="h6-0-15" class="i">+status
+</a><a href="#h6-0-16" id="h6-0-16" class="i">+scan
+</a><a href="#h6-0-17" id="h6-0-17" class="i">+---
+</a><a href="#h6-0-18" id="h6-0-18" class="i">+splice → 2@2 command
+</a><a href="#h6-0-19" id="h6-0-19" class="i">+last=2@2 commit=0@0
+</a><a href="#h6-0-20" id="h6-0-20" class="i">+1@2 None
+</a><a href="#h6-0-21" id="h6-0-21" class="i">+2@2 command
+</a><a href="#h6-0-22" id="h6-0-22" class="i">+
+</a><a href="#h6-0-23" id="h6-0-23" class="i">+# Splicing multiple duplicate entries should fail.
+</a><a href="#h6-0-24" id="h6-0-24" class="i">+!splice 3@2= 3@2=
+</a><a href="#h6-0-25" id="h6-0-25" class="i">+---
+</a><a href="#h6-0-26" id="h6-0-26" class="i">+Error: Spliced entries must be contiguous
+</a><a href="#h6-0-27" id="h6-0-27" class="i">+
+</a><a href="#h6-0-28" id="h6-0-28" class="i">+# Splicing entries with a gap should fail.
+</a><a href="#h6-0-29" id="h6-0-29" class="i">+!splice 3@2= 5@2=
+</a><a href="#h6-0-30" id="h6-0-30" class="i">+---
+</a><a href="#h6-0-31" id="h6-0-31" class="i">+Error: Spliced entries must be contiguous
+</a><a href="#h6-0-32" id="h6-0-32" class="i">+
+</a><a href="#h6-0-33" id="h6-0-33" class="i">+# Splicing with a term regression should fail.
+</a><a href="#h6-0-34" id="h6-0-34" class="i">+# TODO: fix this.
+</a><a href="#h6-0-35" id="h6-0-35" class="i">+#!splice 3@1=
+</a><a href="#h6-0-36" id="h6-0-36" class="i">+#---
+</a><a href="#h6-0-37" id="h6-0-37" class="i">+
+</a><a href="#h6-0-38" id="h6-0-38" class="i">+# Splicing with a term regression in the given entries should fail.
+</a><a href="#h6-0-39" id="h6-0-39" class="i">+# TODO: fix this.
+</a><a href="#h6-0-40" id="h6-0-40" class="i">+#splice 3@2= 4@1=
+</a><a href="#h6-0-41" id="h6-0-41" class="i">+#---
+</a><a href="#h6-0-42" id="h6-0-42" class="i">+
+</a><a href="#h6-0-43" id="h6-0-43" class="i">+# Overlapping entries is a noop.
+</a><a href="#h6-0-44" id="h6-0-44" class="i">+splice 1@2= 2@2=command
+</a><a href="#h6-0-45" id="h6-0-45" class="i">+scan
+</a><a href="#h6-0-46" id="h6-0-46" class="i">+---
+</a><a href="#h6-0-47" id="h6-0-47" class="i">+splice → 2@2 command
+</a><a href="#h6-0-48" id="h6-0-48" class="i">+1@2 None
+</a><a href="#h6-0-49" id="h6-0-49" class="i">+2@2 command
+</a><a href="#h6-0-50" id="h6-0-50" class="i">+
+</a><a href="#h6-0-51" id="h6-0-51" class="i">+# An overlapping prefix is a noop.
+</a><a href="#h6-0-52" id="h6-0-52" class="i">+# TODO: fix this.
+</a><a href="#h6-0-53" id="h6-0-53" class="i">+#splice 1@2=
+</a><a href="#h6-0-54" id="h6-0-54" class="i">+#scan
+</a><a href="#h6-0-55" id="h6-0-55" class="i">+#---
+</a><a href="#h6-0-56" id="h6-0-56" class="i">+
+</a><a href="#h6-0-57" id="h6-0-57" class="i">+# An overlapping suffix is a noop.
+</a><a href="#h6-0-58" id="h6-0-58" class="i">+splice 2@2=command
+</a><a href="#h6-0-59" id="h6-0-59" class="i">+scan
+</a><a href="#h6-0-60" id="h6-0-60" class="i">+---
+</a><a href="#h6-0-61" id="h6-0-61" class="i">+splice → 2@2 command
+</a><a href="#h6-0-62" id="h6-0-62" class="i">+1@2 None
+</a><a href="#h6-0-63" id="h6-0-63" class="i">+2@2 command
+</a><a href="#h6-0-64" id="h6-0-64" class="i">+
+</a><a href="#h6-0-65" id="h6-0-65" class="i">+# Changing a command with the same term/index should fail.
+</a><a href="#h6-0-66" id="h6-0-66" class="i">+# TODO: instead of a noop, this should error.
+</a><a href="#h6-0-67" id="h6-0-67" class="i">+splice 2@2=foo
+</a><a href="#h6-0-68" id="h6-0-68" class="i">+scan
+</a><a href="#h6-0-69" id="h6-0-69" class="i">+---
+</a><a href="#h6-0-70" id="h6-0-70" class="i">+splice → 2@2 command
+</a><a href="#h6-0-71" id="h6-0-71" class="i">+1@2 None
+</a><a href="#h6-0-72" id="h6-0-72" class="i">+2@2 command
+</a><a href="#h6-0-73" id="h6-0-73" class="i">+
+</a><a href="#h6-0-74" id="h6-0-74" class="i">+# Appending a new entry in the same term should work, as should
+</a><a href="#h6-0-75" id="h6-0-75" class="i">+# appending one in a new term.
+</a><a href="#h6-0-76" id="h6-0-76" class="i">+splice 3@2=bar
+</a><a href="#h6-0-77" id="h6-0-77" class="i">+splice 4@3=
+</a><a href="#h6-0-78" id="h6-0-78" class="i">+scan
+</a><a href="#h6-0-79" id="h6-0-79" class="i">+---
+</a><a href="#h6-0-80" id="h6-0-80" class="i">+splice → 3@2 bar
+</a><a href="#h6-0-81" id="h6-0-81" class="i">+splice → 4@3 None
+</a><a href="#h6-0-82" id="h6-0-82" class="i">+1@2 None
+</a><a href="#h6-0-83" id="h6-0-83" class="i">+2@2 command
+</a><a href="#h6-0-84" id="h6-0-84" class="i">+3@2 bar
+</a><a href="#h6-0-85" id="h6-0-85" class="i">+4@3 None
+</a><a href="#h6-0-86" id="h6-0-86" class="i">+
+</a><a href="#h6-0-87" id="h6-0-87" class="i">+# Splicing with suffix overlap should work.
+</a><a href="#h6-0-88" id="h6-0-88" class="i">+splice 3@2=bar 4@3= 5@3=foo
+</a><a href="#h6-0-89" id="h6-0-89" class="i">+scan
+</a><a href="#h6-0-90" id="h6-0-90" class="i">+---
+</a><a href="#h6-0-91" id="h6-0-91" class="i">+splice → 5@3 foo
+</a><a href="#h6-0-92" id="h6-0-92" class="i">+1@2 None
+</a><a href="#h6-0-93" id="h6-0-93" class="i">+2@2 command
+</a><a href="#h6-0-94" id="h6-0-94" class="i">+3@2 bar
+</a><a href="#h6-0-95" id="h6-0-95" class="i">+4@3 None
+</a><a href="#h6-0-96" id="h6-0-96" class="i">+5@3 foo
+</a><a href="#h6-0-97" id="h6-0-97" class="i">+
+</a><a href="#h6-0-98" id="h6-0-98" class="i">+# Splicing at an existing index with a new term should replace the tail.
+</a><a href="#h6-0-99" id="h6-0-99" class="i">+splice 3@4=
+</a><a href="#h6-0-100" id="h6-0-100" class="i">+status
+</a><a href="#h6-0-101" id="h6-0-101" class="i">+scan
+</a><a href="#h6-0-102" id="h6-0-102" class="i">+---
+</a><a href="#h6-0-103" id="h6-0-103" class="i">+splice → 3@4 None
+</a><a href="#h6-0-104" id="h6-0-104" class="i">+last=3@4 commit=0@0
+</a><a href="#h6-0-105" id="h6-0-105" class="i">+1@2 None
+</a><a href="#h6-0-106" id="h6-0-106" class="i">+2@2 command
+</a><a href="#h6-0-107" id="h6-0-107" class="i">+3@4 None
+</a><a href="#h6-0-108" id="h6-0-108" class="i">+
+</a><a href="#h6-0-109" id="h6-0-109" class="i">+# This also holds at the start of the log.
+</a><a href="#h6-0-110" id="h6-0-110" class="i">+splice 1@5= 2@5=foo 3@5=bar
+</a><a href="#h6-0-111" id="h6-0-111" class="i">+status
+</a><a href="#h6-0-112" id="h6-0-112" class="i">+scan
+</a><a href="#h6-0-113" id="h6-0-113" class="i">+---
+</a><a href="#h6-0-114" id="h6-0-114" class="i">+splice → 3@5 bar
+</a><a href="#h6-0-115" id="h6-0-115" class="i">+last=3@5 commit=0@0
+</a><a href="#h6-0-116" id="h6-0-116" class="i">+1@5 None
+</a><a href="#h6-0-117" id="h6-0-117" class="i">+2@5 foo
+</a><a href="#h6-0-118" id="h6-0-118" class="i">+3@5 bar
+</a><a href="#h6-0-119" id="h6-0-119" class="i">+
+</a><a href="#h6-0-120" id="h6-0-120" class="i">+# Splicing across the commit index should work, as long as the entries match.
+</a><a href="#h6-0-121" id="h6-0-121" class="i">+commit 2
+</a><a href="#h6-0-122" id="h6-0-122" class="i">+splice 1@5= 2@5=foo 3@5=bar 4@5=
+</a><a href="#h6-0-123" id="h6-0-123" class="i">+status
+</a><a href="#h6-0-124" id="h6-0-124" class="i">+scan
+</a><a href="#h6-0-125" id="h6-0-125" class="i">+---
+</a><a href="#h6-0-126" id="h6-0-126" class="i">+commit → 2@5 foo
+</a><a href="#h6-0-127" id="h6-0-127" class="i">+splice → 4@5 None
+</a><a href="#h6-0-128" id="h6-0-128" class="i">+last=4@5 commit=2@5
+</a><a href="#h6-0-129" id="h6-0-129" class="i">+1@5 None
+</a><a href="#h6-0-130" id="h6-0-130" class="i">+2@5 foo
+</a><a href="#h6-0-131" id="h6-0-131" class="i">+3@5 bar
+</a><a href="#h6-0-132" id="h6-0-132" class="i">+4@5 None
+</a><a href="#h6-0-133" id="h6-0-133" class="i">+
+</a><a href="#h6-0-134" id="h6-0-134" class="i">+# Splicing across the commit index can replace a tail after the commit index.
+</a><a href="#h6-0-135" id="h6-0-135" class="i">+splice 3@6= 4@6=bar
+</a><a href="#h6-0-136" id="h6-0-136" class="i">+status
+</a><a href="#h6-0-137" id="h6-0-137" class="i">+scan
+</a><a href="#h6-0-138" id="h6-0-138" class="i">+---
+</a><a href="#h6-0-139" id="h6-0-139" class="i">+splice → 4@6 bar
+</a><a href="#h6-0-140" id="h6-0-140" class="i">+last=4@6 commit=2@5
+</a><a href="#h6-0-141" id="h6-0-141" class="i">+1@5 None
+</a><a href="#h6-0-142" id="h6-0-142" class="i">+2@5 foo
+</a><a href="#h6-0-143" id="h6-0-143" class="i">+3@6 None
+</a><a href="#h6-0-144" id="h6-0-144" class="i">+4@6 bar
+</a><a href="#h6-0-145" id="h6-0-145" class="i">+
+</a><a href="#h6-0-146" id="h6-0-146" class="i">+# But replacing a tail at or before the commit index should fail.
+</a><a href="#h6-0-147" id="h6-0-147" class="i">+!splice 2@7=
+</a><a href="#h6-0-148" id="h6-0-148" class="i">+!splice 1@7=
+</a><a href="#h6-0-149" id="h6-0-149" class="i">+---
+</a><a href="#h6-0-150" id="h6-0-150" class="i">+Error: Spliced entries must begin after commit index
+</a><a href="#h6-0-151" id="h6-0-151" class="i">+Error: Spliced entries must begin after commit index
+</a><a href="#h6-0-152" id="h6-0-152" class="i">+
+</a><a href="#h6-0-153" id="h6-0-153" class="i">+# Dump the raw data.
+</a><a href="#h6-0-154" id="h6-0-154" class="i">+raw
+</a><a href="#h6-0-155" id="h6-0-155" class="i">+---
+</a><a href="#h6-0-156" id="h6-0-156" class="i">+Entry(1) 0x000000000000000001 = 0x0500
+</a><a href="#h6-0-157" id="h6-0-157" class="i">+Entry(2) 0x000000000000000002 = 0x050103666f6f
+</a><a href="#h6-0-158" id="h6-0-158" class="i">+Entry(3) 0x000000000000000003 = 0x0600
+</a><a href="#h6-0-159" id="h6-0-159" class="i">+Entry(4) 0x000000000000000004 = 0x060103626172
+</a><a href="#h6-0-160" id="h6-0-160" class="i">+CommitIndex 0x02 = 0x0205
+</a><b>diff --git a/<a id="h7" href="../file/src/raft/testscripts/log/status.html">src/raft/testscripts/log/status</a> b/<a href="../file/src/raft/testscripts/log/status.html">src/raft/testscripts/log/status</a></b>
+<a href="#h7-0" id="h7-0" class="h">@@ -0,0 +1,35 @@
+</a><a href="#h7-0-0" id="h7-0-0" class="i">+# Status on empty engine works.
+</a><a href="#h7-0-1" id="h7-0-1" class="i">+status engine=true
+</a><a href="#h7-0-2" id="h7-0-2" class="i">+---
+</a><a href="#h7-0-3" id="h7-0-3" class="i">+last=0@0 commit=0@0 engine=Status {
+</a><a href="#h7-0-4" id="h7-0-4" class="i">+    name: &quot;memory&quot;,
+</a><a href="#h7-0-5" id="h7-0-5" class="i">+    keys: 0,
+</a><a href="#h7-0-6" id="h7-0-6" class="i">+    size: 0,
+</a><a href="#h7-0-7" id="h7-0-7" class="i">+    total_disk_size: 0,
+</a><a href="#h7-0-8" id="h7-0-8" class="i">+    live_disk_size: 0,
+</a><a href="#h7-0-9" id="h7-0-9" class="i">+    garbage_disk_size: 0,
+</a><a href="#h7-0-10" id="h7-0-10" class="i">+}
+</a><a href="#h7-0-11" id="h7-0-11" class="i">+
+</a><a href="#h7-0-12" id="h7-0-12" class="i">+# Write some data.
+</a><a href="#h7-0-13" id="h7-0-13" class="i">+set_term 2 1
+</a><a href="#h7-0-14" id="h7-0-14" class="i">+append 1
+</a><a href="#h7-0-15" id="h7-0-15" class="i">+append 1 foo
+</a><a href="#h7-0-16" id="h7-0-16" class="i">+append 2 bar
+</a><a href="#h7-0-17" id="h7-0-17" class="i">+commit 2
+</a><a href="#h7-0-18" id="h7-0-18" class="i">+---
+</a><a href="#h7-0-19" id="h7-0-19" class="i">+append → 1@1 None
+</a><a href="#h7-0-20" id="h7-0-20" class="i">+append → 2@1 foo
+</a><a href="#h7-0-21" id="h7-0-21" class="i">+append → 3@2 bar
+</a><a href="#h7-0-22" id="h7-0-22" class="i">+commit → 2@1 foo
+</a><a href="#h7-0-23" id="h7-0-23" class="i">+
+</a><a href="#h7-0-24" id="h7-0-24" class="i">+# Status gives correct info.
+</a><a href="#h7-0-25" id="h7-0-25" class="i">+status engine=true
+</a><a href="#h7-0-26" id="h7-0-26" class="i">+---
+</a><a href="#h7-0-27" id="h7-0-27" class="i">+last=3@2 commit=2@1 engine=Status {
+</a><a href="#h7-0-28" id="h7-0-28" class="i">+    name: &quot;memory&quot;,
+</a><a href="#h7-0-29" id="h7-0-29" class="i">+    keys: 5,
+</a><a href="#h7-0-30" id="h7-0-30" class="i">+    size: 48,
+</a><a href="#h7-0-31" id="h7-0-31" class="i">+    total_disk_size: 0,
+</a><a href="#h7-0-32" id="h7-0-32" class="i">+    live_disk_size: 0,
+</a><a href="#h7-0-33" id="h7-0-33" class="i">+    garbage_disk_size: 0,
+</a><a href="#h7-0-34" id="h7-0-34" class="i">+}
+</a><b>diff --git a/<a id="h8" href="../file/src/raft/testscripts/log/term.html">src/raft/testscripts/log/term</a> b/<a href="../file/src/raft/testscripts/log/term.html">src/raft/testscripts/log/term</a></b>
+<a href="#h8-0" id="h8-0" class="h">@@ -0,0 +1,45 @@
+</a><a href="#h8-0-0" id="h8-0-0" class="i">+# get_term works on empty engine.
+</a><a href="#h8-0-1" id="h8-0-1" class="i">+get_term
+</a><a href="#h8-0-2" id="h8-0-2" class="i">+---
+</a><a href="#h8-0-3" id="h8-0-3" class="i">+term=0 vote=None
+</a><a href="#h8-0-4" id="h8-0-4" class="i">+
+</a><a href="#h8-0-5" id="h8-0-5" class="i">+# set_term stores a term and empty vote.
+</a><a href="#h8-0-6" id="h8-0-6" class="i">+set_term 3
+</a><a href="#h8-0-7" id="h8-0-7" class="i">+get_term
+</a><a href="#h8-0-8" id="h8-0-8" class="i">+raw
+</a><a href="#h8-0-9" id="h8-0-9" class="i">+---
+</a><a href="#h8-0-10" id="h8-0-10" class="i">+term=3 vote=None
+</a><a href="#h8-0-11" id="h8-0-11" class="i">+TermVote 0x01 = 0x0300
+</a><a href="#h8-0-12" id="h8-0-12" class="i">+
+</a><a href="#h8-0-13" id="h8-0-13" class="i">+# set_term stores a term and vote.
+</a><a href="#h8-0-14" id="h8-0-14" class="i">+set_term 3 7
+</a><a href="#h8-0-15" id="h8-0-15" class="i">+get_term
+</a><a href="#h8-0-16" id="h8-0-16" class="i">+raw
+</a><a href="#h8-0-17" id="h8-0-17" class="i">+---
+</a><a href="#h8-0-18" id="h8-0-18" class="i">+term=3 vote=Some(7)
+</a><a href="#h8-0-19" id="h8-0-19" class="i">+TermVote 0x01 = 0x030107
+</a><a href="#h8-0-20" id="h8-0-20" class="i">+
+</a><a href="#h8-0-21" id="h8-0-21" class="i">+# Removing the vote is allowed.
+</a><a href="#h8-0-22" id="h8-0-22" class="i">+#
+</a><a href="#h8-0-23" id="h8-0-23" class="i">+# TODO: it shouldn&#39;t be, nor should changing it. But it should be idempotent.
+</a><a href="#h8-0-24" id="h8-0-24" class="i">+set_term 3
+</a><a href="#h8-0-25" id="h8-0-25" class="i">+get_term
+</a><a href="#h8-0-26" id="h8-0-26" class="i">+---
+</a><a href="#h8-0-27" id="h8-0-27" class="i">+term=3 vote=None
+</a><a href="#h8-0-28" id="h8-0-28" class="i">+
+</a><a href="#h8-0-29" id="h8-0-29" class="i">+# Moving the term into the far future or past is allowed.
+</a><a href="#h8-0-30" id="h8-0-30" class="i">+set_term 7
+</a><a href="#h8-0-31" id="h8-0-31" class="i">+get_term
+</a><a href="#h8-0-32" id="h8-0-32" class="i">+set_term 1 2
+</a><a href="#h8-0-33" id="h8-0-33" class="i">+get_term
+</a><a href="#h8-0-34" id="h8-0-34" class="i">+---
+</a><a href="#h8-0-35" id="h8-0-35" class="i">+term=7 vote=None
+</a><a href="#h8-0-36" id="h8-0-36" class="i">+term=1 vote=Some(2)
+</a><a href="#h8-0-37" id="h8-0-37" class="i">+
+</a><a href="#h8-0-38" id="h8-0-38" class="i">+# Clearing the term is allowed.
+</a><a href="#h8-0-39" id="h8-0-39" class="i">+set_term 0
+</a><a href="#h8-0-40" id="h8-0-40" class="i">+get_term
+</a><a href="#h8-0-41" id="h8-0-41" class="i">+raw
+</a><a href="#h8-0-42" id="h8-0-42" class="i">+---
+</a><a href="#h8-0-43" id="h8-0-43" class="i">+term=0 vote=None
+</a><a href="#h8-0-44" id="h8-0-44" class="i">+TermVote 0x01 = 0x0000
+</a></pre>
+</div>
+</body>
+</html>

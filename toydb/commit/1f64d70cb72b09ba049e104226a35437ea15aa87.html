@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>sql: take explicit column indexes in `plan::Node::Aggregate` - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/1f64d70cb72b09ba049e104226a35437ea15aa87.html">1f64d70cb72b09ba049e104226a35437ea15aa87</a>
+<b>parent</b> <a href="../commit/ab617d0e4b85ce76193c6755d963195b4057396e.html">ab617d0e4b85ce76193c6755d963195b4057396e</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Thu, 11 Jul 2024 13:16:10 +0200
+
+sql: take explicit column indexes in `plan::Node::Aggregate`
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/sql/execution/aggregate.rs</a></td><td> | </td><td class="num">30</td><td><span class="i">++++++++++++++++</span><span class="d">--------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/sql/planner/plan.rs</a></td><td> | </td><td class="num">16</td><td><span class="i">++++++++</span><span class="d">--------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/sql/planner/planner.rs</a></td><td> | </td><td class="num">6</td><td><span class="i">+++</span><span class="d">---</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">src/sql/testscripts/queries/aggregate</a></td><td> | </td><td class="num">36</td><td><span class="i">++++++++++++++++++</span><span class="d">------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h4">src/sql/testscripts/queries/group_by</a></td><td> | </td><td class="num">34</td><td><span class="i">+++++++++++++++++</span><span class="d">-----------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h5">src/sql/testscripts/queries/having</a></td><td> | </td><td class="num">8</td><td><span class="i">++++</span><span class="d">----</span></td></tr>
+</table></pre><pre>6 files changed, 66 insertions(+), 64 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/sql/execution/aggregate.rs.html">src/sql/execution/aggregate.rs</a> b/<a href="../file/src/sql/execution/aggregate.rs.html">src/sql/execution/aggregate.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -5,30 +5,31 @@ use crate::sql::types::{Row, Rows, Value};
+</a> use itertools::Itertools as _;
+ use std::collections::BTreeMap;
+ 
+<a href="#h0-0-3" id="h0-0-3" class="d">-/// Aggregates rows (i.e. GROUP BY).
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+/// Aggregates row values from the source according to the aggregates, using the
+</a><a href="#h0-0-5" id="h0-0-5" class="i">+/// group_by column values as buckets.
+</a> pub(super) fn aggregate(
+     mut source: Rows,
+<a href="#h0-0-8" id="h0-0-8" class="d">-    aggregates: Vec&lt;Aggregate&gt;,
+</a><a href="#h0-0-9" id="h0-0-9" class="d">-    group_by: usize,
+</a><a href="#h0-0-10" id="h0-0-10" class="i">+    aggregates: Vec&lt;(usize, Aggregate)&gt;,
+</a><a href="#h0-0-11" id="h0-0-11" class="i">+    group_by: Vec&lt;usize&gt;,
+</a> ) -&gt; Result&lt;Rows&gt; {
+<a href="#h0-0-13" id="h0-0-13" class="d">-    // Aggregate rows from source, grouped by non-aggregation columns. For
+</a><a href="#h0-0-14" id="h0-0-14" class="d">-    // example, SELECT a, b, SUM(c), MAX(d) ... uses a,b as grouping buckets and
+</a><a href="#h0-0-15" id="h0-0-15" class="d">-    // SUM(c),MAX(d) as accumulators for each a,b bucket. Uses a BTreeMap for
+</a><a href="#h0-0-16" id="h0-0-16" class="d">-    // test determinism.
+</a><a href="#h0-0-17" id="h0-0-17" class="i">+    // Keep a set of accumulators keyed by bucket.
+</a>     let mut accumulators: BTreeMap&lt;Row, Vec&lt;Accumulator&gt;&gt; = BTreeMap::new();
+<a href="#h0-0-19" id="h0-0-19" class="d">-    while let Some(mut row) = source.next().transpose()? {
+</a><a href="#h0-0-20" id="h0-0-20" class="i">+    while let Some(row) = source.next().transpose()? {
+</a><a href="#h0-0-21" id="h0-0-21" class="i">+        let bucket = group_by.iter().map(|i| row[*i].clone()).collect();
+</a>         accumulators
+<a href="#h0-0-23" id="h0-0-23" class="d">-            .entry(row.split_off(aggregates.len()))
+</a><a href="#h0-0-24" id="h0-0-24" class="d">-            .or_insert(aggregates.iter().map(Accumulator::new).collect())
+</a><a href="#h0-0-25" id="h0-0-25" class="i">+            .entry(bucket)
+</a><a href="#h0-0-26" id="h0-0-26" class="i">+            .or_insert_with(|| aggregates.iter().map(|(_, agg)| Accumulator::new(agg)).collect())
+</a>             .iter_mut()
+<a href="#h0-0-28" id="h0-0-28" class="d">-            .zip(row)
+</a><a href="#h0-0-29" id="h0-0-29" class="d">-            .try_for_each(|(acc, value)| acc.add(value))?
+</a><a href="#h0-0-30" id="h0-0-30" class="i">+            .enumerate()
+</a><a href="#h0-0-31" id="h0-0-31" class="i">+            .map(|(i, agg)| (aggregates[i].0, agg))
+</a><a href="#h0-0-32" id="h0-0-32" class="i">+            .try_for_each(|(i, acc)| acc.add(row[i].clone()))?
+</a>     }
+ 
+     // If there were no rows and no group-by columns, return a row of empty
+     // accumulators, e.g.: SELECT COUNT(*) FROM t WHERE FALSE
+<a href="#h0-0-37" id="h0-0-37" class="d">-    if accumulators.is_empty() &amp;&amp; group_by == 0 {
+</a><a href="#h0-0-38" id="h0-0-38" class="d">-        accumulators.insert(Vec::new(), aggregates.iter().map(Accumulator::new).collect());
+</a><a href="#h0-0-39" id="h0-0-39" class="i">+    if accumulators.is_empty() &amp;&amp; group_by.is_empty() {
+</a><a href="#h0-0-40" id="h0-0-40" class="i">+        accumulators
+</a><a href="#h0-0-41" id="h0-0-41" class="i">+            .insert(Vec::new(), aggregates.iter().map(|(_, agg)| Accumulator::new(agg)).collect());
+</a>     }
+ 
+     // Emit the aggregate and row values for each row bucket. We use an
+<a href="#h0-1" id="h0-1" class="h">@@ -79,6 +80,7 @@ impl Accumulator {
+</a>     }
+ 
+     /// Adds a value to the accumulator.
+<a href="#h0-1-3" id="h0-1-3" class="i">+    /// TODO: have this take &amp;Value.
+</a>     fn add(&amp;mut self, value: Value) -&gt; Result&lt;()&gt; {
+         use std::cmp::Ordering;
+         match (self, value) {
+<b>diff --git a/<a id="h1" href="../file/src/sql/planner/plan.rs.html">src/sql/planner/plan.rs</a> b/<a href="../file/src/sql/planner/plan.rs.html">src/sql/planner/plan.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -84,13 +84,9 @@ impl Plan {
+</a> /// A query plan node. These return row iterators and can be nested.
+ #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+ pub enum Node {
+<a href="#h1-0-3" id="h1-0-3" class="d">-    /// Aggregates the input rows by computing the given aggregates for the
+</a><a href="#h1-0-4" id="h1-0-4" class="d">-    /// corresponding source columns. Additional columns in source for which
+</a><a href="#h1-0-5" id="h1-0-5" class="d">-    /// there are no aggregates are used as group by buckets, the number of
+</a><a href="#h1-0-6" id="h1-0-6" class="d">-    /// such group by columns is given in group_by.
+</a><a href="#h1-0-7" id="h1-0-7" class="d">-    ///
+</a><a href="#h1-0-8" id="h1-0-8" class="d">-    /// TODO: consider making aggregates a field/aggregate pair.
+</a><a href="#h1-0-9" id="h1-0-9" class="d">-    Aggregation { source: Box&lt;Node&gt;, aggregates: Vec&lt;Aggregate&gt;, group_by: usize },
+</a><a href="#h1-0-10" id="h1-0-10" class="i">+    /// Computes the given aggregates for the given source columns across all
+</a><a href="#h1-0-11" id="h1-0-11" class="i">+    /// rows, using the group_by column values as buckets.
+</a><a href="#h1-0-12" id="h1-0-12" class="i">+    Aggregation { source: Box&lt;Node&gt;, aggregates: Vec&lt;(usize, Aggregate)&gt;, group_by: Vec&lt;usize&gt; },
+</a>     /// Filters source rows, by only emitting rows for which the predicate
+     /// evaluates to true.
+     Filter { source: Box&lt;Node&gt;, predicate: Expression },
+<a href="#h1-1" id="h1-1" class="h">@@ -344,7 +340,11 @@ impl Node {
+</a>         // Format the node.
+         match self {
+             Self::Aggregation { source, aggregates, .. } =&gt; {
+<a href="#h1-1-3" id="h1-1-3" class="d">-                write!(f, &quot;Aggregation: {}&quot;, aggregates.iter().join(&quot;, &quot;))?;
+</a><a href="#h1-1-4" id="h1-1-4" class="i">+                write!(
+</a><a href="#h1-1-5" id="h1-1-5" class="i">+                    f,
+</a><a href="#h1-1-6" id="h1-1-6" class="i">+                    &quot;Aggregation: {}&quot;,
+</a><a href="#h1-1-7" id="h1-1-7" class="i">+                    aggregates.iter().map(|(i, a)| format!(&quot;{a}(#{i})&quot;)).join(&quot;, &quot;)
+</a><a href="#h1-1-8" id="h1-1-8" class="i">+                )?;
+</a>                 source.format(f, prefix, false, true)?;
+             }
+             Self::Filter { source, predicate } =&gt; {
+<b>diff --git a/<a id="h2" href="../file/src/sql/planner/planner.rs.html">src/sql/planner/planner.rs</a> b/<a href="../file/src/sql/planner/planner.rs.html">src/sql/planner/planner.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -372,8 +372,8 @@ impl&lt;&#39;a, C: Catalog&gt; Planner&lt;&#39;a, C&gt; {
+</a>         let mut aggregates = Vec::new();
+         let mut expressions = Vec::new();
+         let mut labels = Vec::new();
+<a href="#h2-0-3" id="h2-0-3" class="d">-        for (aggregate, expr) in aggregations {
+</a><a href="#h2-0-4" id="h2-0-4" class="d">-            aggregates.push(aggregate);
+</a><a href="#h2-0-5" id="h2-0-5" class="i">+        for (i, (aggregate, expr)) in aggregations.into_iter().enumerate() {
+</a><a href="#h2-0-6" id="h2-0-6" class="i">+            aggregates.push((i, aggregate));
+</a>             expressions.push(Self::build_expression(expr, scope)?);
+             labels.push(Label::None);
+         }
+<a href="#h2-1" id="h2-1" class="h">@@ -400,7 +400,7 @@ impl&lt;&#39;a, C: Catalog&gt; Planner&lt;&#39;a, C&gt; {
+</a>         )?;
+         let node = Node::Aggregation {
+             source: Box::new(Node::Projection { source: Box::new(source), labels, expressions }),
+<a href="#h2-1-3" id="h2-1-3" class="d">-            group_by: scope.len() - aggregates.len(),
+</a><a href="#h2-1-4" id="h2-1-4" class="i">+            group_by: (aggregates.len()..scope.len()).collect(),
+</a>             aggregates,
+         };
+         Ok(node)
+<b>diff --git a/<a id="h3" href="../file/src/sql/testscripts/queries/aggregate.html">src/sql/testscripts/queries/aggregate</a> b/<a href="../file/src/sql/testscripts/queries/aggregate.html">src/sql/testscripts/queries/aggregate</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -21,7 +21,7 @@ ok
+</a> [plan]&gt; SELECT COUNT(*) FROM test
+ ---
+ Projection: #0
+<a href="#h3-0-3" id="h3-0-3" class="d">-└─ Aggregation: count
+</a><a href="#h3-0-4" id="h3-0-4" class="i">+└─ Aggregation: count(#0)
+</a>    └─ Projection: TRUE
+       └─ Scan: test
+ 6
+<a href="#h3-1" id="h3-1" class="h">@@ -31,7 +31,7 @@ Projection: #0
+</a> [plan,header]&gt; SELECT COUNT(NULL), COUNT(TRUE), COUNT(1), COUNT(3.14), COUNT(NAN), COUNT(&#39;&#39;)
+ ---
+ Projection: #0, #1, #2, #3, #4, #5
+<a href="#h3-1-3" id="h3-1-3" class="d">-└─ Aggregation: count, count, count, count, count, count
+</a><a href="#h3-1-4" id="h3-1-4" class="i">+└─ Aggregation: count(#0), count(#1), count(#2), count(#3), count(#4), count(#5)
+</a>    └─ Projection: NULL, TRUE, 1, 3.14, NaN, 
+       └─ EmptyRow
+ , , , , , 
+<a href="#h3-2" id="h3-2" class="h">@@ -41,7 +41,7 @@ Projection: #0, #1, #2, #3, #4, #5
+</a> [plan]&gt; SELECT COUNT(id), COUNT(&quot;bool&quot;), COUNT(&quot;float&quot;), COUNT(&quot;string&quot;) FROM test WHERE false
+ ---
+ Projection: #0, #1, #2, #3
+<a href="#h3-2-3" id="h3-2-3" class="d">-└─ Aggregation: count, count, count, count
+</a><a href="#h3-2-4" id="h3-2-4" class="i">+└─ Aggregation: count(#0), count(#1), count(#2), count(#3)
+</a>    └─ Nothing
+ 0, 0, 0, 0
+ 
+<a href="#h3-3" id="h3-3" class="h">@@ -50,7 +50,7 @@ Projection: #0, #1, #2, #3
+</a> [plan,header]&gt; SELECT COUNT(id), COUNT(&quot;bool&quot;), COUNT(&quot;float&quot;), COUNT(&quot;string&quot;) FROM test
+ ---
+ Projection: #0, #1, #2, #3
+<a href="#h3-3-3" id="h3-3-3" class="d">-└─ Aggregation: count, count, count, count
+</a><a href="#h3-3-4" id="h3-3-4" class="i">+└─ Aggregation: count(#0), count(#1), count(#2), count(#3)
+</a>    └─ Projection: id, bool, float, string
+       └─ Scan: test
+ , , , 
+<a href="#h3-4" id="h3-4" class="h">@@ -60,7 +60,7 @@ Projection: #0, #1, #2, #3
+</a> [plan]&gt; SELECT MAX(NULL), MAX(TRUE), MAX(1), MAX(3.14), MAX(NAN), MAX(&#39;foo&#39;) FROM test
+ ---
+ Projection: #0, #1, #2, #3, #4, #5
+<a href="#h3-4-3" id="h3-4-3" class="d">-└─ Aggregation: max, max, max, max, max, max
+</a><a href="#h3-4-4" id="h3-4-4" class="i">+└─ Aggregation: max(#0), max(#1), max(#2), max(#3), max(#4), max(#5)
+</a>    └─ Projection: NULL, TRUE, 1, 3.14, NaN, foo
+       └─ Scan: test
+ NULL, TRUE, 1, 3.14, NaN, foo
+<a href="#h3-5" id="h3-5" class="h">@@ -69,7 +69,7 @@ NULL, TRUE, 1, 3.14, NaN, foo
+</a> [plan]&gt; SELECT MAX(id), MAX(&quot;bool&quot;), MAX(&quot;float&quot;), MAX(&quot;string&quot;) FROM test WHERE false
+ ---
+ Projection: #0, #1, #2, #3
+<a href="#h3-5-3" id="h3-5-3" class="d">-└─ Aggregation: max, max, max, max
+</a><a href="#h3-5-4" id="h3-5-4" class="i">+└─ Aggregation: max(#0), max(#1), max(#2), max(#3)
+</a>    └─ Nothing
+ NULL, NULL, NULL, NULL
+ 
+<a href="#h3-6" id="h3-6" class="h">@@ -77,7 +77,7 @@ NULL, NULL, NULL, NULL
+</a> [plan]&gt; SELECT MAX(id) FROM test
+ ---
+ Projection: #0
+<a href="#h3-6-3" id="h3-6-3" class="d">-└─ Aggregation: max
+</a><a href="#h3-6-4" id="h3-6-4" class="i">+└─ Aggregation: max(#0)
+</a>    └─ Projection: id
+       └─ Scan: test
+ 5
+<a href="#h3-7" id="h3-7" class="h">@@ -112,7 +112,7 @@ NULL
+</a> [plan]&gt; SELECT MIN(NULL), MIN(TRUE), MIN(1), MIN(3.14), MIN(NAN), MIN(&#39;foo&#39;) FROM test
+ ---
+ Projection: #0, #1, #2, #3, #4, #5
+<a href="#h3-7-3" id="h3-7-3" class="d">-└─ Aggregation: min, min, min, min, min, min
+</a><a href="#h3-7-4" id="h3-7-4" class="i">+└─ Aggregation: min(#0), min(#1), min(#2), min(#3), min(#4), min(#5)
+</a>    └─ Projection: NULL, TRUE, 1, 3.14, NaN, foo
+       └─ Scan: test
+ NULL, TRUE, 1, 3.14, NaN, foo
+<a href="#h3-8" id="h3-8" class="h">@@ -121,7 +121,7 @@ NULL, TRUE, 1, 3.14, NaN, foo
+</a> [plan]&gt; SELECT MIN(id), MIN(&quot;bool&quot;), MIN(&quot;float&quot;), MIN(&quot;string&quot;) FROM test WHERE false
+ ---
+ Projection: #0, #1, #2, #3
+<a href="#h3-8-3" id="h3-8-3" class="d">-└─ Aggregation: min, min, min, min
+</a><a href="#h3-8-4" id="h3-8-4" class="i">+└─ Aggregation: min(#0), min(#1), min(#2), min(#3)
+</a>    └─ Nothing
+ NULL, NULL, NULL, NULL
+ 
+<a href="#h3-9" id="h3-9" class="h">@@ -129,7 +129,7 @@ NULL, NULL, NULL, NULL
+</a> [plan]&gt; SELECT MIN(id) FROM test
+ ---
+ Projection: #0
+<a href="#h3-9-3" id="h3-9-3" class="d">-└─ Aggregation: min
+</a><a href="#h3-9-4" id="h3-9-4" class="i">+└─ Aggregation: min(#0)
+</a>    └─ Projection: id
+       └─ Scan: test
+ 0
+<a href="#h3-10" id="h3-10" class="h">@@ -162,7 +162,7 @@ NULL
+</a> [plan]&gt; SELECT SUM(NULL), SUM(1), SUM(3.14), SUM(NAN) FROM test
+ ---
+ Projection: #0, #1, #2, #3
+<a href="#h3-10-3" id="h3-10-3" class="d">-└─ Aggregation: sum, sum, sum, sum
+</a><a href="#h3-10-4" id="h3-10-4" class="i">+└─ Aggregation: sum(#0), sum(#1), sum(#2), sum(#3)
+</a>    └─ Projection: NULL, 1, 3.14, NaN
+       └─ Scan: test
+ NULL, 6, 18.84, NaN
+<a href="#h3-11" id="h3-11" class="h">@@ -177,7 +177,7 @@ Error: invalid input: can&#39;t add 0 and foo
+</a> [plan]&gt; SELECT SUM(id), SUM(&quot;bool&quot;), SUM(&quot;float&quot;), SUM(&quot;string&quot;) FROM test WHERE false
+ ---
+ Projection: #0, #1, #2, #3
+<a href="#h3-11-3" id="h3-11-3" class="d">-└─ Aggregation: sum, sum, sum, sum
+</a><a href="#h3-11-4" id="h3-11-4" class="i">+└─ Aggregation: sum(#0), sum(#1), sum(#2), sum(#3)
+</a>    └─ Nothing
+ NULL, NULL, NULL, NULL
+ 
+<a href="#h3-12" id="h3-12" class="h">@@ -186,7 +186,7 @@ NULL, NULL, NULL, NULL
+</a> [plan]&gt; SELECT SUM(id) FROM test
+ ---
+ Projection: #0
+<a href="#h3-12-3" id="h3-12-3" class="d">-└─ Aggregation: sum
+</a><a href="#h3-12-4" id="h3-12-4" class="i">+└─ Aggregation: sum(#0)
+</a>    └─ Projection: id
+       └─ Scan: test
+ 15
+<a href="#h3-13" id="h3-13" class="h">@@ -225,7 +225,7 @@ NULL
+</a> [plan]&gt; SELECT AVG(NULL), AVG(1), AVG(3.14), AVG(NAN) FROM test
+ ---
+ Projection: #0, #1, #2, #3
+<a href="#h3-13-3" id="h3-13-3" class="d">-└─ Aggregation: avg, avg, avg, avg
+</a><a href="#h3-13-4" id="h3-13-4" class="i">+└─ Aggregation: avg(#0), avg(#1), avg(#2), avg(#3)
+</a>    └─ Projection: NULL, 1, 3.14, NaN
+       └─ Scan: test
+ NULL, 1, 3.14, NaN
+<a href="#h3-14" id="h3-14" class="h">@@ -240,7 +240,7 @@ Error: invalid input: can&#39;t add 0 and foo
+</a> [plan]&gt; SELECT AVG(id), AVG(&quot;bool&quot;), AVG(&quot;float&quot;), AVG(&quot;string&quot;) FROM test WHERE false
+ ---
+ Projection: #0, #1, #2, #3
+<a href="#h3-14-3" id="h3-14-3" class="d">-└─ Aggregation: avg, avg, avg, avg
+</a><a href="#h3-14-4" id="h3-14-4" class="i">+└─ Aggregation: avg(#0), avg(#1), avg(#2), avg(#3)
+</a>    └─ Nothing
+ NULL, NULL, NULL, NULL
+ 
+<a href="#h3-15" id="h3-15" class="h">@@ -249,7 +249,7 @@ NULL, NULL, NULL, NULL
+</a> [plan]&gt; SELECT AVG(id) FROM test
+ ---
+ Projection: #0
+<a href="#h3-15-3" id="h3-15-3" class="d">-└─ Aggregation: avg
+</a><a href="#h3-15-4" id="h3-15-4" class="i">+└─ Aggregation: avg(#0)
+</a>    └─ Projection: id
+       └─ Scan: test
+ 2
+<a href="#h3-16" id="h3-16" class="h">@@ -290,7 +290,7 @@ NULL
+</a> [plan]&gt; SELECT COUNT(1), MIN(1), MAX(1), SUM(1), AVG(1) FROM test
+ ---
+ Projection: #0, #1, #2, #3, #4
+<a href="#h3-16-3" id="h3-16-3" class="d">-└─ Aggregation: count, min, max, sum, avg
+</a><a href="#h3-16-4" id="h3-16-4" class="i">+└─ Aggregation: count(#0), min(#1), max(#2), sum(#3), avg(#4)
+</a>    └─ Projection: 1, 1, 1, 1, 1
+       └─ Scan: test
+ 6, 1, 1, 6, 1
+<a href="#h3-17" id="h3-17" class="h">@@ -308,7 +308,7 @@ Error: invalid input: unknown field id
+</a> [plan]&gt; SELECT SUM(&quot;int&quot; * 10) / COUNT(&quot;int&quot;) + 7 FROM test WHERE &quot;int&quot; IS NOT NULL
+ ---
+ Projection: #0 / #1 + 7
+<a href="#h3-17-3" id="h3-17-3" class="d">-└─ Aggregation: sum, count
+</a><a href="#h3-17-4" id="h3-17-4" class="i">+└─ Aggregation: sum(#0), count(#1)
+</a>    └─ Projection: int * 10, int
+       └─ Scan: test (NOT int IS NULL)
+ 117
+<b>diff --git a/<a id="h4" href="../file/src/sql/testscripts/queries/group_by.html">src/sql/testscripts/queries/group_by</a> b/<a href="../file/src/sql/testscripts/queries/group_by.html">src/sql/testscripts/queries/group_by</a></b>
+<a href="#h4-0" id="h4-0" class="h">@@ -25,14 +25,14 @@ ok
+</a> [plan]&gt; SELECT COUNT(id), MIN(id), MAX(id), SUM(id), AVG(id) FROM test WHERE FALSE GROUP BY id
+ ---
+ Projection: #0, #1, #2, #3, #4
+<a href="#h4-0-3" id="h4-0-3" class="d">-└─ Aggregation: count, min, max, sum, avg
+</a><a href="#h4-0-4" id="h4-0-4" class="i">+└─ Aggregation: count(#0), min(#1), max(#2), sum(#3), avg(#4)
+</a>    └─ Nothing
+ 
+ # Simple GROUP BY.
+ [plan]&gt; SELECT &quot;group&quot;, COUNT(*) FROM test GROUP BY &quot;group&quot;
+ ---
+ Projection: test.group, #0
+<a href="#h4-0-11" id="h4-0-11" class="d">-└─ Aggregation: count
+</a><a href="#h4-0-12" id="h4-0-12" class="i">+└─ Aggregation: count(#0)
+</a>    └─ Projection: TRUE, group
+       └─ Scan: test
+ NULL, 1
+<a href="#h4-1" id="h4-1" class="h">@@ -43,7 +43,7 @@ b, 3
+</a>     FROM test WHERE id != 0 GROUP BY &quot;group&quot;
+ ---
+ Projection: test.group, #0, #1, #2, #3, #4
+<a href="#h4-1-3" id="h4-1-3" class="d">-└─ Aggregation: count, min, max, sum, avg
+</a><a href="#h4-1-4" id="h4-1-4" class="i">+└─ Aggregation: count(#0), min(#1), max(#2), sum(#3), avg(#4)
+</a>    └─ Projection: TRUE, bool, string, int, float, group
+       └─ Scan: test (NOT id = 0)
+ a, 3, FALSE, AB, 9, NaN
+<a href="#h4-2" id="h4-2" class="h">@@ -53,7 +53,7 @@ b, 3, FALSE, 👋, 41, NaN
+</a> [plan]&gt; SELECT &quot;group&quot;, COUNT(*) FROM test GROUP BY &quot;group&quot;
+ ---
+ Projection: test.group, #0
+<a href="#h4-2-3" id="h4-2-3" class="d">-└─ Aggregation: count
+</a><a href="#h4-2-4" id="h4-2-4" class="i">+└─ Aggregation: count(#0)
+</a>    └─ Projection: TRUE, group
+       └─ Scan: test
+ NULL, 1
+<a href="#h4-3" id="h4-3" class="h">@@ -64,7 +64,7 @@ b, 3
+</a> [plan]&gt; SELECT &quot;bool&quot;, COUNT(*) FROM test WHERE id != 0 GROUP BY &quot;bool&quot;
+ ---
+ Projection: test.bool, #0
+<a href="#h4-3-3" id="h4-3-3" class="d">-└─ Aggregation: count
+</a><a href="#h4-3-4" id="h4-3-4" class="i">+└─ Aggregation: count(#0)
+</a>    └─ Projection: TRUE, bool
+       └─ Scan: test (NOT id = 0)
+ FALSE, 3
+<a href="#h4-4" id="h4-4" class="h">@@ -74,7 +74,7 @@ TRUE, 3
+</a> [plan]&gt; SELECT &quot;int&quot;, COUNT(*) FROM test WHERE id != 0 GROUP BY &quot;int&quot;
+ ---
+ Projection: test.int, #0
+<a href="#h4-4-3" id="h4-4-3" class="d">-└─ Aggregation: count
+</a><a href="#h4-4-4" id="h4-4-4" class="i">+└─ Aggregation: count(#0)
+</a>    └─ Projection: TRUE, int
+       └─ Scan: test (NOT id = 0)
+ -1, 2
+<a href="#h4-5" id="h4-5" class="h">@@ -87,7 +87,7 @@ Projection: test.int, #0
+</a> [plan]&gt; SELECT &quot;float&quot;, COUNT(*) FROM test WHERE id != 0 GROUP BY &quot;float&quot;
+ ---
+ Projection: test.float, #0
+<a href="#h4-5-3" id="h4-5-3" class="d">-└─ Aggregation: count
+</a><a href="#h4-5-4" id="h4-5-4" class="i">+└─ Aggregation: count(#0)
+</a>    └─ Projection: TRUE, float
+       └─ Scan: test (NOT id = 0)
+ 0, 2
+<a href="#h4-6" id="h4-6" class="h">@@ -99,7 +99,7 @@ NaN, 2
+</a> [plan]&gt; SELECT &quot;string&quot;, COUNT(*) FROM test WHERE id != 0 GROUP BY &quot;string&quot;
+ ---
+ Projection: test.string, #0
+<a href="#h4-6-3" id="h4-6-3" class="d">-└─ Aggregation: count
+</a><a href="#h4-6-4" id="h4-6-4" class="i">+└─ Aggregation: count(#0)
+</a>    └─ Projection: TRUE, string
+       └─ Scan: test (NOT id = 0)
+ , 2
+<a href="#h4-7" id="h4-7" class="h">@@ -111,7 +111,7 @@ abc, 2
+</a> [plan]&gt; SELECT COUNT(*) FROM test WHERE id != 0 GROUP BY &quot;group&quot;
+ ---
+ Projection: #0
+<a href="#h4-7-3" id="h4-7-3" class="d">-└─ Aggregation: count
+</a><a href="#h4-7-4" id="h4-7-4" class="i">+└─ Aggregation: count(#0)
+</a>    └─ Projection: TRUE, group
+       └─ Scan: test (NOT id = 0)
+ 3
+<a href="#h4-8" id="h4-8" class="h">@@ -131,7 +131,7 @@ b
+</a> [plan]&gt; SELECT &quot;group&quot; AS g, COUNT(*) FROM test GROUP BY g
+ ---
+ Projection: g, #0
+<a href="#h4-8-3" id="h4-8-3" class="d">-└─ Aggregation: count
+</a><a href="#h4-8-4" id="h4-8-4" class="i">+└─ Aggregation: count(#0)
+</a>    └─ Projection: TRUE, group
+       └─ Scan: test
+ NULL, 1
+<a href="#h4-9" id="h4-9" class="h">@@ -141,7 +141,7 @@ b, 3
+</a> [plan]&gt; SELECT &quot;group&quot;, COUNT(*) FROM test AS t GROUP BY t.&quot;group&quot;
+ ---
+ Projection: group, #0
+<a href="#h4-9-3" id="h4-9-3" class="d">-└─ Aggregation: count
+</a><a href="#h4-9-4" id="h4-9-4" class="i">+└─ Aggregation: count(#0)
+</a>    └─ Projection: TRUE, t.group
+       └─ Scan: test as t
+ NULL, 1
+<a href="#h4-10" id="h4-10" class="h">@@ -169,7 +169,7 @@ Error: invalid input: unknown table unknown
+</a> [plan]&gt; SELECT COUNT(*) FROM test GROUP BY 1
+ ---
+ Projection: #0
+<a href="#h4-10-3" id="h4-10-3" class="d">-└─ Aggregation: count
+</a><a href="#h4-10-4" id="h4-10-4" class="i">+└─ Aggregation: count(#0)
+</a>    └─ Projection: TRUE, 1
+       └─ Scan: test
+ 7
+<a href="#h4-11" id="h4-11" class="h">@@ -177,7 +177,7 @@ Projection: #0
+</a> [plan]&gt; SELECT COUNT(*) FROM test GROUP BY id % 2
+ ---
+ Projection: #0
+<a href="#h4-11-3" id="h4-11-3" class="d">-└─ Aggregation: count
+</a><a href="#h4-11-4" id="h4-11-4" class="i">+└─ Aggregation: count(#0)
+</a>    └─ Projection: TRUE, id % 2
+       └─ Scan: test
+ 4
+<a href="#h4-12" id="h4-12" class="h">@@ -187,7 +187,7 @@ Projection: #0
+</a> [plan]&gt; SELECT id % 2, COUNT(*) FROM test GROUP BY id % 2
+ ---
+ Projection: #1, #0
+<a href="#h4-12-3" id="h4-12-3" class="d">-└─ Aggregation: count
+</a><a href="#h4-12-4" id="h4-12-4" class="i">+└─ Aggregation: count(#0)
+</a>    └─ Projection: TRUE, id % 2
+       └─ Scan: test
+ 0, 4
+<a href="#h4-13" id="h4-13" class="h">@@ -197,7 +197,7 @@ Projection: #1, #0
+</a> [plan]&gt; SELECT id % 2 AS mod, COUNT(*) FROM test GROUP BY mod
+ ---
+ Projection: mod, #0
+<a href="#h4-13-3" id="h4-13-3" class="d">-└─ Aggregation: count
+</a><a href="#h4-13-4" id="h4-13-4" class="i">+└─ Aggregation: count(#0)
+</a>    └─ Projection: TRUE, id % 2
+       └─ Scan: test
+ 0, 4
+<a href="#h4-14" id="h4-14" class="h">@@ -212,7 +212,7 @@ Error: invalid input: group expression cannot contain aggregates
+</a> [plan]&gt; SELECT &quot;group&quot;, &quot;bool&quot;, COUNT(*) FROM test WHERE id != 0 GROUP BY &quot;group&quot;, &quot;bool&quot;
+ ---
+ Projection: test.group, test.bool, #0
+<a href="#h4-14-3" id="h4-14-3" class="d">-└─ Aggregation: count
+</a><a href="#h4-14-4" id="h4-14-4" class="i">+└─ Aggregation: count(#0)
+</a>    └─ Projection: TRUE, group, bool
+       └─ Scan: test (NOT id = 0)
+ a, FALSE, 1
+<a href="#h4-15" id="h4-15" class="h">@@ -224,7 +224,7 @@ b, TRUE, 1
+</a> [plan]&gt; SELECT t.id % 2, COUNT(*) FROM test t JOIN other o ON t.id % 2 = o.id GROUP BY t.id % 2
+ ---
+ Projection: #1, #0
+<a href="#h4-15-3" id="h4-15-3" class="d">-└─ Aggregation: count
+</a><a href="#h4-15-4" id="h4-15-4" class="i">+└─ Aggregation: count(#0)
+</a>    └─ Projection: TRUE, t.id % 2
+       └─ NestedLoopJoin: inner on t.id % 2 = o.id
+          ├─ Scan: test as t
+<b>diff --git a/<a id="h5" href="../file/src/sql/testscripts/queries/having.html">src/sql/testscripts/queries/having</a> b/<a href="../file/src/sql/testscripts/queries/having.html">src/sql/testscripts/queries/having</a></b>
+<a href="#h5-0" id="h5-0" class="h">@@ -46,7 +46,7 @@ Projection: #0
+</a> Projection: #0, #1
+ └─ Filter: #2 &gt; 10
+    └─ Projection: test.group, #0, #1
+<a href="#h5-0-3" id="h5-0-3" class="d">-      └─ Aggregation: max, max
+</a><a href="#h5-0-4" id="h5-0-4" class="i">+      └─ Aggregation: max(#0), max(#1)
+</a>          └─ Projection: int, int, group
+             └─ Scan: test
+ b, 42
+<a href="#h5-1" id="h5-1" class="h">@@ -56,7 +56,7 @@ b, 42
+</a> ---
+ Filter: m &gt; 10
+ └─ Projection: test.group, #0
+<a href="#h5-1-3" id="h5-1-3" class="d">-   └─ Aggregation: max
+</a><a href="#h5-1-4" id="h5-1-4" class="i">+   └─ Aggregation: max(#0)
+</a>       └─ Projection: int, group
+          └─ Scan: test
+ b, 42
+<a href="#h5-2" id="h5-2" class="h">@@ -67,7 +67,7 @@ b, 42
+</a> Projection: #0, #1
+ └─ Filter: #2 &gt; 10
+    └─ Projection: test.group, #0, #1
+<a href="#h5-2-3" id="h5-2-3" class="d">-      └─ Aggregation: count, max
+</a><a href="#h5-2-4" id="h5-2-4" class="i">+      └─ Aggregation: count(#0), max(#1)
+</a>          └─ Projection: TRUE, int, group
+             └─ Scan: test
+ b, 3
+<a href="#h5-3" id="h5-3" class="h">@@ -78,7 +78,7 @@ b, 3
+</a> Projection: #0, #1
+ └─ Filter: #2 / #3 &gt; 3
+    └─ Projection: test.group, #0, #1, #2
+<a href="#h5-3-3" id="h5-3-3" class="d">-      └─ Aggregation: count, max, count
+</a><a href="#h5-3-4" id="h5-3-4" class="i">+      └─ Aggregation: count(#0), max(#1), count(#2)
+</a>          └─ Projection: TRUE, int, TRUE, group
+             └─ Scan: test
+ b, 3
+</pre>
+</div>
+</body>
+</html>

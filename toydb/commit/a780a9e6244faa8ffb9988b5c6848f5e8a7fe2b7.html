@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>sql: make `Scope.project()` return a new scope - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/a780a9e6244faa8ffb9988b5c6848f5e8a7fe2b7.html">a780a9e6244faa8ffb9988b5c6848f5e8a7fe2b7</a>
+<b>parent</b> <a href="../commit/221f1df056adc4308ebd4f7cc2b2224f4dbd7957.html">221f1df056adc4308ebd4f7cc2b2224f4dbd7957</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Thu, 11 Jul 2024 09:56:29 +0200
+
+sql: make `Scope.project()` return a new scope
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/sql/planner/planner.rs</a></td><td> | </td><td class="num">25</td><td><span class="i">++++++++++++</span><span class="d">-------------</span></td></tr>
+</table></pre><pre>1 file changed, 12 insertions(+), 13 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/sql/planner/planner.rs.html">src/sql/planner/planner.rs</a> b/<a href="../file/src/sql/planner/planner.rs.html">src/sql/planner/planner.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -214,7 +214,7 @@ impl&lt;&#39;a, C: Catalog&gt; Planner&lt;&#39;a, C&gt; {
+</a>                 .into_iter()
+                 .map(|(e, _)| Self::build_expression(e, &amp;scope))
+                 .collect::&lt;Result&lt;Vec&lt;_&gt;&gt;&gt;()?;
+<a href="#h0-0-3" id="h0-0-3" class="d">-            scope.project(&amp;expressions, &amp;labels)?;
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+            scope = scope.project(&amp;expressions, &amp;labels)?;
+</a>             node = Node::Projection { source: Box::new(node), expressions, labels };
+         };
+ 
+<a href="#h0-1" id="h0-1" class="h">@@ -257,7 +257,7 @@ impl&lt;&#39;a, C: Catalog&gt; Planner&lt;&#39;a, C&gt; {
+</a>             let columns = scope.len() - hidden;
+             let labels = vec![Label::None; columns];
+             let expressions = (0..columns).map(|i| Expression::Field(i, Label::None)).collect_vec();
+<a href="#h0-1-3" id="h0-1-3" class="d">-            scope.project(&amp;expressions, &amp;labels)?;
+</a><a href="#h0-1-4" id="h0-1-4" class="i">+            scope = scope.project(&amp;expressions, &amp;labels)?;
+</a>             node = Node::Projection { source: Box::new(node), labels, expressions }
+         }
+ 
+<a href="#h0-2" id="h0-2" class="h">@@ -334,7 +334,7 @@ impl&lt;&#39;a, C: Catalog&gt; Planner&lt;&#39;a, C&gt; {
+</a>                         .chain(0..left_size)
+                         .map(|i| Ok(Expression::Field(i, scope.get_column_label(i)?)))
+                         .collect::&lt;Result&lt;Vec&lt;_&gt;&gt;&gt;()?;
+<a href="#h0-2-3" id="h0-2-3" class="d">-                    scope.project(&amp;expressions, &amp;labels)?;
+</a><a href="#h0-2-4" id="h0-2-4" class="i">+                    scope = scope.project(&amp;expressions, &amp;labels)?;
+</a>                     node = Node::Projection { source: Box::new(node), expressions, labels }
+                 }
+                 node
+<a href="#h0-3" id="h0-3" class="h">@@ -369,7 +369,7 @@ impl&lt;&#39;a, C: Catalog&gt; Planner&lt;&#39;a, C&gt; {
+</a>             expressions.push(Self::build_expression(expr, scope)?);
+             labels.push(Label::maybe_name(label));
+         }
+<a href="#h0-3-3" id="h0-3-3" class="d">-        scope.project(
+</a><a href="#h0-3-4" id="h0-3-4" class="i">+        *scope = scope.project(
+</a>             &amp;expressions
+                 .iter()
+                 .cloned()
+<a href="#h0-4" id="h0-4" class="h">@@ -741,13 +741,12 @@ impl Scope {
+</a>     /// Otherwise, for non-trivial field references, a new column is created for
+     /// the expression. An explicit label may also be given for each column.
+     /// Table sets are retained.
+<a href="#h0-4-3" id="h0-4-3" class="d">-    fn project(&amp;mut self, expressions: &amp;[Expression], labels: &amp;[Label]) -&gt; Result&lt;()&gt; {
+</a><a href="#h0-4-4" id="h0-4-4" class="i">+    fn project(&amp;self, expressions: &amp;[Expression], labels: &amp;[Label]) -&gt; Result&lt;Self&gt; {
+</a>         assert_eq!(expressions.len(), labels.len());
+ 
+<a href="#h0-4-7" id="h0-4-7" class="d">-        // Extract the old columns and clear the indexes. Keep the table index.
+</a><a href="#h0-4-8" id="h0-4-8" class="d">-        let columns = std::mem::take(&amp;mut self.columns);
+</a><a href="#h0-4-9" id="h0-4-9" class="d">-        self.qualified.clear();
+</a><a href="#h0-4-10" id="h0-4-10" class="d">-        self.unqualified.clear();
+</a><a href="#h0-4-11" id="h0-4-11" class="i">+        // Copy the table index.
+</a><a href="#h0-4-12" id="h0-4-12" class="i">+        let mut new = Scope::new();
+</a><a href="#h0-4-13" id="h0-4-13" class="i">+        new.tables = self.tables.clone();
+</a> 
+         // Map projected field references to old columns.
+         let mut field_map: HashMap&lt;usize, usize&gt; = HashMap::new();
+<a href="#h0-5" id="h0-5" class="h">@@ -760,13 +759,13 @@ impl Scope {
+</a>         // Construct the new columns and labels.
+         for (i, label) in labels.iter().enumerate() {
+             if label.is_some() {
+<a href="#h0-5-3" id="h0-5-3" class="d">-                self.add_column(label.clone()); // explicit label
+</a><a href="#h0-5-4" id="h0-5-4" class="i">+                new.add_column(label.clone()); // explicit label
+</a>             } else if let Some(f) = field_map.get(&amp;i) {
+<a href="#h0-5-6" id="h0-5-6" class="d">-                self.add_column(columns[*f].clone()) // field reference
+</a><a href="#h0-5-7" id="h0-5-7" class="i">+                new.add_column(self.columns[*f].clone()) // field reference
+</a>             } else {
+<a href="#h0-5-9" id="h0-5-9" class="d">-                self.add_column(Label::None) // unlabeled expression
+</a><a href="#h0-5-10" id="h0-5-10" class="i">+                new.add_column(Label::None) // unlabeled expression
+</a>             }
+         }
+<a href="#h0-5-13" id="h0-5-13" class="d">-        Ok(())
+</a><a href="#h0-5-14" id="h0-5-14" class="i">+        Ok(new)
+</a>     }
+ }
+</pre>
+</div>
+</body>
+</html>

@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>encoding: split out separate encoding module - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/71e1b8a938056d0c1de5aa1a5bbaed0676e0b7a6.html">71e1b8a938056d0c1de5aa1a5bbaed0676e0b7a6</a>
+<b>parent</b> <a href="../commit/2eb01aa24ad9677fc350f57b2946fc8c40a3e5b5.html">2eb01aa24ad9677fc350f57b2946fc8c40a3e5b5</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Tue,  9 Apr 2024 18:19:42 +0200
+
+encoding: split out separate encoding module
+
+<b>Diffstat:</b>
+<table><tr><td class="A">A</td><td><a href="#h0">src/encoding/bincode.rs</a></td><td> | </td><td class="num">27</td><td><span class="i">+++++++++++++++++++++++++++</span><span class="d"></span></td></tr>
+<tr><td class="R">R</td><td><a href="#h1">src/storage/keycode.rs -&gt; src/encoding/keycode.rs</a></td><td> | </td><td class="num">0</td><td><span class="i"></span><span class="d"></span></td></tr>
+<tr><td class="A">A</td><td><a href="#h2">src/encoding/mod.rs</a></td><td> | </td><td class="num">6</td><td><span class="i">++++++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">src/lib.rs</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h4">src/raft/log.rs</a></td><td> | </td><td class="num">3</td><td><span class="i">++</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h5">src/sql/engine/kv.rs</a></td><td> | </td><td class="num">3</td><td><span class="i">++</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h6">src/sql/engine/raft.rs</a></td><td> | </td><td class="num">3</td><td><span class="i">++</span><span class="d">-</span></td></tr>
+<tr><td class="D">D</td><td><a href="#h7">src/storage/bincode.rs</a></td><td> | </td><td class="num">27</td><td><span class="i"></span><span class="d">---------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h8">src/storage/debug.rs</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h9">src/storage/mod.rs</a></td><td> | </td><td class="num">2</td><td><span class="i"></span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h10">src/storage/mvcc.rs</a></td><td> | </td><td class="num">3</td><td><span class="i">++</span><span class="d">-</span></td></tr>
+</table></pre><pre>11 files changed, 43 insertions(+), 34 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/encoding/bincode.rs.html">src/encoding/bincode.rs</a> b/<a href="../file/src/encoding/bincode.rs.html">src/encoding/bincode.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -0,0 +1,27 @@
+</a><a href="#h0-0-0" id="h0-0-0" class="i">+//! Bincode is used to encode values, both in key/value stores and the toyDB
+</a><a href="#h0-0-1" id="h0-0-1" class="i">+//! network protocol. It is a Rust-specific encoding that depends on the
+</a><a href="#h0-0-2" id="h0-0-2" class="i">+//! internal data structures being stable, but it&#39;s sufficient for toyDB. See:
+</a><a href="#h0-0-3" id="h0-0-3" class="i">+//! https://github.com/bincode-org/bincode
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+//!
+</a><a href="#h0-0-5" id="h0-0-5" class="i">+//! This module wraps the standard bincode crate to change the default settings.
+</a><a href="#h0-0-6" id="h0-0-6" class="i">+//! In particular, to use variable-length integers rather than fixed-length.
+</a><a href="#h0-0-7" id="h0-0-7" class="i">+
+</a><a href="#h0-0-8" id="h0-0-8" class="i">+use crate::error::Result;
+</a><a href="#h0-0-9" id="h0-0-9" class="i">+
+</a><a href="#h0-0-10" id="h0-0-10" class="i">+use bincode::Options;
+</a><a href="#h0-0-11" id="h0-0-11" class="i">+use lazy_static::lazy_static;
+</a><a href="#h0-0-12" id="h0-0-12" class="i">+
+</a><a href="#h0-0-13" id="h0-0-13" class="i">+lazy_static! {
+</a><a href="#h0-0-14" id="h0-0-14" class="i">+    /// Create a static binding for the default Bincode options.
+</a><a href="#h0-0-15" id="h0-0-15" class="i">+    static ref BINCODE: bincode::DefaultOptions = bincode::DefaultOptions::new();
+</a><a href="#h0-0-16" id="h0-0-16" class="i">+}
+</a><a href="#h0-0-17" id="h0-0-17" class="i">+
+</a><a href="#h0-0-18" id="h0-0-18" class="i">+/// Deserializes a value using Bincode.
+</a><a href="#h0-0-19" id="h0-0-19" class="i">+pub fn deserialize&lt;&#39;de, T: serde::Deserialize&lt;&#39;de&gt;&gt;(bytes: &amp;&#39;de [u8]) -&gt; Result&lt;T&gt; {
+</a><a href="#h0-0-20" id="h0-0-20" class="i">+    Ok(BINCODE.deserialize(bytes)?)
+</a><a href="#h0-0-21" id="h0-0-21" class="i">+}
+</a><a href="#h0-0-22" id="h0-0-22" class="i">+
+</a><a href="#h0-0-23" id="h0-0-23" class="i">+/// Serializes a value using Bincode.
+</a><a href="#h0-0-24" id="h0-0-24" class="i">+pub fn serialize&lt;T: serde::Serialize&gt;(value: &amp;T) -&gt; Result&lt;Vec&lt;u8&gt;&gt; {
+</a><a href="#h0-0-25" id="h0-0-25" class="i">+    Ok(BINCODE.serialize(value)?)
+</a><a href="#h0-0-26" id="h0-0-26" class="i">+}
+</a><b>diff --git a/<a id="h1" href="../file/src/storage/keycode.rs.html">src/storage/keycode.rs</a> b/<a href="../file/src/encoding/keycode.rs.html">src/encoding/keycode.rs</a></b>
+<b>diff --git a/<a id="h2" href="../file/src/encoding/mod.rs.html">src/encoding/mod.rs</a> b/<a href="../file/src/encoding/mod.rs.html">src/encoding/mod.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -0,0 +1,6 @@
+</a><a href="#h2-0-0" id="h2-0-0" class="i">+//! Binary data encodings.
+</a><a href="#h2-0-1" id="h2-0-1" class="i">+//!
+</a><a href="#h2-0-2" id="h2-0-2" class="i">+//! - keycode: used for keys in the key/value store.
+</a><a href="#h2-0-3" id="h2-0-3" class="i">+//! - bincode: used for values in the key/value store and network protocols.
+</a><a href="#h2-0-4" id="h2-0-4" class="i">+pub mod bincode;
+</a><a href="#h2-0-5" id="h2-0-5" class="i">+pub mod keycode;
+</a><b>diff --git a/<a id="h3" href="../file/src/lib.rs.html">src/lib.rs</a> b/<a href="../file/src/lib.rs.html">src/lib.rs</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -3,6 +3,7 @@
+</a> #![allow(clippy::unneeded_field_pattern)]
+ 
+ pub mod client;
+<a href="#h3-0-3" id="h3-0-3" class="i">+pub mod encoding;
+</a> pub mod error;
+ pub mod raft;
+ pub mod server;
+<b>diff --git a/<a id="h4" href="../file/src/raft/log.rs.html">src/raft/log.rs</a> b/<a href="../file/src/raft/log.rs.html">src/raft/log.rs</a></b>
+<a href="#h4-0" id="h4-0" class="h">@@ -1,5 +1,6 @@
+</a><a href="#h4-0-0" id="h4-0-0" class="i">+use crate::encoding::{bincode, keycode};
+</a> use crate::error::{Error, Result};
+<a href="#h4-0-2" id="h4-0-2" class="d">-use crate::storage::{self, bincode, keycode};
+</a><a href="#h4-0-3" id="h4-0-3" class="i">+use crate::storage;
+</a> 
+ use ::log::debug;
+ use serde::{Deserialize, Serialize};
+<b>diff --git a/<a id="h5" href="../file/src/sql/engine/kv.rs.html">src/sql/engine/kv.rs</a> b/<a href="../file/src/sql/engine/kv.rs.html">src/sql/engine/kv.rs</a></b>
+<a href="#h5-0" id="h5-0" class="h">@@ -1,8 +1,9 @@
+</a> use super::super::schema::{Catalog, Table, Tables};
+ use super::super::types::{Expression, Row, Value};
+ use super::Transaction as _;
+<a href="#h5-0-3" id="h5-0-3" class="i">+use crate::encoding::{bincode, keycode};
+</a> use crate::error::{Error, Result};
+<a href="#h5-0-5" id="h5-0-5" class="d">-use crate::storage::{self, bincode, keycode};
+</a><a href="#h5-0-6" id="h5-0-6" class="i">+use crate::storage;
+</a> 
+ use serde::{Deserialize, Serialize};
+ use std::borrow::Cow;
+<b>diff --git a/<a id="h6" href="../file/src/sql/engine/raft.rs.html">src/sql/engine/raft.rs</a> b/<a href="../file/src/sql/engine/raft.rs.html">src/sql/engine/raft.rs</a></b>
+<a href="#h6-0" id="h6-0" class="h">@@ -1,9 +1,10 @@
+</a> use super::super::schema::{Catalog, Table, Tables};
+ use super::super::types::{Expression, Row, Value};
+ use super::{Engine as _, IndexScan, Scan, Transaction as _};
+<a href="#h6-0-3" id="h6-0-3" class="i">+use crate::encoding::bincode;
+</a> use crate::error::{Error, Result};
+ use crate::raft::{self, Entry};
+<a href="#h6-0-6" id="h6-0-6" class="d">-use crate::storage::{self, bincode, mvcc::TransactionState};
+</a><a href="#h6-0-7" id="h6-0-7" class="i">+use crate::storage::{self, mvcc::TransactionState};
+</a> 
+ use serde::{de::DeserializeOwned, Deserialize, Serialize};
+ use std::collections::HashSet;
+<b>diff --git a/<a id="h7" href="../file/src/storage/bincode.rs.html">src/storage/bincode.rs</a> b/<a href="../file/src/storage/bincode.rs.html">src/storage/bincode.rs</a></b>
+<a href="#h7-0" id="h7-0" class="h">@@ -1,27 +0,0 @@
+</a><a href="#h7-0-0" id="h7-0-0" class="d">-//! Bincode is used to encode values. For details, see:
+</a><a href="#h7-0-1" id="h7-0-1" class="d">-//! https://github.com/bincode-org/bincode
+</a><a href="#h7-0-2" id="h7-0-2" class="d">-//!
+</a><a href="#h7-0-3" id="h7-0-3" class="d">-//! By default, the bincode::(de)serialize functions use fixed-length integer
+</a><a href="#h7-0-4" id="h7-0-4" class="d">-//! encoding, despite DefaultOptions using variable-length encoding. This module
+</a><a href="#h7-0-5" id="h7-0-5" class="d">-//! provides simple wrappers for these functions that use variable-length
+</a><a href="#h7-0-6" id="h7-0-6" class="d">-//! encoding and the other defaults.
+</a><a href="#h7-0-7" id="h7-0-7" class="d">-
+</a><a href="#h7-0-8" id="h7-0-8" class="d">-use crate::error::Result;
+</a><a href="#h7-0-9" id="h7-0-9" class="d">-
+</a><a href="#h7-0-10" id="h7-0-10" class="d">-use bincode::Options;
+</a><a href="#h7-0-11" id="h7-0-11" class="d">-use lazy_static::lazy_static;
+</a><a href="#h7-0-12" id="h7-0-12" class="d">-
+</a><a href="#h7-0-13" id="h7-0-13" class="d">-lazy_static! {
+</a><a href="#h7-0-14" id="h7-0-14" class="d">-    /// Create a static binding for the default Bincode options.
+</a><a href="#h7-0-15" id="h7-0-15" class="d">-    static ref BINCODE: bincode::DefaultOptions = bincode::DefaultOptions::new();
+</a><a href="#h7-0-16" id="h7-0-16" class="d">-}
+</a><a href="#h7-0-17" id="h7-0-17" class="d">-
+</a><a href="#h7-0-18" id="h7-0-18" class="d">-/// Deserializes a value using Bincode.
+</a><a href="#h7-0-19" id="h7-0-19" class="d">-pub fn deserialize&lt;&#39;de, T: serde::Deserialize&lt;&#39;de&gt;&gt;(bytes: &amp;&#39;de [u8]) -&gt; Result&lt;T&gt; {
+</a><a href="#h7-0-20" id="h7-0-20" class="d">-    Ok(BINCODE.deserialize(bytes)?)
+</a><a href="#h7-0-21" id="h7-0-21" class="d">-}
+</a><a href="#h7-0-22" id="h7-0-22" class="d">-
+</a><a href="#h7-0-23" id="h7-0-23" class="d">-/// Serializes a value using Bincode.
+</a><a href="#h7-0-24" id="h7-0-24" class="d">-pub fn serialize&lt;T: serde::Serialize&gt;(value: &amp;T) -&gt; Result&lt;Vec&lt;u8&gt;&gt; {
+</a><a href="#h7-0-25" id="h7-0-25" class="d">-    Ok(BINCODE.serialize(value)?)
+</a><a href="#h7-0-26" id="h7-0-26" class="d">-}
+</a><b>diff --git a/<a id="h8" href="../file/src/storage/debug.rs.html">src/storage/debug.rs</a> b/<a href="../file/src/storage/debug.rs.html">src/storage/debug.rs</a></b>
+<a href="#h8-0" id="h8-0" class="h">@@ -2,9 +2,9 @@
+</a> 
+ use std::collections::HashSet;
+ 
+<a href="#h8-0-3" id="h8-0-3" class="d">-use super::bincode;
+</a> use super::engine::{self, ScanIterator, Status};
+ use super::mvcc::{self, TransactionState};
+<a href="#h8-0-6" id="h8-0-6" class="i">+use crate::encoding::bincode;
+</a> use crate::error::Result;
+ 
+ /// Formats a raw byte string, either as a UTF-8 string (if valid and
+<b>diff --git a/<a id="h9" href="../file/src/storage/mod.rs.html">src/storage/mod.rs</a> b/<a href="../file/src/storage/mod.rs.html">src/storage/mod.rs</a></b>
+<a href="#h9-0" id="h9-0" class="h">@@ -1,5 +1,3 @@
+</a><a href="#h9-0-0" id="h9-0-0" class="d">-pub mod bincode;
+</a> pub mod debug;
+ pub mod engine;
+<a href="#h9-0-3" id="h9-0-3" class="d">-pub mod keycode;
+</a> pub mod mvcc;
+<b>diff --git a/<a id="h10" href="../file/src/storage/mvcc.rs.html">src/storage/mvcc.rs</a> b/<a href="../file/src/storage/mvcc.rs.html">src/storage/mvcc.rs</a></b>
+<a href="#h10-0" id="h10-0" class="h">@@ -139,7 +139,8 @@
+</a> //! forever, both out of laziness and also because it allows unlimited time
+ //! travel queries (it&#39;s a feature, not a bug!).
+ 
+<a href="#h10-0-3" id="h10-0-3" class="d">-use super::{bincode, engine::Engine, keycode};
+</a><a href="#h10-0-4" id="h10-0-4" class="i">+use super::engine::Engine;
+</a><a href="#h10-0-5" id="h10-0-5" class="i">+use crate::encoding::{bincode, keycode};
+</a> use crate::error::{Error, Result};
+ 
+ use serde::{Deserialize, Serialize};
+</pre>
+</div>
+</body>
+</html>

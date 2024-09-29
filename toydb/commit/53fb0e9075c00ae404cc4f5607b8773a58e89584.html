@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>sql: remove `Scope::get_label()` - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/53fb0e9075c00ae404cc4f5607b8773a58e89584.html">53fb0e9075c00ae404cc4f5607b8773a58e89584</a>
+<b>parent</b> <a href="../commit/0883278de9a2133b76a91cf06c93541373203b5d.html">0883278de9a2133b76a91cf06c93541373203b5d</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Tue, 16 Jul 2024 22:47:29 +0200
+
+sql: remove `Scope::get_label()`
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/sql/planner/planner.rs</a></td><td> | </td><td class="num">13</td><td><span class="i">++++</span><span class="d">---------</span></td></tr>
+</table></pre><pre>1 file changed, 4 insertions(+), 9 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/sql/planner/planner.rs.html">src/sql/planner/planner.rs</a> b/<a href="../file/src/sql/planner/planner.rs.html">src/sql/planner/planner.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -184,7 +184,7 @@ impl&lt;&#39;a, C: Catalog&gt; Planner&lt;&#39;a, C&gt; {
+</a>             // verify that they&#39;re all used in GROUP BY as well.
+             if select.is_empty() {
+                 select = (0..node.size())
+<a href="#h0-0-3" id="h0-0-3" class="d">-                    .map(|i| (scope.get_label(i).into_ast_field().expect(&quot;no FROM label&quot;), None))
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+                    .map(|i| (node.column_label(i).into_ast_field().expect(&quot;no FROM label&quot;), None))
+</a>                     .collect();
+             }
+             node = self.build_aggregate(&amp;mut scope, node, group_by, aggregates)?;
+<a href="#h0-1" id="h0-1" class="h">@@ -649,11 +649,6 @@ impl Scope {
+</a>         errinput!(&quot;unknown field {}&quot;, fmtname())
+     }
+ 
+<a href="#h0-1-3" id="h0-1-3" class="d">-    /// Fetches a column label by index, or Label::None if it doesn&#39;t exist.
+</a><a href="#h0-1-4" id="h0-1-4" class="d">-    fn get_label(&amp;self, index: usize) -&gt; Label {
+</a><a href="#h0-1-5" id="h0-1-5" class="d">-        self.columns.get(index).cloned().unwrap_or(Label::None)
+</a><a href="#h0-1-6" id="h0-1-6" class="d">-    }
+</a><a href="#h0-1-7" id="h0-1-7" class="d">-
+</a>     /// Adds an aggregate expression to the scope, returning the new column
+     /// index or None if the expression already exists. This is either an
+     /// aggregate function or a GROUP BY expression. It is used to look up the
+<a href="#h0-2" id="h0-2" class="h">@@ -669,7 +664,7 @@ impl Scope {
+</a>         if let ast::Expression::Field(table, column) = expr {
+             // Ignore errors, they will be emitted when building the expression.
+             if let Ok(index) = parent.lookup_column(table.as_deref(), column.as_str()) {
+<a href="#h0-2-3" id="h0-2-3" class="d">-                label = parent.get_label(index);
+</a><a href="#h0-2-4" id="h0-2-4" class="i">+                label = parent.columns[index].clone();
+</a>             }
+         }
+ 
+<a href="#h0-3" id="h0-3" class="h">@@ -687,7 +682,7 @@ impl Scope {
+</a>     /// Adds a column that passes through a column from the parent scope,
+     /// retaining its properties. If hide is true, the column is hidden.
+     fn add_passthrough(&amp;mut self, parent: &amp;Scope, parent_index: usize, hide: bool) -&gt; usize {
+<a href="#h0-3-3" id="h0-3-3" class="d">-        let label = parent.get_label(parent_index);
+</a><a href="#h0-3-4" id="h0-3-4" class="i">+        let label = parent.columns[parent_index].clone();
+</a>         let index = self.add_column(label);
+         for (expr, i) in &amp;parent.aggregates {
+             if *i == parent_index {
+<a href="#h0-4" id="h0-4" class="h">@@ -735,7 +730,7 @@ impl Scope {
+</a>             } else if let ast::Expression::Field(table, column) = expr {
+                 // Ignore errors, they will be surfaced by build_expression().
+                 if let Ok(index) = self.lookup_column(table.as_deref(), column.as_str()) {
+<a href="#h0-4-3" id="h0-4-3" class="d">-                    label = self.get_label(index);
+</a><a href="#h0-4-4" id="h0-4-4" class="i">+                    label = self.columns[index].clone();
+</a>                 }
+             }
+ 
+</pre>
+</div>
+</body>
+</html>

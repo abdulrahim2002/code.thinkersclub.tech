@@ -1,0 +1,1124 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>improve MVCC and SQL key encoding - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/37dfa6e885e9fa011002bf0c6aaff0e719fda0f1.html">37dfa6e885e9fa011002bf0c6aaff0e719fda0f1</a>
+<b>parent</b> <a href="../commit/2b90ebe5cf1a2f316333eff2565dd52adf484669.html">2b90ebe5cf1a2f316333eff2565dd52adf484669</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Sat, 23 May 2020 21:41:35 +0200
+
+improve MVCC and SQL key encoding
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/error.rs</a></td><td> | </td><td class="num">12</td><td><span class="i">++++++++++++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/raft/log.rs</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/sql/engine/kv.rs</a></td><td> | </td><td class="num">118</td><td><span class="i">+++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d">--------------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">src/sql/types/mod.rs</a></td><td> | </td><td class="num">13</td><td><span class="i">+++++++++++++</span><span class="d"></span></td></tr>
+<tr><td class="A">A</td><td><a href="#h4">src/storage/kv/encoding.rs</a></td><td> | </td><td class="num">504</td><td><span class="i">+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h5">src/storage/kv/mod.rs</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h6">src/storage/kv/mvcc.rs</a></td><td> | </td><td class="num">158</td><td><span class="i">++++++++++++++++++++++++++++++</span><span class="d">-------------------------------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h7">tests/sql/schema/insert_pk_float_negative</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h8">tests/sql/schema/insert_pk_integer_negative</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+</table></pre><pre>9 files changed, 663 insertions(+), 149 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/error.rs.html">src/error.rs</a> b/<a href="../file/src/error.rs.html">src/error.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -73,6 +73,12 @@ impl From&lt;serde_cbor::error::Error&gt; for Error {
+</a>     }
+ }
+ 
+<a href="#h0-0-3" id="h0-0-3" class="i">+impl From&lt;std::array::TryFromSliceError&gt; for Error {
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+    fn from(err: std::array::TryFromSliceError) -&gt; Self {
+</a><a href="#h0-0-5" id="h0-0-5" class="i">+        Error::Internal(err.to_string())
+</a><a href="#h0-0-6" id="h0-0-6" class="i">+    }
+</a><a href="#h0-0-7" id="h0-0-7" class="i">+}
+</a><a href="#h0-0-8" id="h0-0-8" class="i">+
+</a> impl From&lt;std::io::Error&gt; for Error {
+     fn from(err: std::io::Error) -&gt; Self {
+         Error::Internal(err.to_string())
+<a href="#h0-1" id="h0-1" class="h">@@ -97,6 +103,12 @@ impl From&lt;std::num::ParseIntError&gt; for Error {
+</a>     }
+ }
+ 
+<a href="#h0-1-3" id="h0-1-3" class="i">+impl From&lt;std::string::FromUtf8Error&gt; for Error {
+</a><a href="#h0-1-4" id="h0-1-4" class="i">+    fn from(err: std::string::FromUtf8Error) -&gt; Self {
+</a><a href="#h0-1-5" id="h0-1-5" class="i">+        Error::Internal(err.to_string())
+</a><a href="#h0-1-6" id="h0-1-6" class="i">+    }
+</a><a href="#h0-1-7" id="h0-1-7" class="i">+}
+</a><a href="#h0-1-8" id="h0-1-8" class="i">+
+</a> impl&lt;T&gt; From&lt;std::sync::PoisonError&lt;T&gt;&gt; for Error {
+     fn from(err: std::sync::PoisonError&lt;T&gt;) -&gt; Self {
+         Error::Internal(err.to_string())
+<b>diff --git a/<a id="h1" href="../file/src/raft/log.rs.html">src/raft/log.rs</a> b/<a href="../file/src/raft/log.rs.html">src/raft/log.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -27,7 +27,7 @@ pub enum Key {
+</a> impl Key {
+     fn encode(&amp;self) -&gt; Vec&lt;u8&gt; {
+         match self {
+<a href="#h1-0-3" id="h1-0-3" class="d">-            Self::TermVote =&gt; vec![0],
+</a><a href="#h1-0-4" id="h1-0-4" class="i">+            Self::TermVote =&gt; vec![0x00],
+</a>         }
+     }
+ }
+<b>diff --git a/<a id="h2" href="../file/src/sql/engine/kv.rs.html">src/sql/engine/kv.rs</a> b/<a href="../file/src/sql/engine/kv.rs.html">src/sql/engine/kv.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -5,6 +5,7 @@ use crate::error::{Error, Result};
+</a> use crate::storage::kv;
+ 
+ use serde::{Deserialize, Serialize};
+<a href="#h2-0-3" id="h2-0-3" class="i">+use std::borrow::Cow;
+</a> use std::clone::Clone;
+ use std::collections::HashSet;
+ 
+<a href="#h2-1" id="h2-1" class="h">@@ -73,13 +74,12 @@ impl Transaction {
+</a> 
+     /// Loads an index entry
+     fn index_load(&amp;self, table: &amp;str, column: &amp;str, value: &amp;Value) -&gt; Result&lt;HashSet&lt;Value&gt;&gt; {
+<a href="#h2-1-3" id="h2-1-3" class="d">-        let key = Key::Index(table, column, Some(value)).encode();
+</a><a href="#h2-1-4" id="h2-1-4" class="d">-        if let Some(value) = self.txn.get(&amp;key)? {
+</a><a href="#h2-1-5" id="h2-1-5" class="d">-            let item: (Value, HashSet&lt;Value&gt;) = deserialize(&amp;value)?;
+</a><a href="#h2-1-6" id="h2-1-6" class="d">-            Ok(item.1)
+</a><a href="#h2-1-7" id="h2-1-7" class="d">-        } else {
+</a><a href="#h2-1-8" id="h2-1-8" class="d">-            Ok(HashSet::new())
+</a><a href="#h2-1-9" id="h2-1-9" class="d">-        }
+</a><a href="#h2-1-10" id="h2-1-10" class="i">+        Ok(self
+</a><a href="#h2-1-11" id="h2-1-11" class="i">+            .txn
+</a><a href="#h2-1-12" id="h2-1-12" class="i">+            .get(&amp;Key::Index(table.into(), column.into(), Some(value.into())).encode())?
+</a><a href="#h2-1-13" id="h2-1-13" class="i">+            .map(|v| deserialize(&amp;v))
+</a><a href="#h2-1-14" id="h2-1-14" class="i">+            .transpose()?
+</a><a href="#h2-1-15" id="h2-1-15" class="i">+            .unwrap_or_else(HashSet::new))
+</a>     }
+ 
+     /// Saves an index entry.
+<a href="#h2-2" id="h2-2" class="h">@@ -92,11 +92,11 @@ impl Transaction {
+</a>         value: &amp;Value,
+         index: HashSet&lt;Value&gt;,
+     ) -&gt; Result&lt;()&gt; {
+<a href="#h2-2-3" id="h2-2-3" class="d">-        let key = Key::Index(table, column, Some(value)).encode();
+</a><a href="#h2-2-4" id="h2-2-4" class="i">+        let key = Key::Index(table.into(), column.into(), Some(value.into())).encode();
+</a>         if index.is_empty() {
+             self.txn.delete(&amp;key)
+         } else {
+<a href="#h2-2-8" id="h2-2-8" class="d">-            self.txn.set(&amp;key, serialize(&amp;(value, index))?)
+</a><a href="#h2-2-9" id="h2-2-9" class="i">+            self.txn.set(&amp;key, serialize(&amp;index)?)
+</a>         }
+     }
+ }
+<a href="#h2-3" id="h2-3" class="h">@@ -128,7 +128,10 @@ impl super::Transaction for Transaction {
+</a>                 id, table.name
+             )));
+         }
+<a href="#h2-3-3" id="h2-3-3" class="d">-        self.txn.set(&amp;Key::Row(&amp;table.name, Some(&amp;id)).encode(), serialize(&amp;row)?)?;
+</a><a href="#h2-3-4" id="h2-3-4" class="i">+        self.txn.set(
+</a><a href="#h2-3-5" id="h2-3-5" class="i">+            &amp;Key::Row(Cow::Borrowed(&amp;table.name), Some(Cow::Borrowed(&amp;id))).encode(),
+</a><a href="#h2-3-6" id="h2-3-6" class="i">+            serialize(&amp;row)?,
+</a><a href="#h2-3-7" id="h2-3-7" class="i">+        )?;
+</a> 
+         // Update indexes
+         for (i, column) in table.columns.iter().enumerate().filter(|(_, c)| c.index) {
+<a href="#h2-4" id="h2-4" class="h">@@ -153,11 +156,14 @@ impl super::Transaction for Transaction {
+</a>                 }
+             }
+         }
+<a href="#h2-4-3" id="h2-4-3" class="d">-        self.txn.delete(&amp;Key::Row(&amp;table.name, Some(id)).encode())
+</a><a href="#h2-4-4" id="h2-4-4" class="i">+        self.txn.delete(&amp;Key::Row(table.name.into(), Some(id.into())).encode())
+</a>     }
+ 
+     fn read(&amp;self, table: &amp;str, id: &amp;Value) -&gt; Result&lt;Option&lt;Row&gt;&gt; {
+<a href="#h2-4-8" id="h2-4-8" class="d">-        self.txn.get(&amp;Key::Row(table, Some(id)).encode())?.map(|v| deserialize(&amp;v)).transpose()
+</a><a href="#h2-4-9" id="h2-4-9" class="i">+        self.txn
+</a><a href="#h2-4-10" id="h2-4-10" class="i">+            .get(&amp;Key::Row(table.into(), Some(id.into())).encode())?
+</a><a href="#h2-4-11" id="h2-4-11" class="i">+            .map(|v| deserialize(&amp;v))
+</a><a href="#h2-4-12" id="h2-4-12" class="i">+            .transpose()
+</a>     }
+ 
+     fn read_index(&amp;self, table: &amp;str, column: &amp;str, value: &amp;Value) -&gt; Result&lt;HashSet&lt;Value&gt;&gt; {
+<a href="#h2-5" id="h2-5" class="h">@@ -171,7 +177,7 @@ impl super::Transaction for Transaction {
+</a>         let table = self.must_read_table(&amp;table)?;
+         let scan = self
+             .txn
+<a href="#h2-5-3" id="h2-5-3" class="d">-            .scan_prefix(&amp;Key::Row(&amp;table.name, None).encode())?
+</a><a href="#h2-5-4" id="h2-5-4" class="i">+            .scan_prefix(&amp;Key::Row(table.name.clone().into(), None).encode())?
+</a>             .map(|r| r.and_then(|(_, v)| deserialize(&amp;v)))
+             .filter_map(|r| match r {
+                 Ok(row) =&gt; match &amp;filter {
+<a href="#h2-6" id="h2-6" class="h">@@ -202,8 +208,15 @@ impl super::Transaction for Transaction {
+</a> 
+         let scan = self
+             .txn
+<a href="#h2-6-3" id="h2-6-3" class="d">-            .scan_prefix(&amp;Key::Index(&amp;table.name, &amp;column.name, None).encode())?
+</a><a href="#h2-6-4" id="h2-6-4" class="d">-            .map(|r| r.and_then(|(_, v)| deserialize(&amp;v)));
+</a><a href="#h2-6-5" id="h2-6-5" class="i">+            .scan_prefix(&amp;Key::Index((&amp;table.name).into(), (&amp;column.name).into(), None).encode())?
+</a><a href="#h2-6-6" id="h2-6-6" class="i">+            .map(|r| -&gt; Result&lt;(Value, HashSet&lt;Value&gt;)&gt; {
+</a><a href="#h2-6-7" id="h2-6-7" class="i">+                let (k, v) = r?;
+</a><a href="#h2-6-8" id="h2-6-8" class="i">+                let value = match Key::decode(&amp;k)? {
+</a><a href="#h2-6-9" id="h2-6-9" class="i">+                    Key::Index(_, _, Some(pk)) =&gt; pk.into_owned(),
+</a><a href="#h2-6-10" id="h2-6-10" class="i">+                    _ =&gt; return Err(Error::Internal(&quot;Invalid index key&quot;.into())),
+</a><a href="#h2-6-11" id="h2-6-11" class="i">+                };
+</a><a href="#h2-6-12" id="h2-6-12" class="i">+                Ok((value, deserialize(&amp;v)?))
+</a><a href="#h2-6-13" id="h2-6-13" class="i">+            });
+</a> 
+         // FIXME We buffer results here, to avoid dealing with trait lifetimes right now
+         Ok(Box::new(scan.collect::&lt;Vec&lt;Result&lt;(Value, HashSet&lt;Value&gt;)&gt;&gt;&gt;().into_iter()))
+<a href="#h2-7" id="h2-7" class="h">@@ -237,7 +250,7 @@ impl super::Transaction for Transaction {
+</a>         }
+ 
+         table.validate_row(&amp;row, self)?;
+<a href="#h2-7-3" id="h2-7-3" class="d">-        self.txn.set(&amp;Key::Row(&amp;table.name, Some(&amp;id)).encode(), serialize(&amp;row)?)
+</a><a href="#h2-7-4" id="h2-7-4" class="i">+        self.txn.set(&amp;Key::Row(table.name.into(), Some(id.into())).encode(), serialize(&amp;row)?)
+</a>     }
+ }
+ 
+<a href="#h2-8" id="h2-8" class="h">@@ -247,7 +260,7 @@ impl Catalog for Transaction {
+</a>             return Err(Error::Value(format!(&quot;Table {} already exists&quot;, table.name)));
+         }
+         table.validate(self)?;
+<a href="#h2-8-3" id="h2-8-3" class="d">-        self.txn.set(&amp;Key::Table(Some(&amp;table.name)).encode(), serialize(table)?)
+</a><a href="#h2-8-4" id="h2-8-4" class="i">+        self.txn.set(&amp;Key::Table(Some((&amp;table.name).into())).encode(), serialize(table)?)
+</a>     }
+ 
+     fn delete_table(&amp;mut self, table: &amp;str) -&gt; Result&lt;()&gt; {
+<a href="#h2-9" id="h2-9" class="h">@@ -257,11 +270,11 @@ impl Catalog for Transaction {
+</a>         while let Some(row) = scan.next().transpose()? {
+             self.delete(&amp;table.name, &amp;table.get_row_key(&amp;row)?)?
+         }
+<a href="#h2-9-3" id="h2-9-3" class="d">-        self.txn.delete(&amp;Key::Table(Some(&amp;table.name)).encode())
+</a><a href="#h2-9-4" id="h2-9-4" class="i">+        self.txn.delete(&amp;Key::Table(Some(table.name.into())).encode())
+</a>     }
+ 
+     fn read_table(&amp;self, table: &amp;str) -&gt; Result&lt;Option&lt;Table&gt;&gt; {
+<a href="#h2-9-8" id="h2-9-8" class="d">-        self.txn.get(&amp;Key::Table(Some(table)).encode())?.map(|v| deserialize(&amp;v)).transpose()
+</a><a href="#h2-9-9" id="h2-9-9" class="i">+        self.txn.get(&amp;Key::Table(Some(table.into())).encode())?.map(|v| deserialize(&amp;v)).transpose()
+</a>     }
+ 
+     fn scan_tables(&amp;self) -&gt; Result&lt;Tables&gt; {
+<a href="#h2-10" id="h2-10" class="h">@@ -275,49 +288,60 @@ impl Catalog for Transaction {
+</a>     }
+ }
+ 
+<a href="#h2-10-3" id="h2-10-3" class="d">-/// Encodes MVCC keys. Options can be None to get a keyspace prefix.
+</a><a href="#h2-10-4" id="h2-10-4" class="i">+/// Encodes SQL keys, using an order-preserving encoding - see kv::encoding for details. Options can
+</a><a href="#h2-10-5" id="h2-10-5" class="i">+/// be None to get a keyspace prefix. We use table and column names directly as identifiers, to
+</a><a href="#h2-10-6" id="h2-10-6" class="i">+/// avoid additional indirection and associated overhead. It is not possible to change names, so
+</a><a href="#h2-10-7" id="h2-10-7" class="i">+/// this is ok. Uses Cows since we want to borrow when encoding but return owned when decoding.
+</a> enum Key&lt;&#39;a&gt; {
+     /// A table schema key for the given table name
+<a href="#h2-10-10" id="h2-10-10" class="d">-    Table(Option&lt;&amp;&#39;a str&gt;),
+</a><a href="#h2-10-11" id="h2-10-11" class="i">+    Table(Option&lt;Cow&lt;&#39;a, str&gt;&gt;),
+</a>     /// A key for an index entry
+<a href="#h2-10-13" id="h2-10-13" class="d">-    Index(&amp;&#39;a str, &amp;&#39;a str, Option&lt;&amp;&#39;a Value&gt;),
+</a><a href="#h2-10-14" id="h2-10-14" class="i">+    Index(Cow&lt;&#39;a, str&gt;, Cow&lt;&#39;a, str&gt;, Option&lt;Cow&lt;&#39;a, Value&gt;&gt;),
+</a>     /// A key for a row identified by table name and row primary key
+<a href="#h2-10-16" id="h2-10-16" class="d">-    Row(&amp;&#39;a str, Option&lt;&amp;&#39;a Value&gt;),
+</a><a href="#h2-10-17" id="h2-10-17" class="i">+    Row(Cow&lt;&#39;a, str&gt;, Option&lt;Cow&lt;&#39;a, Value&gt;&gt;),
+</a> }
+ 
+ impl&lt;&#39;a&gt; Key&lt;&#39;a&gt; {
+     /// Encodes the key as a byte vector
+     fn encode(self) -&gt; Vec&lt;u8&gt; {
+<a href="#h2-10-23" id="h2-10-23" class="i">+        use kv::encoding::*;
+</a>         match self {
+<a href="#h2-10-25" id="h2-10-25" class="d">-            Self::Table(name) =&gt; [vec![0x01], name.unwrap_or(&quot;&quot;).as_bytes().to_vec()].concat(),
+</a><a href="#h2-10-26" id="h2-10-26" class="d">-            Self::Index(table, column, value) =&gt; [
+</a><a href="#h2-10-27" id="h2-10-27" class="d">-                vec![0x02],
+</a><a href="#h2-10-28" id="h2-10-28" class="d">-                table.as_bytes().to_vec(),
+</a><a href="#h2-10-29" id="h2-10-29" class="d">-                vec![0x00],
+</a><a href="#h2-10-30" id="h2-10-30" class="d">-                column.as_bytes().to_vec(),
+</a><a href="#h2-10-31" id="h2-10-31" class="d">-                vec![0x00],
+</a><a href="#h2-10-32" id="h2-10-32" class="d">-                value.map_or_else(Vec::new, Self::encode_value),
+</a><a href="#h2-10-33" id="h2-10-33" class="d">-            ]
+</a><a href="#h2-10-34" id="h2-10-34" class="d">-            .concat(),
+</a><a href="#h2-10-35" id="h2-10-35" class="d">-            Self::Row(table, pk) =&gt; [
+</a><a href="#h2-10-36" id="h2-10-36" class="d">-                vec![0x03],
+</a><a href="#h2-10-37" id="h2-10-37" class="d">-                table.as_bytes().to_vec(),
+</a><a href="#h2-10-38" id="h2-10-38" class="d">-                vec![0x00],
+</a><a href="#h2-10-39" id="h2-10-39" class="d">-                pk.map_or_else(Vec::new, Self::encode_value),
+</a><a href="#h2-10-40" id="h2-10-40" class="i">+            Self::Table(None) =&gt; vec![0x01],
+</a><a href="#h2-10-41" id="h2-10-41" class="i">+            Self::Table(Some(name)) =&gt; [&amp;[0x01][..], &amp;encode_string(&amp;name)].concat(),
+</a><a href="#h2-10-42" id="h2-10-42" class="i">+            Self::Index(table, column, None) =&gt; {
+</a><a href="#h2-10-43" id="h2-10-43" class="i">+                [&amp;[0x02][..], &amp;encode_string(&amp;table), &amp;encode_string(&amp;column)].concat()
+</a><a href="#h2-10-44" id="h2-10-44" class="i">+            }
+</a><a href="#h2-10-45" id="h2-10-45" class="i">+            Self::Index(table, column, Some(value)) =&gt; [
+</a><a href="#h2-10-46" id="h2-10-46" class="i">+                &amp;[0x02][..],
+</a><a href="#h2-10-47" id="h2-10-47" class="i">+                &amp;encode_string(&amp;table),
+</a><a href="#h2-10-48" id="h2-10-48" class="i">+                &amp;encode_string(&amp;column),
+</a><a href="#h2-10-49" id="h2-10-49" class="i">+                &amp;encode_value(&amp;value),
+</a>             ]
+             .concat(),
+<a href="#h2-10-52" id="h2-10-52" class="i">+            Self::Row(table, None) =&gt; [&amp;[0x03][..], &amp;encode_string(&amp;table)].concat(),
+</a><a href="#h2-10-53" id="h2-10-53" class="i">+            Self::Row(table, Some(pk)) =&gt; {
+</a><a href="#h2-10-54" id="h2-10-54" class="i">+                [&amp;[0x03][..], &amp;encode_string(&amp;table), &amp;encode_value(&amp;pk)].concat()
+</a><a href="#h2-10-55" id="h2-10-55" class="i">+            }
+</a>         }
+     }
+ 
+<a href="#h2-10-59" id="h2-10-59" class="d">-    /// Encodes a value as a byte vector
+</a><a href="#h2-10-60" id="h2-10-60" class="d">-    fn encode_value(value: &amp;Value) -&gt; Vec&lt;u8&gt; {
+</a><a href="#h2-10-61" id="h2-10-61" class="d">-        match value {
+</a><a href="#h2-10-62" id="h2-10-62" class="d">-            Value::Boolean(b) if *b =&gt; vec![0x01],
+</a><a href="#h2-10-63" id="h2-10-63" class="d">-            Value::Boolean(_) =&gt; vec![0x00],
+</a><a href="#h2-10-64" id="h2-10-64" class="d">-            Value::Float(f) =&gt; f.to_be_bytes().to_vec(),
+</a><a href="#h2-10-65" id="h2-10-65" class="d">-            Value::Integer(i) =&gt; i.to_be_bytes().to_vec(),
+</a><a href="#h2-10-66" id="h2-10-66" class="d">-            Value::String(s) =&gt; s.as_bytes().to_vec(),
+</a><a href="#h2-10-67" id="h2-10-67" class="d">-            Value::Null =&gt; vec![],
+</a><a href="#h2-10-68" id="h2-10-68" class="i">+    /// Decodes a key from a byte vector
+</a><a href="#h2-10-69" id="h2-10-69" class="i">+    fn decode(mut bytes: &amp;[u8]) -&gt; Result&lt;Self&gt; {
+</a><a href="#h2-10-70" id="h2-10-70" class="i">+        use kv::encoding::*;
+</a><a href="#h2-10-71" id="h2-10-71" class="i">+        let bytes = &amp;mut bytes;
+</a><a href="#h2-10-72" id="h2-10-72" class="i">+        let key = match take_byte(bytes)? {
+</a><a href="#h2-10-73" id="h2-10-73" class="i">+            0x01 =&gt; Self::Table(Some(take_string(bytes)?.into())),
+</a><a href="#h2-10-74" id="h2-10-74" class="i">+            0x02 =&gt; Self::Index(
+</a><a href="#h2-10-75" id="h2-10-75" class="i">+                take_string(bytes)?.into(),
+</a><a href="#h2-10-76" id="h2-10-76" class="i">+                take_string(bytes)?.into(),
+</a><a href="#h2-10-77" id="h2-10-77" class="i">+                Some(take_value(bytes)?.into()),
+</a><a href="#h2-10-78" id="h2-10-78" class="i">+            ),
+</a><a href="#h2-10-79" id="h2-10-79" class="i">+            0x03 =&gt; Self::Row(take_string(bytes)?.into(), Some(take_value(bytes)?.into())),
+</a><a href="#h2-10-80" id="h2-10-80" class="i">+            b =&gt; return Err(Error::Internal(format!(&quot;Unknown SQL key prefix {:x?}&quot;, b))),
+</a><a href="#h2-10-81" id="h2-10-81" class="i">+        };
+</a><a href="#h2-10-82" id="h2-10-82" class="i">+        if !bytes.is_empty() {
+</a><a href="#h2-10-83" id="h2-10-83" class="i">+            return Err(Error::Internal(&quot;Unexpected data remaining at end of key&quot;.into()));
+</a>         }
+<a href="#h2-10-85" id="h2-10-85" class="i">+        Ok(key)
+</a>     }
+ }
+<b>diff --git a/<a id="h3" href="../file/src/sql/types/mod.rs.html">src/sql/types/mod.rs</a> b/<a href="../file/src/sql/types/mod.rs.html">src/sql/types/mod.rs</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -5,6 +5,7 @@ use crate::error::{Error, Result};
+</a> 
+ use derivative::Derivative;
+ use serde_derive::{Deserialize, Serialize};
+<a href="#h3-0-3" id="h3-0-3" class="i">+use std::borrow::Cow;
+</a> use std::cmp::Ordering;
+ use std::hash::{Hash, Hasher};
+ 
+<a href="#h3-1" id="h3-1" class="h">@@ -54,6 +55,18 @@ impl Hash for Value {
+</a>     }
+ }
+ 
+<a href="#h3-1-3" id="h3-1-3" class="i">+impl&lt;&#39;a&gt; Into&lt;Cow&lt;&#39;a, Value&gt;&gt; for Value {
+</a><a href="#h3-1-4" id="h3-1-4" class="i">+    fn into(self) -&gt; Cow&lt;&#39;a, Value&gt; {
+</a><a href="#h3-1-5" id="h3-1-5" class="i">+        Cow::Owned(self)
+</a><a href="#h3-1-6" id="h3-1-6" class="i">+    }
+</a><a href="#h3-1-7" id="h3-1-7" class="i">+}
+</a><a href="#h3-1-8" id="h3-1-8" class="i">+
+</a><a href="#h3-1-9" id="h3-1-9" class="i">+impl&lt;&#39;a&gt; Into&lt;Cow&lt;&#39;a, Value&gt;&gt; for &amp;&#39;a Value {
+</a><a href="#h3-1-10" id="h3-1-10" class="i">+    fn into(self) -&gt; Cow&lt;&#39;a, Value&gt; {
+</a><a href="#h3-1-11" id="h3-1-11" class="i">+        Cow::Borrowed(self)
+</a><a href="#h3-1-12" id="h3-1-12" class="i">+    }
+</a><a href="#h3-1-13" id="h3-1-13" class="i">+}
+</a><a href="#h3-1-14" id="h3-1-14" class="i">+
+</a> impl Value {
+     /// Returns the value&#39;s datatype, or None for null values
+     pub fn datatype(&amp;self) -&gt; Option&lt;DataType&gt; {
+<b>diff --git a/<a id="h4" href="../file/src/storage/kv/encoding.rs.html">src/storage/kv/encoding.rs</a> b/<a href="../file/src/storage/kv/encoding.rs.html">src/storage/kv/encoding.rs</a></b>
+<a href="#h4-0" id="h4-0" class="h">@@ -0,0 +1,504 @@
+</a><a href="#h4-0-0" id="h4-0-0" class="i">+//! Order-preserving encodings for use in keys.
+</a><a href="#h4-0-1" id="h4-0-1" class="i">+//!
+</a><a href="#h4-0-2" id="h4-0-2" class="i">+//! bool:    0x00 for false, 0x01 for true.
+</a><a href="#h4-0-3" id="h4-0-3" class="i">+//! Vec&lt;u8&gt;: 0x00 is escaped with 0x00 0xff, terminated with 0x00 0x00.
+</a><a href="#h4-0-4" id="h4-0-4" class="i">+//! String:  Like Vec&lt;u8&gt;.
+</a><a href="#h4-0-5" id="h4-0-5" class="i">+//! u64:     Big-endian binary representation.
+</a><a href="#h4-0-6" id="h4-0-6" class="i">+//! i64:     Big-endian binary representation, with sign bit flipped.
+</a><a href="#h4-0-7" id="h4-0-7" class="i">+//! f64:     Big-endian binary representation, with sign bit flipped if +, all flipped if -.
+</a><a href="#h4-0-8" id="h4-0-8" class="i">+//! Value:   Like above, with type prefix 0x00=Null 0x01=Boolean 0x02=Float 0x03=Integer 0x04=String
+</a><a href="#h4-0-9" id="h4-0-9" class="i">+
+</a><a href="#h4-0-10" id="h4-0-10" class="i">+use crate::error::{Error, Result};
+</a><a href="#h4-0-11" id="h4-0-11" class="i">+use crate::sql::types::Value;
+</a><a href="#h4-0-12" id="h4-0-12" class="i">+
+</a><a href="#h4-0-13" id="h4-0-13" class="i">+use std::convert::TryInto;
+</a><a href="#h4-0-14" id="h4-0-14" class="i">+
+</a><a href="#h4-0-15" id="h4-0-15" class="i">+/// Encodes a boolean, using 0x00 for false and 0x01 for true.
+</a><a href="#h4-0-16" id="h4-0-16" class="i">+pub fn encode_boolean(bool: bool) -&gt; u8 {
+</a><a href="#h4-0-17" id="h4-0-17" class="i">+    if bool {
+</a><a href="#h4-0-18" id="h4-0-18" class="i">+        0x01
+</a><a href="#h4-0-19" id="h4-0-19" class="i">+    } else {
+</a><a href="#h4-0-20" id="h4-0-20" class="i">+        0x00
+</a><a href="#h4-0-21" id="h4-0-21" class="i">+    }
+</a><a href="#h4-0-22" id="h4-0-22" class="i">+}
+</a><a href="#h4-0-23" id="h4-0-23" class="i">+
+</a><a href="#h4-0-24" id="h4-0-24" class="i">+/// Decodes a boolean. See encode_boolean() for format.
+</a><a href="#h4-0-25" id="h4-0-25" class="i">+pub fn decode_boolean(byte: u8) -&gt; Result&lt;bool&gt; {
+</a><a href="#h4-0-26" id="h4-0-26" class="i">+    match byte {
+</a><a href="#h4-0-27" id="h4-0-27" class="i">+        0x00 =&gt; Ok(false),
+</a><a href="#h4-0-28" id="h4-0-28" class="i">+        0x01 =&gt; Ok(true),
+</a><a href="#h4-0-29" id="h4-0-29" class="i">+        b =&gt; Err(Error::Internal(format!(&quot;Invalid boolean value {:?}&quot;, b))),
+</a><a href="#h4-0-30" id="h4-0-30" class="i">+    }
+</a><a href="#h4-0-31" id="h4-0-31" class="i">+}
+</a><a href="#h4-0-32" id="h4-0-32" class="i">+
+</a><a href="#h4-0-33" id="h4-0-33" class="i">+/// Decodes a boolean from a slice and shrinks the slice.
+</a><a href="#h4-0-34" id="h4-0-34" class="i">+pub fn take_boolean(bytes: &amp;mut &amp;[u8]) -&gt; Result&lt;bool&gt; {
+</a><a href="#h4-0-35" id="h4-0-35" class="i">+    take_byte(bytes).and_then(decode_boolean)
+</a><a href="#h4-0-36" id="h4-0-36" class="i">+}
+</a><a href="#h4-0-37" id="h4-0-37" class="i">+
+</a><a href="#h4-0-38" id="h4-0-38" class="i">+/// Encodes a byte vector. 0x00 is escaped as 0x00 0xff, and 0x00 0x00 is used as a terminator.
+</a><a href="#h4-0-39" id="h4-0-39" class="i">+/// See: https://activesphere.com/blog/2018/08/17/order-preserving-serialization
+</a><a href="#h4-0-40" id="h4-0-40" class="i">+pub fn encode_bytes(bytes: &amp;[u8]) -&gt; Vec&lt;u8&gt; {
+</a><a href="#h4-0-41" id="h4-0-41" class="i">+    // flat_map() obscures Iterator.size_hint(), so we explicitly allocate.
+</a><a href="#h4-0-42" id="h4-0-42" class="i">+    // See also: https://github.com/rust-lang/rust/issues/45840
+</a><a href="#h4-0-43" id="h4-0-43" class="i">+    let mut encoded = Vec::with_capacity(bytes.len() + 2);
+</a><a href="#h4-0-44" id="h4-0-44" class="i">+    encoded.extend(
+</a><a href="#h4-0-45" id="h4-0-45" class="i">+        bytes
+</a><a href="#h4-0-46" id="h4-0-46" class="i">+            .iter()
+</a><a href="#h4-0-47" id="h4-0-47" class="i">+            .flat_map(|b| match b {
+</a><a href="#h4-0-48" id="h4-0-48" class="i">+                0x00 =&gt; vec![0x00, 0xff],
+</a><a href="#h4-0-49" id="h4-0-49" class="i">+                b =&gt; vec![*b],
+</a><a href="#h4-0-50" id="h4-0-50" class="i">+            })
+</a><a href="#h4-0-51" id="h4-0-51" class="i">+            .chain(vec![0x00, 0x00]),
+</a><a href="#h4-0-52" id="h4-0-52" class="i">+    );
+</a><a href="#h4-0-53" id="h4-0-53" class="i">+    encoded
+</a><a href="#h4-0-54" id="h4-0-54" class="i">+}
+</a><a href="#h4-0-55" id="h4-0-55" class="i">+
+</a><a href="#h4-0-56" id="h4-0-56" class="i">+/// Takes a single byte from a slice and shortens it, without any escaping.
+</a><a href="#h4-0-57" id="h4-0-57" class="i">+pub fn take_byte(bytes: &amp;mut &amp;[u8]) -&gt; Result&lt;u8&gt; {
+</a><a href="#h4-0-58" id="h4-0-58" class="i">+    if bytes.is_empty() {
+</a><a href="#h4-0-59" id="h4-0-59" class="i">+        return Err(Error::Internal(&quot;Unexpected end of bytes&quot;.into()));
+</a><a href="#h4-0-60" id="h4-0-60" class="i">+    }
+</a><a href="#h4-0-61" id="h4-0-61" class="i">+    let b = bytes[0];
+</a><a href="#h4-0-62" id="h4-0-62" class="i">+    *bytes = &amp;bytes[1..];
+</a><a href="#h4-0-63" id="h4-0-63" class="i">+    Ok(b)
+</a><a href="#h4-0-64" id="h4-0-64" class="i">+}
+</a><a href="#h4-0-65" id="h4-0-65" class="i">+
+</a><a href="#h4-0-66" id="h4-0-66" class="i">+/// Decodes a byte vector from a slice and shortens the slice. See encode_bytes() for format.
+</a><a href="#h4-0-67" id="h4-0-67" class="i">+pub fn take_bytes(bytes: &amp;mut &amp;[u8]) -&gt; Result&lt;Vec&lt;u8&gt;&gt; {
+</a><a href="#h4-0-68" id="h4-0-68" class="i">+    // Since we&#39;re generally decoding keys, and these are short, we begin allocating at half of
+</a><a href="#h4-0-69" id="h4-0-69" class="i">+    // the byte size.
+</a><a href="#h4-0-70" id="h4-0-70" class="i">+    let mut decoded = Vec::with_capacity(bytes.len() / 2);
+</a><a href="#h4-0-71" id="h4-0-71" class="i">+    let mut iter = bytes.iter().enumerate();
+</a><a href="#h4-0-72" id="h4-0-72" class="i">+    let taken = loop {
+</a><a href="#h4-0-73" id="h4-0-73" class="i">+        match iter.next().map(|(_, b)| b) {
+</a><a href="#h4-0-74" id="h4-0-74" class="i">+            Some(0x00) =&gt; match iter.next() {
+</a><a href="#h4-0-75" id="h4-0-75" class="i">+                Some((i, 0x00)) =&gt; break i + 1,        // 0x00 0x00 is terminator
+</a><a href="#h4-0-76" id="h4-0-76" class="i">+                Some((_, 0xff)) =&gt; decoded.push(0x00), // 0x00 0xff is escape sequence for 0x00
+</a><a href="#h4-0-77" id="h4-0-77" class="i">+                Some((_, b)) =&gt; return Err(Error::Value(format!(&quot;Invalid byte escape {:?}&quot;, b))),
+</a><a href="#h4-0-78" id="h4-0-78" class="i">+                None =&gt; return Err(Error::Value(&quot;Unexpected end of bytes&quot;.into())),
+</a><a href="#h4-0-79" id="h4-0-79" class="i">+            },
+</a><a href="#h4-0-80" id="h4-0-80" class="i">+            Some(b) =&gt; decoded.push(*b),
+</a><a href="#h4-0-81" id="h4-0-81" class="i">+            None =&gt; return Err(Error::Value(&quot;Unexpected end of bytes&quot;.into())),
+</a><a href="#h4-0-82" id="h4-0-82" class="i">+        }
+</a><a href="#h4-0-83" id="h4-0-83" class="i">+    };
+</a><a href="#h4-0-84" id="h4-0-84" class="i">+    *bytes = &amp;bytes[taken..];
+</a><a href="#h4-0-85" id="h4-0-85" class="i">+    Ok(decoded)
+</a><a href="#h4-0-86" id="h4-0-86" class="i">+}
+</a><a href="#h4-0-87" id="h4-0-87" class="i">+
+</a><a href="#h4-0-88" id="h4-0-88" class="i">+/// Encodes an f64. Uses big-endian form, and flip sign bit to 1 if 0, otherwise flip all bits.
+</a><a href="#h4-0-89" id="h4-0-89" class="i">+/// This preserves the natural numerical ordering, with NaN at the end.
+</a><a href="#h4-0-90" id="h4-0-90" class="i">+pub fn encode_f64(n: f64) -&gt; [u8; 8] {
+</a><a href="#h4-0-91" id="h4-0-91" class="i">+    let mut bytes = n.to_be_bytes();
+</a><a href="#h4-0-92" id="h4-0-92" class="i">+    if bytes[0] &gt;&gt; 7 &amp; 1 == 0 {
+</a><a href="#h4-0-93" id="h4-0-93" class="i">+        bytes[0] ^= 1 &lt;&lt; 7;
+</a><a href="#h4-0-94" id="h4-0-94" class="i">+    } else {
+</a><a href="#h4-0-95" id="h4-0-95" class="i">+        bytes.iter_mut().for_each(|b| *b = !*b);
+</a><a href="#h4-0-96" id="h4-0-96" class="i">+    }
+</a><a href="#h4-0-97" id="h4-0-97" class="i">+    bytes
+</a><a href="#h4-0-98" id="h4-0-98" class="i">+}
+</a><a href="#h4-0-99" id="h4-0-99" class="i">+
+</a><a href="#h4-0-100" id="h4-0-100" class="i">+/// Decodes an f64. See encode_f64() for format.
+</a><a href="#h4-0-101" id="h4-0-101" class="i">+pub fn decode_f64(mut bytes: [u8; 8]) -&gt; f64 {
+</a><a href="#h4-0-102" id="h4-0-102" class="i">+    if bytes[0] &gt;&gt; 7 &amp; 1 == 1 {
+</a><a href="#h4-0-103" id="h4-0-103" class="i">+        bytes[0] ^= 1 &lt;&lt; 7;
+</a><a href="#h4-0-104" id="h4-0-104" class="i">+    } else {
+</a><a href="#h4-0-105" id="h4-0-105" class="i">+        bytes.iter_mut().for_each(|b| *b = !*b);
+</a><a href="#h4-0-106" id="h4-0-106" class="i">+    }
+</a><a href="#h4-0-107" id="h4-0-107" class="i">+    f64::from_be_bytes(bytes)
+</a><a href="#h4-0-108" id="h4-0-108" class="i">+}
+</a><a href="#h4-0-109" id="h4-0-109" class="i">+
+</a><a href="#h4-0-110" id="h4-0-110" class="i">+/// Decodes an f64 from a slice and shrinks the slice.
+</a><a href="#h4-0-111" id="h4-0-111" class="i">+pub fn take_f64(bytes: &amp;mut &amp;[u8]) -&gt; Result&lt;f64&gt; {
+</a><a href="#h4-0-112" id="h4-0-112" class="i">+    if bytes.len() &lt; 8 {
+</a><a href="#h4-0-113" id="h4-0-113" class="i">+        return Err(Error::Internal(format!(&quot;Unable to decode f64 from {} bytes&quot;, bytes.len())));
+</a><a href="#h4-0-114" id="h4-0-114" class="i">+    }
+</a><a href="#h4-0-115" id="h4-0-115" class="i">+    let n = decode_f64(bytes[0..8].try_into()?);
+</a><a href="#h4-0-116" id="h4-0-116" class="i">+    *bytes = &amp;bytes[8..];
+</a><a href="#h4-0-117" id="h4-0-117" class="i">+    Ok(n)
+</a><a href="#h4-0-118" id="h4-0-118" class="i">+}
+</a><a href="#h4-0-119" id="h4-0-119" class="i">+
+</a><a href="#h4-0-120" id="h4-0-120" class="i">+/// Encodes an i64. Uses big-endian form, with the first bit flipped to order negative/positive
+</a><a href="#h4-0-121" id="h4-0-121" class="i">+/// numbers correctly.
+</a><a href="#h4-0-122" id="h4-0-122" class="i">+pub fn encode_i64(n: i64) -&gt; [u8; 8] {
+</a><a href="#h4-0-123" id="h4-0-123" class="i">+    let mut bytes = n.to_be_bytes();
+</a><a href="#h4-0-124" id="h4-0-124" class="i">+    bytes[0] ^= 1 &lt;&lt; 7; // Flip left-most bit in the first byte, i.e. sign bit.
+</a><a href="#h4-0-125" id="h4-0-125" class="i">+    bytes
+</a><a href="#h4-0-126" id="h4-0-126" class="i">+}
+</a><a href="#h4-0-127" id="h4-0-127" class="i">+
+</a><a href="#h4-0-128" id="h4-0-128" class="i">+/// Decodes an i64. See encode_i64() for format.
+</a><a href="#h4-0-129" id="h4-0-129" class="i">+pub fn decode_i64(mut bytes: [u8; 8]) -&gt; i64 {
+</a><a href="#h4-0-130" id="h4-0-130" class="i">+    bytes[0] ^= 1 &lt;&lt; 7;
+</a><a href="#h4-0-131" id="h4-0-131" class="i">+    i64::from_be_bytes(bytes)
+</a><a href="#h4-0-132" id="h4-0-132" class="i">+}
+</a><a href="#h4-0-133" id="h4-0-133" class="i">+
+</a><a href="#h4-0-134" id="h4-0-134" class="i">+/// Decodes a i64 from a slice and shrinks the slice.
+</a><a href="#h4-0-135" id="h4-0-135" class="i">+pub fn take_i64(bytes: &amp;mut &amp;[u8]) -&gt; Result&lt;i64&gt; {
+</a><a href="#h4-0-136" id="h4-0-136" class="i">+    if bytes.len() &lt; 8 {
+</a><a href="#h4-0-137" id="h4-0-137" class="i">+        return Err(Error::Internal(format!(&quot;Unable to decode i64 from {} bytes&quot;, bytes.len())));
+</a><a href="#h4-0-138" id="h4-0-138" class="i">+    }
+</a><a href="#h4-0-139" id="h4-0-139" class="i">+    let n = decode_i64(bytes[0..8].try_into()?);
+</a><a href="#h4-0-140" id="h4-0-140" class="i">+    *bytes = &amp;bytes[8..];
+</a><a href="#h4-0-141" id="h4-0-141" class="i">+    Ok(n)
+</a><a href="#h4-0-142" id="h4-0-142" class="i">+}
+</a><a href="#h4-0-143" id="h4-0-143" class="i">+
+</a><a href="#h4-0-144" id="h4-0-144" class="i">+/// Encodes a string. Simply converts to a byte vector and encodes that.
+</a><a href="#h4-0-145" id="h4-0-145" class="i">+pub fn encode_string(string: &amp;str) -&gt; Vec&lt;u8&gt; {
+</a><a href="#h4-0-146" id="h4-0-146" class="i">+    encode_bytes(string.as_bytes())
+</a><a href="#h4-0-147" id="h4-0-147" class="i">+}
+</a><a href="#h4-0-148" id="h4-0-148" class="i">+
+</a><a href="#h4-0-149" id="h4-0-149" class="i">+/// Decodes a string from a slice and shrinks the slice.
+</a><a href="#h4-0-150" id="h4-0-150" class="i">+pub fn take_string(bytes: &amp;mut &amp;[u8]) -&gt; Result&lt;String&gt; {
+</a><a href="#h4-0-151" id="h4-0-151" class="i">+    Ok(String::from_utf8(take_bytes(bytes)?)?)
+</a><a href="#h4-0-152" id="h4-0-152" class="i">+}
+</a><a href="#h4-0-153" id="h4-0-153" class="i">+
+</a><a href="#h4-0-154" id="h4-0-154" class="i">+/// Encodes a u64. Simply uses the big-endian form, which preserves order. Does not attempt to
+</a><a href="#h4-0-155" id="h4-0-155" class="i">+/// compress it, for now.
+</a><a href="#h4-0-156" id="h4-0-156" class="i">+pub fn encode_u64(n: u64) -&gt; [u8; 8] {
+</a><a href="#h4-0-157" id="h4-0-157" class="i">+    n.to_be_bytes()
+</a><a href="#h4-0-158" id="h4-0-158" class="i">+}
+</a><a href="#h4-0-159" id="h4-0-159" class="i">+
+</a><a href="#h4-0-160" id="h4-0-160" class="i">+/// Decodes a u64. See encode_u64() for format.
+</a><a href="#h4-0-161" id="h4-0-161" class="i">+pub fn decode_u64(bytes: [u8; 8]) -&gt; u64 {
+</a><a href="#h4-0-162" id="h4-0-162" class="i">+    u64::from_be_bytes(bytes)
+</a><a href="#h4-0-163" id="h4-0-163" class="i">+}
+</a><a href="#h4-0-164" id="h4-0-164" class="i">+
+</a><a href="#h4-0-165" id="h4-0-165" class="i">+/// Decodes a u64 from a slice and shrinks the slice.
+</a><a href="#h4-0-166" id="h4-0-166" class="i">+pub fn take_u64(bytes: &amp;mut &amp;[u8]) -&gt; Result&lt;u64&gt; {
+</a><a href="#h4-0-167" id="h4-0-167" class="i">+    if bytes.len() &lt; 8 {
+</a><a href="#h4-0-168" id="h4-0-168" class="i">+        return Err(Error::Internal(format!(&quot;Unable to decode u64 from {} bytes&quot;, bytes.len())));
+</a><a href="#h4-0-169" id="h4-0-169" class="i">+    }
+</a><a href="#h4-0-170" id="h4-0-170" class="i">+    let n = decode_u64(bytes[0..8].try_into()?);
+</a><a href="#h4-0-171" id="h4-0-171" class="i">+    *bytes = &amp;bytes[8..];
+</a><a href="#h4-0-172" id="h4-0-172" class="i">+    Ok(n)
+</a><a href="#h4-0-173" id="h4-0-173" class="i">+}
+</a><a href="#h4-0-174" id="h4-0-174" class="i">+
+</a><a href="#h4-0-175" id="h4-0-175" class="i">+/// Encodes a value, using the first byte for the value type and delegating to other encoders.
+</a><a href="#h4-0-176" id="h4-0-176" class="i">+pub fn encode_value(value: &amp;Value) -&gt; Vec&lt;u8&gt; {
+</a><a href="#h4-0-177" id="h4-0-177" class="i">+    match value {
+</a><a href="#h4-0-178" id="h4-0-178" class="i">+        Value::Null =&gt; vec![0x00],
+</a><a href="#h4-0-179" id="h4-0-179" class="i">+        Value::Boolean(b) =&gt; vec![0x01, encode_boolean(*b)],
+</a><a href="#h4-0-180" id="h4-0-180" class="i">+        Value::Float(f) =&gt; [&amp;[0x02][..], &amp;encode_f64(*f)].concat(),
+</a><a href="#h4-0-181" id="h4-0-181" class="i">+        Value::Integer(i) =&gt; [&amp;[0x03][..], &amp;encode_i64(*i)].concat(),
+</a><a href="#h4-0-182" id="h4-0-182" class="i">+        Value::String(s) =&gt; [&amp;[0x04][..], &amp;encode_string(s)].concat(),
+</a><a href="#h4-0-183" id="h4-0-183" class="i">+    }
+</a><a href="#h4-0-184" id="h4-0-184" class="i">+}
+</a><a href="#h4-0-185" id="h4-0-185" class="i">+
+</a><a href="#h4-0-186" id="h4-0-186" class="i">+/// Decodes a value from a slice and shrinks the slice.
+</a><a href="#h4-0-187" id="h4-0-187" class="i">+pub fn take_value(bytes: &amp;mut &amp;[u8]) -&gt; Result&lt;Value&gt; {
+</a><a href="#h4-0-188" id="h4-0-188" class="i">+    match take_byte(bytes)? {
+</a><a href="#h4-0-189" id="h4-0-189" class="i">+        0x00 =&gt; Ok(Value::Null),
+</a><a href="#h4-0-190" id="h4-0-190" class="i">+        0x01 =&gt; Ok(Value::Boolean(take_boolean(bytes)?)),
+</a><a href="#h4-0-191" id="h4-0-191" class="i">+        0x02 =&gt; Ok(Value::Float(take_f64(bytes)?)),
+</a><a href="#h4-0-192" id="h4-0-192" class="i">+        0x03 =&gt; Ok(Value::Integer(take_i64(bytes)?)),
+</a><a href="#h4-0-193" id="h4-0-193" class="i">+        0x04 =&gt; Ok(Value::String(take_string(bytes)?)),
+</a><a href="#h4-0-194" id="h4-0-194" class="i">+        n =&gt; Err(Error::Internal(format!(&quot;Invalid value prefix {:x?}&quot;, n))),
+</a><a href="#h4-0-195" id="h4-0-195" class="i">+    }
+</a><a href="#h4-0-196" id="h4-0-196" class="i">+}
+</a><a href="#h4-0-197" id="h4-0-197" class="i">+
+</a><a href="#h4-0-198" id="h4-0-198" class="i">+#[cfg(test)]
+</a><a href="#h4-0-199" id="h4-0-199" class="i">+mod tests {
+</a><a href="#h4-0-200" id="h4-0-200" class="i">+    use super::*;
+</a><a href="#h4-0-201" id="h4-0-201" class="i">+    use pretty_assertions::assert_eq;
+</a><a href="#h4-0-202" id="h4-0-202" class="i">+
+</a><a href="#h4-0-203" id="h4-0-203" class="i">+    #[test]
+</a><a href="#h4-0-204" id="h4-0-204" class="i">+    fn encode_boolean() -&gt; Result&lt;()&gt; {
+</a><a href="#h4-0-205" id="h4-0-205" class="i">+        use super::encode_boolean;
+</a><a href="#h4-0-206" id="h4-0-206" class="i">+        assert_eq!(encode_boolean(false), 0x00);
+</a><a href="#h4-0-207" id="h4-0-207" class="i">+        assert_eq!(encode_boolean(true), 0x01);
+</a><a href="#h4-0-208" id="h4-0-208" class="i">+        Ok(())
+</a><a href="#h4-0-209" id="h4-0-209" class="i">+    }
+</a><a href="#h4-0-210" id="h4-0-210" class="i">+
+</a><a href="#h4-0-211" id="h4-0-211" class="i">+    #[test]
+</a><a href="#h4-0-212" id="h4-0-212" class="i">+    fn decode_boolean() -&gt; Result&lt;()&gt; {
+</a><a href="#h4-0-213" id="h4-0-213" class="i">+        use super::decode_boolean;
+</a><a href="#h4-0-214" id="h4-0-214" class="i">+        assert_eq!(decode_boolean(0x00)?, false);
+</a><a href="#h4-0-215" id="h4-0-215" class="i">+        assert_eq!(decode_boolean(0x01)?, true);
+</a><a href="#h4-0-216" id="h4-0-216" class="i">+        assert!(decode_boolean(0x02).is_err());
+</a><a href="#h4-0-217" id="h4-0-217" class="i">+        Ok(())
+</a><a href="#h4-0-218" id="h4-0-218" class="i">+    }
+</a><a href="#h4-0-219" id="h4-0-219" class="i">+
+</a><a href="#h4-0-220" id="h4-0-220" class="i">+    #[test]
+</a><a href="#h4-0-221" id="h4-0-221" class="i">+    fn take_boolean() -&gt; Result&lt;()&gt; {
+</a><a href="#h4-0-222" id="h4-0-222" class="i">+        use super::take_boolean;
+</a><a href="#h4-0-223" id="h4-0-223" class="i">+        let mut bytes: &amp;[u8] = &amp;[0x01, 0xaf];
+</a><a href="#h4-0-224" id="h4-0-224" class="i">+        assert_eq!(take_boolean(&amp;mut bytes)?, true);
+</a><a href="#h4-0-225" id="h4-0-225" class="i">+        assert_eq!(bytes, &amp;[0xaf]);
+</a><a href="#h4-0-226" id="h4-0-226" class="i">+        Ok(())
+</a><a href="#h4-0-227" id="h4-0-227" class="i">+    }
+</a><a href="#h4-0-228" id="h4-0-228" class="i">+
+</a><a href="#h4-0-229" id="h4-0-229" class="i">+    #[test]
+</a><a href="#h4-0-230" id="h4-0-230" class="i">+    fn encode_bytes() -&gt; Result&lt;()&gt; {
+</a><a href="#h4-0-231" id="h4-0-231" class="i">+        use super::encode_bytes;
+</a><a href="#h4-0-232" id="h4-0-232" class="i">+        assert_eq!(encode_bytes(&amp;[]), vec![0x00, 0x00]);
+</a><a href="#h4-0-233" id="h4-0-233" class="i">+        assert_eq!(encode_bytes(&amp;[0x01, 0x02, 0x03]), vec![0x01, 0x02, 0x03, 0x00, 0x00]);
+</a><a href="#h4-0-234" id="h4-0-234" class="i">+        assert_eq!(encode_bytes(&amp;[0x00, 0x01, 0x02]), vec![0x00, 0xff, 0x01, 0x02, 0x00, 0x00]);
+</a><a href="#h4-0-235" id="h4-0-235" class="i">+        Ok(())
+</a><a href="#h4-0-236" id="h4-0-236" class="i">+    }
+</a><a href="#h4-0-237" id="h4-0-237" class="i">+
+</a><a href="#h4-0-238" id="h4-0-238" class="i">+    #[test]
+</a><a href="#h4-0-239" id="h4-0-239" class="i">+    fn take_bytes() -&gt; Result&lt;()&gt; {
+</a><a href="#h4-0-240" id="h4-0-240" class="i">+        use super::take_bytes;
+</a><a href="#h4-0-241" id="h4-0-241" class="i">+
+</a><a href="#h4-0-242" id="h4-0-242" class="i">+        let mut bytes: &amp;[u8] = &amp;[];
+</a><a href="#h4-0-243" id="h4-0-243" class="i">+        assert!(take_bytes(&amp;mut bytes).is_err());
+</a><a href="#h4-0-244" id="h4-0-244" class="i">+
+</a><a href="#h4-0-245" id="h4-0-245" class="i">+        let mut bytes: &amp;[u8] = &amp;[0x00, 0x00];
+</a><a href="#h4-0-246" id="h4-0-246" class="i">+        assert_eq!(take_bytes(&amp;mut bytes)?, Vec::&lt;u8&gt;::new());
+</a><a href="#h4-0-247" id="h4-0-247" class="i">+        assert!(bytes.is_empty());
+</a><a href="#h4-0-248" id="h4-0-248" class="i">+
+</a><a href="#h4-0-249" id="h4-0-249" class="i">+        let mut bytes: &amp;[u8] = &amp;[0x01, 0x02, 0x03, 0x00, 0x00, 0xa0, 0xb0];
+</a><a href="#h4-0-250" id="h4-0-250" class="i">+        assert_eq!(take_bytes(&amp;mut bytes)?, &amp;[0x01, 0x02, 0x03]);
+</a><a href="#h4-0-251" id="h4-0-251" class="i">+        assert_eq!(bytes, &amp;[0xa0, 0xb0]);
+</a><a href="#h4-0-252" id="h4-0-252" class="i">+
+</a><a href="#h4-0-253" id="h4-0-253" class="i">+        let mut bytes: &amp;[u8] = &amp;[0x00, 0xff, 0x01, 0x02, 0x00, 0x00];
+</a><a href="#h4-0-254" id="h4-0-254" class="i">+        assert_eq!(take_bytes(&amp;mut bytes)?, &amp;[0x00, 0x01, 0x02]);
+</a><a href="#h4-0-255" id="h4-0-255" class="i">+        assert!(bytes.is_empty());
+</a><a href="#h4-0-256" id="h4-0-256" class="i">+
+</a><a href="#h4-0-257" id="h4-0-257" class="i">+        assert!(take_bytes(&amp;mut &amp;[0x00][..]).is_err());
+</a><a href="#h4-0-258" id="h4-0-258" class="i">+        assert!(take_bytes(&amp;mut &amp;[0x01][..]).is_err());
+</a><a href="#h4-0-259" id="h4-0-259" class="i">+        assert!(take_bytes(&amp;mut &amp;[0x00, 0x01, 0x00, 0x00][..]).is_err());
+</a><a href="#h4-0-260" id="h4-0-260" class="i">+
+</a><a href="#h4-0-261" id="h4-0-261" class="i">+        Ok(())
+</a><a href="#h4-0-262" id="h4-0-262" class="i">+    }
+</a><a href="#h4-0-263" id="h4-0-263" class="i">+
+</a><a href="#h4-0-264" id="h4-0-264" class="i">+    #[test]
+</a><a href="#h4-0-265" id="h4-0-265" class="i">+    fn encode_f64() -&gt; Result&lt;()&gt; {
+</a><a href="#h4-0-266" id="h4-0-266" class="i">+        use super::encode_f64;
+</a><a href="#h4-0-267" id="h4-0-267" class="i">+        use std::f64;
+</a><a href="#h4-0-268" id="h4-0-268" class="i">+        use std::f64::consts::PI;
+</a><a href="#h4-0-269" id="h4-0-269" class="i">+        assert_eq!(encode_f64(f64::NEG_INFINITY), [0x00, 0x0f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff]);
+</a><a href="#h4-0-270" id="h4-0-270" class="i">+        assert_eq!(encode_f64(-PI * 1e100), [0x2b, 0x33, 0x46, 0x0a, 0x3c, 0x0d, 0x14, 0x7b]);
+</a><a href="#h4-0-271" id="h4-0-271" class="i">+        assert_eq!(encode_f64(-PI * 1e2), [0x3f, 0x8c, 0x5d, 0x73, 0xa6, 0x2a, 0xbc, 0xc4]);
+</a><a href="#h4-0-272" id="h4-0-272" class="i">+        assert_eq!(encode_f64(-0_f64), [0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff]);
+</a><a href="#h4-0-273" id="h4-0-273" class="i">+        assert_eq!(encode_f64(0_f64), [0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
+</a><a href="#h4-0-274" id="h4-0-274" class="i">+        assert_eq!(encode_f64(PI), [0xc0, 0x09, 0x21, 0xfb, 0x54, 0x44, 0x2d, 0x18]);
+</a><a href="#h4-0-275" id="h4-0-275" class="i">+        assert_eq!(encode_f64(PI * 1e2), [0xc0, 0x73, 0xa2, 0x8c, 0x59, 0xd5, 0x43, 0x3b]);
+</a><a href="#h4-0-276" id="h4-0-276" class="i">+        assert_eq!(encode_f64(PI * 1e100), [0xd4, 0xcc, 0xb9, 0xf5, 0xc3, 0xf2, 0xeb, 0x84]);
+</a><a href="#h4-0-277" id="h4-0-277" class="i">+        assert_eq!(encode_f64(f64::INFINITY), [0xff, 0xf0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
+</a><a href="#h4-0-278" id="h4-0-278" class="i">+        assert_eq!(encode_f64(f64::NAN), [0xff, 0xf8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
+</a><a href="#h4-0-279" id="h4-0-279" class="i">+        Ok(())
+</a><a href="#h4-0-280" id="h4-0-280" class="i">+    }
+</a><a href="#h4-0-281" id="h4-0-281" class="i">+
+</a><a href="#h4-0-282" id="h4-0-282" class="i">+    #[test]
+</a><a href="#h4-0-283" id="h4-0-283" class="i">+    #[allow(clippy::float_cmp)]
+</a><a href="#h4-0-284" id="h4-0-284" class="i">+    fn decode_f64() -&gt; Result&lt;()&gt; {
+</a><a href="#h4-0-285" id="h4-0-285" class="i">+        use super::{decode_f64, encode_f64};
+</a><a href="#h4-0-286" id="h4-0-286" class="i">+        use std::f64;
+</a><a href="#h4-0-287" id="h4-0-287" class="i">+        use std::f64::consts::PI;
+</a><a href="#h4-0-288" id="h4-0-288" class="i">+        assert_eq!(decode_f64(encode_f64(f64::NEG_INFINITY)), f64::NEG_INFINITY);
+</a><a href="#h4-0-289" id="h4-0-289" class="i">+        assert_eq!(decode_f64(encode_f64(-PI)), -PI);
+</a><a href="#h4-0-290" id="h4-0-290" class="i">+        assert_eq!(decode_f64(encode_f64(-0.0)), -0.0);
+</a><a href="#h4-0-291" id="h4-0-291" class="i">+        assert_eq!(decode_f64(encode_f64(0.0)), 0.0);
+</a><a href="#h4-0-292" id="h4-0-292" class="i">+        assert_eq!(decode_f64(encode_f64(PI)), PI);
+</a><a href="#h4-0-293" id="h4-0-293" class="i">+        assert_eq!(decode_f64(encode_f64(f64::INFINITY)), f64::INFINITY);
+</a><a href="#h4-0-294" id="h4-0-294" class="i">+        assert!(decode_f64(encode_f64(f64::NAN)).is_nan());
+</a><a href="#h4-0-295" id="h4-0-295" class="i">+        Ok(())
+</a><a href="#h4-0-296" id="h4-0-296" class="i">+    }
+</a><a href="#h4-0-297" id="h4-0-297" class="i">+
+</a><a href="#h4-0-298" id="h4-0-298" class="i">+    #[test]
+</a><a href="#h4-0-299" id="h4-0-299" class="i">+    #[allow(clippy::float_cmp)]
+</a><a href="#h4-0-300" id="h4-0-300" class="i">+    fn take_f64() -&gt; Result&lt;()&gt; {
+</a><a href="#h4-0-301" id="h4-0-301" class="i">+        use super::take_f64;
+</a><a href="#h4-0-302" id="h4-0-302" class="i">+
+</a><a href="#h4-0-303" id="h4-0-303" class="i">+        let mut bytes: &amp;[u8] = &amp;[];
+</a><a href="#h4-0-304" id="h4-0-304" class="i">+        assert!(take_f64(&amp;mut bytes).is_err());
+</a><a href="#h4-0-305" id="h4-0-305" class="i">+
+</a><a href="#h4-0-306" id="h4-0-306" class="i">+        let mut bytes: &amp;[u8] = &amp;[0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07];
+</a><a href="#h4-0-307" id="h4-0-307" class="i">+        assert!(take_f64(&amp;mut bytes).is_err());
+</a><a href="#h4-0-308" id="h4-0-308" class="i">+        assert_eq!(bytes.len(), 7);
+</a><a href="#h4-0-309" id="h4-0-309" class="i">+
+</a><a href="#h4-0-310" id="h4-0-310" class="i">+        let mut bytes: &amp;[u8] = &amp;[0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+</a><a href="#h4-0-311" id="h4-0-311" class="i">+        assert_eq!(take_f64(&amp;mut bytes)?, 0.0);
+</a><a href="#h4-0-312" id="h4-0-312" class="i">+        assert!(bytes.is_empty());
+</a><a href="#h4-0-313" id="h4-0-313" class="i">+
+</a><a href="#h4-0-314" id="h4-0-314" class="i">+        let mut bytes: &amp;[u8] = &amp;[0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xaf];
+</a><a href="#h4-0-315" id="h4-0-315" class="i">+        assert_eq!(take_f64(&amp;mut bytes)?, -0.0);
+</a><a href="#h4-0-316" id="h4-0-316" class="i">+        assert_eq!(bytes, &amp;[0xaf]);
+</a><a href="#h4-0-317" id="h4-0-317" class="i">+
+</a><a href="#h4-0-318" id="h4-0-318" class="i">+        Ok(())
+</a><a href="#h4-0-319" id="h4-0-319" class="i">+    }
+</a><a href="#h4-0-320" id="h4-0-320" class="i">+
+</a><a href="#h4-0-321" id="h4-0-321" class="i">+    #[test]
+</a><a href="#h4-0-322" id="h4-0-322" class="i">+    fn encode_i64() -&gt; Result&lt;()&gt; {
+</a><a href="#h4-0-323" id="h4-0-323" class="i">+        use super::encode_i64;
+</a><a href="#h4-0-324" id="h4-0-324" class="i">+        assert_eq!(encode_i64(std::i64::MIN), [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
+</a><a href="#h4-0-325" id="h4-0-325" class="i">+        assert_eq!(encode_i64(-1024), [0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xfc, 0x00]);
+</a><a href="#h4-0-326" id="h4-0-326" class="i">+        assert_eq!(encode_i64(-1), [0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff]);
+</a><a href="#h4-0-327" id="h4-0-327" class="i">+        assert_eq!(encode_i64(0), [0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
+</a><a href="#h4-0-328" id="h4-0-328" class="i">+        assert_eq!(encode_i64(1), [0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01]);
+</a><a href="#h4-0-329" id="h4-0-329" class="i">+        assert_eq!(encode_i64(1024), [0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00]);
+</a><a href="#h4-0-330" id="h4-0-330" class="i">+        assert_eq!(encode_i64(std::i64::MAX), [0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff]);
+</a><a href="#h4-0-331" id="h4-0-331" class="i">+        Ok(())
+</a><a href="#h4-0-332" id="h4-0-332" class="i">+    }
+</a><a href="#h4-0-333" id="h4-0-333" class="i">+
+</a><a href="#h4-0-334" id="h4-0-334" class="i">+    #[test]
+</a><a href="#h4-0-335" id="h4-0-335" class="i">+    fn decode_i64() -&gt; Result&lt;()&gt; {
+</a><a href="#h4-0-336" id="h4-0-336" class="i">+        use super::decode_i64;
+</a><a href="#h4-0-337" id="h4-0-337" class="i">+        assert_eq!(decode_i64([0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]), std::i64::MIN);
+</a><a href="#h4-0-338" id="h4-0-338" class="i">+        assert_eq!(decode_i64([0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xfc, 0x00]), -1024);
+</a><a href="#h4-0-339" id="h4-0-339" class="i">+        assert_eq!(decode_i64([0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff]), -1);
+</a><a href="#h4-0-340" id="h4-0-340" class="i">+        assert_eq!(decode_i64([0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]), 0);
+</a><a href="#h4-0-341" id="h4-0-341" class="i">+        assert_eq!(decode_i64([0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01]), 1);
+</a><a href="#h4-0-342" id="h4-0-342" class="i">+        assert_eq!(decode_i64([0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00]), 1024);
+</a><a href="#h4-0-343" id="h4-0-343" class="i">+        assert_eq!(decode_i64([0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff]), std::i64::MAX);
+</a><a href="#h4-0-344" id="h4-0-344" class="i">+        Ok(())
+</a><a href="#h4-0-345" id="h4-0-345" class="i">+    }
+</a><a href="#h4-0-346" id="h4-0-346" class="i">+
+</a><a href="#h4-0-347" id="h4-0-347" class="i">+    #[test]
+</a><a href="#h4-0-348" id="h4-0-348" class="i">+    fn take_i64() -&gt; Result&lt;()&gt; {
+</a><a href="#h4-0-349" id="h4-0-349" class="i">+        use super::take_i64;
+</a><a href="#h4-0-350" id="h4-0-350" class="i">+
+</a><a href="#h4-0-351" id="h4-0-351" class="i">+        let mut bytes: &amp;[u8] = &amp;[];
+</a><a href="#h4-0-352" id="h4-0-352" class="i">+        assert!(take_i64(&amp;mut bytes).is_err());
+</a><a href="#h4-0-353" id="h4-0-353" class="i">+
+</a><a href="#h4-0-354" id="h4-0-354" class="i">+        let mut bytes: &amp;[u8] = &amp;[0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07];
+</a><a href="#h4-0-355" id="h4-0-355" class="i">+        assert!(take_i64(&amp;mut bytes).is_err());
+</a><a href="#h4-0-356" id="h4-0-356" class="i">+        assert_eq!(bytes.len(), 7);
+</a><a href="#h4-0-357" id="h4-0-357" class="i">+
+</a><a href="#h4-0-358" id="h4-0-358" class="i">+        let mut bytes: &amp;[u8] = &amp;[0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00];
+</a><a href="#h4-0-359" id="h4-0-359" class="i">+        assert_eq!(take_i64(&amp;mut bytes)?, 1024);
+</a><a href="#h4-0-360" id="h4-0-360" class="i">+        assert!(bytes.is_empty());
+</a><a href="#h4-0-361" id="h4-0-361" class="i">+
+</a><a href="#h4-0-362" id="h4-0-362" class="i">+        let mut bytes: &amp;[u8] = &amp;[0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xfc, 0x00, 0xff];
+</a><a href="#h4-0-363" id="h4-0-363" class="i">+        assert_eq!(take_i64(&amp;mut bytes)?, -1024);
+</a><a href="#h4-0-364" id="h4-0-364" class="i">+        assert_eq!(bytes, &amp;[0xff]);
+</a><a href="#h4-0-365" id="h4-0-365" class="i">+
+</a><a href="#h4-0-366" id="h4-0-366" class="i">+        Ok(())
+</a><a href="#h4-0-367" id="h4-0-367" class="i">+    }
+</a><a href="#h4-0-368" id="h4-0-368" class="i">+
+</a><a href="#h4-0-369" id="h4-0-369" class="i">+    #[test]
+</a><a href="#h4-0-370" id="h4-0-370" class="i">+    fn encode_string() -&gt; Result&lt;()&gt; {
+</a><a href="#h4-0-371" id="h4-0-371" class="i">+        use super::encode_string;
+</a><a href="#h4-0-372" id="h4-0-372" class="i">+        assert_eq!(encode_string(&quot;&quot;), vec![0x00, 0x00]);
+</a><a href="#h4-0-373" id="h4-0-373" class="i">+        assert_eq!(encode_string(&quot;abc&quot;), vec![0x61, 0x62, 0x63, 0x00, 0x00]);
+</a><a href="#h4-0-374" id="h4-0-374" class="i">+        assert_eq!(
+</a><a href="#h4-0-375" id="h4-0-375" class="i">+            encode_string(&quot;x \u{0000} z&quot;),
+</a><a href="#h4-0-376" id="h4-0-376" class="i">+            vec![0x78, 0x20, 0x00, 0xff, 0x20, 0x7a, 0x00, 0x00]
+</a><a href="#h4-0-377" id="h4-0-377" class="i">+        );
+</a><a href="#h4-0-378" id="h4-0-378" class="i">+        assert_eq!(encode_string(&quot;aáåA&quot;), vec![0x61, 0xc3, 0xa1, 0xc3, 0xa5, 0x41, 0x00, 0x00]);
+</a><a href="#h4-0-379" id="h4-0-379" class="i">+        Ok(())
+</a><a href="#h4-0-380" id="h4-0-380" class="i">+    }
+</a><a href="#h4-0-381" id="h4-0-381" class="i">+
+</a><a href="#h4-0-382" id="h4-0-382" class="i">+    #[test]
+</a><a href="#h4-0-383" id="h4-0-383" class="i">+    fn take_string() -&gt; Result&lt;()&gt; {
+</a><a href="#h4-0-384" id="h4-0-384" class="i">+        use super::take_string;
+</a><a href="#h4-0-385" id="h4-0-385" class="i">+
+</a><a href="#h4-0-386" id="h4-0-386" class="i">+        let mut bytes: &amp;[u8] = &amp;[];
+</a><a href="#h4-0-387" id="h4-0-387" class="i">+        assert!(take_string(&amp;mut bytes).is_err());
+</a><a href="#h4-0-388" id="h4-0-388" class="i">+
+</a><a href="#h4-0-389" id="h4-0-389" class="i">+        let mut bytes: &amp;[u8] = &amp;[0x00, 0x00];
+</a><a href="#h4-0-390" id="h4-0-390" class="i">+        assert_eq!(take_string(&amp;mut bytes)?, &quot;&quot;.to_owned());
+</a><a href="#h4-0-391" id="h4-0-391" class="i">+        assert!(bytes.is_empty());
+</a><a href="#h4-0-392" id="h4-0-392" class="i">+
+</a><a href="#h4-0-393" id="h4-0-393" class="i">+        let mut bytes: &amp;[u8] = &amp;[0x61, 0x62, 0x63, 0x00, 0x00];
+</a><a href="#h4-0-394" id="h4-0-394" class="i">+        assert_eq!(take_string(&amp;mut bytes)?, &quot;abc&quot;.to_owned());
+</a><a href="#h4-0-395" id="h4-0-395" class="i">+        assert!(bytes.is_empty());
+</a><a href="#h4-0-396" id="h4-0-396" class="i">+
+</a><a href="#h4-0-397" id="h4-0-397" class="i">+        let mut bytes: &amp;[u8] = &amp;[0x78, 0x20, 0x00, 0xff, 0x20, 0x7a, 0x00, 0x00, 0x01, 0x02, 0x03];
+</a><a href="#h4-0-398" id="h4-0-398" class="i">+        assert_eq!(take_string(&amp;mut bytes)?, &quot;x \u{0000} z&quot;.to_owned());
+</a><a href="#h4-0-399" id="h4-0-399" class="i">+        assert_eq!(bytes, &amp;[0x01, 0x02, 0x03]);
+</a><a href="#h4-0-400" id="h4-0-400" class="i">+
+</a><a href="#h4-0-401" id="h4-0-401" class="i">+        let mut bytes: &amp;[u8] = &amp;[0xff, 0x00, 0x00]; // invalid utf-8
+</a><a href="#h4-0-402" id="h4-0-402" class="i">+        assert!(take_string(&amp;mut bytes).is_err());
+</a><a href="#h4-0-403" id="h4-0-403" class="i">+
+</a><a href="#h4-0-404" id="h4-0-404" class="i">+        Ok(())
+</a><a href="#h4-0-405" id="h4-0-405" class="i">+    }
+</a><a href="#h4-0-406" id="h4-0-406" class="i">+
+</a><a href="#h4-0-407" id="h4-0-407" class="i">+    #[test]
+</a><a href="#h4-0-408" id="h4-0-408" class="i">+    fn encode_u64() -&gt; Result&lt;()&gt; {
+</a><a href="#h4-0-409" id="h4-0-409" class="i">+        use super::encode_u64;
+</a><a href="#h4-0-410" id="h4-0-410" class="i">+        assert_eq!(encode_u64(0), [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
+</a><a href="#h4-0-411" id="h4-0-411" class="i">+        assert_eq!(encode_u64(1), [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01]);
+</a><a href="#h4-0-412" id="h4-0-412" class="i">+        assert_eq!(encode_u64(1024), [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00]);
+</a><a href="#h4-0-413" id="h4-0-413" class="i">+        assert_eq!(encode_u64(std::u64::MAX), [0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff]);
+</a><a href="#h4-0-414" id="h4-0-414" class="i">+        Ok(())
+</a><a href="#h4-0-415" id="h4-0-415" class="i">+    }
+</a><a href="#h4-0-416" id="h4-0-416" class="i">+
+</a><a href="#h4-0-417" id="h4-0-417" class="i">+    #[test]
+</a><a href="#h4-0-418" id="h4-0-418" class="i">+    fn decode_u64() -&gt; Result&lt;()&gt; {
+</a><a href="#h4-0-419" id="h4-0-419" class="i">+        use super::decode_u64;
+</a><a href="#h4-0-420" id="h4-0-420" class="i">+        assert_eq!(decode_u64([0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]), 0);
+</a><a href="#h4-0-421" id="h4-0-421" class="i">+        assert_eq!(decode_u64([0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01]), 1);
+</a><a href="#h4-0-422" id="h4-0-422" class="i">+        assert_eq!(decode_u64([0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00]), 1024);
+</a><a href="#h4-0-423" id="h4-0-423" class="i">+        assert_eq!(decode_u64([0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff]), std::u64::MAX);
+</a><a href="#h4-0-424" id="h4-0-424" class="i">+        Ok(())
+</a><a href="#h4-0-425" id="h4-0-425" class="i">+    }
+</a><a href="#h4-0-426" id="h4-0-426" class="i">+
+</a><a href="#h4-0-427" id="h4-0-427" class="i">+    #[test]
+</a><a href="#h4-0-428" id="h4-0-428" class="i">+    fn take_u64() -&gt; Result&lt;()&gt; {
+</a><a href="#h4-0-429" id="h4-0-429" class="i">+        use super::take_u64;
+</a><a href="#h4-0-430" id="h4-0-430" class="i">+
+</a><a href="#h4-0-431" id="h4-0-431" class="i">+        let mut bytes: &amp;[u8] = &amp;[];
+</a><a href="#h4-0-432" id="h4-0-432" class="i">+        assert!(take_u64(&amp;mut bytes).is_err());
+</a><a href="#h4-0-433" id="h4-0-433" class="i">+
+</a><a href="#h4-0-434" id="h4-0-434" class="i">+        let mut bytes: &amp;[u8] = &amp;[0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07];
+</a><a href="#h4-0-435" id="h4-0-435" class="i">+        assert!(take_u64(&amp;mut bytes).is_err());
+</a><a href="#h4-0-436" id="h4-0-436" class="i">+        assert_eq!(bytes.len(), 7);
+</a><a href="#h4-0-437" id="h4-0-437" class="i">+
+</a><a href="#h4-0-438" id="h4-0-438" class="i">+        let mut bytes: &amp;[u8] = &amp;[0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01];
+</a><a href="#h4-0-439" id="h4-0-439" class="i">+        assert_eq!(take_u64(&amp;mut bytes)?, 1);
+</a><a href="#h4-0-440" id="h4-0-440" class="i">+        assert!(bytes.is_empty());
+</a><a href="#h4-0-441" id="h4-0-441" class="i">+
+</a><a href="#h4-0-442" id="h4-0-442" class="i">+        let mut bytes: &amp;[u8] = &amp;[0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0xff];
+</a><a href="#h4-0-443" id="h4-0-443" class="i">+        assert_eq!(take_u64(&amp;mut bytes)?, 1);
+</a><a href="#h4-0-444" id="h4-0-444" class="i">+        assert_eq!(bytes, &amp;[0xff]);
+</a><a href="#h4-0-445" id="h4-0-445" class="i">+
+</a><a href="#h4-0-446" id="h4-0-446" class="i">+        Ok(())
+</a><a href="#h4-0-447" id="h4-0-447" class="i">+    }
+</a><a href="#h4-0-448" id="h4-0-448" class="i">+
+</a><a href="#h4-0-449" id="h4-0-449" class="i">+    #[test]
+</a><a href="#h4-0-450" id="h4-0-450" class="i">+    fn encode_value() -&gt; Result&lt;()&gt; {
+</a><a href="#h4-0-451" id="h4-0-451" class="i">+        use super::encode_value;
+</a><a href="#h4-0-452" id="h4-0-452" class="i">+
+</a><a href="#h4-0-453" id="h4-0-453" class="i">+        assert_eq!(encode_value(&amp;Value::Null), vec![0x00]);
+</a><a href="#h4-0-454" id="h4-0-454" class="i">+        assert_eq!(encode_value(&amp;Value::Boolean(false)), vec![0x01, 0x00]);
+</a><a href="#h4-0-455" id="h4-0-455" class="i">+        assert_eq!(encode_value(&amp;Value::Boolean(true)), vec![0x01, 0x01]);
+</a><a href="#h4-0-456" id="h4-0-456" class="i">+        assert_eq!(
+</a><a href="#h4-0-457" id="h4-0-457" class="i">+            encode_value(&amp;Value::Float(-0.0)),
+</a><a href="#h4-0-458" id="h4-0-458" class="i">+            vec![0x02, 0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff]
+</a><a href="#h4-0-459" id="h4-0-459" class="i">+        );
+</a><a href="#h4-0-460" id="h4-0-460" class="i">+        assert_eq!(
+</a><a href="#h4-0-461" id="h4-0-461" class="i">+            encode_value(&amp;Value::Integer(1024)),
+</a><a href="#h4-0-462" id="h4-0-462" class="i">+            vec![0x03, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00]
+</a><a href="#h4-0-463" id="h4-0-463" class="i">+        );
+</a><a href="#h4-0-464" id="h4-0-464" class="i">+        assert_eq!(
+</a><a href="#h4-0-465" id="h4-0-465" class="i">+            encode_value(&amp;Value::String(&quot;abc&quot;.into())),
+</a><a href="#h4-0-466" id="h4-0-466" class="i">+            vec![0x04, 0x61, 0x62, 0x63, 0x00, 0x00]
+</a><a href="#h4-0-467" id="h4-0-467" class="i">+        );
+</a><a href="#h4-0-468" id="h4-0-468" class="i">+        Ok(())
+</a><a href="#h4-0-469" id="h4-0-469" class="i">+    }
+</a><a href="#h4-0-470" id="h4-0-470" class="i">+
+</a><a href="#h4-0-471" id="h4-0-471" class="i">+    #[test]
+</a><a href="#h4-0-472" id="h4-0-472" class="i">+    fn take_value() -&gt; Result&lt;()&gt; {
+</a><a href="#h4-0-473" id="h4-0-473" class="i">+        use super::take_value;
+</a><a href="#h4-0-474" id="h4-0-474" class="i">+
+</a><a href="#h4-0-475" id="h4-0-475" class="i">+        let mut bytes: &amp;[u8] = &amp;[];
+</a><a href="#h4-0-476" id="h4-0-476" class="i">+        assert!(take_value(&amp;mut bytes).is_err());
+</a><a href="#h4-0-477" id="h4-0-477" class="i">+
+</a><a href="#h4-0-478" id="h4-0-478" class="i">+        let mut bytes: &amp;[u8] = &amp;[0xaf];
+</a><a href="#h4-0-479" id="h4-0-479" class="i">+        assert!(take_value(&amp;mut bytes).is_err());
+</a><a href="#h4-0-480" id="h4-0-480" class="i">+
+</a><a href="#h4-0-481" id="h4-0-481" class="i">+        let mut bytes: &amp;[u8] = &amp;[0x00, 0xaf];
+</a><a href="#h4-0-482" id="h4-0-482" class="i">+        assert_eq!(take_value(&amp;mut bytes)?, Value::Null);
+</a><a href="#h4-0-483" id="h4-0-483" class="i">+        assert_eq!(bytes, &amp;[0xaf]);
+</a><a href="#h4-0-484" id="h4-0-484" class="i">+
+</a><a href="#h4-0-485" id="h4-0-485" class="i">+        let mut bytes: &amp;[u8] = &amp;[0x01, 0x01, 0xaf];
+</a><a href="#h4-0-486" id="h4-0-486" class="i">+        assert_eq!(take_value(&amp;mut bytes)?, Value::Boolean(true));
+</a><a href="#h4-0-487" id="h4-0-487" class="i">+        assert_eq!(bytes, &amp;[0xaf]);
+</a><a href="#h4-0-488" id="h4-0-488" class="i">+
+</a><a href="#h4-0-489" id="h4-0-489" class="i">+        let mut bytes: &amp;[u8] = &amp;[0x02, 0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xaf];
+</a><a href="#h4-0-490" id="h4-0-490" class="i">+        assert_eq!(take_value(&amp;mut bytes)?, Value::Float(-0.0));
+</a><a href="#h4-0-491" id="h4-0-491" class="i">+        assert_eq!(bytes, &amp;[0xaf]);
+</a><a href="#h4-0-492" id="h4-0-492" class="i">+
+</a><a href="#h4-0-493" id="h4-0-493" class="i">+        let mut bytes: &amp;[u8] = &amp;[0x03, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0xaf];
+</a><a href="#h4-0-494" id="h4-0-494" class="i">+        assert_eq!(take_value(&amp;mut bytes)?, Value::Integer(1024));
+</a><a href="#h4-0-495" id="h4-0-495" class="i">+        assert_eq!(bytes, &amp;[0xaf]);
+</a><a href="#h4-0-496" id="h4-0-496" class="i">+
+</a><a href="#h4-0-497" id="h4-0-497" class="i">+        let mut bytes: &amp;[u8] = &amp;[0x04, 0x61, 0x62, 0x63, 0x00, 0x00, 0xaf];
+</a><a href="#h4-0-498" id="h4-0-498" class="i">+        assert_eq!(take_value(&amp;mut bytes)?, Value::String(&quot;abc&quot;.into()));
+</a><a href="#h4-0-499" id="h4-0-499" class="i">+        assert_eq!(bytes, &amp;[0xaf]);
+</a><a href="#h4-0-500" id="h4-0-500" class="i">+
+</a><a href="#h4-0-501" id="h4-0-501" class="i">+        Ok(())
+</a><a href="#h4-0-502" id="h4-0-502" class="i">+    }
+</a><a href="#h4-0-503" id="h4-0-503" class="i">+}
+</a><b>diff --git a/<a id="h5" href="../file/src/storage/kv/mod.rs.html">src/storage/kv/mod.rs</a> b/<a href="../file/src/storage/kv/mod.rs.html">src/storage/kv/mod.rs</a></b>
+<a href="#h5-0" id="h5-0" class="h">@@ -1,3 +1,4 @@
+</a><a href="#h5-0-0" id="h5-0-0" class="i">+pub mod encoding;
+</a> mod memory;
+ pub mod mvcc;
+ mod std_memory;
+<b>diff --git a/<a id="h6" href="../file/src/storage/kv/mvcc.rs.html">src/storage/kv/mvcc.rs</a> b/<a href="../file/src/storage/kv/mvcc.rs.html">src/storage/kv/mvcc.rs</a></b>
+<a href="#h6-0" id="h6-0" class="h">@@ -1,8 +1,9 @@
+</a><a href="#h6-0-0" id="h6-0-0" class="d">-use super::{Range, Store};
+</a><a href="#h6-0-1" id="h6-0-1" class="i">+use super::{encoding, Range, Store};
+</a> use crate::error::{Error, Result};
+ 
+ use serde::{Deserialize, Serialize};
+ use serde_derive::{Deserialize, Serialize};
+<a href="#h6-0-6" id="h6-0-6" class="i">+use std::borrow::Cow;
+</a> use std::collections::HashSet;
+ use std::ops::{Bound, RangeBounds};
+ use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
+<a href="#h6-1" id="h6-1" class="h">@@ -54,13 +55,13 @@ impl MVCC {
+</a>     /// Fetches an unversioned metadata value
+     pub fn get_metadata(&amp;self, key: &amp;[u8]) -&gt; Result&lt;Option&lt;Vec&lt;u8&gt;&gt;&gt; {
+         let session = self.store.read()?;
+<a href="#h6-1-3" id="h6-1-3" class="d">-        session.get(key)
+</a><a href="#h6-1-4" id="h6-1-4" class="i">+        session.get(&amp;Key::Metadata(key.into()).encode())
+</a>     }
+ 
+     /// Sets an unversioned metadata value
+     pub fn set_metadata(&amp;self, key: &amp;[u8], value: Vec&lt;u8&gt;) -&gt; Result&lt;()&gt; {
+         let mut session = self.store.write()?;
+<a href="#h6-1-10" id="h6-1-10" class="d">-        session.set(key, value)
+</a><a href="#h6-1-11" id="h6-1-11" class="i">+        session.set(&amp;Key::Metadata(key.into()).encode(), value)
+</a>     }
+ 
+     /// Returns engine status
+<a href="#h6-2" id="h6-2" class="h">@@ -169,12 +170,12 @@ impl Transaction {
+</a>         if self.mode.mutable() {
+             let mut rollback = Vec::new();
+             let mut scan = session.scan(Range::from(
+<a href="#h6-2-3" id="h6-2-3" class="d">-                Key::TxnUpdate(self.id, vec![]).encode()
+</a><a href="#h6-2-4" id="h6-2-4" class="d">-                    ..Key::TxnUpdate(self.id + 1, vec![]).encode(),
+</a><a href="#h6-2-5" id="h6-2-5" class="i">+                Key::TxnUpdate(self.id, vec![].into()).encode()
+</a><a href="#h6-2-6" id="h6-2-6" class="i">+                    ..Key::TxnUpdate(self.id + 1, vec![].into()).encode(),
+</a>             ));
+             while let Some((key, _)) = scan.next().transpose()? {
+                 match Key::decode(&amp;key)? {
+<a href="#h6-2-10" id="h6-2-10" class="d">-                    Key::TxnUpdate(_, updated_key) =&gt; rollback.push(updated_key),
+</a><a href="#h6-2-11" id="h6-2-11" class="i">+                    Key::TxnUpdate(_, updated_key) =&gt; rollback.push(updated_key.into_owned()),
+</a>                     k =&gt; return Err(Error::Internal(format!(&quot;Expected TxnUpdate, got {:?}&quot;, k))),
+                 };
+                 rollback.push(key);
+<a href="#h6-3" id="h6-3" class="h">@@ -197,7 +198,8 @@ impl Transaction {
+</a>         let session = self.store.read()?;
+         let mut scan = session
+             .scan(Range::from(
+<a href="#h6-3-3" id="h6-3-3" class="d">-                Key::Record(key.to_vec(), 0).encode()..=Key::Record(key.to_vec(), self.id).encode(),
+</a><a href="#h6-3-4" id="h6-3-4" class="i">+                Key::Record(Cow::Borrowed(key), 0).encode()
+</a><a href="#h6-3-5" id="h6-3-5" class="i">+                    ..=Key::Record(Cow::Borrowed(key), self.id).encode(),
+</a>             ))
+             .rev();
+         while let Some((k, v)) = scan.next().transpose()? {
+<a href="#h6-4" id="h6-4" class="h">@@ -259,8 +261,8 @@ impl Transaction {
+</a>         let min = self.snapshot.invisible.iter().min().cloned().unwrap_or(self.id + 1);
+         let mut scan = session
+             .scan(Range::from(
+<a href="#h6-4-3" id="h6-4-3" class="d">-                Key::Record(key.to_vec(), min).encode()
+</a><a href="#h6-4-4" id="h6-4-4" class="d">-                    ..=Key::Record(key.to_vec(), std::u64::MAX).encode(),
+</a><a href="#h6-4-5" id="h6-4-5" class="i">+                Key::Record(Cow::Borrowed(key), min).encode()
+</a><a href="#h6-4-6" id="h6-4-6" class="i">+                    ..=Key::Record(Cow::Borrowed(key), std::u64::MAX).encode(),
+</a>             ))
+             .rev();
+         while let Some((k, _)) = scan.next().transpose()? {
+<a href="#h6-5" id="h6-5" class="h">@@ -276,8 +278,8 @@ impl Transaction {
+</a>         std::mem::drop(scan);
+ 
+         // Write the key and its update record.
+<a href="#h6-5-3" id="h6-5-3" class="d">-        let key = Key::Record(key.to_vec(), self.id).encode();
+</a><a href="#h6-5-4" id="h6-5-4" class="d">-        let update = Key::TxnUpdate(self.id, key.clone()).encode();
+</a><a href="#h6-5-5" id="h6-5-5" class="i">+        let key = Key::Record(Cow::Borrowed(key), self.id).encode();
+</a><a href="#h6-5-6" id="h6-5-6" class="i">+        let update = Key::TxnUpdate(self.id, Cow::Borrowed(&amp;key)).encode();
+</a>         session.set(&amp;update, vec![])?;
+         session.set(&amp;key, serialize(&amp;value)?)
+     }
+<a href="#h6-6" id="h6-6" class="h">@@ -360,105 +362,59 @@ impl Snapshot {
+</a>     }
+ }
+ 
+<a href="#h6-6-3" id="h6-6-3" class="d">-/// MVCC keys. The encoding must preserve the grouping and ordering of keys.
+</a><a href="#h6-6-4" id="h6-6-4" class="d">-///
+</a><a href="#h6-6-5" id="h6-6-5" class="d">-/// The first byte determines the key type. u64 is encoded in big-endian byte order. For Vec&lt;u8&gt;, we
+</a><a href="#h6-6-6" id="h6-6-6" class="d">-/// use 0x00 0xff as an escape sequence for 0x00, and 0x00 0x00 as a terminator, to avoid
+</a><a href="#h6-6-7" id="h6-6-7" class="d">-/// key/version overlaps from messing up the key sequence during scans - see:
+</a><a href="#h6-6-8" id="h6-6-8" class="d">-/// https://activesphere.com/blog/2018/08/17/order-preserving-serialization
+</a><a href="#h6-6-9" id="h6-6-9" class="i">+/// MVCC keys. The encoding preserves the grouping and ordering of keys. Uses a Cow since we want
+</a><a href="#h6-6-10" id="h6-6-10" class="i">+/// to take borrows when encoding and return owned when decoding.
+</a> #[derive(Debug)]
+<a href="#h6-6-12" id="h6-6-12" class="d">-enum Key {
+</a><a href="#h6-6-13" id="h6-6-13" class="i">+enum Key&lt;&#39;a&gt; {
+</a>     /// The next available txn ID. Used when starting new txns.
+     TxnNext,
+<a href="#h6-6-16" id="h6-6-16" class="d">-    /// Marker for active txns, containing the txn mode. Used to detect concurrent txns, and
+</a><a href="#h6-6-17" id="h6-6-17" class="d">-    /// to resume txns.
+</a><a href="#h6-6-18" id="h6-6-18" class="i">+    /// Active txn markers, containing the mode. Used to detect concurrent txns, and to resume.
+</a>     TxnActive(u64),
+     /// Txn snapshot, containing concurrent active txns at start of txn.
+     TxnSnapshot(u64),
+     /// Update marker for a txn ID and key, used for rollback.
+<a href="#h6-6-23" id="h6-6-23" class="d">-    TxnUpdate(u64, Vec&lt;u8&gt;),
+</a><a href="#h6-6-24" id="h6-6-24" class="i">+    TxnUpdate(u64, Cow&lt;&#39;a, [u8]&gt;),
+</a>     /// A record for a key/version pair.
+<a href="#h6-6-26" id="h6-6-26" class="d">-    Record(Vec&lt;u8&gt;, u64),
+</a><a href="#h6-6-27" id="h6-6-27" class="i">+    Record(Cow&lt;&#39;a, [u8]&gt;, u64),
+</a>     /// Arbitrary unversioned metadata.
+<a href="#h6-6-29" id="h6-6-29" class="d">-    Metadata(Vec&lt;u8&gt;),
+</a><a href="#h6-6-30" id="h6-6-30" class="i">+    Metadata(Cow&lt;&#39;a, [u8]&gt;),
+</a> }
+ 
+<a href="#h6-6-33" id="h6-6-33" class="d">-impl Key {
+</a><a href="#h6-6-34" id="h6-6-34" class="d">-    /// Decodes a key from a byte representation.
+</a><a href="#h6-6-35" id="h6-6-35" class="d">-    fn decode(key: &amp;[u8]) -&gt; Result&lt;Self&gt; {
+</a><a href="#h6-6-36" id="h6-6-36" class="d">-        let mut iter = key.iter();
+</a><a href="#h6-6-37" id="h6-6-37" class="d">-        match iter.next() {
+</a><a href="#h6-6-38" id="h6-6-38" class="d">-            Some(0x01) =&gt; Ok(Key::TxnNext),
+</a><a href="#h6-6-39" id="h6-6-39" class="d">-            Some(0x02) =&gt; Ok(Key::TxnActive(Self::decode_u64(&amp;mut iter)?)),
+</a><a href="#h6-6-40" id="h6-6-40" class="d">-            Some(0x03) =&gt; Ok(Key::TxnSnapshot(Self::decode_u64(&amp;mut iter)?)),
+</a><a href="#h6-6-41" id="h6-6-41" class="d">-            Some(0x04) =&gt; Ok(Key::TxnUpdate(Self::decode_u64(&amp;mut iter)?, iter.cloned().collect())),
+</a><a href="#h6-6-42" id="h6-6-42" class="d">-            Some(0x05) =&gt; Ok(Key::Metadata(Self::decode_bytes(&amp;mut iter)?)),
+</a><a href="#h6-6-43" id="h6-6-43" class="d">-            Some(0xff) =&gt; {
+</a><a href="#h6-6-44" id="h6-6-44" class="d">-                Ok(Self::Record(Self::decode_bytes(&amp;mut iter)?, Self::decode_u64(&amp;mut iter)?))
+</a><a href="#h6-6-45" id="h6-6-45" class="d">-            }
+</a><a href="#h6-6-46" id="h6-6-46" class="d">-            _ =&gt; Err(Error::Value(&quot;Unable to parse MVCC key&quot;.into())),
+</a><a href="#h6-6-47" id="h6-6-47" class="d">-        }
+</a><a href="#h6-6-48" id="h6-6-48" class="d">-    }
+</a><a href="#h6-6-49" id="h6-6-49" class="d">-
+</a><a href="#h6-6-50" id="h6-6-50" class="d">-    /// Decodes a byte vector from a byte representation. See encode_bytes() for format.
+</a><a href="#h6-6-51" id="h6-6-51" class="d">-    fn decode_bytes&lt;&#39;a, I: Iterator&lt;Item = &amp;&#39;a u8&gt;&gt;(iter: &amp;mut I) -&gt; Result&lt;Vec&lt;u8&gt;&gt; {
+</a><a href="#h6-6-52" id="h6-6-52" class="d">-        let mut bytes = Vec::new();
+</a><a href="#h6-6-53" id="h6-6-53" class="d">-        loop {
+</a><a href="#h6-6-54" id="h6-6-54" class="d">-            match iter.next() {
+</a><a href="#h6-6-55" id="h6-6-55" class="d">-                Some(0x00) =&gt; match iter.next() {
+</a><a href="#h6-6-56" id="h6-6-56" class="d">-                    Some(0x00) =&gt; break,            // 0x00 0x00 is terminator
+</a><a href="#h6-6-57" id="h6-6-57" class="d">-                    Some(0xff) =&gt; bytes.push(0x00), // 0x00 0xff is escape sequence for 0x00
+</a><a href="#h6-6-58" id="h6-6-58" class="d">-                    b =&gt; return Err(Error::Value(format!(&quot;Unexpected 0x00 encoding {:?}&quot;, b))),
+</a><a href="#h6-6-59" id="h6-6-59" class="d">-                },
+</a><a href="#h6-6-60" id="h6-6-60" class="d">-                Some(b) =&gt; bytes.push(*b),
+</a><a href="#h6-6-61" id="h6-6-61" class="d">-                None =&gt; return Err(Error::Value(&quot;Unexpected end of input&quot;.into())),
+</a><a href="#h6-6-62" id="h6-6-62" class="d">-            }
+</a><a href="#h6-6-63" id="h6-6-63" class="d">-        }
+</a><a href="#h6-6-64" id="h6-6-64" class="d">-        Ok(bytes)
+</a><a href="#h6-6-65" id="h6-6-65" class="d">-    }
+</a><a href="#h6-6-66" id="h6-6-66" class="d">-
+</a><a href="#h6-6-67" id="h6-6-67" class="d">-    /// Decodes a u64 from a byte representation.
+</a><a href="#h6-6-68" id="h6-6-68" class="d">-    fn decode_u64&lt;&#39;a, I: Iterator&lt;Item = &amp;&#39;a u8&gt;&gt;(iter: &amp;mut I) -&gt; Result&lt;u64&gt; {
+</a><a href="#h6-6-69" id="h6-6-69" class="d">-        let bytes = iter.take(8).cloned().collect::&lt;Vec&lt;u8&gt;&gt;();
+</a><a href="#h6-6-70" id="h6-6-70" class="d">-        if bytes.len() &lt; 8 {
+</a><a href="#h6-6-71" id="h6-6-71" class="d">-            return Err(Error::Value(format!(&quot;Unable to decode u64, got {} bytes&quot;, bytes.len())));
+</a><a href="#h6-6-72" id="h6-6-72" class="d">-        }
+</a><a href="#h6-6-73" id="h6-6-73" class="d">-        let mut buf = [0; 8];
+</a><a href="#h6-6-74" id="h6-6-74" class="d">-        buf.copy_from_slice(&amp;bytes[..]);
+</a><a href="#h6-6-75" id="h6-6-75" class="d">-        Ok(u64::from_be_bytes(buf))
+</a><a href="#h6-6-76" id="h6-6-76" class="d">-    }
+</a><a href="#h6-6-77" id="h6-6-77" class="d">-
+</a><a href="#h6-6-78" id="h6-6-78" class="i">+impl&lt;&#39;a&gt; Key&lt;&#39;a&gt; {
+</a>     /// Encodes a key into a byte vector.
+     fn encode(self) -&gt; Vec&lt;u8&gt; {
+<a href="#h6-6-81" id="h6-6-81" class="i">+        use encoding::*;
+</a>         match self {
+             Self::TxnNext =&gt; vec![0x01],
+<a href="#h6-6-84" id="h6-6-84" class="d">-            Self::TxnActive(id) =&gt; [vec![0x02], Self::encode_u64(id)].concat(),
+</a><a href="#h6-6-85" id="h6-6-85" class="d">-            Self::TxnSnapshot(version) =&gt; [vec![0x03], Self::encode_u64(version)].concat(),
+</a><a href="#h6-6-86" id="h6-6-86" class="d">-            Self::TxnUpdate(id, key) =&gt; [vec![0x04], Self::encode_u64(id), key].concat(),
+</a><a href="#h6-6-87" id="h6-6-87" class="d">-            Self::Metadata(key) =&gt; [vec![0x05], Self::encode_bytes(key)].concat(),
+</a><a href="#h6-6-88" id="h6-6-88" class="i">+            Self::TxnActive(id) =&gt; [&amp;[0x02][..], &amp;encode_u64(id)].concat(),
+</a><a href="#h6-6-89" id="h6-6-89" class="i">+            Self::TxnSnapshot(version) =&gt; [&amp;[0x03][..], &amp;encode_u64(version)].concat(),
+</a><a href="#h6-6-90" id="h6-6-90" class="i">+            Self::TxnUpdate(id, key) =&gt; {
+</a><a href="#h6-6-91" id="h6-6-91" class="i">+                [&amp;[0x04][..], &amp;encode_u64(id), &amp;encode_bytes(&amp;key)].concat()
+</a><a href="#h6-6-92" id="h6-6-92" class="i">+            }
+</a><a href="#h6-6-93" id="h6-6-93" class="i">+            Self::Metadata(key) =&gt; [&amp;[0x05][..], &amp;encode_bytes(&amp;key)].concat(),
+</a>             Self::Record(key, version) =&gt; {
+<a href="#h6-6-95" id="h6-6-95" class="d">-                [vec![0xff], Self::encode_bytes(key), Self::encode_u64(version)].concat()
+</a><a href="#h6-6-96" id="h6-6-96" class="i">+                [&amp;[0xff][..], &amp;encode_bytes(&amp;key), &amp;encode_u64(version)].concat()
+</a>             }
+         }
+     }
+ 
+<a href="#h6-6-101" id="h6-6-101" class="d">-    /// Encodes a byte vector.
+</a><a href="#h6-6-102" id="h6-6-102" class="d">-    fn encode_bytes(bytes: Vec&lt;u8&gt;) -&gt; Vec&lt;u8&gt; {
+</a><a href="#h6-6-103" id="h6-6-103" class="d">-        let mut escaped = vec![];
+</a><a href="#h6-6-104" id="h6-6-104" class="d">-        for b in bytes.into_iter() {
+</a><a href="#h6-6-105" id="h6-6-105" class="d">-            escaped.push(b);
+</a><a href="#h6-6-106" id="h6-6-106" class="d">-            if b == 0x00 {
+</a><a href="#h6-6-107" id="h6-6-107" class="d">-                escaped.push(0xff);
+</a><a href="#h6-6-108" id="h6-6-108" class="d">-            }
+</a><a href="#h6-6-109" id="h6-6-109" class="i">+    /// Decodes a key from a byte representation.
+</a><a href="#h6-6-110" id="h6-6-110" class="i">+    fn decode(mut bytes: &amp;[u8]) -&gt; Result&lt;Self&gt; {
+</a><a href="#h6-6-111" id="h6-6-111" class="i">+        use encoding::*;
+</a><a href="#h6-6-112" id="h6-6-112" class="i">+        let bytes = &amp;mut bytes;
+</a><a href="#h6-6-113" id="h6-6-113" class="i">+        let key = match take_byte(bytes)? {
+</a><a href="#h6-6-114" id="h6-6-114" class="i">+            0x01 =&gt; Self::TxnNext,
+</a><a href="#h6-6-115" id="h6-6-115" class="i">+            0x02 =&gt; Self::TxnActive(take_u64(bytes)?),
+</a><a href="#h6-6-116" id="h6-6-116" class="i">+            0x03 =&gt; Self::TxnSnapshot(take_u64(bytes)?),
+</a><a href="#h6-6-117" id="h6-6-117" class="i">+            0x04 =&gt; Self::TxnUpdate(take_u64(bytes)?, take_bytes(bytes)?.into()),
+</a><a href="#h6-6-118" id="h6-6-118" class="i">+            0x05 =&gt; Self::Metadata(take_bytes(bytes)?.into()),
+</a><a href="#h6-6-119" id="h6-6-119" class="i">+            0xff =&gt; Self::Record(take_bytes(bytes)?.into(), take_u64(bytes)?),
+</a><a href="#h6-6-120" id="h6-6-120" class="i">+            b =&gt; return Err(Error::Internal(format!(&quot;Unknown MVCC key prefix {:x?}&quot;, b))),
+</a><a href="#h6-6-121" id="h6-6-121" class="i">+        };
+</a><a href="#h6-6-122" id="h6-6-122" class="i">+        if !bytes.is_empty() {
+</a><a href="#h6-6-123" id="h6-6-123" class="i">+            return Err(Error::Internal(&quot;Unexpected data remaining at end of key&quot;.into()));
+</a>         }
+<a href="#h6-6-125" id="h6-6-125" class="d">-        escaped.push(0x00);
+</a><a href="#h6-6-126" id="h6-6-126" class="d">-        escaped.push(0x00);
+</a><a href="#h6-6-127" id="h6-6-127" class="d">-        escaped
+</a><a href="#h6-6-128" id="h6-6-128" class="d">-    }
+</a><a href="#h6-6-129" id="h6-6-129" class="d">-
+</a><a href="#h6-6-130" id="h6-6-130" class="d">-    /// Encodes a u64.
+</a><a href="#h6-6-131" id="h6-6-131" class="d">-    fn encode_u64(n: u64) -&gt; Vec&lt;u8&gt; {
+</a><a href="#h6-6-132" id="h6-6-132" class="d">-        n.to_be_bytes().to_vec()
+</a><a href="#h6-6-133" id="h6-6-133" class="i">+        Ok(key)
+</a>     }
+ }
+ 
+<a href="#h6-7" id="h6-7" class="h">@@ -487,13 +443,17 @@ impl Scan {
+</a>         range: impl RangeBounds&lt;Vec&lt;u8&gt;&gt;,
+     ) -&gt; Result&lt;Self&gt; {
+         let start = match range.start_bound() {
+<a href="#h6-7-3" id="h6-7-3" class="d">-            Bound::Excluded(k) =&gt; Bound::Excluded(Key::Record(k.clone(), std::u64::MAX).encode()),
+</a><a href="#h6-7-4" id="h6-7-4" class="d">-            Bound::Included(k) =&gt; Bound::Included(Key::Record(k.clone(), 0).encode()),
+</a><a href="#h6-7-5" id="h6-7-5" class="d">-            Bound::Unbounded =&gt; Bound::Included(Key::Record(vec![], 0).encode()),
+</a><a href="#h6-7-6" id="h6-7-6" class="i">+            Bound::Excluded(k) =&gt; {
+</a><a href="#h6-7-7" id="h6-7-7" class="i">+                Bound::Excluded(Key::Record(Cow::Borrowed(k), std::u64::MAX).encode())
+</a><a href="#h6-7-8" id="h6-7-8" class="i">+            }
+</a><a href="#h6-7-9" id="h6-7-9" class="i">+            Bound::Included(k) =&gt; Bound::Included(Key::Record(Cow::Borrowed(k), 0).encode()),
+</a><a href="#h6-7-10" id="h6-7-10" class="i">+            Bound::Unbounded =&gt; Bound::Included(Key::Record(Cow::Owned(vec![]), 0).encode()),
+</a>         };
+         let end = match range.end_bound() {
+<a href="#h6-7-13" id="h6-7-13" class="d">-            Bound::Excluded(k) =&gt; Bound::Excluded(Key::Record(k.clone(), 0).encode()),
+</a><a href="#h6-7-14" id="h6-7-14" class="d">-            Bound::Included(k) =&gt; Bound::Included(Key::Record(k.clone(), std::u64::MAX).encode()),
+</a><a href="#h6-7-15" id="h6-7-15" class="i">+            Bound::Excluded(k) =&gt; Bound::Excluded(Key::Record(Cow::Borrowed(k), 0).encode()),
+</a><a href="#h6-7-16" id="h6-7-16" class="i">+            Bound::Included(k) =&gt; {
+</a><a href="#h6-7-17" id="h6-7-17" class="i">+                Bound::Included(Key::Record(Cow::Borrowed(k), std::u64::MAX).encode())
+</a><a href="#h6-7-18" id="h6-7-18" class="i">+            }
+</a>             Bound::Unbounded =&gt; Bound::Unbounded,
+         };
+ 
+<a href="#h6-8" id="h6-8" class="h">@@ -524,10 +484,10 @@ impl Scan {
+</a> 
+             // Keep track of return candidate, and return current candidate if key changes.
+             let ret = match &amp;self.next_candidate {
+<a href="#h6-8-3" id="h6-8-3" class="d">-                Some((k, Some(v))) if k != &amp;key =&gt; Some((k.clone(), v.clone())),
+</a><a href="#h6-8-4" id="h6-8-4" class="i">+                Some((k, Some(v))) if k != &amp;&amp;*key =&gt; Some((k.clone(), v.clone())),
+</a>                 _ =&gt; None,
+             };
+<a href="#h6-8-7" id="h6-8-7" class="d">-            self.next_candidate = Some((key, deserialize(&amp;v)?));
+</a><a href="#h6-8-8" id="h6-8-8" class="i">+            self.next_candidate = Some((key.into_owned(), deserialize(&amp;v)?));
+</a>             if ret.is_some() {
+                 return Ok(ret);
+             }
+<a href="#h6-9" id="h6-9" class="h">@@ -559,13 +519,13 @@ impl Scan {
+</a>             }
+ 
+             // Keep track of keys already been seen and returned (i.e. skip older versions)
+<a href="#h6-9-3" id="h6-9-3" class="d">-            if self.next_back_returned.as_ref() == Some(&amp;key) {
+</a><a href="#h6-9-4" id="h6-9-4" class="i">+            if Some(key.clone().into_owned()) == self.next_back_returned {
+</a>                 continue;
+             }
+<a href="#h6-9-7" id="h6-9-7" class="d">-            self.next_back_returned = Some(key.clone());
+</a><a href="#h6-9-8" id="h6-9-8" class="i">+            self.next_back_returned = Some(key.clone().into_owned());
+</a> 
+             if let Some(value) = deserialize(&amp;v)? {
+<a href="#h6-9-11" id="h6-9-11" class="d">-                return Ok(Some((key, value)));
+</a><a href="#h6-9-12" id="h6-9-12" class="i">+                return Ok(Some((key.into_owned(), value)));
+</a>             }
+         }
+         Ok(None)
+<b>diff --git a/<a id="h7" href="../file/tests/sql/schema/insert_pk_float_negative.html">tests/sql/schema/insert_pk_float_negative</a> b/<a href="../file/tests/sql/schema/insert_pk_float_negative.html">tests/sql/schema/insert_pk_float_negative</a></b>
+<a href="#h7-0" id="h7-0" class="h">@@ -5,8 +5,8 @@ Storage:
+</a> CREATE TABLE &quot;float&quot; (
+   pk FLOAT PRIMARY KEY
+ )
+<a href="#h7-0-3" id="h7-0-3" class="i">+[Float(-3.14)]
+</a> [Float(2.718)]
+ [Float(3.14)]
+ [Float(inf)]
+ [Float(NaN)]
+<a href="#h7-0-8" id="h7-0-8" class="d">-[Float(-3.14)]
+</a><b>diff --git a/<a id="h8" href="../file/tests/sql/schema/insert_pk_integer_negative.html">tests/sql/schema/insert_pk_integer_negative</a> b/<a href="../file/tests/sql/schema/insert_pk_integer_negative.html">tests/sql/schema/insert_pk_integer_negative</a></b>
+<a href="#h8-0" id="h8-0" class="h">@@ -5,6 +5,6 @@ Storage:
+</a> CREATE TABLE &quot;integer&quot; (
+   pk INTEGER PRIMARY KEY
+ )
+<a href="#h8-0-3" id="h8-0-3" class="i">+[Integer(-1)]
+</a> [Integer(1)]
+ [Integer(2)]
+<a href="#h8-0-6" id="h8-0-6" class="d">-[Integer(-1)]
+</a></pre>
+</div>
+</body>
+</html>

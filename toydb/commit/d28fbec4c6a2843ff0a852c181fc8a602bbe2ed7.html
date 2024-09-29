@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>raft: clean up test code - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/d28fbec4c6a2843ff0a852c181fc8a602bbe2ed7.html">d28fbec4c6a2843ff0a852c181fc8a602bbe2ed7</a>
+<b>parent</b> <a href="../commit/3522859bfba80b5b7efd24b6d102d59e54a05733.html">3522859bfba80b5b7efd24b6d102d59e54a05733</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Mon, 22 Jul 2024 15:47:05 +0200
+
+raft: clean up test code
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/raft/log.rs</a></td><td> | </td><td class="num">213</td><td><span class="i">+++++++++++++++++++++++++++++++++++++</span><span class="d">------------------------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/raft/node.rs</a></td><td> | </td><td class="num">41</td><td><span class="i">++++++++++++++++++++</span><span class="d">---------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/raft/state.rs</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+</table></pre><pre>3 files changed, 121 insertions(+), 134 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/raft/log.rs.html">src/raft/log.rs</a> b/<a href="../file/src/raft/log.rs.html">src/raft/log.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -338,16 +338,18 @@ impl&lt;&#39;a&gt; std::iter::Iterator for Iterator&lt;&#39;a&gt; {
+</a>     }
+ }
+ 
+<a href="#h0-0-3" id="h0-0-3" class="i">+/// Most Raft tests are Goldenscripts under src/raft/testscripts.
+</a> #[cfg(test)]
+ mod tests {
+     use super::*;
+     use crate::encoding::format::{self, Formatter as _};
+<a href="#h0-0-8" id="h0-0-8" class="i">+    use crate::storage::engine::test as testengine;
+</a><a href="#h0-0-9" id="h0-0-9" class="i">+
+</a>     use crossbeam::channel::Receiver;
+     use itertools::Itertools as _;
+     use regex::Regex;
+     use std::fmt::Write as _;
+     use std::{error::Error, result::Result};
+<a href="#h0-0-15" id="h0-0-15" class="d">-    use storage::engine::test::{self as testengine, Operation};
+</a>     use test_each_file::test_each_path;
+ 
+     // Run goldenscript tests in src/raft/testscripts/log.
+<a href="#h0-1" id="h0-1" class="h">@@ -362,12 +364,58 @@ mod tests {
+</a>         log: Log,
+         op_rx: Receiver&lt;testengine::Operation&gt;,
+         #[allow(dead_code)]
+<a href="#h0-1-3" id="h0-1-3" class="d">-        tempdir: tempfile::TempDir, // deleted when dropped
+</a><a href="#h0-1-4" id="h0-1-4" class="i">+        tempdir: tempfile::TempDir,
+</a><a href="#h0-1-5" id="h0-1-5" class="i">+    }
+</a><a href="#h0-1-6" id="h0-1-6" class="i">+
+</a><a href="#h0-1-7" id="h0-1-7" class="i">+    impl TestRunner {
+</a><a href="#h0-1-8" id="h0-1-8" class="i">+        fn new() -&gt; Self {
+</a><a href="#h0-1-9" id="h0-1-9" class="i">+            // Use both a BitCask and a Memory engine, and mirror operations
+</a><a href="#h0-1-10" id="h0-1-10" class="i">+            // across them. Emit write events to op_tx.
+</a><a href="#h0-1-11" id="h0-1-11" class="i">+            let (op_tx, op_rx) = crossbeam::channel::unbounded();
+</a><a href="#h0-1-12" id="h0-1-12" class="i">+            let tempdir = tempfile::TempDir::with_prefix(&quot;toydb&quot;).expect(&quot;tempdir failed&quot;);
+</a><a href="#h0-1-13" id="h0-1-13" class="i">+            let bitcask =
+</a><a href="#h0-1-14" id="h0-1-14" class="i">+                storage::BitCask::new(tempdir.path().join(&quot;bitcask&quot;)).expect(&quot;bitcask failed&quot;);
+</a><a href="#h0-1-15" id="h0-1-15" class="i">+            let memory = storage::Memory::new();
+</a><a href="#h0-1-16" id="h0-1-16" class="i">+            let engine = testengine::Emit::new(testengine::Mirror::new(bitcask, memory), op_tx);
+</a><a href="#h0-1-17" id="h0-1-17" class="i">+            let log = Log::new(Box::new(engine)).expect(&quot;log failed&quot;);
+</a><a href="#h0-1-18" id="h0-1-18" class="i">+            Self { log, op_rx, tempdir }
+</a><a href="#h0-1-19" id="h0-1-19" class="i">+        }
+</a><a href="#h0-1-20" id="h0-1-20" class="i">+
+</a><a href="#h0-1-21" id="h0-1-21" class="i">+        /// Parses an index@term pair.
+</a><a href="#h0-1-22" id="h0-1-22" class="i">+        fn parse_index_term(s: &amp;str) -&gt; Result&lt;(Index, Term), Box&lt;dyn Error&gt;&gt; {
+</a><a href="#h0-1-23" id="h0-1-23" class="i">+            let re = Regex::new(r&quot;^(\d+)@(\d+)$&quot;).expect(&quot;invalid regex&quot;);
+</a><a href="#h0-1-24" id="h0-1-24" class="i">+            let groups = re.captures(s).ok_or_else(|| format!(&quot;invalid index/term {s}&quot;))?;
+</a><a href="#h0-1-25" id="h0-1-25" class="i">+            let index = groups.get(1).unwrap().as_str().parse()?;
+</a><a href="#h0-1-26" id="h0-1-26" class="i">+            let term = groups.get(2).unwrap().as_str().parse()?;
+</a><a href="#h0-1-27" id="h0-1-27" class="i">+            Ok((index, term))
+</a><a href="#h0-1-28" id="h0-1-28" class="i">+        }
+</a><a href="#h0-1-29" id="h0-1-29" class="i">+
+</a><a href="#h0-1-30" id="h0-1-30" class="i">+        /// Parses an index range, in Rust range syntax.
+</a><a href="#h0-1-31" id="h0-1-31" class="i">+        fn parse_index_range(s: &amp;str) -&gt; Result&lt;impl std::ops::RangeBounds&lt;Index&gt;, Box&lt;dyn Error&gt;&gt; {
+</a><a href="#h0-1-32" id="h0-1-32" class="i">+            use std::ops::Bound;
+</a><a href="#h0-1-33" id="h0-1-33" class="i">+            let mut bound = (Bound::&lt;Index&gt;::Unbounded, Bound::&lt;Index&gt;::Unbounded);
+</a><a href="#h0-1-34" id="h0-1-34" class="i">+            let re = Regex::new(r&quot;^(\d+)?\.\.(=)?(\d+)?&quot;).expect(&quot;invalid regex&quot;);
+</a><a href="#h0-1-35" id="h0-1-35" class="i">+            let groups = re.captures(s).ok_or_else(|| format!(&quot;invalid range {s}&quot;))?;
+</a><a href="#h0-1-36" id="h0-1-36" class="i">+            if let Some(start) = groups.get(1) {
+</a><a href="#h0-1-37" id="h0-1-37" class="i">+                bound.0 = Bound::Included(start.as_str().parse()?);
+</a><a href="#h0-1-38" id="h0-1-38" class="i">+            }
+</a><a href="#h0-1-39" id="h0-1-39" class="i">+            if let Some(end) = groups.get(3) {
+</a><a href="#h0-1-40" id="h0-1-40" class="i">+                let end = end.as_str().parse()?;
+</a><a href="#h0-1-41" id="h0-1-41" class="i">+                if groups.get(2).is_some() {
+</a><a href="#h0-1-42" id="h0-1-42" class="i">+                    bound.1 = Bound::Included(end)
+</a><a href="#h0-1-43" id="h0-1-43" class="i">+                } else {
+</a><a href="#h0-1-44" id="h0-1-44" class="i">+                    bound.1 = Bound::Excluded(end)
+</a><a href="#h0-1-45" id="h0-1-45" class="i">+                }
+</a><a href="#h0-1-46" id="h0-1-46" class="i">+            }
+</a><a href="#h0-1-47" id="h0-1-47" class="i">+            Ok(bound)
+</a><a href="#h0-1-48" id="h0-1-48" class="i">+        }
+</a>     }
+ 
+     impl goldenscript::Runner for TestRunner {
+         fn run(&amp;mut self, command: &amp;goldenscript::Command) -&gt; Result&lt;String, Box&lt;dyn Error&gt;&gt; {
+             let mut output = String::new();
+<a href="#h0-1-54" id="h0-1-54" class="i">+            let mut tags = command.tags.clone();
+</a><a href="#h0-1-55" id="h0-1-55" class="i">+
+</a>             match command.name.as_str() {
+                 // append [COMMAND]
+                 &quot;append&quot; =&gt; {
+<a href="#h0-2" id="h0-2" class="h">@@ -376,10 +424,8 @@ mod tests {
+</a>                     args.reject_rest()?;
+                     let index = self.log.append(command)?;
+                     let entry = self.log.get(index)?.expect(&quot;entry not found&quot;);
+<a href="#h0-2-3" id="h0-2-3" class="d">-                    output.push_str(&amp;format!(
+</a><a href="#h0-2-4" id="h0-2-4" class="d">-                        &quot;append → {}\n&quot;,
+</a><a href="#h0-2-5" id="h0-2-5" class="d">-                        format::Raft::&lt;format::Raw&gt;::entry(&amp;entry)
+</a><a href="#h0-2-6" id="h0-2-6" class="d">-                    ));
+</a><a href="#h0-2-7" id="h0-2-7" class="i">+                    let fmtentry = format::Raft::&lt;format::Raw&gt;::entry(&amp;entry);
+</a><a href="#h0-2-8" id="h0-2-8" class="i">+                    writeln!(output, &quot;append → {fmtentry}&quot;)?;
+</a>                 }
+ 
+                 // commit INDEX
+<a href="#h0-3" id="h0-3" class="h">@@ -389,10 +435,8 @@ mod tests {
+</a>                     args.reject_rest()?;
+                     let index = self.log.commit(index)?;
+                     let entry = self.log.get(index)?.expect(&quot;entry not found&quot;);
+<a href="#h0-3-3" id="h0-3-3" class="d">-                    output.push_str(&amp;format!(
+</a><a href="#h0-3-4" id="h0-3-4" class="d">-                        &quot;commit → {}\n&quot;,
+</a><a href="#h0-3-5" id="h0-3-5" class="d">-                        format::Raft::&lt;format::Raw&gt;::entry(&amp;entry)
+</a><a href="#h0-3-6" id="h0-3-6" class="d">-                    ));
+</a><a href="#h0-3-7" id="h0-3-7" class="i">+                    let fmtentry = format::Raft::&lt;format::Raw&gt;::entry(&amp;entry);
+</a><a href="#h0-3-8" id="h0-3-8" class="i">+                    writeln!(output, &quot;commit → {fmtentry}&quot;)?;
+</a>                 }
+ 
+                 // dump
+<a href="#h0-4" id="h0-4" class="h">@@ -401,12 +445,9 @@ mod tests {
+</a>                     let range = (std::ops::Bound::Unbounded, std::ops::Bound::Unbounded);
+                     let mut scan = self.log.engine.scan_dyn(range);
+                     while let Some((key, value)) = scan.next().transpose()? {
+<a href="#h0-4-3" id="h0-4-3" class="d">-                        writeln!(
+</a><a href="#h0-4-4" id="h0-4-4" class="d">-                            output,
+</a><a href="#h0-4-5" id="h0-4-5" class="d">-                            &quot;{} [{}]&quot;,
+</a><a href="#h0-4-6" id="h0-4-6" class="d">-                            format::Raft::&lt;format::Raw&gt;::key_value(&amp;key, &amp;value),
+</a><a href="#h0-4-7" id="h0-4-7" class="d">-                            format::Raw::key_value(&amp;key, &amp;value)
+</a><a href="#h0-4-8" id="h0-4-8" class="d">-                        )?;
+</a><a href="#h0-4-9" id="h0-4-9" class="i">+                        let fmtkv = format::Raft::&lt;format::Raw&gt;::key_value(&amp;key, &amp;value);
+</a><a href="#h0-4-10" id="h0-4-10" class="i">+                        let rawkv = format::Raw::key_value(&amp;key, &amp;value);
+</a><a href="#h0-4-11" id="h0-4-11" class="i">+                        writeln!(output, &quot;{fmtkv} [{rawkv}]&quot;)?;
+</a>                     }
+                 }
+ 
+<a href="#h0-5" id="h0-5" class="h">@@ -417,13 +458,12 @@ mod tests {
+</a>                         args.rest_pos().iter().map(|a| a.parse()).try_collect()?;
+                     args.reject_rest()?;
+                     for index in indexes {
+<a href="#h0-5-3" id="h0-5-3" class="d">-                        let entry = self
+</a><a href="#h0-5-4" id="h0-5-4" class="d">-                            .log
+</a><a href="#h0-5-5" id="h0-5-5" class="d">-                            .get(index)?
+</a><a href="#h0-5-6" id="h0-5-6" class="i">+                        let entry = self.log.get(index)?;
+</a><a href="#h0-5-7" id="h0-5-7" class="i">+                        let fmtentry = entry
+</a>                             .as_ref()
+                             .map(format::Raft::&lt;format::Raw&gt;::entry)
+                             .unwrap_or(&quot;None&quot;.to_string());
+<a href="#h0-5-11" id="h0-5-11" class="d">-                        output.push_str(&amp;format!(&quot;{entry}\n&quot;));
+</a><a href="#h0-5-12" id="h0-5-12" class="i">+                        writeln!(output, &quot;{fmtentry}&quot;)?;
+</a>                     }
+                 }
+ 
+<a href="#h0-6" id="h0-6" class="h">@@ -431,10 +471,8 @@ mod tests {
+</a>                 &quot;get_term&quot; =&gt; {
+                     command.consume_args().reject_rest()?;
+                     let (term, vote) = self.log.get_term();
+<a href="#h0-6-3" id="h0-6-3" class="d">-                    output.push_str(&amp;format!(
+</a><a href="#h0-6-4" id="h0-6-4" class="d">-                        &quot;term={term} vote={}\n&quot;,
+</a><a href="#h0-6-5" id="h0-6-5" class="d">-                        vote.map(|v| v.to_string()).unwrap_or(&quot;None&quot;.to_string())
+</a><a href="#h0-6-6" id="h0-6-6" class="d">-                    ));
+</a><a href="#h0-6-7" id="h0-6-7" class="i">+                    let vote = vote.map(|v| v.to_string()).unwrap_or(&quot;None&quot;.to_string());
+</a><a href="#h0-6-8" id="h0-6-8" class="i">+                    writeln!(output, &quot;term={term} vote={vote}&quot;)?;
+</a>                 }
+ 
+                 // has INDEX@TERM...
+<a href="#h0-7" id="h0-7" class="h">@@ -448,7 +486,7 @@ mod tests {
+</a>                     args.reject_rest()?;
+                     for (index, term) in indexes {
+                         let has = self.log.has(index, term)?;
+<a href="#h0-7-3" id="h0-7-3" class="d">-                        output.push_str(&amp;format!(&quot;{has}\n&quot;));
+</a><a href="#h0-7-4" id="h0-7-4" class="i">+                        writeln!(output, &quot;{has}&quot;)?;
+</a>                     }
+                 }
+ 
+<a href="#h0-8" id="h0-8" class="h">@@ -471,8 +509,8 @@ mod tests {
+</a>                     args.reject_rest()?;
+                     let mut scan = self.log.scan(range);
+                     while let Some(entry) = scan.next().transpose()? {
+<a href="#h0-8-3" id="h0-8-3" class="d">-                        output
+</a><a href="#h0-8-4" id="h0-8-4" class="d">-                            .push_str(&amp;format!(&quot;{}\n&quot;, format::Raft::&lt;format::Raw&gt;::entry(&amp;entry)));
+</a><a href="#h0-8-5" id="h0-8-5" class="i">+                        let fmtentry = format::Raft::&lt;format::Raw&gt;::entry(&amp;entry);
+</a><a href="#h0-8-6" id="h0-8-6" class="i">+                        writeln!(output, &quot;{fmtentry}&quot;)?;
+</a>                     }
+                 }
+ 
+<a href="#h0-9" id="h0-9" class="h">@@ -484,8 +522,8 @@ mod tests {
+</a>                     args.reject_rest()?;
+                     let mut scan = self.log.scan_apply(applied_index);
+                     while let Some(entry) = scan.next().transpose()? {
+<a href="#h0-9-3" id="h0-9-3" class="d">-                        output
+</a><a href="#h0-9-4" id="h0-9-4" class="d">-                            .push_str(&amp;format!(&quot;{}\n&quot;, format::Raft::&lt;format::Raw&gt;::entry(&amp;entry)));
+</a><a href="#h0-9-5" id="h0-9-5" class="i">+                        let fmtentry = format::Raft::&lt;format::Raw&gt;::entry(&amp;entry);
+</a><a href="#h0-9-6" id="h0-9-6" class="i">+                        writeln!(output, &quot;{fmtentry}&quot;)?;
+</a>                     }
+                 }
+ 
+<a href="#h0-10" id="h0-10" class="h">@@ -513,10 +551,8 @@ mod tests {
+</a>                     args.reject_rest()?;
+                     let index = self.log.splice(entries)?;
+                     let entry = self.log.get(index)?.expect(&quot;entry not found&quot;);
+<a href="#h0-10-3" id="h0-10-3" class="d">-                    output.push_str(&amp;format!(
+</a><a href="#h0-10-4" id="h0-10-4" class="d">-                        &quot;splice → {}\n&quot;,
+</a><a href="#h0-10-5" id="h0-10-5" class="d">-                        format::Raft::&lt;format::Raw&gt;::entry(&amp;entry)
+</a><a href="#h0-10-6" id="h0-10-6" class="d">-                    ));
+</a><a href="#h0-10-7" id="h0-10-7" class="i">+                    let fmtentry = format::Raft::&lt;format::Raw&gt;::entry(&amp;entry);
+</a><a href="#h0-10-8" id="h0-10-8" class="i">+                    writeln!(output, &quot;splice → {fmtentry}&quot;)?;
+</a>                 }
+ 
+                 // status [engine=BOOL]
+<a href="#h0-11" id="h0-11" class="h">@@ -527,100 +563,51 @@ mod tests {
+</a>                     let (term, vote) = self.log.get_term();
+                     let (last_index, last_term) = self.log.get_last_index();
+                     let (commit_index, commit_term) = self.log.get_commit_index();
+<a href="#h0-11-3" id="h0-11-3" class="d">-                    output.push_str(&amp;format!(
+</a><a href="#h0-11-4" id="h0-11-4" class="d">-                        &quot;term={term} last={last_index}@{last_term} commit={commit_index}@{commit_term} vote={}&quot;,
+</a><a href="#h0-11-5" id="h0-11-5" class="d">-                        vote.map(|id| id.to_string()).unwrap_or(&quot;None&quot;.to_string())
+</a><a href="#h0-11-6" id="h0-11-6" class="d">-                    ));
+</a><a href="#h0-11-7" id="h0-11-7" class="i">+                    let vote = vote.map(|id| id.to_string()).unwrap_or(&quot;None&quot;.to_string());
+</a><a href="#h0-11-8" id="h0-11-8" class="i">+                    write!(
+</a><a href="#h0-11-9" id="h0-11-9" class="i">+                        output,
+</a><a href="#h0-11-10" id="h0-11-10" class="i">+                        &quot;term={term} last={last_index}@{last_term} commit={commit_index}@{commit_term} vote={vote}&quot;,
+</a><a href="#h0-11-11" id="h0-11-11" class="i">+                    )?;
+</a>                     if engine {
+<a href="#h0-11-13" id="h0-11-13" class="d">-                        output.push_str(&amp;format!(&quot; engine={:#?}&quot;, self.log.status()?));
+</a><a href="#h0-11-14" id="h0-11-14" class="i">+                        write!(output, &quot; engine={:#?}&quot;, self.log.status()?)?;
+</a>                     }
+<a href="#h0-11-16" id="h0-11-16" class="d">-                    output.push(&#39;\n&#39;);
+</a><a href="#h0-11-17" id="h0-11-17" class="i">+                    writeln!(output)?;
+</a>                 }
+ 
+                 name =&gt; return Err(format!(&quot;unknown command {name}&quot;).into()),
+             }
+<a href="#h0-11-22" id="h0-11-22" class="d">-            Ok(output)
+</a><a href="#h0-11-23" id="h0-11-23" class="d">-        }
+</a> 
+<a href="#h0-11-25" id="h0-11-25" class="d">-        /// If requested via [ops] tag, output engine operations for the command.
+</a><a href="#h0-11-26" id="h0-11-26" class="d">-        fn end_command(
+</a><a href="#h0-11-27" id="h0-11-27" class="d">-            &amp;mut self,
+</a><a href="#h0-11-28" id="h0-11-28" class="d">-            command: &amp;goldenscript::Command,
+</a><a href="#h0-11-29" id="h0-11-29" class="d">-        ) -&gt; Result&lt;String, Box&lt;dyn Error&gt;&gt; {
+</a><a href="#h0-11-30" id="h0-11-30" class="d">-            // Parse tags.
+</a><a href="#h0-11-31" id="h0-11-31" class="d">-            let mut show_ops = false;
+</a><a href="#h0-11-32" id="h0-11-32" class="d">-            for tag in &amp;command.tags {
+</a><a href="#h0-11-33" id="h0-11-33" class="d">-                match tag.as_str() {
+</a><a href="#h0-11-34" id="h0-11-34" class="d">-                    &quot;ops&quot; =&gt; show_ops = true,
+</a><a href="#h0-11-35" id="h0-11-35" class="d">-                    tag =&gt; return Err(format!(&quot;invalid tag {tag}&quot;).into()),
+</a><a href="#h0-11-36" id="h0-11-36" class="i">+            // If requested, output engine operations.
+</a><a href="#h0-11-37" id="h0-11-37" class="i">+            if tags.remove(&quot;ops&quot;) {
+</a><a href="#h0-11-38" id="h0-11-38" class="i">+                while let Ok(op) = self.op_rx.try_recv() {
+</a><a href="#h0-11-39" id="h0-11-39" class="i">+                    match op {
+</a><a href="#h0-11-40" id="h0-11-40" class="i">+                        testengine::Operation::Delete { key } =&gt; {
+</a><a href="#h0-11-41" id="h0-11-41" class="i">+                            let fmtkey = format::Raft::&lt;format::Raw&gt;::key(&amp;key);
+</a><a href="#h0-11-42" id="h0-11-42" class="i">+                            let rawkey = format::Raw::key(&amp;key);
+</a><a href="#h0-11-43" id="h0-11-43" class="i">+                            writeln!(output, &quot;engine delete {fmtkey} [{rawkey}]&quot;)?
+</a><a href="#h0-11-44" id="h0-11-44" class="i">+                        }
+</a><a href="#h0-11-45" id="h0-11-45" class="i">+                        testengine::Operation::Flush =&gt; writeln!(output, &quot;engine flush&quot;)?,
+</a><a href="#h0-11-46" id="h0-11-46" class="i">+                        testengine::Operation::Set { key, value } =&gt; {
+</a><a href="#h0-11-47" id="h0-11-47" class="i">+                            let fmtkv = format::Raft::&lt;format::Raw&gt;::key_value(&amp;key, &amp;value);
+</a><a href="#h0-11-48" id="h0-11-48" class="i">+                            let rawkv = format::Raw::key_value(&amp;key, &amp;value);
+</a><a href="#h0-11-49" id="h0-11-49" class="i">+                            writeln!(output, &quot;engine set {fmtkv} [{rawkv}]&quot;)?
+</a><a href="#h0-11-50" id="h0-11-50" class="i">+                        }
+</a><a href="#h0-11-51" id="h0-11-51" class="i">+                    }
+</a>                 }
+             }
+ 
+<a href="#h0-11-55" id="h0-11-55" class="d">-            // Process engine operations, either output or drain.
+</a><a href="#h0-11-56" id="h0-11-56" class="d">-            let mut output = String::new();
+</a><a href="#h0-11-57" id="h0-11-57" class="d">-            while let Ok(op) = self.op_rx.try_recv() {
+</a><a href="#h0-11-58" id="h0-11-58" class="d">-                match op {
+</a><a href="#h0-11-59" id="h0-11-59" class="d">-                    _ if !show_ops =&gt; {}
+</a><a href="#h0-11-60" id="h0-11-60" class="d">-                    Operation::Delete { key } =&gt; writeln!(
+</a><a href="#h0-11-61" id="h0-11-61" class="d">-                        output,
+</a><a href="#h0-11-62" id="h0-11-62" class="d">-                        &quot;engine delete {} [{}]&quot;,
+</a><a href="#h0-11-63" id="h0-11-63" class="d">-                        format::Raft::&lt;format::Raw&gt;::key(&amp;key),
+</a><a href="#h0-11-64" id="h0-11-64" class="d">-                        format::Raw::key(&amp;key)
+</a><a href="#h0-11-65" id="h0-11-65" class="d">-                    )?,
+</a><a href="#h0-11-66" id="h0-11-66" class="d">-                    Operation::Flush =&gt; writeln!(output, &quot;engine flush&quot;)?,
+</a><a href="#h0-11-67" id="h0-11-67" class="d">-                    Operation::Set { key, value } =&gt; writeln!(
+</a><a href="#h0-11-68" id="h0-11-68" class="d">-                        output,
+</a><a href="#h0-11-69" id="h0-11-69" class="d">-                        &quot;engine set {} [{}]&quot;,
+</a><a href="#h0-11-70" id="h0-11-70" class="d">-                        format::Raft::&lt;format::Raw&gt;::key_value(&amp;key, &amp;value),
+</a><a href="#h0-11-71" id="h0-11-71" class="d">-                        format::Raw::key_value(&amp;key, &amp;value)
+</a><a href="#h0-11-72" id="h0-11-72" class="d">-                    )?,
+</a><a href="#h0-11-73" id="h0-11-73" class="d">-                }
+</a><a href="#h0-11-74" id="h0-11-74" class="i">+            if let Some(tag) = tags.iter().next() {
+</a><a href="#h0-11-75" id="h0-11-75" class="i">+                return Err(format!(&quot;unknown tag {tag}&quot;).into());
+</a>             }
+<a href="#h0-11-77" id="h0-11-77" class="d">-            Ok(output)
+</a><a href="#h0-11-78" id="h0-11-78" class="d">-        }
+</a><a href="#h0-11-79" id="h0-11-79" class="d">-    }
+</a> 
+<a href="#h0-11-81" id="h0-11-81" class="d">-    impl TestRunner {
+</a><a href="#h0-11-82" id="h0-11-82" class="d">-        fn new() -&gt; Self {
+</a><a href="#h0-11-83" id="h0-11-83" class="d">-            // Use both a BitCask and a Memory engine, and mirror operations
+</a><a href="#h0-11-84" id="h0-11-84" class="d">-            // across them. Emit write events to op_tx.
+</a><a href="#h0-11-85" id="h0-11-85" class="d">-            let (op_tx, op_rx) = crossbeam::channel::unbounded();
+</a><a href="#h0-11-86" id="h0-11-86" class="d">-            let tempdir = tempfile::TempDir::with_prefix(&quot;toydb&quot;).expect(&quot;tempdir failed&quot;);
+</a><a href="#h0-11-87" id="h0-11-87" class="d">-            let bitcask =
+</a><a href="#h0-11-88" id="h0-11-88" class="d">-                storage::BitCask::new(tempdir.path().join(&quot;bitcask&quot;)).expect(&quot;bitcask failed&quot;);
+</a><a href="#h0-11-89" id="h0-11-89" class="d">-            let memory = storage::Memory::new();
+</a><a href="#h0-11-90" id="h0-11-90" class="d">-            let engine = testengine::Emit::new(testengine::Mirror::new(bitcask, memory), op_tx);
+</a><a href="#h0-11-91" id="h0-11-91" class="d">-            let log = Log::new(Box::new(engine)).expect(&quot;log init failed&quot;);
+</a><a href="#h0-11-92" id="h0-11-92" class="d">-            Self { log, op_rx, tempdir }
+</a><a href="#h0-11-93" id="h0-11-93" class="d">-        }
+</a><a href="#h0-11-94" id="h0-11-94" class="d">-
+</a><a href="#h0-11-95" id="h0-11-95" class="d">-        /// Parses an index@term pair.
+</a><a href="#h0-11-96" id="h0-11-96" class="d">-        fn parse_index_term(s: &amp;str) -&gt; Result&lt;(Index, Term), Box&lt;dyn Error&gt;&gt; {
+</a><a href="#h0-11-97" id="h0-11-97" class="d">-            let re = Regex::new(r&quot;^(\d+)@(\d+)$&quot;).expect(&quot;invalid regex&quot;);
+</a><a href="#h0-11-98" id="h0-11-98" class="d">-            let groups = re.captures(s).ok_or_else(|| format!(&quot;invalid index/term {s}&quot;))?;
+</a><a href="#h0-11-99" id="h0-11-99" class="d">-            let index = groups.get(1).unwrap().as_str().parse()?;
+</a><a href="#h0-11-100" id="h0-11-100" class="d">-            let term = groups.get(2).unwrap().as_str().parse()?;
+</a><a href="#h0-11-101" id="h0-11-101" class="d">-            Ok((index, term))
+</a><a href="#h0-11-102" id="h0-11-102" class="i">+            Ok(output)
+</a>         }
+ 
+<a href="#h0-11-105" id="h0-11-105" class="d">-        /// Parses an index range, in Rust range syntax.
+</a><a href="#h0-11-106" id="h0-11-106" class="d">-        fn parse_index_range(s: &amp;str) -&gt; Result&lt;impl std::ops::RangeBounds&lt;Index&gt;, Box&lt;dyn Error&gt;&gt; {
+</a><a href="#h0-11-107" id="h0-11-107" class="d">-            use std::ops::Bound;
+</a><a href="#h0-11-108" id="h0-11-108" class="d">-            let mut bound = (Bound::&lt;Index&gt;::Unbounded, Bound::&lt;Index&gt;::Unbounded);
+</a><a href="#h0-11-109" id="h0-11-109" class="d">-            let re = Regex::new(r&quot;^(\d+)?\.\.(=)?(\d+)?&quot;).expect(&quot;invalid regex&quot;);
+</a><a href="#h0-11-110" id="h0-11-110" class="d">-            let groups = re.captures(s).ok_or_else(|| format!(&quot;invalid range {s}&quot;))?;
+</a><a href="#h0-11-111" id="h0-11-111" class="d">-            if let Some(start) = groups.get(1) {
+</a><a href="#h0-11-112" id="h0-11-112" class="d">-                bound.0 = Bound::Included(start.as_str().parse()?);
+</a><a href="#h0-11-113" id="h0-11-113" class="d">-            }
+</a><a href="#h0-11-114" id="h0-11-114" class="d">-            if let Some(end) = groups.get(3) {
+</a><a href="#h0-11-115" id="h0-11-115" class="d">-                let end = end.as_str().parse()?;
+</a><a href="#h0-11-116" id="h0-11-116" class="d">-                if groups.get(2).is_some() {
+</a><a href="#h0-11-117" id="h0-11-117" class="d">-                    bound.1 = Bound::Included(end)
+</a><a href="#h0-11-118" id="h0-11-118" class="d">-                } else {
+</a><a href="#h0-11-119" id="h0-11-119" class="d">-                    bound.1 = Bound::Excluded(end)
+</a><a href="#h0-11-120" id="h0-11-120" class="d">-                }
+</a><a href="#h0-11-121" id="h0-11-121" class="d">-            }
+</a><a href="#h0-11-122" id="h0-11-122" class="d">-            Ok(bound)
+</a><a href="#h0-11-123" id="h0-11-123" class="i">+        /// If requested via [ops] tag, output engine operations for the command.
+</a><a href="#h0-11-124" id="h0-11-124" class="i">+        fn end_command(&amp;mut self, _: &amp;goldenscript::Command) -&gt; Result&lt;String, Box&lt;dyn Error&gt;&gt; {
+</a><a href="#h0-11-125" id="h0-11-125" class="i">+            // Drain any remaining engine operations.
+</a><a href="#h0-11-126" id="h0-11-126" class="i">+            while self.op_rx.try_recv().is_ok() {}
+</a><a href="#h0-11-127" id="h0-11-127" class="i">+            Ok(String::new())
+</a>         }
+     }
+ }
+<b>diff --git a/<a id="h1" href="../file/src/raft/node.rs.html">src/raft/node.rs</a> b/<a href="../file/src/raft/node.rs.html">src/raft/node.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -1152,6 +1152,7 @@ impl RawNode&lt;Leader&gt; {
+</a>     }
+ }
+ 
+<a href="#h1-0-3" id="h1-0-3" class="i">+/// Most Raft tests are Goldenscripts under src/raft/testscripts.
+</a> #[cfg(test)]
+ mod tests {
+     use super::*;
+<a href="#h1-1" id="h1-1" class="h">@@ -1160,6 +1161,7 @@ mod tests {
+</a>     use crate::raft::Entry;
+     use crate::storage;
+     use crate::storage::engine::test as testengine;
+<a href="#h1-1-3" id="h1-1-3" class="i">+
+</a>     use crossbeam::channel::Receiver;
+     use std::borrow::Borrow;
+     use std::error::Error;
+<a href="#h1-2" id="h1-2" class="h">@@ -1791,13 +1793,13 @@ mod tests {
+</a>             // If requested, heartbeat the current leader (with the highest
+             // term) and re-stabilize the nodes.
+             if heartbeat {
+<a href="#h1-2-3" id="h1-2-3" class="d">-                if let Some(leader) = self
+</a><a href="#h1-2-4" id="h1-2-4" class="i">+                let leader = self
+</a>                     .nodes
+                     .values()
+                     .sorted_by_key(|n| n.term())
+                     .rev()
+<a href="#h1-2-9" id="h1-2-9" class="d">-                    .find(|n| matches!(n, Node::Leader(_)))
+</a><a href="#h1-2-10" id="h1-2-10" class="d">-                {
+</a><a href="#h1-2-11" id="h1-2-11" class="i">+                    .find(|n| matches!(n, Node::Leader(_)));
+</a><a href="#h1-2-12" id="h1-2-12" class="i">+                if let Some(leader) = leader {
+</a>                     self.heartbeat(&amp;[leader.id()], output)?;
+                     self.stabilize(ids, false, output)?;
+                 }
+<a href="#h1-3" id="h1-3" class="h">@@ -1832,21 +1834,18 @@ mod tests {
+</a>                 let applied_index = node.get_applied_index();
+                 write!(
+                     output,
+<a href="#h1-3-3" id="h1-3-3" class="d">-                    &quot;{} last={last_index}@{last_term} commit={commit_index}@{commit_term} applied={applied_index}&quot;,
+</a><a href="#h1-3-4" id="h1-3-4" class="d">-                    Self::format_node_role(node)
+</a><a href="#h1-3-5" id="h1-3-5" class="i">+                    &quot;{node} last={last_index}@{last_term} commit={commit_index}@{commit_term} applied={applied_index}&quot;,
+</a><a href="#h1-3-6" id="h1-3-6" class="i">+                    node = Self::format_node_role(node)
+</a>                 )?;
+                 if let Node::Leader(leader) = node {
+<a href="#h1-3-9" id="h1-3-9" class="d">-                    write!(
+</a><a href="#h1-3-10" id="h1-3-10" class="d">-                        output,
+</a><a href="#h1-3-11" id="h1-3-11" class="d">-                        &quot; progress={{{}}}&quot;,
+</a><a href="#h1-3-12" id="h1-3-12" class="d">-                        leader
+</a><a href="#h1-3-13" id="h1-3-13" class="d">-                            .role
+</a><a href="#h1-3-14" id="h1-3-14" class="d">-                            .progress
+</a><a href="#h1-3-15" id="h1-3-15" class="d">-                            .iter()
+</a><a href="#h1-3-16" id="h1-3-16" class="d">-                            .sorted_by_key(|(id, _)| *id)
+</a><a href="#h1-3-17" id="h1-3-17" class="d">-                            .map(|(id, pr)| format!(&quot;{id}:{}→{}&quot;, pr.match_index, pr.next_index))
+</a><a href="#h1-3-18" id="h1-3-18" class="d">-                            .join(&quot; &quot;)
+</a><a href="#h1-3-19" id="h1-3-19" class="d">-                    )?
+</a><a href="#h1-3-20" id="h1-3-20" class="i">+                    let progress = leader
+</a><a href="#h1-3-21" id="h1-3-21" class="i">+                        .role
+</a><a href="#h1-3-22" id="h1-3-22" class="i">+                        .progress
+</a><a href="#h1-3-23" id="h1-3-23" class="i">+                        .iter()
+</a><a href="#h1-3-24" id="h1-3-24" class="i">+                        .sorted_by_key(|(id, _)| *id)
+</a><a href="#h1-3-25" id="h1-3-25" class="i">+                        .map(|(id, pr)| format!(&quot;{id}:{}→{}&quot;, pr.match_index, pr.next_index))
+</a><a href="#h1-3-26" id="h1-3-26" class="i">+                        .join(&quot; &quot;);
+</a><a href="#h1-3-27" id="h1-3-27" class="i">+                    write!(output, &quot; progress={{{progress}}}&quot;)?
+</a>                 }
+                 output.push(&#39;\n&#39;);
+             }
+<a href="#h1-4" id="h1-4" class="h">@@ -2029,7 +2028,7 @@ mod tests {
+</a>                 Some(raw) =&gt; KVCommand::decode(raw).expect(&quot;invalid command&quot;).to_string(),
+                 None =&gt; &quot;None&quot;.to_string(),
+             };
+<a href="#h1-4-3" id="h1-4-3" class="d">-            format!(&quot;{}@{} {command}&quot;, entry.index, entry.term)
+</a><a href="#h1-4-4" id="h1-4-4" class="i">+            format!(&quot;{index}@{term} {command}&quot;, index = entry.index, term = entry.term)
+</a>         }
+ 
+         /// Formats a message.
+<a href="#h1-5" id="h1-5" class="h">@@ -2084,7 +2083,7 @@ mod tests {
+</a>                             Ok(Response::Read(v)) =&gt; format!(&quot;read 0x{}&quot;, hex::encode(v)),
+                             Ok(Response::Write(v)) =&gt; format!(&quot;write 0x{}&quot;, hex::encode(v)),
+                             Ok(Response::Status(v)) =&gt; format!(&quot;status {v:?}&quot;),
+<a href="#h1-5-3" id="h1-5-3" class="d">-                            Err(e) =&gt; format!(&quot;Error::{e:#?}&quot;),
+</a><a href="#h1-5-4" id="h1-5-4" class="i">+                            Err(error) =&gt; format!(&quot;Error::{error:#?}&quot;),
+</a>                         }
+                     )
+                 }
+<a href="#h1-6" id="h1-6" class="h">@@ -2093,7 +2092,7 @@ mod tests {
+</a> 
+         /// Formats a node identifier.
+         fn format_node(node: &amp;Node) -&gt; String {
+<a href="#h1-6-3" id="h1-6-3" class="d">-            format!(&quot;n{}@{}&quot;, node.id(), node.term())
+</a><a href="#h1-6-4" id="h1-6-4" class="i">+            format!(&quot;n{id}@{term}&quot;, id = node.id(), term = node.term())
+</a>         }
+ 
+         /// Formats a node identifier with role.
+<a href="#h1-7" id="h1-7" class="h">@@ -2106,7 +2105,7 @@ mod tests {
+</a>                 }
+                 Node::Leader(_) =&gt; &quot;leader&quot;.to_string(),
+             };
+<a href="#h1-7-3" id="h1-7-3" class="d">-            format!(&quot;{} {role}&quot;, Self::format_node(node))
+</a><a href="#h1-7-4" id="h1-7-4" class="i">+            format!(&quot;{node} {role}&quot;, node = Self::format_node(node))
+</a>         }
+ 
+         /// Formats a request.
+<a href="#h1-8" id="h1-8" class="h">@@ -2124,7 +2123,7 @@ mod tests {
+</a>                     KVResponse::decode(r).unwrap().to_string()
+                 }
+                 Ok(Response::Status(status)) =&gt; format!(&quot;{status:#?}&quot;),
+<a href="#h1-8-3" id="h1-8-3" class="d">-                Err(e) =&gt; format!(&quot;Error::{e:?} ({e})&quot;),
+</a><a href="#h1-8-4" id="h1-8-4" class="i">+                Err(error) =&gt; format!(&quot;Error::{error:?} ({error})&quot;),
+</a>             }
+         }
+ 
+<b>diff --git a/<a id="h2" href="../file/src/raft/state.rs.html">src/raft/state.rs</a> b/<a href="../file/src/raft/state.rs.html">src/raft/state.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -55,6 +55,7 @@ pub trait State: Send {
+</a> pub mod test {
+     use super::*;
+     use crate::encoding::{self, Value as _};
+<a href="#h2-0-3" id="h2-0-3" class="i">+
+</a>     use crossbeam::channel::Sender;
+     use itertools::Itertools as _;
+     use serde::{Deserialize, Serialize};
+</pre>
+</div>
+</body>
+</html>

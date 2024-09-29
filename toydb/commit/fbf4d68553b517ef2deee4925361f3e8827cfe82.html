@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>raft: make request aborting deterministic - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/fbf4d68553b517ef2deee4925361f3e8827cfe82.html">fbf4d68553b517ef2deee4925361f3e8827cfe82</a>
+<b>parent</b> <a href="../commit/737e38cc23f10819e1d775fdbe372a3a75743549.html">737e38cc23f10819e1d775fdbe372a3a75743549</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Wed, 22 May 2024 12:48:21 +0200
+
+raft: make request aborting deterministic
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/raft/node/follower.rs</a></td><td> | </td><td class="num">5</td><td><span class="i">+++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/raft/node/leader.rs</a></td><td> | </td><td class="num">7</td><td><span class="i">+++++</span><span class="d">--</span></td></tr>
+</table></pre><pre>2 files changed, 8 insertions(+), 4 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/raft/node/follower.rs.html">src/raft/node/follower.rs</a> b/<a href="../file/src/raft/node/follower.rs.html">src/raft/node/follower.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -3,6 +3,7 @@ use super::{Candidate, Node, NodeID, RawNode, Role, Term, Ticks};
+</a> use crate::error::{Error, Result};
+ 
+ use ::log::{debug, info};
+<a href="#h0-0-3" id="h0-0-3" class="i">+use itertools::Itertools as _;
+</a> use std::collections::HashSet;
+ 
+ // A follower replicates state from a leader.
+<a href="#h0-1" id="h0-1" class="h">@@ -272,7 +273,8 @@ impl RawNode&lt;Follower&gt; {
+</a> 
+     /// Aborts all forwarded requests.
+     fn abort_forwarded(&amp;mut self) -&gt; Result&lt;()&gt; {
+<a href="#h0-1-3" id="h0-1-3" class="d">-        for id in std::mem::take(&amp;mut self.role.forwarded) {
+</a><a href="#h0-1-4" id="h0-1-4" class="i">+        // Sort the IDs for test determinism.
+</a><a href="#h0-1-5" id="h0-1-5" class="i">+        for id in std::mem::take(&amp;mut self.role.forwarded).into_iter().sorted() {
+</a>             debug!(&quot;Aborting forwarded request {:x?}&quot;, id);
+             self.send(self.id, Message::ClientResponse { id, response: Err(Error::Abort) })?;
+         }
+<a href="#h0-2" id="h0-2" class="h">@@ -294,7 +296,6 @@ pub mod tests {
+</a>     use crate::error::Error;
+     use crate::raft::HEARTBEAT_INTERVAL;
+     use crate::storage;
+<a href="#h0-2-3" id="h0-2-3" class="d">-    use itertools::Itertools as _;
+</a>     use rand::Rng as _;
+ 
+     #[allow(clippy::type_complexity)]
+<b>diff --git a/<a id="h1" href="../file/src/raft/node/leader.rs.html">src/raft/node/leader.rs</a> b/<a href="../file/src/raft/node/leader.rs.html">src/raft/node/leader.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -107,13 +107,16 @@ impl RawNode&lt;Leader&gt; {
+</a>         info!(&quot;Discovered new term {}&quot;, term);
+ 
+         // Cancel in-flight requests.
+<a href="#h1-0-3" id="h1-0-3" class="d">-        for write in std::mem::take(&amp;mut self.role.writes).into_values() {
+</a><a href="#h1-0-4" id="h1-0-4" class="i">+        for write in
+</a><a href="#h1-0-5" id="h1-0-5" class="i">+            std::mem::take(&amp;mut self.role.writes).into_values().sorted_by_key(|w| w.id.clone())
+</a><a href="#h1-0-6" id="h1-0-6" class="i">+        {
+</a>             self.send(
+                 write.from,
+                 Message::ClientResponse { id: write.id, response: Err(Error::Abort) },
+             )?;
+         }
+<a href="#h1-0-12" id="h1-0-12" class="d">-        for read in std::mem::take(&amp;mut self.role.reads).into_iter() {
+</a><a href="#h1-0-13" id="h1-0-13" class="i">+        for read in std::mem::take(&amp;mut self.role.reads).into_iter().sorted_by_key(|r| r.id.clone())
+</a><a href="#h1-0-14" id="h1-0-14" class="i">+        {
+</a>             self.send(
+                 read.from,
+                 Message::ClientResponse { id: read.id, response: Err(Error::Abort) },
+</pre>
+</div>
+</body>
+</html>

@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>raft: add test helper state machines - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/bbe8a69970d166d071c6063cafce1deb2bd52b70.html">bbe8a69970d166d071c6063cafce1deb2bd52b70</a>
+<b>parent</b> <a href="../commit/16dcc863fd8aea9055cda2cce0817d813a2c4423.html">16dcc863fd8aea9055cda2cce0817d813a2c4423</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Sat,  8 Jun 2024 15:31:09 +0200
+
+raft: add test helper state machines
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/raft/node.rs</a></td><td> | </td><td class="num">125</td><td><span class="i">++++++++</span><span class="d">-----------------------------------------------------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/raft/state.rs</a></td><td> | </td><td class="num">167</td><td><span class="i">++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d">---</span></td></tr>
+</table></pre><pre>2 files changed, 174 insertions(+), 118 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/raft/node.rs.html">src/raft/node.rs</a> b/<a href="../file/src/raft/node.rs.html">src/raft/node.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -1222,16 +1222,16 @@ fn quorum_value&lt;T: Ord + Copy&gt;(mut values: Vec&lt;T&gt;) -&gt; T {
+</a> #[cfg(test)]
+ mod tests {
+     use super::*;
+<a href="#h0-0-3" id="h0-0-3" class="d">-    use crate::encoding::{self, bincode, Value as _};
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+    use crate::encoding::{bincode, Value as _};
+</a><a href="#h0-0-5" id="h0-0-5" class="i">+    use crate::raft::state::test::{self as teststate, KVCommand, KVResponse};
+</a>     use crate::raft::{
+         Entry, Request, RequestID, Response, ELECTION_TIMEOUT_RANGE, HEARTBEAT_INTERVAL,
+         MAX_APPEND_ENTRIES,
+     };
+<a href="#h0-0-10" id="h0-0-10" class="d">-    use crossbeam::channel::{Receiver, Sender};
+</a><a href="#h0-0-11" id="h0-0-11" class="i">+    use crossbeam::channel::Receiver;
+</a>     use pretty_assertions::assert_eq;
+<a href="#h0-0-13" id="h0-0-13" class="d">-    use serde::{Deserialize, Serialize};
+</a>     use std::borrow::Borrow;
+<a href="#h0-0-15" id="h0-0-15" class="d">-    use std::collections::{BTreeMap, HashMap, HashSet};
+</a><a href="#h0-0-16" id="h0-0-16" class="i">+    use std::collections::{HashMap, HashSet};
+</a>     use std::error::Error;
+     use std::result::Result;
+     use test_each_file::test_each_path;
+<a href="#h0-1" id="h0-1" class="h">@@ -1270,7 +1270,7 @@ mod tests {
+</a>         nodes_rx: HashMap&lt;NodeID, Receiver&lt;Envelope&gt;&gt;,
+         /// Inbound receive queues to each node, to be stepped.
+         nodes_pending: HashMap&lt;NodeID, Vec&lt;Envelope&gt;&gt;,
+<a href="#h0-1-3" id="h0-1-3" class="d">-        /// Applied log entries for each node, after TestState application.
+</a><a href="#h0-1-4" id="h0-1-4" class="i">+        /// Applied log entries for each node, after state machine application.
+</a>         applied_rx: HashMap&lt;NodeID, Receiver&lt;Entry&gt;&gt;,
+         /// Network partitions, sender → receivers.
+         disconnected: HashMap&lt;NodeID, HashSet&lt;NodeID&gt;&gt;,
+<a href="#h0-2" id="h0-2" class="h">@@ -1339,7 +1339,7 @@ mod tests {
+</a>                     let id = args.next_pos().ok_or(&quot;must specify node ID&quot;)?.parse()?;
+                     let key = args.next_pos().ok_or(&quot;must specify key&quot;)?.value.clone();
+                     args.reject_rest()?;
+<a href="#h0-2-3" id="h0-2-3" class="d">-                    let request = Request::Read(TestCommand::Get { key }.encode()?);
+</a><a href="#h0-2-4" id="h0-2-4" class="i">+                    let request = Request::Read(KVCommand::Get { key }.encode()?);
+</a>                     self.request(id, request, &amp;mut output)?;
+                 }
+ 
+<a href="#h0-3" id="h0-3" class="h">@@ -1387,7 +1387,7 @@ mod tests {
+</a>                     let kv = args.next_key().ok_or(&quot;must specify key/value pair&quot;)?.clone();
+                     let (key, value) = (kv.key.unwrap(), kv.value);
+                     args.reject_rest()?;
+<a href="#h0-3-3" id="h0-3-3" class="d">-                    let request = Request::Write(TestCommand::Put { key, value }.encode()?);
+</a><a href="#h0-3-4" id="h0-3-4" class="i">+                    let request = Request::Write(KVCommand::Put { key, value }.encode()?);
+</a>                     self.request(id, request, &amp;mut output)?;
+                 }
+ 
+<a href="#h0-4" id="h0-4" class="h">@@ -1504,7 +1504,7 @@ mod tests {
+</a>                 let (applied_tx, applied_rx) = crossbeam::channel::unbounded();
+                 let peers = self.ids.iter().copied().filter(|i| *i != id).collect();
+                 let log = Log::new(crate::storage::Memory::new())?;
+<a href="#h0-4-3" id="h0-4-3" class="d">-                let state = Box::new(TestState::new(applied_tx));
+</a><a href="#h0-4-4" id="h0-4-4" class="i">+                let state = teststate::Emit::new(teststate::KV::new(), applied_tx);
+</a>                 let opts = Options {
+                     heartbeat_interval,
+                     election_timeout_range: election_timeout..election_timeout + 1,
+<a href="#h0-5" id="h0-5" class="h">@@ -1740,7 +1740,7 @@ mod tests {
+</a>                 let nodefmt = Self::format_node(node);
+                 output.push_str(&amp;format!(&quot;{nodefmt} applied={applied_index}\n&quot;));
+ 
+<a href="#h0-5-3" id="h0-5-3" class="d">-                let raw = state.read(TestCommand::Scan.encode()?)?;
+</a><a href="#h0-5-4" id="h0-5-4" class="i">+                let raw = state.read(KVCommand::Scan.encode()?)?;
+</a>                 let kvs: Vec&lt;(String, String)&gt; = bincode::deserialize(&amp;raw)?;
+                 for (key, value) in kvs {
+                     output.push_str(&amp;format!(&quot;{nodefmt} state {key}={value}\n&quot;));
+<a href="#h0-6" id="h0-6" class="h">@@ -1962,7 +1962,7 @@ mod tests {
+</a>         /// Formats an entry.
+         fn format_entry(entry: &amp;Entry) -&gt; String {
+             let command = match entry.command.as_ref() {
+<a href="#h0-6-3" id="h0-6-3" class="d">-                Some(raw) =&gt; TestCommand::decode(raw).expect(&quot;invalid command&quot;).to_string(),
+</a><a href="#h0-6-4" id="h0-6-4" class="i">+                Some(raw) =&gt; KVCommand::decode(raw).expect(&quot;invalid command&quot;).to_string(),
+</a>                 None =&gt; &quot;None&quot;.to_string(),
+             };
+             format!(&quot;{}@{} {command}&quot;, entry.index, entry.term)
+<a href="#h0-7" id="h0-7" class="h">@@ -2046,7 +2046,7 @@ mod tests {
+</a>         /// Formats a request.
+         fn format_request(request: &amp;Request) -&gt; String {
+             match request {
+<a href="#h0-7-3" id="h0-7-3" class="d">-                Request::Read(c) | Request::Write(c) =&gt; TestCommand::decode(c).unwrap().to_string(),
+</a><a href="#h0-7-4" id="h0-7-4" class="i">+                Request::Read(c) | Request::Write(c) =&gt; KVCommand::decode(c).unwrap().to_string(),
+</a>                 Request::Status =&gt; &quot;status&quot;.to_string(),
+             }
+         }
+<a href="#h0-8" id="h0-8" class="h">@@ -2055,7 +2055,7 @@ mod tests {
+</a>         fn format_response(response: &amp;crate::error::Result&lt;Response&gt;) -&gt; String {
+             match response {
+                 Ok(Response::Read(r) | Response::Write(r)) =&gt; {
+<a href="#h0-8-3" id="h0-8-3" class="d">-                    TestResponse::decode(r).unwrap().to_string()
+</a><a href="#h0-8-4" id="h0-8-4" class="i">+                    KVResponse::decode(r).unwrap().to_string()
+</a>                 }
+                 Ok(Response::Status(status)) =&gt; format!(&quot;{status:#?}&quot;),
+                 Err(e) =&gt; format!(&quot;Error::{e:?} ({e})&quot;),
+<a href="#h0-9" id="h0-9" class="h">@@ -2094,105 +2094,4 @@ mod tests {
+</a>             }
+         }
+     }
+<a href="#h0-9-3" id="h0-9-3" class="d">-
+</a><a href="#h0-9-4" id="h0-9-4" class="d">-    /// A test state machine which stores key/value pairs. See TestCommand.
+</a><a href="#h0-9-5" id="h0-9-5" class="d">-    struct TestState {
+</a><a href="#h0-9-6" id="h0-9-6" class="d">-        /// The current applied index.
+</a><a href="#h0-9-7" id="h0-9-7" class="d">-        applied_index: Index,
+</a><a href="#h0-9-8" id="h0-9-8" class="d">-        /// The stored data.
+</a><a href="#h0-9-9" id="h0-9-9" class="d">-        data: BTreeMap&lt;String, String&gt;,
+</a><a href="#h0-9-10" id="h0-9-10" class="d">-        /// Sends applied entries, for output.
+</a><a href="#h0-9-11" id="h0-9-11" class="d">-        applied_tx: Sender&lt;Entry&gt;,
+</a><a href="#h0-9-12" id="h0-9-12" class="d">-    }
+</a><a href="#h0-9-13" id="h0-9-13" class="d">-
+</a><a href="#h0-9-14" id="h0-9-14" class="d">-    impl TestState {
+</a><a href="#h0-9-15" id="h0-9-15" class="d">-        fn new(applied_tx: Sender&lt;Entry&gt;) -&gt; Self {
+</a><a href="#h0-9-16" id="h0-9-16" class="d">-            Self { applied_index: 0, data: BTreeMap::new(), applied_tx }
+</a><a href="#h0-9-17" id="h0-9-17" class="d">-        }
+</a><a href="#h0-9-18" id="h0-9-18" class="d">-    }
+</a><a href="#h0-9-19" id="h0-9-19" class="d">-
+</a><a href="#h0-9-20" id="h0-9-20" class="d">-    impl State for TestState {
+</a><a href="#h0-9-21" id="h0-9-21" class="d">-        fn get_applied_index(&amp;self) -&gt; Index {
+</a><a href="#h0-9-22" id="h0-9-22" class="d">-            self.applied_index
+</a><a href="#h0-9-23" id="h0-9-23" class="d">-        }
+</a><a href="#h0-9-24" id="h0-9-24" class="d">-
+</a><a href="#h0-9-25" id="h0-9-25" class="d">-        fn apply(&amp;mut self, entry: Entry) -&gt; crate::error::Result&lt;Vec&lt;u8&gt;&gt; {
+</a><a href="#h0-9-26" id="h0-9-26" class="d">-            let response = entry
+</a><a href="#h0-9-27" id="h0-9-27" class="d">-                .command
+</a><a href="#h0-9-28" id="h0-9-28" class="d">-                .as_deref()
+</a><a href="#h0-9-29" id="h0-9-29" class="d">-                .map(TestCommand::decode)
+</a><a href="#h0-9-30" id="h0-9-30" class="d">-                .transpose()?
+</a><a href="#h0-9-31" id="h0-9-31" class="d">-                .map(|c| match c {
+</a><a href="#h0-9-32" id="h0-9-32" class="d">-                    TestCommand::Put { key, value } =&gt; {
+</a><a href="#h0-9-33" id="h0-9-33" class="d">-                        self.data.insert(key, value);
+</a><a href="#h0-9-34" id="h0-9-34" class="d">-                        TestResponse::Put(entry.index)
+</a><a href="#h0-9-35" id="h0-9-35" class="d">-                    }
+</a><a href="#h0-9-36" id="h0-9-36" class="d">-                    TestCommand::Get { .. } =&gt; panic!(&quot;get submitted as write command&quot;),
+</a><a href="#h0-9-37" id="h0-9-37" class="d">-                    TestCommand::Scan =&gt; panic!(&quot;scan submitted as write command&quot;),
+</a><a href="#h0-9-38" id="h0-9-38" class="d">-                })
+</a><a href="#h0-9-39" id="h0-9-39" class="d">-                .map_or(Ok(Vec::new()), |r| r.encode())?;
+</a><a href="#h0-9-40" id="h0-9-40" class="d">-            self.applied_index = entry.index;
+</a><a href="#h0-9-41" id="h0-9-41" class="d">-            self.applied_tx.send(entry)?;
+</a><a href="#h0-9-42" id="h0-9-42" class="d">-            Ok(response)
+</a><a href="#h0-9-43" id="h0-9-43" class="d">-        }
+</a><a href="#h0-9-44" id="h0-9-44" class="d">-
+</a><a href="#h0-9-45" id="h0-9-45" class="d">-        fn read(&amp;self, command: Vec&lt;u8&gt;) -&gt; crate::error::Result&lt;Vec&lt;u8&gt;&gt; {
+</a><a href="#h0-9-46" id="h0-9-46" class="d">-            let response = match TestCommand::decode(&amp;command)? {
+</a><a href="#h0-9-47" id="h0-9-47" class="d">-                TestCommand::Get { key } =&gt; TestResponse::Get(self.data.get(&amp;key).cloned()),
+</a><a href="#h0-9-48" id="h0-9-48" class="d">-                TestCommand::Scan =&gt; TestResponse::Scan(self.data.clone()),
+</a><a href="#h0-9-49" id="h0-9-49" class="d">-                TestCommand::Put { .. } =&gt; panic!(&quot;put submitted as read command&quot;),
+</a><a href="#h0-9-50" id="h0-9-50" class="d">-            };
+</a><a href="#h0-9-51" id="h0-9-51" class="d">-            response.encode()
+</a><a href="#h0-9-52" id="h0-9-52" class="d">-        }
+</a><a href="#h0-9-53" id="h0-9-53" class="d">-    }
+</a><a href="#h0-9-54" id="h0-9-54" class="d">-
+</a><a href="#h0-9-55" id="h0-9-55" class="d">-    /// A TestState command. Each command returns a corresponding TestResponse.
+</a><a href="#h0-9-56" id="h0-9-56" class="d">-    #[derive(Serialize, Deserialize)]
+</a><a href="#h0-9-57" id="h0-9-57" class="d">-    enum TestCommand {
+</a><a href="#h0-9-58" id="h0-9-58" class="d">-        /// Fetches the value of the given key.
+</a><a href="#h0-9-59" id="h0-9-59" class="d">-        Get { key: String },
+</a><a href="#h0-9-60" id="h0-9-60" class="d">-        /// Stores the given key/value pair, returning the applied index.
+</a><a href="#h0-9-61" id="h0-9-61" class="d">-        Put { key: String, value: String },
+</a><a href="#h0-9-62" id="h0-9-62" class="d">-        /// Returns all key/value pairs.
+</a><a href="#h0-9-63" id="h0-9-63" class="d">-        Scan,
+</a><a href="#h0-9-64" id="h0-9-64" class="d">-    }
+</a><a href="#h0-9-65" id="h0-9-65" class="d">-
+</a><a href="#h0-9-66" id="h0-9-66" class="d">-    impl encoding::Value for TestCommand {}
+</a><a href="#h0-9-67" id="h0-9-67" class="d">-
+</a><a href="#h0-9-68" id="h0-9-68" class="d">-    impl std::fmt::Display for TestCommand {
+</a><a href="#h0-9-69" id="h0-9-69" class="d">-        fn fmt(&amp;self, f: &amp;mut std::fmt::Formatter&lt;&#39;_&gt;) -&gt; std::fmt::Result {
+</a><a href="#h0-9-70" id="h0-9-70" class="d">-            match self {
+</a><a href="#h0-9-71" id="h0-9-71" class="d">-                Self::Get { key } =&gt; write!(f, &quot;get {key}&quot;),
+</a><a href="#h0-9-72" id="h0-9-72" class="d">-                Self::Put { key, value } =&gt; write!(f, &quot;put {key}={value}&quot;),
+</a><a href="#h0-9-73" id="h0-9-73" class="d">-                Self::Scan =&gt; write!(f, &quot;scan&quot;),
+</a><a href="#h0-9-74" id="h0-9-74" class="d">-            }
+</a><a href="#h0-9-75" id="h0-9-75" class="d">-        }
+</a><a href="#h0-9-76" id="h0-9-76" class="d">-    }
+</a><a href="#h0-9-77" id="h0-9-77" class="d">-
+</a><a href="#h0-9-78" id="h0-9-78" class="d">-    /// A TestCommand response.
+</a><a href="#h0-9-79" id="h0-9-79" class="d">-    #[derive(Serialize, Deserialize)]
+</a><a href="#h0-9-80" id="h0-9-80" class="d">-    enum TestResponse {
+</a><a href="#h0-9-81" id="h0-9-81" class="d">-        /// The value for the TestCommand::Get key, or None if it does not exist.
+</a><a href="#h0-9-82" id="h0-9-82" class="d">-        Get(Option&lt;String&gt;),
+</a><a href="#h0-9-83" id="h0-9-83" class="d">-        /// The applied index of a TestCommand::Put command.
+</a><a href="#h0-9-84" id="h0-9-84" class="d">-        Put(Index),
+</a><a href="#h0-9-85" id="h0-9-85" class="d">-        /// The scanned key/value pairs.
+</a><a href="#h0-9-86" id="h0-9-86" class="d">-        Scan(BTreeMap&lt;String, String&gt;),
+</a><a href="#h0-9-87" id="h0-9-87" class="d">-    }
+</a><a href="#h0-9-88" id="h0-9-88" class="d">-
+</a><a href="#h0-9-89" id="h0-9-89" class="d">-    impl encoding::Value for TestResponse {}
+</a><a href="#h0-9-90" id="h0-9-90" class="d">-
+</a><a href="#h0-9-91" id="h0-9-91" class="d">-    impl std::fmt::Display for TestResponse {
+</a><a href="#h0-9-92" id="h0-9-92" class="d">-        fn fmt(&amp;self, f: &amp;mut std::fmt::Formatter&lt;&#39;_&gt;) -&gt; std::fmt::Result {
+</a><a href="#h0-9-93" id="h0-9-93" class="d">-            match self {
+</a><a href="#h0-9-94" id="h0-9-94" class="d">-                Self::Get(Some(value)) =&gt; write!(f, &quot;{value}&quot;)?,
+</a><a href="#h0-9-95" id="h0-9-95" class="d">-                Self::Get(None) =&gt; write!(f, &quot;None&quot;)?,
+</a><a href="#h0-9-96" id="h0-9-96" class="d">-                Self::Put(applied_index) =&gt; write!(f, &quot;{applied_index}&quot;)?,
+</a><a href="#h0-9-97" id="h0-9-97" class="d">-                Self::Scan(scan) =&gt; {
+</a><a href="#h0-9-98" id="h0-9-98" class="d">-                    write!(f, &quot;{}&quot;, scan.iter().map(|(k, v)| format!(&quot;{k}={v}&quot;)).join(&quot;,&quot;))?
+</a><a href="#h0-9-99" id="h0-9-99" class="d">-                }
+</a><a href="#h0-9-100" id="h0-9-100" class="d">-            };
+</a><a href="#h0-9-101" id="h0-9-101" class="d">-            Ok(())
+</a><a href="#h0-9-102" id="h0-9-102" class="d">-        }
+</a><a href="#h0-9-103" id="h0-9-103" class="d">-    }
+</a> }
+<b>diff --git a/<a id="h1" href="../file/src/raft/state.rs.html">src/raft/state.rs</a> b/<a href="../file/src/raft/state.rs.html">src/raft/state.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -11,11 +11,11 @@ use crate::error::Result;
+</a> /// Otherwise, the replicas will diverge, and different replicas will produce
+ /// different results.
+ ///
+<a href="#h1-0-3" id="h1-0-3" class="d">-/// Write commands ([`Request::Write`]) are replicated and applied on all
+</a><a href="#h1-0-4" id="h1-0-4" class="d">-/// replicas via [`State::apply`]. The state machine must keep track of the last
+</a><a href="#h1-0-5" id="h1-0-5" class="d">-/// applied index and return it via [`State::get_applied_index`]. Read commands
+</a><a href="#h1-0-6" id="h1-0-6" class="d">-/// ([`Request::Read`]) are only executed on a single replica via
+</a><a href="#h1-0-7" id="h1-0-7" class="d">-/// [`State::read`] and must not make any state changes.
+</a><a href="#h1-0-8" id="h1-0-8" class="i">+/// Write commands (`Request::Write`) are replicated and applied on all replicas
+</a><a href="#h1-0-9" id="h1-0-9" class="i">+/// via `State::apply`. The state machine must keep track of the last applied
+</a><a href="#h1-0-10" id="h1-0-10" class="i">+/// index and return it via `State::get_applied_index`. Read commands
+</a><a href="#h1-0-11" id="h1-0-11" class="i">+/// (`Request::Read`) are only executed on a single replica via `State::read`
+</a><a href="#h1-0-12" id="h1-0-12" class="i">+/// and must not make any state changes.
+</a> pub trait State: Send {
+     /// Returns the last applied index from the state machine.
+     ///
+<a href="#h1-1" id="h1-1" class="h">@@ -49,3 +49,160 @@ pub trait State: Send {
+</a>     /// any state changes (i.e. it must not write).
+     fn read(&amp;self, command: Vec&lt;u8&gt;) -&gt; Result&lt;Vec&lt;u8&gt;&gt;;
+ }
+<a href="#h1-1-3" id="h1-1-3" class="i">+
+</a><a href="#h1-1-4" id="h1-1-4" class="i">+/// Test helper state machines.
+</a><a href="#h1-1-5" id="h1-1-5" class="i">+#[allow(dead_code)]
+</a><a href="#h1-1-6" id="h1-1-6" class="i">+#[cfg(test)]
+</a><a href="#h1-1-7" id="h1-1-7" class="i">+pub mod test {
+</a><a href="#h1-1-8" id="h1-1-8" class="i">+    use super::*;
+</a><a href="#h1-1-9" id="h1-1-9" class="i">+    use crate::encoding::{self, Value as _};
+</a><a href="#h1-1-10" id="h1-1-10" class="i">+    use crossbeam::channel::Sender;
+</a><a href="#h1-1-11" id="h1-1-11" class="i">+    use itertools::Itertools as _;
+</a><a href="#h1-1-12" id="h1-1-12" class="i">+    use serde::{Deserialize, Serialize};
+</a><a href="#h1-1-13" id="h1-1-13" class="i">+    use std::collections::BTreeMap;
+</a><a href="#h1-1-14" id="h1-1-14" class="i">+
+</a><a href="#h1-1-15" id="h1-1-15" class="i">+    /// Wraps a state machine and emits applied entries to the provided channel.
+</a><a href="#h1-1-16" id="h1-1-16" class="i">+    pub struct Emit {
+</a><a href="#h1-1-17" id="h1-1-17" class="i">+        inner: Box&lt;dyn State&gt;,
+</a><a href="#h1-1-18" id="h1-1-18" class="i">+        tx: Sender&lt;Entry&gt;,
+</a><a href="#h1-1-19" id="h1-1-19" class="i">+    }
+</a><a href="#h1-1-20" id="h1-1-20" class="i">+
+</a><a href="#h1-1-21" id="h1-1-21" class="i">+    impl Emit {
+</a><a href="#h1-1-22" id="h1-1-22" class="i">+        pub fn new(inner: Box&lt;dyn State&gt;, tx: Sender&lt;Entry&gt;) -&gt; Box&lt;Self&gt; {
+</a><a href="#h1-1-23" id="h1-1-23" class="i">+            Box::new(Self { inner, tx })
+</a><a href="#h1-1-24" id="h1-1-24" class="i">+        }
+</a><a href="#h1-1-25" id="h1-1-25" class="i">+    }
+</a><a href="#h1-1-26" id="h1-1-26" class="i">+
+</a><a href="#h1-1-27" id="h1-1-27" class="i">+    impl State for Emit {
+</a><a href="#h1-1-28" id="h1-1-28" class="i">+        fn get_applied_index(&amp;self) -&gt; Index {
+</a><a href="#h1-1-29" id="h1-1-29" class="i">+            self.inner.get_applied_index()
+</a><a href="#h1-1-30" id="h1-1-30" class="i">+        }
+</a><a href="#h1-1-31" id="h1-1-31" class="i">+
+</a><a href="#h1-1-32" id="h1-1-32" class="i">+        fn apply(&amp;mut self, entry: Entry) -&gt; Result&lt;Vec&lt;u8&gt;&gt; {
+</a><a href="#h1-1-33" id="h1-1-33" class="i">+            let response = self.inner.apply(entry.clone())?;
+</a><a href="#h1-1-34" id="h1-1-34" class="i">+            self.tx.send(entry)?;
+</a><a href="#h1-1-35" id="h1-1-35" class="i">+            Ok(response)
+</a><a href="#h1-1-36" id="h1-1-36" class="i">+        }
+</a><a href="#h1-1-37" id="h1-1-37" class="i">+
+</a><a href="#h1-1-38" id="h1-1-38" class="i">+        fn read(&amp;self, command: Vec&lt;u8&gt;) -&gt; Result&lt;Vec&lt;u8&gt;&gt; {
+</a><a href="#h1-1-39" id="h1-1-39" class="i">+            self.inner.read(command)
+</a><a href="#h1-1-40" id="h1-1-40" class="i">+        }
+</a><a href="#h1-1-41" id="h1-1-41" class="i">+    }
+</a><a href="#h1-1-42" id="h1-1-42" class="i">+
+</a><a href="#h1-1-43" id="h1-1-43" class="i">+    /// A simple string key/value store. Takes KVCommands.
+</a><a href="#h1-1-44" id="h1-1-44" class="i">+    pub struct KV {
+</a><a href="#h1-1-45" id="h1-1-45" class="i">+        applied_index: Index,
+</a><a href="#h1-1-46" id="h1-1-46" class="i">+        data: BTreeMap&lt;String, String&gt;,
+</a><a href="#h1-1-47" id="h1-1-47" class="i">+    }
+</a><a href="#h1-1-48" id="h1-1-48" class="i">+
+</a><a href="#h1-1-49" id="h1-1-49" class="i">+    impl KV {
+</a><a href="#h1-1-50" id="h1-1-50" class="i">+        pub fn new() -&gt; Box&lt;Self&gt; {
+</a><a href="#h1-1-51" id="h1-1-51" class="i">+            Box::new(Self { applied_index: 0, data: BTreeMap::new() })
+</a><a href="#h1-1-52" id="h1-1-52" class="i">+        }
+</a><a href="#h1-1-53" id="h1-1-53" class="i">+    }
+</a><a href="#h1-1-54" id="h1-1-54" class="i">+
+</a><a href="#h1-1-55" id="h1-1-55" class="i">+    impl State for KV {
+</a><a href="#h1-1-56" id="h1-1-56" class="i">+        fn get_applied_index(&amp;self) -&gt; Index {
+</a><a href="#h1-1-57" id="h1-1-57" class="i">+            self.applied_index
+</a><a href="#h1-1-58" id="h1-1-58" class="i">+        }
+</a><a href="#h1-1-59" id="h1-1-59" class="i">+
+</a><a href="#h1-1-60" id="h1-1-60" class="i">+        fn apply(&amp;mut self, entry: Entry) -&gt; Result&lt;Vec&lt;u8&gt;&gt; {
+</a><a href="#h1-1-61" id="h1-1-61" class="i">+            let command = entry.command.as_deref().map(KVCommand::decode).transpose()?;
+</a><a href="#h1-1-62" id="h1-1-62" class="i">+            let response = match command {
+</a><a href="#h1-1-63" id="h1-1-63" class="i">+                Some(KVCommand::Put { key, value }) =&gt; {
+</a><a href="#h1-1-64" id="h1-1-64" class="i">+                    self.data.insert(key, value);
+</a><a href="#h1-1-65" id="h1-1-65" class="i">+                    KVResponse::Put(entry.index).encode()?
+</a><a href="#h1-1-66" id="h1-1-66" class="i">+                }
+</a><a href="#h1-1-67" id="h1-1-67" class="i">+                Some(c @ (KVCommand::Get { .. } | KVCommand::Scan)) =&gt; {
+</a><a href="#h1-1-68" id="h1-1-68" class="i">+                    panic!(&quot;{c} submitted as write command&quot;)
+</a><a href="#h1-1-69" id="h1-1-69" class="i">+                }
+</a><a href="#h1-1-70" id="h1-1-70" class="i">+                None =&gt; Vec::new(),
+</a><a href="#h1-1-71" id="h1-1-71" class="i">+            };
+</a><a href="#h1-1-72" id="h1-1-72" class="i">+            self.applied_index = entry.index;
+</a><a href="#h1-1-73" id="h1-1-73" class="i">+            Ok(response)
+</a><a href="#h1-1-74" id="h1-1-74" class="i">+        }
+</a><a href="#h1-1-75" id="h1-1-75" class="i">+
+</a><a href="#h1-1-76" id="h1-1-76" class="i">+        fn read(&amp;self, command: Vec&lt;u8&gt;) -&gt; Result&lt;Vec&lt;u8&gt;&gt; {
+</a><a href="#h1-1-77" id="h1-1-77" class="i">+            match KVCommand::decode(&amp;command)? {
+</a><a href="#h1-1-78" id="h1-1-78" class="i">+                KVCommand::Get { key } =&gt; KVResponse::Get(self.data.get(&amp;key).cloned()).encode(),
+</a><a href="#h1-1-79" id="h1-1-79" class="i">+                KVCommand::Scan =&gt; KVResponse::Scan(self.data.clone()).encode(),
+</a><a href="#h1-1-80" id="h1-1-80" class="i">+                c @ KVCommand::Put { .. } =&gt; panic!(&quot;{c} submitted as read command&quot;),
+</a><a href="#h1-1-81" id="h1-1-81" class="i">+            }
+</a><a href="#h1-1-82" id="h1-1-82" class="i">+        }
+</a><a href="#h1-1-83" id="h1-1-83" class="i">+    }
+</a><a href="#h1-1-84" id="h1-1-84" class="i">+
+</a><a href="#h1-1-85" id="h1-1-85" class="i">+    /// A KV command. Returns the corresponding KVResponse.
+</a><a href="#h1-1-86" id="h1-1-86" class="i">+    #[derive(Serialize, Deserialize)]
+</a><a href="#h1-1-87" id="h1-1-87" class="i">+    pub enum KVCommand {
+</a><a href="#h1-1-88" id="h1-1-88" class="i">+        /// Fetches the value of the given key.
+</a><a href="#h1-1-89" id="h1-1-89" class="i">+        Get { key: String },
+</a><a href="#h1-1-90" id="h1-1-90" class="i">+        /// Stores the given key/value pair, returning the applied index.
+</a><a href="#h1-1-91" id="h1-1-91" class="i">+        Put { key: String, value: String },
+</a><a href="#h1-1-92" id="h1-1-92" class="i">+        /// Returns all key/value pairs.
+</a><a href="#h1-1-93" id="h1-1-93" class="i">+        Scan,
+</a><a href="#h1-1-94" id="h1-1-94" class="i">+    }
+</a><a href="#h1-1-95" id="h1-1-95" class="i">+
+</a><a href="#h1-1-96" id="h1-1-96" class="i">+    impl encoding::Value for KVCommand {}
+</a><a href="#h1-1-97" id="h1-1-97" class="i">+
+</a><a href="#h1-1-98" id="h1-1-98" class="i">+    impl std::fmt::Display for KVCommand {
+</a><a href="#h1-1-99" id="h1-1-99" class="i">+        fn fmt(&amp;self, f: &amp;mut std::fmt::Formatter&lt;&#39;_&gt;) -&gt; std::fmt::Result {
+</a><a href="#h1-1-100" id="h1-1-100" class="i">+            match self {
+</a><a href="#h1-1-101" id="h1-1-101" class="i">+                Self::Get { key } =&gt; write!(f, &quot;get {key}&quot;),
+</a><a href="#h1-1-102" id="h1-1-102" class="i">+                Self::Put { key, value } =&gt; write!(f, &quot;put {key}={value}&quot;),
+</a><a href="#h1-1-103" id="h1-1-103" class="i">+                Self::Scan =&gt; write!(f, &quot;scan&quot;),
+</a><a href="#h1-1-104" id="h1-1-104" class="i">+            }
+</a><a href="#h1-1-105" id="h1-1-105" class="i">+        }
+</a><a href="#h1-1-106" id="h1-1-106" class="i">+    }
+</a><a href="#h1-1-107" id="h1-1-107" class="i">+
+</a><a href="#h1-1-108" id="h1-1-108" class="i">+    /// A KVCommand response.
+</a><a href="#h1-1-109" id="h1-1-109" class="i">+    #[derive(Serialize, Deserialize)]
+</a><a href="#h1-1-110" id="h1-1-110" class="i">+    pub enum KVResponse {
+</a><a href="#h1-1-111" id="h1-1-111" class="i">+        /// Get returns the key&#39;s value, or None if it does not exist.
+</a><a href="#h1-1-112" id="h1-1-112" class="i">+        Get(Option&lt;String&gt;),
+</a><a href="#h1-1-113" id="h1-1-113" class="i">+        /// Put returns the applied index of the command.
+</a><a href="#h1-1-114" id="h1-1-114" class="i">+        Put(Index),
+</a><a href="#h1-1-115" id="h1-1-115" class="i">+        /// Scan returns the key/value pairs.
+</a><a href="#h1-1-116" id="h1-1-116" class="i">+        Scan(BTreeMap&lt;String, String&gt;),
+</a><a href="#h1-1-117" id="h1-1-117" class="i">+    }
+</a><a href="#h1-1-118" id="h1-1-118" class="i">+
+</a><a href="#h1-1-119" id="h1-1-119" class="i">+    impl encoding::Value for KVResponse {}
+</a><a href="#h1-1-120" id="h1-1-120" class="i">+
+</a><a href="#h1-1-121" id="h1-1-121" class="i">+    impl std::fmt::Display for KVResponse {
+</a><a href="#h1-1-122" id="h1-1-122" class="i">+        fn fmt(&amp;self, f: &amp;mut std::fmt::Formatter&lt;&#39;_&gt;) -&gt; std::fmt::Result {
+</a><a href="#h1-1-123" id="h1-1-123" class="i">+            match self {
+</a><a href="#h1-1-124" id="h1-1-124" class="i">+                Self::Get(Some(value)) =&gt; write!(f, &quot;{value}&quot;),
+</a><a href="#h1-1-125" id="h1-1-125" class="i">+                Self::Get(None) =&gt; write!(f, &quot;None&quot;),
+</a><a href="#h1-1-126" id="h1-1-126" class="i">+                Self::Put(applied_index) =&gt; write!(f, &quot;{applied_index}&quot;),
+</a><a href="#h1-1-127" id="h1-1-127" class="i">+                Self::Scan(kvs) =&gt; {
+</a><a href="#h1-1-128" id="h1-1-128" class="i">+                    write!(f, &quot;{}&quot;, kvs.iter().map(|(k, v)| format!(&quot;{k}={v}&quot;)).join(&quot;,&quot;))
+</a><a href="#h1-1-129" id="h1-1-129" class="i">+                }
+</a><a href="#h1-1-130" id="h1-1-130" class="i">+            }
+</a><a href="#h1-1-131" id="h1-1-131" class="i">+        }
+</a><a href="#h1-1-132" id="h1-1-132" class="i">+    }
+</a><a href="#h1-1-133" id="h1-1-133" class="i">+
+</a><a href="#h1-1-134" id="h1-1-134" class="i">+    /// A state machine which does nothing. All commands are ignored.
+</a><a href="#h1-1-135" id="h1-1-135" class="i">+    pub struct Noop {
+</a><a href="#h1-1-136" id="h1-1-136" class="i">+        applied_index: Index,
+</a><a href="#h1-1-137" id="h1-1-137" class="i">+    }
+</a><a href="#h1-1-138" id="h1-1-138" class="i">+
+</a><a href="#h1-1-139" id="h1-1-139" class="i">+    impl Noop {
+</a><a href="#h1-1-140" id="h1-1-140" class="i">+        pub fn new() -&gt; Box&lt;Self&gt; {
+</a><a href="#h1-1-141" id="h1-1-141" class="i">+            Box::new(Self { applied_index: 0 })
+</a><a href="#h1-1-142" id="h1-1-142" class="i">+        }
+</a><a href="#h1-1-143" id="h1-1-143" class="i">+    }
+</a><a href="#h1-1-144" id="h1-1-144" class="i">+
+</a><a href="#h1-1-145" id="h1-1-145" class="i">+    impl State for Noop {
+</a><a href="#h1-1-146" id="h1-1-146" class="i">+        fn get_applied_index(&amp;self) -&gt; Index {
+</a><a href="#h1-1-147" id="h1-1-147" class="i">+            self.applied_index
+</a><a href="#h1-1-148" id="h1-1-148" class="i">+        }
+</a><a href="#h1-1-149" id="h1-1-149" class="i">+
+</a><a href="#h1-1-150" id="h1-1-150" class="i">+        fn apply(&amp;mut self, entry: Entry) -&gt; Result&lt;Vec&lt;u8&gt;&gt; {
+</a><a href="#h1-1-151" id="h1-1-151" class="i">+            self.applied_index = entry.index;
+</a><a href="#h1-1-152" id="h1-1-152" class="i">+            Ok(Vec::new())
+</a><a href="#h1-1-153" id="h1-1-153" class="i">+        }
+</a><a href="#h1-1-154" id="h1-1-154" class="i">+
+</a><a href="#h1-1-155" id="h1-1-155" class="i">+        fn read(&amp;self, _: Vec&lt;u8&gt;) -&gt; Result&lt;Vec&lt;u8&gt;&gt; {
+</a><a href="#h1-1-156" id="h1-1-156" class="i">+            Ok(Vec::new())
+</a><a href="#h1-1-157" id="h1-1-157" class="i">+        }
+</a><a href="#h1-1-158" id="h1-1-158" class="i">+    }
+</a><a href="#h1-1-159" id="h1-1-159" class="i">+}
+</a></pre>
+</div>
+</body>
+</html>

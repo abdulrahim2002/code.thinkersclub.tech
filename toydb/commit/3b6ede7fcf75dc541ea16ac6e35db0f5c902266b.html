@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>raft: check term when voting to execute queries (fixes #35) - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/3b6ede7fcf75dc541ea16ac6e35db0f5c902266b.html">3b6ede7fcf75dc541ea16ac6e35db0f5c902266b</a>
+<b>parent</b> <a href="../commit/600baa97360fc001c41850440d18306606e7e628.html">600baa97360fc001c41850440d18306606e7e628</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Tue,  9 Jun 2020 21:42:22 +0200
+
+raft: check term when voting to execute queries (fixes #35)
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/raft/node/candidate.rs</a></td><td> | </td><td class="num">3</td><td><span class="i">++</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/raft/node/leader.rs</a></td><td> | </td><td class="num">18</td><td><span class="i">+++++++++++</span><span class="d">-------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/raft/state.rs</a></td><td> | </td><td class="num">70</td><td><span class="i">++++++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d">----------------</span></td></tr>
+</table></pre><pre>3 files changed, 67 insertions(+), 24 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/raft/node/candidate.rs.html">src/raft/node/candidate.rs</a> b/<a href="../file/src/raft/node/candidate.rs.html">src/raft/node/candidate.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -337,10 +337,11 @@ mod tests {
+</a>                     id: vec![0xaf],
+                     address: Address::Client,
+                     command: vec![0xf0],
+<a href="#h0-0-3" id="h0-0-3" class="i">+                    term: 3,
+</a>                     index: 2,
+                     quorum: 3,
+                 },
+<a href="#h0-0-7" id="h0-0-7" class="d">-                Instruction::Vote { index: 2, address: Address::Local },
+</a><a href="#h0-0-8" id="h0-0-8" class="i">+                Instruction::Vote { term: 3, index: 2, address: Address::Local },
+</a>             ],
+         );
+         Ok(())
+<b>diff --git a/<a id="h1" href="../file/src/raft/node/leader.rs.html">src/raft/node/leader.rs</a> b/<a href="../file/src/raft/node/leader.rs.html">src/raft/node/leader.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -113,8 +113,11 @@ impl RoleNode&lt;Leader&gt; {
+</a>         match msg.event {
+             Event::ConfirmLeader { commit_index, has_committed } =&gt; {
+                 if let Address::Peer(from) = msg.from.clone() {
+<a href="#h1-0-3" id="h1-0-3" class="d">-                    self.state_tx
+</a><a href="#h1-0-4" id="h1-0-4" class="d">-                        .send(Instruction::Vote { index: commit_index, address: msg.from })?;
+</a><a href="#h1-0-5" id="h1-0-5" class="i">+                    self.state_tx.send(Instruction::Vote {
+</a><a href="#h1-0-6" id="h1-0-6" class="i">+                        term: msg.term,
+</a><a href="#h1-0-7" id="h1-0-7" class="i">+                        index: commit_index,
+</a><a href="#h1-0-8" id="h1-0-8" class="i">+                        address: msg.from,
+</a><a href="#h1-0-9" id="h1-0-9" class="i">+                    })?;
+</a>                     if !has_committed {
+                         self.replicate(&amp;from)?;
+                     }
+<a href="#h1-1" id="h1-1" class="h">@@ -141,16 +144,16 @@ impl RoleNode&lt;Leader&gt; {
+</a>             }
+ 
+             Event::ClientRequest { id, request: Request::Query(command) } =&gt; {
+<a href="#h1-1-3" id="h1-1-3" class="d">-                // FIXME This needs to wait until the first entry from our term has been
+</a><a href="#h1-1-4" id="h1-1-4" class="d">-                // committed, see: https://stackoverflow.com/questions/37207682/raft-some-questions-about-read-only-queries
+</a>                 self.state_tx.send(Instruction::Query {
+                     id,
+                     address: msg.from,
+                     command,
+<a href="#h1-1-9" id="h1-1-9" class="i">+                    term: self.term,
+</a>                     index: self.log.commit_index,
+                     quorum: self.quorum(),
+                 })?;
+                 self.state_tx.send(Instruction::Vote {
+<a href="#h1-1-14" id="h1-1-14" class="i">+                    term: self.term,
+</a>                     index: self.log.commit_index,
+                     address: Address::Local,
+                 })?;
+<a href="#h1-2" id="h1-2" class="h">@@ -283,7 +286,7 @@ mod tests {
+</a>         assert_messages(&amp;mut node_rx, vec![]);
+         assert_messages(
+             &amp;mut state_rx,
+<a href="#h1-2-3" id="h1-2-3" class="d">-            vec![Instruction::Vote { index: 2, address: Address::Peer(&quot;b&quot;.into()) }],
+</a><a href="#h1-2-4" id="h1-2-4" class="i">+            vec![Instruction::Vote { term: 3, index: 2, address: Address::Peer(&quot;b&quot;.into()) }],
+</a>         );
+         Ok(())
+     }
+<a href="#h1-3" id="h1-3" class="h">@@ -312,7 +315,7 @@ mod tests {
+</a>         );
+         assert_messages(
+             &amp;mut state_rx,
+<a href="#h1-3-3" id="h1-3-3" class="d">-            vec![Instruction::Vote { index: 2, address: Address::Peer(&quot;b&quot;.into()) }],
+</a><a href="#h1-3-4" id="h1-3-4" class="i">+            vec![Instruction::Vote { term: 3, index: 2, address: Address::Peer(&quot;b&quot;.into()) }],
+</a>         );
+         Ok(())
+     }
+<a href="#h1-4" id="h1-4" class="h">@@ -582,10 +585,11 @@ mod tests {
+</a>                     id: vec![0x01],
+                     address: Address::Client,
+                     command: vec![0xaf],
+<a href="#h1-4-3" id="h1-4-3" class="i">+                    term: 3,
+</a>                     index: 2,
+                     quorum,
+                 },
+<a href="#h1-4-7" id="h1-4-7" class="d">-                Instruction::Vote { index: 2, address: Address::Local },
+</a><a href="#h1-4-8" id="h1-4-8" class="i">+                Instruction::Vote { term: 3, index: 2, address: Address::Local },
+</a>             ],
+         );
+         Ok(())
+<b>diff --git a/<a id="h2" href="../file/src/raft/state.rs.html">src/raft/state.rs</a> b/<a href="../file/src/raft/state.rs.html">src/raft/state.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -28,17 +28,18 @@ pub enum Instruction {
+</a>     Apply { entry: Entry },
+     /// Notify the given address with the result of applying the entry at the given index.
+     Notify { id: Vec&lt;u8&gt;, address: Address, index: u64 },
+<a href="#h2-0-3" id="h2-0-3" class="d">-    /// Query the state machine when the given index has been confirmed by vote.
+</a><a href="#h2-0-4" id="h2-0-4" class="d">-    Query { id: Vec&lt;u8&gt;, address: Address, command: Vec&lt;u8&gt;, index: u64, quorum: u64 },
+</a><a href="#h2-0-5" id="h2-0-5" class="i">+    /// Query the state machine when the given term and index has been confirmed by vote.
+</a><a href="#h2-0-6" id="h2-0-6" class="i">+    Query { id: Vec&lt;u8&gt;, address: Address, command: Vec&lt;u8&gt;, term: u64, index: u64, quorum: u64 },
+</a>     /// Extend the given server status and return it to the given address.
+     Status { id: Vec&lt;u8&gt;, address: Address, status: Box&lt;Status&gt; },
+<a href="#h2-0-9" id="h2-0-9" class="d">-    /// Votes for queries at the given commit index.
+</a><a href="#h2-0-10" id="h2-0-10" class="d">-    Vote { index: u64, address: Address },
+</a><a href="#h2-0-11" id="h2-0-11" class="i">+    /// Votes for queries at the given term and commit index.
+</a><a href="#h2-0-12" id="h2-0-12" class="i">+    Vote { term: u64, index: u64, address: Address },
+</a> }
+ 
+ /// A driver query.
+ struct Query {
+     id: Vec&lt;u8&gt;,
+<a href="#h2-0-18" id="h2-0-18" class="i">+    term: u64,
+</a>     address: Address,
+     command: Vec&lt;u8&gt;,
+     quorum: u64,
+<a href="#h2-1" id="h2-1" class="h">@@ -131,10 +132,10 @@ impl Driver {
+</a>                 }
+             }
+ 
+<a href="#h2-1-3" id="h2-1-3" class="d">-            Instruction::Query { id, address, command, index, quorum } =&gt; {
+</a><a href="#h2-1-4" id="h2-1-4" class="i">+            Instruction::Query { id, address, command, index, term, quorum } =&gt; {
+</a>                 self.queries.entry(index).or_default().insert(
+                     id.clone(),
+<a href="#h2-1-7" id="h2-1-7" class="d">-                    Query { id, address, command, quorum, votes: HashSet::new() },
+</a><a href="#h2-1-8" id="h2-1-8" class="i">+                    Query { id, term, address, command, quorum, votes: HashSet::new() },
+</a>                 );
+             }
+ 
+<a href="#h2-2" id="h2-2" class="h">@@ -146,8 +147,8 @@ impl Driver {
+</a>                 )?;
+             }
+ 
+<a href="#h2-2-3" id="h2-2-3" class="d">-            Instruction::Vote { index, address } =&gt; {
+</a><a href="#h2-2-4" id="h2-2-4" class="d">-                self.query_vote(index, address);
+</a><a href="#h2-2-5" id="h2-2-5" class="i">+            Instruction::Vote { term, index, address } =&gt; {
+</a><a href="#h2-2-6" id="h2-2-6" class="i">+                self.query_vote(term, index, address);
+</a>                 self.query_execute(state)?;
+             }
+         }
+<a href="#h2-3" id="h2-3" class="h">@@ -225,11 +226,13 @@ impl Driver {
+</a>         ready
+     }
+ 
+<a href="#h2-3-3" id="h2-3-3" class="d">-    /// Votes for queries up to and including a given commit index by an address.
+</a><a href="#h2-3-4" id="h2-3-4" class="d">-    fn query_vote(&amp;mut self, commit_index: u64, address: Address) {
+</a><a href="#h2-3-5" id="h2-3-5" class="i">+    /// Votes for queries up to and including a given commit index for a term by an address.
+</a><a href="#h2-3-6" id="h2-3-6" class="i">+    fn query_vote(&amp;mut self, term: u64, commit_index: u64, address: Address) {
+</a>         for (_, queries) in self.queries.range_mut(..=commit_index) {
+             for (_, query) in queries.iter_mut() {
+<a href="#h2-3-9" id="h2-3-9" class="d">-                query.votes.insert(address.clone());
+</a><a href="#h2-3-10" id="h2-3-10" class="i">+                if term &gt;= query.term {
+</a><a href="#h2-3-11" id="h2-3-11" class="i">+                    query.votes.insert(address.clone());
+</a><a href="#h2-3-12" id="h2-3-12" class="i">+                }
+</a>             }
+         }
+     }
+<a href="#h2-4" id="h2-4" class="h">@@ -311,10 +314,11 @@ pub mod tests {
+</a>             id: vec![0x02],
+             address: Address::Client,
+             command: vec![0xf0],
+<a href="#h2-4-3" id="h2-4-3" class="i">+            term: 1,
+</a>             index: 1,
+             quorum: 2,
+         })?;
+<a href="#h2-4-7" id="h2-4-7" class="d">-        state_tx.send(Instruction::Vote { index: 1, address: Address::Local })?;
+</a><a href="#h2-4-8" id="h2-4-8" class="i">+        state_tx.send(Instruction::Vote { term: 1, index: 1, address: Address::Local })?;
+</a>         state_tx.send(Instruction::Abort)?;
+         std::mem::drop(state_tx);
+ 
+<a href="#h2-5" id="h2-5" class="h">@@ -381,14 +385,19 @@ pub mod tests {
+</a>             id: vec![0x01],
+             address: Address::Client,
+             command: vec![0xf0],
+<a href="#h2-5-3" id="h2-5-3" class="i">+            term: 2,
+</a>             index: 1,
+             quorum: 2,
+         })?;
+         state_tx.send(Instruction::Apply {
+<a href="#h2-5-8" id="h2-5-8" class="d">-            entry: Entry { index: 1, term: 1, command: Some(vec![0xaf]) },
+</a><a href="#h2-5-9" id="h2-5-9" class="i">+            entry: Entry { index: 1, term: 2, command: Some(vec![0xaf]) },
+</a><a href="#h2-5-10" id="h2-5-10" class="i">+        })?;
+</a><a href="#h2-5-11" id="h2-5-11" class="i">+        state_tx.send(Instruction::Vote { term: 2, index: 1, address: Address::Local })?;
+</a><a href="#h2-5-12" id="h2-5-12" class="i">+        state_tx.send(Instruction::Vote {
+</a><a href="#h2-5-13" id="h2-5-13" class="i">+            term: 2,
+</a><a href="#h2-5-14" id="h2-5-14" class="i">+            index: 1,
+</a><a href="#h2-5-15" id="h2-5-15" class="i">+            address: Address::Peer(&quot;a&quot;.into()),
+</a>         })?;
+<a href="#h2-5-17" id="h2-5-17" class="d">-        state_tx.send(Instruction::Vote { index: 1, address: Address::Local })?;
+</a><a href="#h2-5-18" id="h2-5-18" class="d">-        state_tx.send(Instruction::Vote { index: 1, address: Address::Peer(&quot;a&quot;.into()) })?;
+</a>         std::mem::drop(state_tx);
+ 
+         assert_eq!(
+<a href="#h2-6" id="h2-6" class="h">@@ -407,6 +416,34 @@ pub mod tests {
+</a>         Ok(())
+     }
+ 
+<a href="#h2-6-3" id="h2-6-3" class="i">+    // A query for an index submitted in a given term cannot be satisfied by votes below that term.
+</a><a href="#h2-6-4" id="h2-6-4" class="i">+    #[tokio::test(core_threads = 2)]
+</a><a href="#h2-6-5" id="h2-6-5" class="i">+    async fn driver_query_noterm() -&gt; Result&lt;()&gt; {
+</a><a href="#h2-6-6" id="h2-6-6" class="i">+        let (_, state_tx, node_rx) = setup().await?;
+</a><a href="#h2-6-7" id="h2-6-7" class="i">+
+</a><a href="#h2-6-8" id="h2-6-8" class="i">+        state_tx.send(Instruction::Query {
+</a><a href="#h2-6-9" id="h2-6-9" class="i">+            id: vec![0x01],
+</a><a href="#h2-6-10" id="h2-6-10" class="i">+            address: Address::Client,
+</a><a href="#h2-6-11" id="h2-6-11" class="i">+            command: vec![0xf0],
+</a><a href="#h2-6-12" id="h2-6-12" class="i">+            term: 2,
+</a><a href="#h2-6-13" id="h2-6-13" class="i">+            index: 1,
+</a><a href="#h2-6-14" id="h2-6-14" class="i">+            quorum: 2,
+</a><a href="#h2-6-15" id="h2-6-15" class="i">+        })?;
+</a><a href="#h2-6-16" id="h2-6-16" class="i">+        state_tx.send(Instruction::Apply {
+</a><a href="#h2-6-17" id="h2-6-17" class="i">+            entry: Entry { index: 1, term: 1, command: Some(vec![0xaf]) },
+</a><a href="#h2-6-18" id="h2-6-18" class="i">+        })?;
+</a><a href="#h2-6-19" id="h2-6-19" class="i">+        state_tx.send(Instruction::Vote { term: 2, index: 1, address: Address::Local })?;
+</a><a href="#h2-6-20" id="h2-6-20" class="i">+        state_tx.send(Instruction::Vote {
+</a><a href="#h2-6-21" id="h2-6-21" class="i">+            term: 1,
+</a><a href="#h2-6-22" id="h2-6-22" class="i">+            index: 1,
+</a><a href="#h2-6-23" id="h2-6-23" class="i">+            address: Address::Peer(&quot;a&quot;.into()),
+</a><a href="#h2-6-24" id="h2-6-24" class="i">+        })?;
+</a><a href="#h2-6-25" id="h2-6-25" class="i">+        std::mem::drop(state_tx);
+</a><a href="#h2-6-26" id="h2-6-26" class="i">+
+</a><a href="#h2-6-27" id="h2-6-27" class="i">+        assert_eq!(node_rx.collect::&lt;Vec&lt;_&gt;&gt;().await, vec![]);
+</a><a href="#h2-6-28" id="h2-6-28" class="i">+        Ok(())
+</a><a href="#h2-6-29" id="h2-6-29" class="i">+    }
+</a><a href="#h2-6-30" id="h2-6-30" class="i">+
+</a>     #[tokio::test(core_threads = 2)]
+     async fn driver_query_noquorum() -&gt; Result&lt;()&gt; {
+         let (_, state_tx, node_rx) = setup().await?;
+<a href="#h2-7" id="h2-7" class="h">@@ -415,13 +452,14 @@ pub mod tests {
+</a>             id: vec![0x01],
+             address: Address::Client,
+             command: vec![0xf0],
+<a href="#h2-7-3" id="h2-7-3" class="i">+            term: 1,
+</a>             index: 1,
+             quorum: 2,
+         })?;
+         state_tx.send(Instruction::Apply {
+             entry: Entry { index: 1, term: 1, command: Some(vec![0xaf]) },
+         })?;
+<a href="#h2-7-10" id="h2-7-10" class="d">-        state_tx.send(Instruction::Vote { index: 1, address: Address::Local })?;
+</a><a href="#h2-7-11" id="h2-7-11" class="i">+        state_tx.send(Instruction::Vote { term: 1, index: 1, address: Address::Local })?;
+</a>         std::mem::drop(state_tx);
+ 
+         assert_eq!(node_rx.collect::&lt;Vec&lt;_&gt;&gt;().await, vec![]);
+</pre>
+</div>
+</body>
+</html>

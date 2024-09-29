@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>raft: improve assertions - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/952d8b183f75f0f827cfd4fb74ea1e4753bd50ee.html">952d8b183f75f0f827cfd4fb74ea1e4753bd50ee</a>
+<b>parent</b> <a href="../commit/3c3ce5c00c91dd8fa12264c26cbb0c16c5d3d1a4.html">3c3ce5c00c91dd8fa12264c26cbb0c16c5d3d1a4</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Sun,  9 Jun 2024 15:05:41 +0200
+
+raft: improve assertions
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/raft/node.rs</a></td><td> | </td><td class="num">164</td><td><span class="i">++++++++++++++++++++++++++++++</span><span class="d">-------------------------------------------------</span></td></tr>
+</table></pre><pre>1 file changed, 63 insertions(+), 101 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/raft/node.rs.html">src/raft/node.rs</a> b/<a href="../file/src/raft/node.rs.html">src/raft/node.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -1,6 +1,7 @@
+</a> use super::{
+     Envelope, Index, Log, Message, ReadSequence, Request, RequestID, Response, State, Status,
+ };
+<a href="#h0-0-3" id="h0-0-3" class="i">+use crate::errinput;
+</a> use crate::error::{Error, Result};
+ 
+ use itertools::Itertools as _;
+<a href="#h0-1" id="h0-1" class="h">@@ -51,6 +52,32 @@ pub enum Node {
+</a>     Leader(RawNode&lt;Leader&gt;),
+ }
+ 
+<a href="#h0-1-3" id="h0-1-3" class="i">+/// Helper macro which calls a closure on the inner RawNode&lt;R&gt;.
+</a><a href="#h0-1-4" id="h0-1-4" class="i">+macro_rules! with_rawnode {
+</a><a href="#h0-1-5" id="h0-1-5" class="i">+    // Borrowed (using ref keyword).
+</a><a href="#h0-1-6" id="h0-1-6" class="i">+    (ref $node:expr, $fn:expr) =&gt; {{
+</a><a href="#h0-1-7" id="h0-1-7" class="i">+        fn with_rawnode&lt;R: Role, T&gt;(node: &amp;RawNode&lt;R&gt;, f: impl Fn(&amp;RawNode&lt;R&gt;) -&gt; T) -&gt; T {
+</a><a href="#h0-1-8" id="h0-1-8" class="i">+            f(node)
+</a><a href="#h0-1-9" id="h0-1-9" class="i">+        }
+</a><a href="#h0-1-10" id="h0-1-10" class="i">+        match $node {
+</a><a href="#h0-1-11" id="h0-1-11" class="i">+            Node::Candidate(ref n) =&gt; with_rawnode(n, $fn),
+</a><a href="#h0-1-12" id="h0-1-12" class="i">+            Node::Follower(ref n) =&gt; with_rawnode(n, $fn),
+</a><a href="#h0-1-13" id="h0-1-13" class="i">+            Node::Leader(ref n) =&gt; with_rawnode(n, $fn),
+</a><a href="#h0-1-14" id="h0-1-14" class="i">+        }
+</a><a href="#h0-1-15" id="h0-1-15" class="i">+    }};
+</a><a href="#h0-1-16" id="h0-1-16" class="i">+    // Owned.
+</a><a href="#h0-1-17" id="h0-1-17" class="i">+    ($node:expr, $fn:expr) =&gt; {{
+</a><a href="#h0-1-18" id="h0-1-18" class="i">+        fn with_rawnode&lt;R: Role, T&gt;(node: RawNode&lt;R&gt;, f: impl FnOnce(RawNode&lt;R&gt;) -&gt; T) -&gt; T {
+</a><a href="#h0-1-19" id="h0-1-19" class="i">+            f(node)
+</a><a href="#h0-1-20" id="h0-1-20" class="i">+        }
+</a><a href="#h0-1-21" id="h0-1-21" class="i">+        match $node {
+</a><a href="#h0-1-22" id="h0-1-22" class="i">+            Node::Candidate(n) =&gt; with_rawnode(n, $fn),
+</a><a href="#h0-1-23" id="h0-1-23" class="i">+            Node::Follower(n) =&gt; with_rawnode(n, $fn),
+</a><a href="#h0-1-24" id="h0-1-24" class="i">+            Node::Leader(n) =&gt; with_rawnode(n, $fn),
+</a><a href="#h0-1-25" id="h0-1-25" class="i">+        }
+</a><a href="#h0-1-26" id="h0-1-26" class="i">+    }};
+</a><a href="#h0-1-27" id="h0-1-27" class="i">+}
+</a><a href="#h0-1-28" id="h0-1-28" class="i">+
+</a> impl Node {
+     /// Creates a new Raft node, starting as a leaderless follower, or leader if
+     /// there are no peers.
+<a href="#h0-2" id="h0-2" class="h">@@ -72,39 +99,28 @@ impl Node {
+</a> 
+     /// Returns the node ID.
+     pub fn id(&amp;self) -&gt; NodeID {
+<a href="#h0-2-3" id="h0-2-3" class="d">-        match self {
+</a><a href="#h0-2-4" id="h0-2-4" class="d">-            Node::Candidate(n) =&gt; n.id,
+</a><a href="#h0-2-5" id="h0-2-5" class="d">-            Node::Follower(n) =&gt; n.id,
+</a><a href="#h0-2-6" id="h0-2-6" class="d">-            Node::Leader(n) =&gt; n.id,
+</a><a href="#h0-2-7" id="h0-2-7" class="d">-        }
+</a><a href="#h0-2-8" id="h0-2-8" class="i">+        with_rawnode!(ref self, |n| n.id)
+</a>     }
+ 
+     /// Returns the node term.
+     pub fn term(&amp;self) -&gt; Term {
+<a href="#h0-2-13" id="h0-2-13" class="d">-        match self {
+</a><a href="#h0-2-14" id="h0-2-14" class="d">-            Node::Candidate(n) =&gt; n.term(),
+</a><a href="#h0-2-15" id="h0-2-15" class="d">-            Node::Follower(n) =&gt; n.term(),
+</a><a href="#h0-2-16" id="h0-2-16" class="d">-            Node::Leader(n) =&gt; n.term(),
+</a><a href="#h0-2-17" id="h0-2-17" class="d">-        }
+</a><a href="#h0-2-18" id="h0-2-18" class="i">+        with_rawnode!(ref self, |n| n.term())
+</a>     }
+ 
+<a href="#h0-2-21" id="h0-2-21" class="d">-    /// Processes a message from a peer.
+</a><a href="#h0-2-22" id="h0-2-22" class="i">+    /// Processes an inbound message.
+</a>     pub fn step(self, msg: Envelope) -&gt; Result&lt;Self&gt; {
+<a href="#h0-2-24" id="h0-2-24" class="d">-        debug!(&quot;Stepping {:?}&quot;, msg);
+</a><a href="#h0-2-25" id="h0-2-25" class="d">-        match self {
+</a><a href="#h0-2-26" id="h0-2-26" class="d">-            Node::Candidate(n) =&gt; n.step(msg),
+</a><a href="#h0-2-27" id="h0-2-27" class="d">-            Node::Follower(n) =&gt; n.step(msg),
+</a><a href="#h0-2-28" id="h0-2-28" class="d">-            Node::Leader(n) =&gt; n.step(msg),
+</a><a href="#h0-2-29" id="h0-2-29" class="d">-        }
+</a><a href="#h0-2-30" id="h0-2-30" class="i">+        with_rawnode!(ref self, |n| {
+</a><a href="#h0-2-31" id="h0-2-31" class="i">+            assert_eq!(msg.to, n.id, &quot;message to other node: {msg:?}&quot;);
+</a><a href="#h0-2-32" id="h0-2-32" class="i">+            assert!(n.peers.contains(&amp;msg.from) || msg.from == n.id, &quot;unknown sender: {msg:?}&quot;);
+</a><a href="#h0-2-33" id="h0-2-33" class="i">+        });
+</a><a href="#h0-2-34" id="h0-2-34" class="i">+
+</a><a href="#h0-2-35" id="h0-2-35" class="i">+        debug!(&quot;Stepping {msg:?}&quot;);
+</a><a href="#h0-2-36" id="h0-2-36" class="i">+        with_rawnode!(self, |n| n.step(msg))
+</a>     }
+ 
+     /// Moves time forward by a tick.
+     pub fn tick(self) -&gt; Result&lt;Self&gt; {
+<a href="#h0-2-41" id="h0-2-41" class="d">-        match self {
+</a><a href="#h0-2-42" id="h0-2-42" class="d">-            Node::Candidate(n) =&gt; n.tick(),
+</a><a href="#h0-2-43" id="h0-2-43" class="d">-            Node::Follower(n) =&gt; n.tick(),
+</a><a href="#h0-2-44" id="h0-2-44" class="d">-            Node::Leader(n) =&gt; n.tick(),
+</a><a href="#h0-2-45" id="h0-2-45" class="d">-        }
+</a><a href="#h0-2-46" id="h0-2-46" class="i">+        with_rawnode!(self, |n| n.tick())
+</a>     }
+ }
+ 
+<a href="#h0-3" id="h0-3" class="h">@@ -203,19 +219,6 @@ impl&lt;R: Role&gt; RawNode&lt;R&gt; {
+</a>     fn gen_election_timeout(&amp;self) -&gt; Ticks {
+         rand::thread_rng().gen_range(self.opts.election_timeout_range.clone())
+     }
+<a href="#h0-3-3" id="h0-3-3" class="d">-
+</a><a href="#h0-3-4" id="h0-3-4" class="d">-    /// Asserts message invariants when stepping.
+</a><a href="#h0-3-5" id="h0-3-5" class="d">-    fn assert_step(&amp;self, msg: &amp;Envelope) {
+</a><a href="#h0-3-6" id="h0-3-6" class="d">-        // Messages must be addressed to the local node.
+</a><a href="#h0-3-7" id="h0-3-7" class="d">-        assert_eq!(msg.to, self.id, &quot;Message to other node&quot;);
+</a><a href="#h0-3-8" id="h0-3-8" class="d">-
+</a><a href="#h0-3-9" id="h0-3-9" class="d">-        // Senders must be known.
+</a><a href="#h0-3-10" id="h0-3-10" class="d">-        assert!(
+</a><a href="#h0-3-11" id="h0-3-11" class="d">-            msg.from == self.id || self.peers.contains(&amp;msg.from),
+</a><a href="#h0-3-12" id="h0-3-12" class="d">-            &quot;Unknown sender {}&quot;,
+</a><a href="#h0-3-13" id="h0-3-13" class="d">-            msg.from
+</a><a href="#h0-3-14" id="h0-3-14" class="d">-        );
+</a><a href="#h0-3-15" id="h0-3-15" class="d">-    }
+</a> }
+ 
+ /// A candidate is campaigning to become a leader.
+<a href="#h0-4" id="h0-4" class="h">@@ -238,37 +241,21 @@ impl Candidate {
+</a> impl Role for Candidate {}
+ 
+ impl RawNode&lt;Candidate&gt; {
+<a href="#h0-4-3" id="h0-4-3" class="d">-    /// Asserts internal invariants.
+</a><a href="#h0-4-4" id="h0-4-4" class="d">-    fn assert(&amp;mut self) -&gt; Result&lt;()&gt; {
+</a><a href="#h0-4-5" id="h0-4-5" class="d">-        assert_ne!(self.term(), 0, &quot;candidates can&#39;t have term 0&quot;);
+</a><a href="#h0-4-6" id="h0-4-6" class="d">-        assert!(self.role.votes.contains(&amp;self.id), &quot;candidate did not vote for self&quot;);
+</a><a href="#h0-4-7" id="h0-4-7" class="d">-        debug_assert_eq!(Some(self.id), self.log.get_term().1, &quot;log vote does not match self&quot;);
+</a><a href="#h0-4-8" id="h0-4-8" class="d">-
+</a><a href="#h0-4-9" id="h0-4-9" class="d">-        assert!(
+</a><a href="#h0-4-10" id="h0-4-10" class="d">-            self.role.election_duration &lt; self.role.election_timeout,
+</a><a href="#h0-4-11" id="h0-4-11" class="d">-            &quot;Election timeout passed&quot;
+</a><a href="#h0-4-12" id="h0-4-12" class="d">-        );
+</a><a href="#h0-4-13" id="h0-4-13" class="d">-
+</a><a href="#h0-4-14" id="h0-4-14" class="d">-        Ok(())
+</a><a href="#h0-4-15" id="h0-4-15" class="d">-    }
+</a><a href="#h0-4-16" id="h0-4-16" class="d">-
+</a>     /// Transitions the candidate to a follower. We either lost the election and
+     /// follow the winner, or we discovered a new term in which case we step
+     /// into it as a leaderless follower.
+     fn into_follower(mut self, term: Term, leader: Option&lt;NodeID&gt;) -&gt; Result&lt;RawNode&lt;Follower&gt;&gt; {
+<a href="#h0-4-21" id="h0-4-21" class="d">-        assert!(term &gt;= self.term(), &quot;term regression {} → {}&quot;, self.term(), term);
+</a><a href="#h0-4-22" id="h0-4-22" class="d">-
+</a>         let election_timeout = self.gen_election_timeout();
+         if let Some(leader) = leader {
+             // We lost the election, follow the winner.
+             assert_eq!(term, self.term(), &quot;can&#39;t follow leader in different term&quot;);
+<a href="#h0-4-27" id="h0-4-27" class="d">-            info!(&quot;Lost election, following leader {} in term {}&quot;, leader, term);
+</a><a href="#h0-4-28" id="h0-4-28" class="i">+            info!(&quot;Lost election, following leader {leader} in term {term}&quot;);
+</a>             Ok(self.into_role(Follower::new(Some(leader), election_timeout)))
+         } else {
+             // We found a new term, but we don&#39;t necessarily know who the leader
+             // is yet. We&#39;ll find out when we step a message from it.
+<a href="#h0-4-33" id="h0-4-33" class="d">-            assert_ne!(term, self.term(), &quot;can&#39;t be leaderless follower in current term&quot;);
+</a><a href="#h0-4-34" id="h0-4-34" class="d">-            info!(&quot;Discovered new term {}&quot;, term);
+</a><a href="#h0-4-35" id="h0-4-35" class="i">+            assert_ne!(term, self.term(), &quot;can&#39;t become leaderless follower in current term&quot;);
+</a><a href="#h0-4-36" id="h0-4-36" class="i">+            info!(&quot;Discovered new term {term}&quot;);
+</a>             self.log.set_term(term, None)?;
+             Ok(self.into_role(Follower::new(None, election_timeout)))
+         }
+<a href="#h0-5" id="h0-5" class="h">@@ -276,7 +263,11 @@ impl RawNode&lt;Candidate&gt; {
+</a> 
+     /// Transitions the candidate to a leader. We won the election.
+     fn into_leader(self) -&gt; Result&lt;RawNode&lt;Leader&gt;&gt; {
+<a href="#h0-5-3" id="h0-5-3" class="d">-        info!(&quot;Won election for term {}, becoming leader&quot;, self.term());
+</a><a href="#h0-5-4" id="h0-5-4" class="i">+        let (term, vote) = self.log.get_term();
+</a><a href="#h0-5-5" id="h0-5-5" class="i">+        assert_ne!(term, 0, &quot;leaders can&#39;t have term 0&quot;);
+</a><a href="#h0-5-6" id="h0-5-6" class="i">+        assert_eq!(vote, Some(self.id), &quot;leader did not vote for self&quot;);
+</a><a href="#h0-5-7" id="h0-5-7" class="i">+
+</a><a href="#h0-5-8" id="h0-5-8" class="i">+        info!(&quot;Won election for term {term}, becoming leader&quot;);
+</a>         let peers = self.peers.clone();
+         let (last_index, _) = self.log.get_last_index();
+         let mut node = self.into_role(Leader::new(peers, last_index));
+<a href="#h0-6" id="h0-6" class="h">@@ -295,9 +286,6 @@ impl RawNode&lt;Candidate&gt; {
+</a> 
+     /// Processes a message.
+     fn step(mut self, msg: Envelope) -&gt; Result&lt;Node&gt; {
+<a href="#h0-6-3" id="h0-6-3" class="d">-        self.assert()?;
+</a><a href="#h0-6-4" id="h0-6-4" class="d">-        self.assert_step(&amp;msg);
+</a><a href="#h0-6-5" id="h0-6-5" class="d">-
+</a>         // Drop messages from past terms.
+         if msg.term &lt; self.term() {
+             debug!(&quot;Dropping message from past term ({:?})&quot;, msg);
+<a href="#h0-7" id="h0-7" class="h">@@ -351,12 +339,11 @@ impl RawNode&lt;Candidate&gt; {
+</a> 
+     /// Processes a logical clock tick.
+     fn tick(mut self) -&gt; Result&lt;Node&gt; {
+<a href="#h0-7-3" id="h0-7-3" class="d">-        self.assert()?;
+</a><a href="#h0-7-4" id="h0-7-4" class="d">-
+</a>         self.role.election_duration += 1;
+         if self.role.election_duration &gt;= self.role.election_timeout {
+             self.campaign()?;
+         }
+<a href="#h0-7-9" id="h0-7-9" class="i">+        assert!(self.role.election_duration &lt; self.role.election_timeout, &quot;past election timeout&quot;);
+</a>         Ok(self.into())
+     }
+ 
+<a href="#h0-8" id="h0-8" class="h">@@ -407,30 +394,15 @@ impl RawNode&lt;Follower&gt; {
+</a>         node_tx: crossbeam::channel::Sender&lt;Envelope&gt;,
+         opts: Options,
+     ) -&gt; Result&lt;Self&gt; {
+<a href="#h0-8-3" id="h0-8-3" class="i">+        if peers.contains(&amp;id) {
+</a><a href="#h0-8-4" id="h0-8-4" class="i">+            return errinput!(&quot;node ID {id} can&#39;t be in peers&quot;);
+</a><a href="#h0-8-5" id="h0-8-5" class="i">+        }
+</a>         let role = Follower::new(None, 0);
+         let mut node = Self { id, peers, log, state, node_tx, opts, role };
+         node.role.election_timeout = node.gen_election_timeout();
+         Ok(node)
+     }
+ 
+<a href="#h0-8-12" id="h0-8-12" class="d">-    /// Asserts internal invariants.
+</a><a href="#h0-8-13" id="h0-8-13" class="d">-    fn assert(&amp;mut self) -&gt; Result&lt;()&gt; {
+</a><a href="#h0-8-14" id="h0-8-14" class="d">-        if let Some(leader) = self.role.leader {
+</a><a href="#h0-8-15" id="h0-8-15" class="d">-            assert_ne!(leader, self.id, &quot;Can&#39;t follow self&quot;);
+</a><a href="#h0-8-16" id="h0-8-16" class="d">-            assert!(self.peers.contains(&amp;leader), &quot;Leader not in peers&quot;);
+</a><a href="#h0-8-17" id="h0-8-17" class="d">-            assert_ne!(self.term(), 0, &quot;Followers with leaders can&#39;t have term 0&quot;);
+</a><a href="#h0-8-18" id="h0-8-18" class="d">-        } else {
+</a><a href="#h0-8-19" id="h0-8-19" class="d">-            assert!(self.role.forwarded.is_empty(), &quot;Leaderless follower has forwarded requests&quot;);
+</a><a href="#h0-8-20" id="h0-8-20" class="d">-        }
+</a><a href="#h0-8-21" id="h0-8-21" class="d">-        assert!(self.role.leader_seen &lt; self.role.election_timeout, &quot;Election timeout passed&quot;);
+</a><a href="#h0-8-22" id="h0-8-22" class="d">-
+</a><a href="#h0-8-23" id="h0-8-23" class="d">-        // NB: We allow vote not in peers, since this can happen when removing
+</a><a href="#h0-8-24" id="h0-8-24" class="d">-        // nodes from the cluster via a cold restart. We also allow vote for
+</a><a href="#h0-8-25" id="h0-8-25" class="d">-        // self, which can happen if we lose an election.
+</a><a href="#h0-8-26" id="h0-8-26" class="d">-
+</a><a href="#h0-8-27" id="h0-8-27" class="d">-        Ok(())
+</a><a href="#h0-8-28" id="h0-8-28" class="d">-    }
+</a><a href="#h0-8-29" id="h0-8-29" class="d">-
+</a>     /// Transitions the follower into a candidate, by campaigning for
+     /// leadership in a new term.
+     fn into_candidate(mut self) -&gt; Result&lt;RawNode&lt;Candidate&gt;&gt; {
+<a href="#h0-9" id="h0-9" class="h">@@ -440,9 +412,16 @@ impl RawNode&lt;Follower&gt; {
+</a>         // Apply any pending log entries, so that we&#39;re caught up if we win.
+         self.maybe_apply()?;
+ 
+<a href="#h0-9-3" id="h0-9-3" class="i">+        // Become candidate and campaign.
+</a>         let election_timeout = self.gen_election_timeout();
+         let mut node = self.into_role(Candidate::new(election_timeout));
+         node.campaign()?;
+<a href="#h0-9-7" id="h0-9-7" class="i">+
+</a><a href="#h0-9-8" id="h0-9-8" class="i">+        let (term, vote) = node.log.get_term();
+</a><a href="#h0-9-9" id="h0-9-9" class="i">+        assert!(node.role.votes.contains(&amp;node.id), &quot;candidate did not vote for self&quot;);
+</a><a href="#h0-9-10" id="h0-9-10" class="i">+        assert_ne!(term, 0, &quot;candidate can&#39;t have term 0&quot;);
+</a><a href="#h0-9-11" id="h0-9-11" class="i">+        assert_eq!(vote, Some(node.id), &quot;log vote does not match self&quot;);
+</a><a href="#h0-9-12" id="h0-9-12" class="i">+
+</a>         Ok(node)
+     }
+ 
+<a href="#h0-10" id="h0-10" class="h">@@ -450,21 +429,22 @@ impl RawNode&lt;Follower&gt; {
+</a>     /// in a new term (e.g. if someone holds a new election) or following a
+     /// leader in the current term once someone wins the election.
+     fn into_follower(mut self, leader: Option&lt;NodeID&gt;, term: Term) -&gt; Result&lt;RawNode&lt;Follower&gt;&gt; {
+<a href="#h0-10-3" id="h0-10-3" class="d">-        assert!(term &gt;= self.term(), &quot;term regression {} → {}&quot;, self.term(), term);
+</a><a href="#h0-10-4" id="h0-10-4" class="i">+        assert_ne!(term, 0, &quot;can&#39;t become follower in term 0&quot;);
+</a> 
+         // Abort any forwarded requests. These must be retried with new leader.
+         self.abort_forwarded()?;
+ 
+         if let Some(leader) = leader {
+             // We found a leader in the current term.
+<a href="#h0-10-11" id="h0-10-11" class="d">-            assert_eq!(self.role.leader, None, &quot;Already have leader in term&quot;);
+</a><a href="#h0-10-12" id="h0-10-12" class="d">-            assert_eq!(term, self.term(), &quot;Can&#39;t follow leader in different term&quot;);
+</a><a href="#h0-10-13" id="h0-10-13" class="i">+            assert!(self.peers.contains(&amp;leader), &quot;leader is not a peer&quot;);
+</a><a href="#h0-10-14" id="h0-10-14" class="i">+            assert_eq!(self.role.leader, None, &quot;already have leader in term&quot;);
+</a><a href="#h0-10-15" id="h0-10-15" class="i">+            assert_eq!(term, self.term(), &quot;can&#39;t follow leader in different term&quot;);
+</a>             info!(&quot;Following leader {leader} in term {term}&quot;);
+             self.role = Follower::new(Some(leader), self.role.election_timeout);
+         } else {
+             // We found a new term, but we don&#39;t necessarily know who the leader
+             // is yet. We&#39;ll find out when we step a message from it.
+<a href="#h0-10-21" id="h0-10-21" class="d">-            assert_ne!(term, self.term(), &quot;can&#39;t be leaderless follower in current term&quot;);
+</a><a href="#h0-10-22" id="h0-10-22" class="i">+            assert_ne!(term, self.term(), &quot;can&#39;t become leaderless follower in current term&quot;);
+</a>             info!(&quot;Discovered new term {term}&quot;);
+             self.log.set_term(term, None)?;
+             self.role = Follower::new(None, self.gen_election_timeout());
+<a href="#h0-11" id="h0-11" class="h">@@ -474,9 +454,6 @@ impl RawNode&lt;Follower&gt; {
+</a> 
+     /// Processes a message.
+     fn step(mut self, msg: Envelope) -&gt; Result&lt;Node&gt; {
+<a href="#h0-11-3" id="h0-11-3" class="d">-        self.assert()?;
+</a><a href="#h0-11-4" id="h0-11-4" class="d">-        self.assert_step(&amp;msg);
+</a><a href="#h0-11-5" id="h0-11-5" class="d">-
+</a>         // Drop messages from past terms.
+         if msg.term &lt; self.term() {
+             debug!(&quot;Dropping message from past term ({:?})&quot;, msg);
+<a href="#h0-12" id="h0-12" class="h">@@ -612,8 +589,6 @@ impl RawNode&lt;Follower&gt; {
+</a> 
+     /// Processes a logical clock tick.
+     fn tick(mut self) -&gt; Result&lt;Node&gt; {
+<a href="#h0-12-3" id="h0-12-3" class="d">-        self.assert()?;
+</a><a href="#h0-12-4" id="h0-12-4" class="d">-
+</a>         self.role.leader_seen += 1;
+         if self.role.leader_seen &gt;= self.role.election_timeout {
+             return Ok(self.into_candidate()?.into());
+<a href="#h0-13" id="h0-13" class="h">@@ -762,19 +737,11 @@ impl Leader {
+</a> impl Role for Leader {}
+ 
+ impl RawNode&lt;Leader&gt; {
+<a href="#h0-13-3" id="h0-13-3" class="d">-    /// Asserts internal invariants.
+</a><a href="#h0-13-4" id="h0-13-4" class="d">-    fn assert(&amp;mut self) -&gt; Result&lt;()&gt; {
+</a><a href="#h0-13-5" id="h0-13-5" class="d">-        assert_ne!(self.term(), 0, &quot;leaders can&#39;t have term 0&quot;);
+</a><a href="#h0-13-6" id="h0-13-6" class="d">-        debug_assert_eq!(Some(self.id), self.log.get_term().1, &quot;vote does not match self&quot;);
+</a><a href="#h0-13-7" id="h0-13-7" class="d">-        Ok(())
+</a><a href="#h0-13-8" id="h0-13-8" class="d">-    }
+</a><a href="#h0-13-9" id="h0-13-9" class="d">-
+</a>     /// Transitions the leader into a follower. This can only happen if we
+     /// discover a new term, so we become a leaderless follower. Subsequently
+     /// stepping the received message may discover the leader, if there is one.
+     fn into_follower(mut self, term: Term) -&gt; Result&lt;RawNode&lt;Follower&gt;&gt; {
+<a href="#h0-13-14" id="h0-13-14" class="d">-        assert!(term &gt;= self.term(), &quot;term regression {} → {}&quot;, self.term(), term);
+</a><a href="#h0-13-15" id="h0-13-15" class="d">-        assert!(term &gt; self.term(), &quot;can only become follower in later term&quot;);
+</a><a href="#h0-13-16" id="h0-13-16" class="i">+        assert!(term &gt; self.term(), &quot;leader can only become follower in later term&quot;);
+</a> 
+         info!(&quot;Discovered new term {term}&quot;);
+ 
+<a href="#h0-14" id="h0-14" class="h">@@ -799,9 +766,6 @@ impl RawNode&lt;Leader&gt; {
+</a> 
+     /// Processes a message.
+     fn step(mut self, msg: Envelope) -&gt; Result&lt;Node&gt; {
+<a href="#h0-14-3" id="h0-14-3" class="d">-        self.assert()?;
+</a><a href="#h0-14-4" id="h0-14-4" class="d">-        self.assert_step(&amp;msg);
+</a><a href="#h0-14-5" id="h0-14-5" class="d">-
+</a>         // Drop messages from past terms.
+         if msg.term &lt; self.term() {
+             debug!(&quot;Dropping message from past term ({:?})&quot;, msg);
+<a href="#h0-15" id="h0-15" class="h">@@ -962,8 +926,6 @@ impl RawNode&lt;Leader&gt; {
+</a> 
+     /// Processes a logical clock tick.
+     fn tick(mut self) -&gt; Result&lt;Node&gt; {
+<a href="#h0-15-3" id="h0-15-3" class="d">-        self.assert()?;
+</a><a href="#h0-15-4" id="h0-15-4" class="d">-
+</a>         self.role.since_heartbeat += 1;
+         if self.role.since_heartbeat &gt;= self.opts.heartbeat_interval {
+             self.heartbeat()?;
+</pre>
+</div>
+</body>
+</html>

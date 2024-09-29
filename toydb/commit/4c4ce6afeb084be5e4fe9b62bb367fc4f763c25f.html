@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>sql: add arithmetic methods for `Value` - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/4c4ce6afeb084be5e4fe9b62bb367fc4f763c25f.html">4c4ce6afeb084be5e4fe9b62bb367fc4f763c25f</a>
+<b>parent</b> <a href="../commit/1f7855326b1bbfe39c4f24f39dfb5e72bf6ccec8.html">1f7855326b1bbfe39c4f24f39dfb5e72bf6ccec8</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Fri, 21 Jun 2024 15:04:33 +0200
+
+sql: add arithmetic methods for `Value`
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/sql/types/expression.rs</a></td><td> | </td><td class="num">81</td><td><span class="i">+++++++++</span><span class="d">----------------------------------------------------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/sql/types/value.rs</a></td><td> | </td><td class="num">70</td><td><span class="i">++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d">--</span></td></tr>
+</table></pre><pre>2 files changed, 77 insertions(+), 74 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/sql/types/expression.rs.html">src/sql/types/expression.rs</a> b/<a href="../file/src/sql/types/expression.rs.html">src/sql/types/expression.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -1,6 +1,6 @@
+</a> use super::{Label, Row, Value};
+ use crate::errinput;
+<a href="#h0-0-2" id="h0-0-2" class="d">-use crate::error::{Error, Result};
+</a><a href="#h0-0-3" id="h0-0-3" class="i">+use crate::error::Result;
+</a> 
+ use serde::{Deserialize, Serialize};
+ 
+<a href="#h0-1" id="h0-1" class="h">@@ -131,8 +131,8 @@ impl Expression {
+</a>             // Comparisons. Must be of same type, except floats and integers
+             // which are interchangeable. NULLs yield NULL.
+             //
+<a href="#h0-1-3" id="h0-1-3" class="d">-            // TODO: handle the f64 NaN case.
+</a><a href="#h0-1-4" id="h0-1-4" class="d">-            // TODO: shouldn&#39;t this dispatch to Value.cmp()?
+</a><a href="#h0-1-5" id="h0-1-5" class="i">+            // Does not dispatch to Value.cmp() because sorting and comparisons
+</a><a href="#h0-1-6" id="h0-1-6" class="i">+            // are different for f64 NaN and -0 values.
+</a>             #[allow(clippy::float_cmp)]
+             Self::Equal(lhs, rhs) =&gt; match (lhs.evaluate(row)?, rhs.evaluate(row)?) {
+                 (Boolean(lhs), Boolean(rhs)) =&gt; Boolean(lhs == rhs),
+<a href="#h0-2" id="h0-2" class="h">@@ -170,42 +170,9 @@ impl Expression {
+</a> 
+             // Mathematical operations. Inputs must be numbers, but integers and
+             // floats are interchangeable (float when mixed). NULLs yield NULL.
+<a href="#h0-2-3" id="h0-2-3" class="d">-            //
+</a><a href="#h0-2-4" id="h0-2-4" class="d">-            // TODO: implement Add, CheckedAdd, etc. instead for Value.
+</a><a href="#h0-2-5" id="h0-2-5" class="d">-            Self::Add(lhs, rhs) =&gt; match (lhs.evaluate(row)?, rhs.evaluate(row)?) {
+</a><a href="#h0-2-6" id="h0-2-6" class="d">-                (Integer(lhs), Integer(rhs)) =&gt; {
+</a><a href="#h0-2-7" id="h0-2-7" class="d">-                    Integer(lhs.checked_add(rhs).ok_or::&lt;Error&gt;(errinput!(&quot;integer overflow&quot;))?)
+</a><a href="#h0-2-8" id="h0-2-8" class="d">-                }
+</a><a href="#h0-2-9" id="h0-2-9" class="d">-                (Integer(lhs), Float(rhs)) =&gt; Float(lhs as f64 + rhs),
+</a><a href="#h0-2-10" id="h0-2-10" class="d">-                (Float(lhs), Integer(rhs)) =&gt; Float(lhs + rhs as f64),
+</a><a href="#h0-2-11" id="h0-2-11" class="d">-                (Float(lhs), Float(rhs)) =&gt; Float(lhs + rhs),
+</a><a href="#h0-2-12" id="h0-2-12" class="d">-                (Null, Integer(_) | Float(_) | Null) =&gt; Null,
+</a><a href="#h0-2-13" id="h0-2-13" class="d">-                (Integer(_) | Float(_), Null) =&gt; Null,
+</a><a href="#h0-2-14" id="h0-2-14" class="d">-                (lhs, rhs) =&gt; return errinput!(&quot;can&#39;t add {lhs} and {rhs}&quot;),
+</a><a href="#h0-2-15" id="h0-2-15" class="d">-            },
+</a><a href="#h0-2-16" id="h0-2-16" class="d">-            Self::Divide(lhs, rhs) =&gt; match (lhs.evaluate(row)?, rhs.evaluate(row)?) {
+</a><a href="#h0-2-17" id="h0-2-17" class="d">-                (Integer(_), Integer(0)) =&gt; return errinput!(&quot;can&#39;t divide by zero&quot;),
+</a><a href="#h0-2-18" id="h0-2-18" class="d">-                (Integer(lhs), Integer(rhs)) =&gt; Integer(lhs / rhs),
+</a><a href="#h0-2-19" id="h0-2-19" class="d">-                (Integer(lhs), Float(rhs)) =&gt; Float(lhs as f64 / rhs),
+</a><a href="#h0-2-20" id="h0-2-20" class="d">-                (Float(lhs), Integer(rhs)) =&gt; Float(lhs / rhs as f64),
+</a><a href="#h0-2-21" id="h0-2-21" class="d">-                (Float(lhs), Float(rhs)) =&gt; Float(lhs / rhs),
+</a><a href="#h0-2-22" id="h0-2-22" class="d">-                (Null, Integer(_) | Float(_) | Null) =&gt; Null,
+</a><a href="#h0-2-23" id="h0-2-23" class="d">-                (Integer(_) | Float(_), Null) =&gt; Null,
+</a><a href="#h0-2-24" id="h0-2-24" class="d">-                (lhs, rhs) =&gt; return errinput!(&quot;can&#39;t divide {lhs} and {rhs}&quot;),
+</a><a href="#h0-2-25" id="h0-2-25" class="d">-            },
+</a><a href="#h0-2-26" id="h0-2-26" class="d">-            Self::Exponentiate(lhs, rhs) =&gt; match (lhs.evaluate(row)?, rhs.evaluate(row)?) {
+</a><a href="#h0-2-27" id="h0-2-27" class="d">-                (Integer(lhs), Integer(rhs)) if rhs &gt;= 0 =&gt; {
+</a><a href="#h0-2-28" id="h0-2-28" class="d">-                    let rhs: u32 = rhs.try_into().or(errinput!(&quot;integer overflow&quot;))?;
+</a><a href="#h0-2-29" id="h0-2-29" class="d">-                    Integer(lhs.checked_pow(rhs).ok_or::&lt;Error&gt;(errinput!(&quot;integer overflow&quot;))?)
+</a><a href="#h0-2-30" id="h0-2-30" class="d">-                }
+</a><a href="#h0-2-31" id="h0-2-31" class="d">-                (Integer(lhs), Integer(rhs)) =&gt; Float((lhs as f64).powf(rhs as f64)),
+</a><a href="#h0-2-32" id="h0-2-32" class="d">-                (Integer(lhs), Float(rhs)) =&gt; Float((lhs as f64).powf(rhs)),
+</a><a href="#h0-2-33" id="h0-2-33" class="d">-                (Float(lhs), Integer(rhs)) =&gt; Float((lhs).powi(rhs as i32)),
+</a><a href="#h0-2-34" id="h0-2-34" class="d">-                (Float(lhs), Float(rhs)) =&gt; Float((lhs).powf(rhs)),
+</a><a href="#h0-2-35" id="h0-2-35" class="d">-                (Integer(_) | Float(_), Null) =&gt; Null,
+</a><a href="#h0-2-36" id="h0-2-36" class="d">-                (Null, Integer(_) | Float(_) | Null) =&gt; Null,
+</a><a href="#h0-2-37" id="h0-2-37" class="d">-                (lhs, rhs) =&gt; return errinput!(&quot;can&#39;t exponentiate {lhs} and {rhs}&quot;),
+</a><a href="#h0-2-38" id="h0-2-38" class="d">-            },
+</a><a href="#h0-2-39" id="h0-2-39" class="i">+            Self::Add(lhs, rhs) =&gt; lhs.evaluate(row)?.checked_add(&amp;rhs.evaluate(row)?)?,
+</a><a href="#h0-2-40" id="h0-2-40" class="i">+            Self::Divide(lhs, rhs) =&gt; lhs.evaluate(row)?.checked_div(&amp;rhs.evaluate(row)?)?,
+</a><a href="#h0-2-41" id="h0-2-41" class="i">+            Self::Exponentiate(lhs, rhs) =&gt; lhs.evaluate(row)?.checked_pow(&amp;rhs.evaluate(row)?)?,
+</a>             Self::Factorial(expr) =&gt; match expr.evaluate(row)? {
+                 Integer(i) if i &lt; 0 =&gt; return errinput!(&quot;can&#39;t take factorial of negative number&quot;),
+                 Integer(i) =&gt; Integer((1..=i).product()),
+<a href="#h0-3" id="h0-3" class="h">@@ -216,45 +183,15 @@ impl Expression {
+</a>                 v @ (Integer(_) | Float(_) | Null) =&gt; v,
+                 expr =&gt; return errinput!(&quot;can&#39;t take the identity of {expr}&quot;),
+             },
+<a href="#h0-3-3" id="h0-3-3" class="d">-            Self::Modulo(lhs, rhs) =&gt; match (lhs.evaluate(row)?, rhs.evaluate(row)?) {
+</a><a href="#h0-3-4" id="h0-3-4" class="d">-                // Uses remainder semantics, like Postgres.
+</a><a href="#h0-3-5" id="h0-3-5" class="d">-                (Integer(_), Integer(0)) =&gt; return errinput!(&quot;can&#39;t divide by zero&quot;),
+</a><a href="#h0-3-6" id="h0-3-6" class="d">-                (Integer(lhs), Integer(rhs)) =&gt; Integer(lhs % rhs),
+</a><a href="#h0-3-7" id="h0-3-7" class="d">-                (Integer(lhs), Float(rhs)) =&gt; Float(lhs as f64 % rhs),
+</a><a href="#h0-3-8" id="h0-3-8" class="d">-                (Float(lhs), Integer(rhs)) =&gt; Float(lhs % rhs as f64),
+</a><a href="#h0-3-9" id="h0-3-9" class="d">-                (Float(lhs), Float(rhs)) =&gt; Float(lhs % rhs),
+</a><a href="#h0-3-10" id="h0-3-10" class="d">-                (Integer(_) | Float(_) | Null, Null) =&gt; Null,
+</a><a href="#h0-3-11" id="h0-3-11" class="d">-                (Null, Integer(_) | Float(_)) =&gt; Null,
+</a><a href="#h0-3-12" id="h0-3-12" class="d">-                (lhs, rhs) =&gt; return errinput!(&quot;can&#39;t take modulo of {lhs} and {rhs}&quot;),
+</a><a href="#h0-3-13" id="h0-3-13" class="d">-            },
+</a><a href="#h0-3-14" id="h0-3-14" class="d">-            Self::Multiply(lhs, rhs) =&gt; match (lhs.evaluate(row)?, rhs.evaluate(row)?) {
+</a><a href="#h0-3-15" id="h0-3-15" class="d">-                (Integer(lhs), Integer(rhs)) =&gt; {
+</a><a href="#h0-3-16" id="h0-3-16" class="d">-                    Integer(lhs.checked_mul(rhs).ok_or::&lt;Error&gt;(errinput!(&quot;integer overflow&quot;))?)
+</a><a href="#h0-3-17" id="h0-3-17" class="d">-                }
+</a><a href="#h0-3-18" id="h0-3-18" class="d">-                (Integer(lhs), Float(rhs)) =&gt; Float(lhs as f64 * rhs),
+</a><a href="#h0-3-19" id="h0-3-19" class="d">-                (Float(lhs), Integer(rhs)) =&gt; Float(lhs * rhs as f64),
+</a><a href="#h0-3-20" id="h0-3-20" class="d">-                (Float(lhs), Float(rhs)) =&gt; Float(lhs * rhs),
+</a><a href="#h0-3-21" id="h0-3-21" class="d">-                (Null, Integer(_) | Float(_) | Null) =&gt; Null,
+</a><a href="#h0-3-22" id="h0-3-22" class="d">-                (Integer(_) | Float(_), Null) =&gt; Null,
+</a><a href="#h0-3-23" id="h0-3-23" class="d">-                (lhs, rhs) =&gt; return errinput!(&quot;can&#39;t multiply {lhs} and {rhs}&quot;),
+</a><a href="#h0-3-24" id="h0-3-24" class="d">-            },
+</a><a href="#h0-3-25" id="h0-3-25" class="i">+            Self::Modulo(lhs, rhs) =&gt; lhs.evaluate(row)?.checked_rem(&amp;rhs.evaluate(row)?)?,
+</a><a href="#h0-3-26" id="h0-3-26" class="i">+            Self::Multiply(lhs, rhs) =&gt; lhs.evaluate(row)?.checked_mul(&amp;rhs.evaluate(row)?)?,
+</a>             Self::Negate(expr) =&gt; match expr.evaluate(row)? {
+                 Integer(i) =&gt; Integer(-i),
+                 Float(f) =&gt; Float(-f),
+                 Null =&gt; Null,
+                 value =&gt; return errinput!(&quot;can&#39;t negate {value}&quot;),
+             },
+<a href="#h0-3-33" id="h0-3-33" class="d">-            Self::Subtract(lhs, rhs) =&gt; match (lhs.evaluate(row)?, rhs.evaluate(row)?) {
+</a><a href="#h0-3-34" id="h0-3-34" class="d">-                (Integer(lhs), Integer(rhs)) =&gt; {
+</a><a href="#h0-3-35" id="h0-3-35" class="d">-                    Integer(lhs.checked_sub(rhs).ok_or::&lt;Error&gt;(errinput!(&quot;integer overflow&quot;))?)
+</a><a href="#h0-3-36" id="h0-3-36" class="d">-                }
+</a><a href="#h0-3-37" id="h0-3-37" class="d">-                (Integer(lhs), Float(rhs)) =&gt; Float(lhs as f64 - rhs),
+</a><a href="#h0-3-38" id="h0-3-38" class="d">-                (Float(lhs), Integer(rhs)) =&gt; Float(lhs - rhs as f64),
+</a><a href="#h0-3-39" id="h0-3-39" class="d">-                (Float(lhs), Float(rhs)) =&gt; Float(lhs - rhs),
+</a><a href="#h0-3-40" id="h0-3-40" class="d">-                (Null, Integer(_) | Float(_) | Null) =&gt; Null,
+</a><a href="#h0-3-41" id="h0-3-41" class="d">-                (Integer(_) | Float(_), Null) =&gt; Null,
+</a><a href="#h0-3-42" id="h0-3-42" class="d">-                (lhs, rhs) =&gt; return errinput!(&quot;can&#39;t subtract {lhs} and {rhs}&quot;),
+</a><a href="#h0-3-43" id="h0-3-43" class="d">-            },
+</a><a href="#h0-3-44" id="h0-3-44" class="i">+            Self::Subtract(lhs, rhs) =&gt; lhs.evaluate(row)?.checked_sub(&amp;rhs.evaluate(row)?)?,
+</a> 
+             // LIKE pattern matching, using _ and % as single- and
+             // multi-character wildcards. Can be escaped as __ and %%. Inputs
+<b>diff --git a/<a id="h1" href="../file/src/sql/types/value.rs.html">src/sql/types/value.rs</a> b/<a href="../file/src/sql/types/value.rs.html">src/sql/types/value.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -103,7 +103,7 @@ impl PartialOrd for Value {
+</a> }
+ 
+ impl Value {
+<a href="#h1-0-3" id="h1-0-3" class="d">-    /// Adds two values, returning a new value. Errors when invalid.
+</a><a href="#h1-0-4" id="h1-0-4" class="i">+    /// Adds two values. Errors when invalid.
+</a>     pub fn checked_add(&amp;self, other: &amp;Self) -&gt; Result&lt;Self&gt; {
+         use Value::*;
+         Ok(match (self, other) {
+<a href="#h1-1" id="h1-1" class="h">@@ -119,7 +119,7 @@ impl Value {
+</a>         })
+     }
+ 
+<a href="#h1-1-3" id="h1-1-3" class="d">-    /// Divides two values, returning a new value. Errors when invalid.
+</a><a href="#h1-1-4" id="h1-1-4" class="i">+    /// Divides two values. Errors when invalid.
+</a>     pub fn checked_div(&amp;self, other: &amp;Self) -&gt; Result&lt;Self&gt; {
+         use Value::*;
+         Ok(match (self, other) {
+<a href="#h1-2" id="h1-2" class="h">@@ -134,6 +134,72 @@ impl Value {
+</a>         })
+     }
+ 
+<a href="#h1-2-3" id="h1-2-3" class="i">+    /// Exponentiates two values. Errors when invalid.
+</a><a href="#h1-2-4" id="h1-2-4" class="i">+    pub fn checked_pow(&amp;self, other: &amp;Self) -&gt; Result&lt;Self&gt; {
+</a><a href="#h1-2-5" id="h1-2-5" class="i">+        use Value::*;
+</a><a href="#h1-2-6" id="h1-2-6" class="i">+        Ok(match (self, other) {
+</a><a href="#h1-2-7" id="h1-2-7" class="i">+            (Integer(lhs), Integer(rhs)) if *rhs &gt;= 0 =&gt; {
+</a><a href="#h1-2-8" id="h1-2-8" class="i">+                let rhs: u32 = (*rhs).try_into().or(errinput!(&quot;integer overflow&quot;))?;
+</a><a href="#h1-2-9" id="h1-2-9" class="i">+                Integer(lhs.checked_pow(rhs).ok_or::&lt;Error&gt;(errinput!(&quot;integer overflow&quot;))?)
+</a><a href="#h1-2-10" id="h1-2-10" class="i">+            }
+</a><a href="#h1-2-11" id="h1-2-11" class="i">+            (Integer(lhs), Integer(rhs)) =&gt; Float((*lhs as f64).powf(*rhs as f64)),
+</a><a href="#h1-2-12" id="h1-2-12" class="i">+            (Integer(lhs), Float(rhs)) =&gt; Float((*lhs as f64).powf(*rhs)),
+</a><a href="#h1-2-13" id="h1-2-13" class="i">+            (Float(lhs), Integer(rhs)) =&gt; Float((lhs).powi(*rhs as i32)),
+</a><a href="#h1-2-14" id="h1-2-14" class="i">+            (Float(lhs), Float(rhs)) =&gt; Float((lhs).powf(*rhs)),
+</a><a href="#h1-2-15" id="h1-2-15" class="i">+            (Integer(_) | Float(_), Null) =&gt; Null,
+</a><a href="#h1-2-16" id="h1-2-16" class="i">+            (Null, Integer(_) | Float(_) | Null) =&gt; Null,
+</a><a href="#h1-2-17" id="h1-2-17" class="i">+            (lhs, rhs) =&gt; return errinput!(&quot;can&#39;t exponentiate {lhs} and {rhs}&quot;),
+</a><a href="#h1-2-18" id="h1-2-18" class="i">+        })
+</a><a href="#h1-2-19" id="h1-2-19" class="i">+    }
+</a><a href="#h1-2-20" id="h1-2-20" class="i">+
+</a><a href="#h1-2-21" id="h1-2-21" class="i">+    /// Multiplies two values. Errors when invalid.
+</a><a href="#h1-2-22" id="h1-2-22" class="i">+    pub fn checked_mul(&amp;self, other: &amp;Self) -&gt; Result&lt;Self&gt; {
+</a><a href="#h1-2-23" id="h1-2-23" class="i">+        use Value::*;
+</a><a href="#h1-2-24" id="h1-2-24" class="i">+        Ok(match (self, other) {
+</a><a href="#h1-2-25" id="h1-2-25" class="i">+            (Integer(lhs), Integer(rhs)) =&gt; {
+</a><a href="#h1-2-26" id="h1-2-26" class="i">+                Integer(lhs.checked_mul(*rhs).ok_or::&lt;Error&gt;(errinput!(&quot;integer overflow&quot;))?)
+</a><a href="#h1-2-27" id="h1-2-27" class="i">+            }
+</a><a href="#h1-2-28" id="h1-2-28" class="i">+            (Integer(lhs), Float(rhs)) =&gt; Float(*lhs as f64 * rhs),
+</a><a href="#h1-2-29" id="h1-2-29" class="i">+            (Float(lhs), Integer(rhs)) =&gt; Float(lhs * *rhs as f64),
+</a><a href="#h1-2-30" id="h1-2-30" class="i">+            (Float(lhs), Float(rhs)) =&gt; Float(lhs * rhs),
+</a><a href="#h1-2-31" id="h1-2-31" class="i">+            (Null, Integer(_) | Float(_) | Null) =&gt; Null,
+</a><a href="#h1-2-32" id="h1-2-32" class="i">+            (Integer(_) | Float(_), Null) =&gt; Null,
+</a><a href="#h1-2-33" id="h1-2-33" class="i">+            (lhs, rhs) =&gt; return errinput!(&quot;can&#39;t multiply {lhs} and {rhs}&quot;),
+</a><a href="#h1-2-34" id="h1-2-34" class="i">+        })
+</a><a href="#h1-2-35" id="h1-2-35" class="i">+    }
+</a><a href="#h1-2-36" id="h1-2-36" class="i">+
+</a><a href="#h1-2-37" id="h1-2-37" class="i">+    /// Finds the remainder of two values. Errors when invalid.
+</a><a href="#h1-2-38" id="h1-2-38" class="i">+    pub fn checked_rem(&amp;self, other: &amp;Self) -&gt; Result&lt;Self&gt; {
+</a><a href="#h1-2-39" id="h1-2-39" class="i">+        use Value::*;
+</a><a href="#h1-2-40" id="h1-2-40" class="i">+        Ok(match (self, other) {
+</a><a href="#h1-2-41" id="h1-2-41" class="i">+            // Uses remainder semantics, like Postgres.
+</a><a href="#h1-2-42" id="h1-2-42" class="i">+            (Integer(_), Integer(0)) =&gt; return errinput!(&quot;can&#39;t divide by zero&quot;),
+</a><a href="#h1-2-43" id="h1-2-43" class="i">+            (Integer(lhs), Integer(rhs)) =&gt; Integer(lhs % rhs),
+</a><a href="#h1-2-44" id="h1-2-44" class="i">+            (Integer(lhs), Float(rhs)) =&gt; Float(*lhs as f64 % rhs),
+</a><a href="#h1-2-45" id="h1-2-45" class="i">+            (Float(lhs), Integer(rhs)) =&gt; Float(lhs % *rhs as f64),
+</a><a href="#h1-2-46" id="h1-2-46" class="i">+            (Float(lhs), Float(rhs)) =&gt; Float(lhs % rhs),
+</a><a href="#h1-2-47" id="h1-2-47" class="i">+            (Integer(_) | Float(_) | Null, Null) =&gt; Null,
+</a><a href="#h1-2-48" id="h1-2-48" class="i">+            (Null, Integer(_) | Float(_)) =&gt; Null,
+</a><a href="#h1-2-49" id="h1-2-49" class="i">+            (lhs, rhs) =&gt; return errinput!(&quot;can&#39;t take modulo of {lhs} and {rhs}&quot;),
+</a><a href="#h1-2-50" id="h1-2-50" class="i">+        })
+</a><a href="#h1-2-51" id="h1-2-51" class="i">+    }
+</a><a href="#h1-2-52" id="h1-2-52" class="i">+
+</a><a href="#h1-2-53" id="h1-2-53" class="i">+    /// Subtracts two values. Errors when invalid.
+</a><a href="#h1-2-54" id="h1-2-54" class="i">+    pub fn checked_sub(&amp;self, other: &amp;Self) -&gt; Result&lt;Self&gt; {
+</a><a href="#h1-2-55" id="h1-2-55" class="i">+        use Value::*;
+</a><a href="#h1-2-56" id="h1-2-56" class="i">+        Ok(match (self, other) {
+</a><a href="#h1-2-57" id="h1-2-57" class="i">+            (Integer(lhs), Integer(rhs)) =&gt; {
+</a><a href="#h1-2-58" id="h1-2-58" class="i">+                Integer(lhs.checked_sub(*rhs).ok_or::&lt;Error&gt;(errinput!(&quot;integer overflow&quot;))?)
+</a><a href="#h1-2-59" id="h1-2-59" class="i">+            }
+</a><a href="#h1-2-60" id="h1-2-60" class="i">+            (Integer(lhs), Float(rhs)) =&gt; Float(*lhs as f64 - rhs),
+</a><a href="#h1-2-61" id="h1-2-61" class="i">+            (Float(lhs), Integer(rhs)) =&gt; Float(lhs - *rhs as f64),
+</a><a href="#h1-2-62" id="h1-2-62" class="i">+            (Float(lhs), Float(rhs)) =&gt; Float(lhs - rhs),
+</a><a href="#h1-2-63" id="h1-2-63" class="i">+            (Null, Integer(_) | Float(_) | Null) =&gt; Null,
+</a><a href="#h1-2-64" id="h1-2-64" class="i">+            (Integer(_) | Float(_), Null) =&gt; Null,
+</a><a href="#h1-2-65" id="h1-2-65" class="i">+            (lhs, rhs) =&gt; return errinput!(&quot;can&#39;t subtract {lhs} and {rhs}&quot;),
+</a><a href="#h1-2-66" id="h1-2-66" class="i">+        })
+</a><a href="#h1-2-67" id="h1-2-67" class="i">+    }
+</a><a href="#h1-2-68" id="h1-2-68" class="i">+
+</a>     /// Returns the value&#39;s datatype, or None for null values.
+     pub fn datatype(&amp;self) -&gt; Option&lt;DataType&gt; {
+         match self {
+</pre>
+</div>
+</body>
+</html>

@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Add Raft `Role` trait - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/4e69511418bdc7f64d45316bc3ace4eb2996cad9.html">4e69511418bdc7f64d45316bc3ace4eb2996cad9</a>
+<b>parent</b> <a href="../commit/e2dd73e00a42d8e74f7bc5375a6b4d315dd201a9.html">e2dd73e00a42d8e74f7bc5375a6b4d315dd201a9</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Sun,  7 Jan 2024 12:31:28 +0100
+
+Add Raft `Role` trait
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/raft/node/candidate.rs</a></td><td> | </td><td class="num">6</td><td><span class="i">++++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/raft/node/follower.rs</a></td><td> | </td><td class="num">6</td><td><span class="i">++++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/raft/node/leader.rs</a></td><td> | </td><td class="num">8</td><td><span class="i">+++++</span><span class="d">---</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">src/raft/node/mod.rs</a></td><td> | </td><td class="num">20</td><td><span class="i">++++++++++++</span><span class="d">--------</span></td></tr>
+</table></pre><pre>4 files changed, 25 insertions(+), 15 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/raft/node/candidate.rs.html">src/raft/node/candidate.rs</a> b/<a href="../file/src/raft/node/candidate.rs.html">src/raft/node/candidate.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -1,12 +1,12 @@
+</a> use super::super::{Address, Event, Message};
+<a href="#h0-0-1" id="h0-0-1" class="d">-use super::{rand_election_timeout, Follower, Leader, Node, NodeID, RawNode, Term, Ticks};
+</a><a href="#h0-0-2" id="h0-0-2" class="i">+use super::{rand_election_timeout, Follower, Leader, Node, NodeID, RawNode, Role, Term, Ticks};
+</a> use crate::error::{Error, Result};
+ 
+ use ::log::{debug, info, warn};
+ use std::collections::HashSet;
+ 
+ /// A candidate is campaigning to become a leader.
+<a href="#h0-0-9" id="h0-0-9" class="d">-#[derive(Debug)]
+</a><a href="#h0-0-10" id="h0-0-10" class="i">+#[derive(Clone, Debug, PartialEq)]
+</a> pub struct Candidate {
+     /// Votes received (including ourself).
+     votes: HashSet&lt;NodeID&gt;,
+<a href="#h0-1" id="h0-1" class="h">@@ -27,6 +27,8 @@ impl Candidate {
+</a>     }
+ }
+ 
+<a href="#h0-1-3" id="h0-1-3" class="i">+impl Role for Candidate {}
+</a><a href="#h0-1-4" id="h0-1-4" class="i">+
+</a> impl RawNode&lt;Candidate&gt; {
+     /// Asserts internal invariants.
+     fn assert(&amp;mut self) -&gt; Result&lt;()&gt; {
+<b>diff --git a/<a id="h1" href="../file/src/raft/node/follower.rs.html">src/raft/node/follower.rs</a> b/<a href="../file/src/raft/node/follower.rs.html">src/raft/node/follower.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -1,12 +1,12 @@
+</a> use super::super::{Address, Event, Instruction, Message, RequestID, Response};
+<a href="#h1-0-1" id="h1-0-1" class="d">-use super::{rand_election_timeout, Candidate, Node, NodeID, RawNode, Term, Ticks};
+</a><a href="#h1-0-2" id="h1-0-2" class="i">+use super::{rand_election_timeout, Candidate, Node, NodeID, RawNode, Role, Term, Ticks};
+</a> use crate::error::{Error, Result};
+ 
+ use ::log::{debug, error, info, warn};
+ use std::collections::HashSet;
+ 
+ // A follower replicates state from a leader.
+<a href="#h1-0-9" id="h1-0-9" class="d">-#[derive(Debug)]
+</a><a href="#h1-0-10" id="h1-0-10" class="i">+#[derive(Clone, Debug, PartialEq)]
+</a> pub struct Follower {
+     /// The leader, or None if just initialized.
+     leader: Option&lt;NodeID&gt;,
+<a href="#h1-1" id="h1-1" class="h">@@ -34,6 +34,8 @@ impl Follower {
+</a>     }
+ }
+ 
+<a href="#h1-1-3" id="h1-1-3" class="i">+impl Role for Follower {}
+</a><a href="#h1-1-4" id="h1-1-4" class="i">+
+</a> impl RawNode&lt;Follower&gt; {
+     /// Asserts internal invariants.
+     fn assert(&amp;mut self) -&gt; Result&lt;()&gt; {
+<b>diff --git a/<a id="h2" href="../file/src/raft/node/leader.rs.html">src/raft/node/leader.rs</a> b/<a href="../file/src/raft/node/leader.rs.html">src/raft/node/leader.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -1,12 +1,12 @@
+</a> use super::super::{Address, Event, Index, Instruction, Message, Request, Response, Status};
+<a href="#h2-0-1" id="h2-0-1" class="d">-use super::{Follower, Node, NodeID, RawNode, Term, Ticks, HEARTBEAT_INTERVAL};
+</a><a href="#h2-0-2" id="h2-0-2" class="i">+use super::{Follower, Node, NodeID, RawNode, Role, Term, Ticks, HEARTBEAT_INTERVAL};
+</a> use crate::error::Result;
+ 
+ use ::log::{debug, info};
+ use std::collections::{HashMap, HashSet};
+ 
+ /// Peer replication progress.
+<a href="#h2-0-9" id="h2-0-9" class="d">-#[derive(Debug)]
+</a><a href="#h2-0-10" id="h2-0-10" class="i">+#[derive(Clone, Debug, PartialEq)]
+</a> struct Progress {
+     /// The next index to replicate to the peer.
+     next: Index,
+<a href="#h2-1" id="h2-1" class="h">@@ -15,7 +15,7 @@ struct Progress {
+</a> }
+ 
+ // A leader serves requests and replicates the log to followers.
+<a href="#h2-1-3" id="h2-1-3" class="d">-#[derive(Debug)]
+</a><a href="#h2-1-4" id="h2-1-4" class="i">+#[derive(Clone, Debug, PartialEq)]
+</a> pub struct Leader {
+     /// Peer replication progress.
+     progress: HashMap&lt;NodeID, Progress&gt;,
+<a href="#h2-2" id="h2-2" class="h">@@ -32,6 +32,8 @@ impl Leader {
+</a>     }
+ }
+ 
+<a href="#h2-2-3" id="h2-2-3" class="i">+impl Role for Leader {}
+</a><a href="#h2-2-4" id="h2-2-4" class="i">+
+</a> impl RawNode&lt;Leader&gt; {
+     /// Asserts internal invariants.
+     fn assert(&amp;mut self) -&gt; Result&lt;()&gt; {
+<b>diff --git a/<a id="h3" href="../file/src/raft/node/mod.rs.html">src/raft/node/mod.rs</a> b/<a href="../file/src/raft/node/mod.rs.html">src/raft/node/mod.rs</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -133,8 +133,11 @@ impl From&lt;RawNode&lt;Leader&gt;&gt; for Node {
+</a>     }
+ }
+ 
+<a href="#h3-0-3" id="h3-0-3" class="i">+/// A Raft role: leader, follower, or candidate.
+</a><a href="#h3-0-4" id="h3-0-4" class="i">+pub trait Role: Clone + std::fmt::Debug + PartialEq {}
+</a><a href="#h3-0-5" id="h3-0-5" class="i">+
+</a> // A Raft node with role R
+<a href="#h3-0-7" id="h3-0-7" class="d">-pub struct RawNode&lt;R&gt; {
+</a><a href="#h3-0-8" id="h3-0-8" class="i">+pub struct RawNode&lt;R: Role&gt; {
+</a>     id: NodeID,
+     peers: HashSet&lt;NodeID&gt;,
+     term: Term,
+<a href="#h3-1" id="h3-1" class="h">@@ -144,9 +147,9 @@ pub struct RawNode&lt;R&gt; {
+</a>     role: R,
+ }
+ 
+<a href="#h3-1-3" id="h3-1-3" class="d">-impl&lt;R&gt; RawNode&lt;R&gt; {
+</a><a href="#h3-1-4" id="h3-1-4" class="i">+impl&lt;R: Role&gt; RawNode&lt;R&gt; {
+</a>     /// Transforms the node into another role.
+<a href="#h3-1-6" id="h3-1-6" class="d">-    fn become_role&lt;T&gt;(self, role: T) -&gt; RawNode&lt;T&gt; {
+</a><a href="#h3-1-7" id="h3-1-7" class="i">+    fn become_role&lt;T: Role&gt;(self, role: T) -&gt; RawNode&lt;T&gt; {
+</a>         RawNode {
+             id: self.id,
+             peers: self.peers,
+<a href="#h3-2" id="h3-2" class="h">@@ -369,17 +372,17 @@ mod tests {
+</a>         NodeAsserter::new(node)
+     }
+ 
+<a href="#h3-2-3" id="h3-2-3" class="d">-    fn setup_rolenode() -&gt; Result&lt;(RawNode&lt;()&gt;, mpsc::UnboundedReceiver&lt;Message&gt;)&gt; {
+</a><a href="#h3-2-4" id="h3-2-4" class="i">+    fn setup_rolenode() -&gt; Result&lt;(RawNode&lt;Follower&gt;, mpsc::UnboundedReceiver&lt;Message&gt;)&gt; {
+</a>         setup_rolenode_peers(vec![2, 3])
+     }
+ 
+     fn setup_rolenode_peers(
+         peers: Vec&lt;NodeID&gt;,
+<a href="#h3-2-10" id="h3-2-10" class="d">-    ) -&gt; Result&lt;(RawNode&lt;()&gt;, mpsc::UnboundedReceiver&lt;Message&gt;)&gt; {
+</a><a href="#h3-2-11" id="h3-2-11" class="i">+    ) -&gt; Result&lt;(RawNode&lt;Follower&gt;, mpsc::UnboundedReceiver&lt;Message&gt;)&gt; {
+</a>         let (node_tx, node_rx) = mpsc::unbounded_channel();
+         let (state_tx, _) = mpsc::unbounded_channel();
+         let node = RawNode {
+<a href="#h3-2-15" id="h3-2-15" class="d">-            role: (),
+</a><a href="#h3-2-16" id="h3-2-16" class="i">+            role: Follower::new(None, None),
+</a>             id: 1,
+             peers: HashSet::from_iter(peers),
+             term: 1,
+<a href="#h3-3" id="h3-3" class="h">@@ -488,11 +491,12 @@ mod tests {
+</a>     #[test]
+     fn become_role() -&gt; Result&lt;()&gt; {
+         let (node, _) = setup_rolenode()?;
+<a href="#h3-3-3" id="h3-3-3" class="d">-        let new = node.become_role(&quot;role&quot;);
+</a><a href="#h3-3-4" id="h3-3-4" class="i">+        let role = Candidate::new();
+</a><a href="#h3-3-5" id="h3-3-5" class="i">+        let new = node.become_role(role.clone());
+</a>         assert_eq!(new.id, 1);
+         assert_eq!(new.term, 1);
+         assert_eq!(new.peers, HashSet::from([2, 3]));
+<a href="#h3-3-9" id="h3-3-9" class="d">-        assert_eq!(new.role, &quot;role&quot;);
+</a><a href="#h3-3-10" id="h3-3-10" class="i">+        assert_eq!(new.role, role);
+</a>         Ok(())
+     }
+ 
+</pre>
+</div>
+</body>
+</html>

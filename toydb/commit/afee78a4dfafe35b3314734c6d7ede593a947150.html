@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Tweak Raft election logic. - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/afee78a4dfafe35b3314734c6d7ede593a947150.html">afee78a4dfafe35b3314734c6d7ede593a947150</a>
+<b>parent</b> <a href="../commit/d76cb23cbacf037a0112a882242c9188483b638f.html">d76cb23cbacf037a0112a882242c9188483b638f</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Sun, 19 Nov 2023 15:30:02 +0100
+
+Tweak Raft election logic.
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/raft/message.rs</a></td><td> | </td><td class="num">8</td><td><span class="i">++++++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/raft/node/candidate.rs</a></td><td> | </td><td class="num">61</td><td><span class="i">++++++++++++++++++++++++++++++++++++++</span><span class="d">-----------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/raft/node/follower.rs</a></td><td> | </td><td class="num">63</td><td><span class="i">++++++++++++++++++++++++++++++</span><span class="d">---------------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">src/raft/node/leader.rs</a></td><td> | </td><td class="num">4</td><td><span class="i">++++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h4">src/raft/node/mod.rs</a></td><td> | </td><td class="num">5</td><td><span class="i">++++</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h5">tests/client/mod.rs</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+</table></pre><pre>6 files changed, 83 insertions(+), 60 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/raft/message.rs.html">src/raft/message.rs</a> b/<a href="../file/src/raft/message.rs.html">src/raft/message.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -59,15 +59,19 @@ pub enum Event {
+</a>         /// and would like the leader to replicate it.
+         has_committed: bool,
+     },
+<a href="#h0-0-3" id="h0-0-3" class="d">-    /// Candidates solicit votes from all peers.
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+
+</a><a href="#h0-0-5" id="h0-0-5" class="i">+    /// Candidates solicit votes from all peers when campaigning for leadership.
+</a>     SolicitVote {
+         // The index of the candidate&#39;s last stored log entry
+         last_index: Index,
+         // The term of the candidate&#39;s last stored log entry
+         last_term: Term,
+     },
+<a href="#h0-0-12" id="h0-0-12" class="d">-    /// Followers may grant votes to candidates.
+</a><a href="#h0-0-13" id="h0-0-13" class="i">+
+</a><a href="#h0-0-14" id="h0-0-14" class="i">+    /// Followers may grant a single vote to a candidate per term, on a
+</a><a href="#h0-0-15" id="h0-0-15" class="i">+    /// first-come basis. Candidates implicitly vote for themselves.
+</a>     GrantVote,
+<a href="#h0-0-17" id="h0-0-17" class="i">+
+</a>     /// Leaders replicate log entries to followers by appending it to their log.
+     AppendEntries {
+         /// The index of the log entry immediately preceding the submitted commands.
+<b>diff --git a/<a id="h1" href="../file/src/raft/node/candidate.rs.html">src/raft/node/candidate.rs</a> b/<a href="../file/src/raft/node/candidate.rs.html">src/raft/node/candidate.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -3,23 +3,24 @@ use super::{rand_election_timeout, Follower, Leader, Node, NodeID, RoleNode, Ter
+</a> use crate::error::{Error, Result};
+ 
+ use ::log::{debug, error, info, warn};
+<a href="#h1-0-3" id="h1-0-3" class="i">+use std::collections::HashSet;
+</a> 
+ /// A candidate is campaigning to become a leader.
+ #[derive(Debug)]
+ pub struct Candidate {
+<a href="#h1-0-8" id="h1-0-8" class="i">+    /// Votes received (including ourself).
+</a><a href="#h1-0-9" id="h1-0-9" class="i">+    votes: HashSet&lt;NodeID&gt;,
+</a>     /// Ticks elapsed since election start.
+     election_duration: Ticks,
+     /// Election timeout, in ticks.
+     election_timeout: Ticks,
+<a href="#h1-0-14" id="h1-0-14" class="d">-    /// Votes received (including ourself).
+</a><a href="#h1-0-15" id="h1-0-15" class="d">-    votes: u64,
+</a> }
+ 
+ impl Candidate {
+     /// Creates a new candidate role.
+     pub fn new() -&gt; Self {
+         Self {
+<a href="#h1-0-22" id="h1-0-22" class="d">-            votes: 1, // We always start with a vote for ourselves.
+</a><a href="#h1-0-23" id="h1-0-23" class="i">+            votes: HashSet::new(),
+</a>             election_duration: 0,
+             election_timeout: rand_election_timeout(),
+         }
+<a href="#h1-1" id="h1-1" class="h">@@ -63,6 +64,10 @@ impl RoleNode&lt;Candidate&gt; {
+</a> 
+     /// Processes a message.
+     pub fn step(mut self, msg: Message) -&gt; Result&lt;Node&gt; {
+<a href="#h1-1-3" id="h1-1-3" class="i">+        // Assert invariants.
+</a><a href="#h1-1-4" id="h1-1-4" class="i">+        debug_assert_eq!(self.term, self.log.get_term()?.0, &quot;Term does not match log&quot;);
+</a><a href="#h1-1-5" id="h1-1-5" class="i">+        debug_assert_eq!(Some(self.id), self.log.get_term()?.1, &quot;Log vote does not match self&quot;);
+</a><a href="#h1-1-6" id="h1-1-6" class="i">+
+</a>         // Drop invalid messages and messages from past terms.
+         if let Err(err) = self.validate(&amp;msg) {
+             error!(&quot;Invalid message: {} ({:?})&quot;, err, msg);
+<a href="#h1-2" id="h1-2" class="h">@@ -81,29 +86,29 @@ impl RoleNode&lt;Candidate&gt; {
+</a>         }
+ 
+         match msg.event {
+<a href="#h1-2-3" id="h1-2-3" class="d">-            // If we receive a heartbeat or replicated entries in this term, we
+</a><a href="#h1-2-4" id="h1-2-4" class="d">-            // lost the election and have a new leader. Follow it and process
+</a><a href="#h1-2-5" id="h1-2-5" class="d">-            // the message.
+</a><a href="#h1-2-6" id="h1-2-6" class="d">-            Event::Heartbeat { .. } | Event::AppendEntries { .. } =&gt; {
+</a><a href="#h1-2-7" id="h1-2-7" class="d">-                return self.become_follower(msg.term, Some(msg.from.unwrap()))?.step(msg);
+</a><a href="#h1-2-8" id="h1-2-8" class="d">-            }
+</a><a href="#h1-2-9" id="h1-2-9" class="i">+            // Ignore other candidates when we&#39;re also campaigning.
+</a><a href="#h1-2-10" id="h1-2-10" class="i">+            Event::SolicitVote { .. } =&gt; {}
+</a> 
+<a href="#h1-2-12" id="h1-2-12" class="i">+            // We received a vote. Record it, and if we have quorum, assume
+</a><a href="#h1-2-13" id="h1-2-13" class="i">+            // leadership.
+</a>             Event::GrantVote =&gt; {
+<a href="#h1-2-15" id="h1-2-15" class="d">-                debug!(&quot;Received term {} vote from {:?}&quot;, self.term, msg.from);
+</a><a href="#h1-2-16" id="h1-2-16" class="d">-                self.role.votes += 1;
+</a><a href="#h1-2-17" id="h1-2-17" class="d">-                if self.role.votes &gt;= self.quorum() {
+</a><a href="#h1-2-18" id="h1-2-18" class="i">+                self.role.votes.insert(msg.from.unwrap());
+</a><a href="#h1-2-19" id="h1-2-19" class="i">+                if self.role.votes.len() as u64 &gt;= self.quorum() {
+</a>                     return Ok(self.become_leader()?.into());
+                 }
+             }
+ 
+<a href="#h1-2-24" id="h1-2-24" class="i">+            // If we receive a heartbeat or entries in this term, we lost the
+</a><a href="#h1-2-25" id="h1-2-25" class="i">+            // election and have a new leader. Follow it and step the message.
+</a><a href="#h1-2-26" id="h1-2-26" class="i">+            Event::Heartbeat { .. } | Event::AppendEntries { .. } =&gt; {
+</a><a href="#h1-2-27" id="h1-2-27" class="i">+                return self.become_follower(msg.term, Some(msg.from.unwrap()))?.step(msg);
+</a><a href="#h1-2-28" id="h1-2-28" class="i">+            }
+</a><a href="#h1-2-29" id="h1-2-29" class="i">+
+</a>             // Abort any inbound client requests while candidate.
+             Event::ClientRequest { id, .. } =&gt; {
+                 self.send(msg.from, Event::ClientResponse { id, response: Err(Error::Abort) })?;
+             }
+ 
+<a href="#h1-2-35" id="h1-2-35" class="d">-            // Ignore other candidates when we&#39;re also campaigning
+</a><a href="#h1-2-36" id="h1-2-36" class="d">-            Event::SolicitVote { .. } =&gt; {}
+</a><a href="#h1-2-37" id="h1-2-37" class="d">-
+</a>             // We&#39;re not a leader in this term, nor are we forwarding requests,
+             // so we shouldn&#39;t see these.
+             Event::ConfirmLeader { .. }
+<a href="#h1-3" id="h1-3" class="h">@@ -116,18 +121,27 @@ impl RoleNode&lt;Candidate&gt; {
+</a> 
+     /// Processes a logical clock tick.
+     pub fn tick(mut self) -&gt; Result&lt;Node&gt; {
+<a href="#h1-3-3" id="h1-3-3" class="d">-        // If the election times out, start a new one for the next term.
+</a>         self.role.election_duration += 1;
+         if self.role.election_duration &gt;= self.role.election_timeout {
+<a href="#h1-3-6" id="h1-3-6" class="d">-            info!(&quot;Election timed out, starting new election for term {}&quot;, self.term + 1);
+</a><a href="#h1-3-7" id="h1-3-7" class="d">-            let (last_index, last_term) = self.log.get_last_index();
+</a><a href="#h1-3-8" id="h1-3-8" class="d">-            self.term += 1;
+</a><a href="#h1-3-9" id="h1-3-9" class="d">-            self.log.set_term(self.term, Some(self.id))?;
+</a><a href="#h1-3-10" id="h1-3-10" class="d">-            self.role = Candidate::new();
+</a><a href="#h1-3-11" id="h1-3-11" class="d">-            self.send(Address::Broadcast, Event::SolicitVote { last_index, last_term })?;
+</a><a href="#h1-3-12" id="h1-3-12" class="i">+            self.campaign()?;
+</a>         }
+         Ok(self.into())
+     }
+<a href="#h1-3-16" id="h1-3-16" class="i">+
+</a><a href="#h1-3-17" id="h1-3-17" class="i">+    /// Campaign for leadership by increasing the term, voting for ourself, and
+</a><a href="#h1-3-18" id="h1-3-18" class="i">+    /// soliciting votes from all peers.
+</a><a href="#h1-3-19" id="h1-3-19" class="i">+    pub(super) fn campaign(&amp;mut self) -&gt; Result&lt;()&gt; {
+</a><a href="#h1-3-20" id="h1-3-20" class="i">+        let term = self.term + 1;
+</a><a href="#h1-3-21" id="h1-3-21" class="i">+        info!(&quot;Starting new election for term {}&quot;, term);
+</a><a href="#h1-3-22" id="h1-3-22" class="i">+        self.role = Candidate::new();
+</a><a href="#h1-3-23" id="h1-3-23" class="i">+        self.role.votes.insert(self.id); // vote for ourself
+</a><a href="#h1-3-24" id="h1-3-24" class="i">+        self.term = term;
+</a><a href="#h1-3-25" id="h1-3-25" class="i">+        self.log.set_term(term, Some(self.id))?;
+</a><a href="#h1-3-26" id="h1-3-26" class="i">+
+</a><a href="#h1-3-27" id="h1-3-27" class="i">+        let (last_index, last_term) = self.log.get_last_index();
+</a><a href="#h1-3-28" id="h1-3-28" class="i">+        self.send(Address::Broadcast, Event::SolicitVote { last_index, last_term })?;
+</a><a href="#h1-3-29" id="h1-3-29" class="i">+        Ok(())
+</a><a href="#h1-3-30" id="h1-3-30" class="i">+    }
+</a> }
+ 
+ #[cfg(test)]
+<a href="#h1-4" id="h1-4" class="h">@@ -153,7 +167,7 @@ mod tests {
+</a>         log.commit(2)?;
+         log.set_term(3, Some(1))?;
+ 
+<a href="#h1-4-3" id="h1-4-3" class="d">-        let node = RoleNode {
+</a><a href="#h1-4-4" id="h1-4-4" class="i">+        let mut node = RoleNode {
+</a>             id: 1,
+             peers: vec![2, 3, 4, 5],
+             term: 3,
+<a href="#h1-5" id="h1-5" class="h">@@ -162,6 +176,7 @@ mod tests {
+</a>             state_tx,
+             role: Candidate::new(),
+         };
+<a href="#h1-5-3" id="h1-5-3" class="i">+        node.role.votes.insert(1);
+</a>         Ok((node, node_rx, state_rx))
+     }
+ 
+<b>diff --git a/<a id="h2" href="../file/src/raft/node/follower.rs.html">src/raft/node/follower.rs</a> b/<a href="../file/src/raft/node/follower.rs.html">src/raft/node/follower.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -35,17 +35,14 @@ impl Follower {
+</a> }
+ 
+ impl RoleNode&lt;Follower&gt; {
+<a href="#h2-0-3" id="h2-0-3" class="d">-    /// Transforms the node into a candidate.
+</a><a href="#h2-0-4" id="h2-0-4" class="i">+    /// Transforms the node into a candidate, by campaigning for leadership in a
+</a><a href="#h2-0-5" id="h2-0-5" class="i">+    /// new term.
+</a>     fn become_candidate(mut self) -&gt; Result&lt;RoleNode&lt;Candidate&gt;&gt; {
+         // Abort any forwarded requests. These must be retried with new leader.
+         self.abort_forwarded()?;
+ 
+<a href="#h2-0-10" id="h2-0-10" class="d">-        info!(&quot;Starting election for term {}&quot;, self.term + 1);
+</a><a href="#h2-0-11" id="h2-0-11" class="d">-        let (last_index, last_term) = self.log.get_last_index();
+</a>         let mut node = self.become_role(Candidate::new());
+<a href="#h2-0-13" id="h2-0-13" class="d">-        node.term += 1;
+</a><a href="#h2-0-14" id="h2-0-14" class="d">-        node.log.set_term(node.term, Some(node.id))?;
+</a><a href="#h2-0-15" id="h2-0-15" class="d">-        node.send(Address::Broadcast, Event::SolicitVote { last_index, last_term })?;
+</a><a href="#h2-0-16" id="h2-0-16" class="i">+        node.campaign()?;
+</a>         Ok(node)
+     }
+ 
+<a href="#h2-1" id="h2-1" class="h">@@ -75,19 +72,11 @@ impl RoleNode&lt;Follower&gt; {
+</a>         Ok(self)
+     }
+ 
+<a href="#h2-1-3" id="h2-1-3" class="d">-    /// Checks if an address is the current leader.
+</a><a href="#h2-1-4" id="h2-1-4" class="d">-    fn is_leader(&amp;self, from: &amp;Address) -&gt; bool {
+</a><a href="#h2-1-5" id="h2-1-5" class="d">-        if let Some(leader) = &amp;self.role.leader {
+</a><a href="#h2-1-6" id="h2-1-6" class="d">-            if let Address::Node(from) = from {
+</a><a href="#h2-1-7" id="h2-1-7" class="d">-                return leader == from;
+</a><a href="#h2-1-8" id="h2-1-8" class="d">-            }
+</a><a href="#h2-1-9" id="h2-1-9" class="d">-        }
+</a><a href="#h2-1-10" id="h2-1-10" class="d">-        false
+</a><a href="#h2-1-11" id="h2-1-11" class="d">-    }
+</a><a href="#h2-1-12" id="h2-1-12" class="d">-
+</a>     /// Processes a message.
+     pub fn step(mut self, msg: Message) -&gt; Result&lt;Node&gt; {
+         // Assert invariants.
+<a href="#h2-1-16" id="h2-1-16" class="i">+        debug_assert_eq!(self.term, self.log.get_term()?.0, &quot;Term does not match log&quot;);
+</a><a href="#h2-1-17" id="h2-1-17" class="i">+        debug_assert_eq!(self.role.voted_for, self.log.get_term()?.1, &quot;Vote does not match log&quot;);
+</a>         if self.role.leader.is_none() {
+             assert!(self.role.forwarded.is_empty(), &quot;Leaderless follower has forwarded requests&quot;);
+         }
+<a href="#h2-2" id="h2-2" class="h">@@ -159,20 +148,21 @@ impl RoleNode&lt;Follower&gt; {
+</a>                 }
+             }
+ 
+<a href="#h2-2-3" id="h2-2-3" class="i">+            // A candidate in this term is requesting our vote.
+</a>             Event::SolicitVote { last_index, last_term } =&gt; {
+<a href="#h2-2-5" id="h2-2-5" class="i">+                let from = msg.from.unwrap();
+</a><a href="#h2-2-6" id="h2-2-6" class="i">+
+</a><a href="#h2-2-7" id="h2-2-7" class="i">+                // If we already voted for someone else in this term, ignore it.
+</a>                 if let Some(voted_for) = self.role.voted_for {
+<a href="#h2-2-9" id="h2-2-9" class="d">-                    if msg.from != Address::Node(voted_for) {
+</a><a href="#h2-2-10" id="h2-2-10" class="i">+                    if from != voted_for {
+</a>                         return Ok(self.into());
+                     }
+                 }
+<a href="#h2-2-14" id="h2-2-14" class="d">-                let (log_last_index, log_last_term) = self.log.get_last_index();
+</a><a href="#h2-2-15" id="h2-2-15" class="d">-                if last_term &lt; log_last_term {
+</a><a href="#h2-2-16" id="h2-2-16" class="d">-                    return Ok(self.into());
+</a><a href="#h2-2-17" id="h2-2-17" class="d">-                }
+</a><a href="#h2-2-18" id="h2-2-18" class="d">-                if last_term == log_last_term &amp;&amp; last_index &lt; log_last_index {
+</a><a href="#h2-2-19" id="h2-2-19" class="d">-                    return Ok(self.into());
+</a><a href="#h2-2-20" id="h2-2-20" class="d">-                }
+</a><a href="#h2-2-21" id="h2-2-21" class="d">-                if let Address::Node(from) = msg.from {
+</a><a href="#h2-2-22" id="h2-2-22" class="i">+
+</a><a href="#h2-2-23" id="h2-2-23" class="i">+                // Only vote if the candidate&#39;s log is at least as up-to-date as
+</a><a href="#h2-2-24" id="h2-2-24" class="i">+                // our log.
+</a><a href="#h2-2-25" id="h2-2-25" class="i">+                let (log_index, log_term) = self.log.get_last_index();
+</a><a href="#h2-2-26" id="h2-2-26" class="i">+                if last_term &gt; log_term || last_term == log_term &amp;&amp; last_index &gt;= log_index {
+</a>                     info!(&quot;Voting for {} in term {} election&quot;, from, self.term);
+                     self.send(Address::Node(from), Event::GrantVote)?;
+                     self.log.set_term(self.term, Some(from))?;
+<a href="#h2-3" id="h2-3" class="h">@@ -215,13 +205,11 @@ impl RoleNode&lt;Follower&gt; {
+</a>                 }
+             }
+ 
+<a href="#h2-3-3" id="h2-3-3" class="d">-            // Ignore votes which are usually strays from the previous election that we lost.
+</a><a href="#h2-3-4" id="h2-3-4" class="d">-            Event::GrantVote =&gt; {}
+</a><a href="#h2-3-5" id="h2-3-5" class="d">-
+</a><a href="#h2-3-6" id="h2-3-6" class="d">-            // We&#39;re not a leader in this term, so we shoudn&#39;t see these.
+</a><a href="#h2-3-7" id="h2-3-7" class="i">+            // We&#39;re not a leader nor candidate in this term, so we shoudn&#39;t see these.
+</a>             Event::ConfirmLeader { .. }
+             | Event::AcceptEntries { .. }
+<a href="#h2-3-10" id="h2-3-10" class="d">-            | Event::RejectEntries { .. } =&gt; warn!(&quot;Received unexpected message {:?}&quot;, msg),
+</a><a href="#h2-3-11" id="h2-3-11" class="i">+            | Event::RejectEntries { .. }
+</a><a href="#h2-3-12" id="h2-3-12" class="i">+            | Event::GrantVote { .. } =&gt; warn!(&quot;Received unexpected message {:?}&quot;, msg),
+</a>         };
+         Ok(self.into())
+     }
+<a href="#h2-4" id="h2-4" class="h">@@ -230,10 +218,9 @@ impl RoleNode&lt;Follower&gt; {
+</a>     pub fn tick(mut self) -&gt; Result&lt;Node&gt; {
+         self.role.leader_seen += 1;
+         if self.role.leader_seen &gt;= self.role.election_timeout {
+<a href="#h2-4-3" id="h2-4-3" class="d">-            Ok(self.become_candidate()?.into())
+</a><a href="#h2-4-4" id="h2-4-4" class="d">-        } else {
+</a><a href="#h2-4-5" id="h2-4-5" class="d">-            Ok(self.into())
+</a><a href="#h2-4-6" id="h2-4-6" class="i">+            return Ok(self.become_candidate()?.into());
+</a>         }
+<a href="#h2-4-8" id="h2-4-8" class="i">+        Ok(self.into())
+</a>     }
+ 
+     /// Aborts all forwarded requests.
+<a href="#h2-5" id="h2-5" class="h">@@ -244,6 +231,16 @@ impl RoleNode&lt;Follower&gt; {
+</a>         }
+         Ok(())
+     }
+<a href="#h2-5-3" id="h2-5-3" class="i">+
+</a><a href="#h2-5-4" id="h2-5-4" class="i">+    /// Checks if an address is the current leader.
+</a><a href="#h2-5-5" id="h2-5-5" class="i">+    fn is_leader(&amp;self, from: &amp;Address) -&gt; bool {
+</a><a href="#h2-5-6" id="h2-5-6" class="i">+        if let Some(leader) = &amp;self.role.leader {
+</a><a href="#h2-5-7" id="h2-5-7" class="i">+            if let Address::Node(from) = from {
+</a><a href="#h2-5-8" id="h2-5-8" class="i">+                return leader == from;
+</a><a href="#h2-5-9" id="h2-5-9" class="i">+            }
+</a><a href="#h2-5-10" id="h2-5-10" class="i">+        }
+</a><a href="#h2-5-11" id="h2-5-11" class="i">+        false
+</a><a href="#h2-5-12" id="h2-5-12" class="i">+    }
+</a> }
+ 
+ #[cfg(test)]
+<b>diff --git a/<a id="h3" href="../file/src/raft/node/leader.rs.html">src/raft/node/leader.rs</a> b/<a href="../file/src/raft/node/leader.rs.html">src/raft/node/leader.rs</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -101,6 +101,10 @@ impl RoleNode&lt;Leader&gt; {
+</a> 
+     /// Processes a message.
+     pub fn step(mut self, msg: Message) -&gt; Result&lt;Node&gt; {
+<a href="#h3-0-3" id="h3-0-3" class="i">+        // Assert invariants.
+</a><a href="#h3-0-4" id="h3-0-4" class="i">+        debug_assert_eq!(self.term, self.log.get_term()?.0, &quot;Term does not match log&quot;);
+</a><a href="#h3-0-5" id="h3-0-5" class="i">+        debug_assert_eq!(Some(self.id), self.log.get_term()?.1, &quot;Log vote does not match self&quot;);
+</a><a href="#h3-0-6" id="h3-0-6" class="i">+
+</a>         // Drop invalid messages and messages from past terms.
+         if let Err(err) = self.validate(&amp;msg) {
+             error!(&quot;Invalid message: {} ({:?})&quot;, err, msg);
+<b>diff --git a/<a id="h4" href="../file/src/raft/node/mod.rs.html">src/raft/node/mod.rs</a> b/<a href="../file/src/raft/node/mod.rs.html">src/raft/node/mod.rs</a></b>
+<a href="#h4-0" id="h4-0" class="h">@@ -70,7 +70,7 @@ impl Node {
+</a>         tokio::spawn(driver.drive(state));
+ 
+         let (term, voted_for) = log.get_term()?;
+<a href="#h4-0-3" id="h4-0-3" class="d">-        let node = RoleNode {
+</a><a href="#h4-0-4" id="h4-0-4" class="i">+        let mut node = RoleNode {
+</a>             id,
+             peers,
+             term,
+<a href="#h4-1" id="h4-1" class="h">@@ -81,6 +81,9 @@ impl Node {
+</a>         };
+         if node.peers.is_empty() {
+             info!(&quot;No peers specified, starting as leader&quot;);
+<a href="#h4-1-3" id="h4-1-3" class="i">+            if voted_for != Some(id) {
+</a><a href="#h4-1-4" id="h4-1-4" class="i">+                node.log.set_term(term, Some(id))?;
+</a><a href="#h4-1-5" id="h4-1-5" class="i">+            }
+</a>             let (last_index, _) = node.log.get_last_index();
+             Ok(node.become_role(Leader::new(vec![], last_index)).into())
+         } else {
+<b>diff --git a/<a id="h5" href="../file/tests/client/mod.rs.html">tests/client/mod.rs</a> b/<a href="../file/tests/client/mod.rs.html">tests/client/mod.rs</a></b>
+<a href="#h5-0" id="h5-0" class="h">@@ -129,7 +129,7 @@ async fn status() -&gt; Result&lt;()&gt; {
+</a>                 commit_index: 26,
+                 apply_index: 26,
+                 storage: &quot;bitcask&quot;.into(),
+<a href="#h5-0-3" id="h5-0-3" class="d">-                storage_size: 1309,
+</a><a href="#h5-0-4" id="h5-0-4" class="i">+                storage_size: 1313,
+</a>             },
+             mvcc: mvcc::Status {
+                 versions: 1,
+</pre>
+</div>
+</body>
+</html>

@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>raft: use `Uuid` type for request IDs - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/16dcc863fd8aea9055cda2cce0817d813a2c4423.html">16dcc863fd8aea9055cda2cce0817d813a2c4423</a>
+<b>parent</b> <a href="../commit/3cd31cbc33f91ec5162e987bbdfc9ffb5c4f78b2.html">3cd31cbc33f91ec5162e987bbdfc9ffb5c4f78b2</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Sat,  8 Jun 2024 11:48:34 +0200
+
+raft: use `Uuid` type for request IDs
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">Cargo.lock</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">Cargo.toml</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/raft/message.rs</a></td><td> | </td><td class="num">14</td><td><span class="i">++++++++</span><span class="d">------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">src/raft/node.rs</a></td><td> | </td><td class="num">22</td><td><span class="i">+++++++++</span><span class="d">-------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h4">src/server.rs</a></td><td> | </td><td class="num">4</td><td><span class="i">++</span><span class="d">--</span></td></tr>
+</table></pre><pre>5 files changed, 21 insertions(+), 22 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/Cargo.lock.html">Cargo.lock</a> b/<a href="../file/Cargo.lock.html">Cargo.lock</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -1597,6 +1597,7 @@ source = &quot;registry+https://github.com/rust-lang/crates.io-index&quot;
+</a> checksum = &quot;a183cf7feeba97b4dd1c0d46788634f6221d87fa961b305bed08c851829efcc0&quot;
+ dependencies = [
+  &quot;getrandom&quot;,
+<a href="#h0-0-3" id="h0-0-3" class="i">+ &quot;serde&quot;,
+</a> ]
+ 
+ [[package]]
+<b>diff --git a/<a id="h1" href="../file/Cargo.toml.html">Cargo.toml</a> b/<a href="../file/Cargo.toml.html">Cargo.toml</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -29,7 +29,7 @@ serde = &quot;1.0.200&quot;
+</a> serde_bytes = &quot;0.11.14&quot;
+ serde_derive = &quot;1.0.200&quot;
+ simplelog = &quot;0.12.2&quot;
+<a href="#h1-0-3" id="h1-0-3" class="d">-uuid = { version = &quot;1.8.0&quot;, features = [&quot;v4&quot;] }
+</a><a href="#h1-0-4" id="h1-0-4" class="i">+uuid = { version = &quot;1.8.0&quot;, features = [&quot;serde&quot;, &quot;v4&quot;] }
+</a> 
+ [dev-dependencies]
+ escargot = &quot;0.5.10&quot;
+<b>diff --git a/<a id="h2" href="../file/src/raft/message.rs.html">src/raft/message.rs</a> b/<a href="../file/src/raft/message.rs.html">src/raft/message.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -132,24 +132,26 @@ pub enum Message {
+</a>     /// leader or term changes, the request is aborted with an Error::Abort
+     /// ClientResponse and the client must retry.
+     ClientRequest {
+<a href="#h2-0-3" id="h2-0-3" class="d">-        /// The request ID. This is arbitrary, but must be globally unique for
+</a><a href="#h2-0-4" id="h2-0-4" class="d">-        /// the duration of the request.
+</a><a href="#h2-0-5" id="h2-0-5" class="i">+        /// The request ID. Must be globally unique for the request duration.
+</a>         id: RequestID,
+<a href="#h2-0-7" id="h2-0-7" class="d">-        /// The request.
+</a><a href="#h2-0-8" id="h2-0-8" class="i">+        /// The request itself.
+</a>         request: Request,
+     },
+ 
+     /// A client response.
+     ClientResponse {
+<a href="#h2-0-14" id="h2-0-14" class="d">-        /// The response ID. This matches the ID of the ClientRequest.
+</a><a href="#h2-0-15" id="h2-0-15" class="i">+        /// The ID of the original ClientRequest.
+</a>         id: RequestID,
+         /// The response, or an error.
+         response: Result&lt;Response&gt;,
+     },
+ }
+ 
+<a href="#h2-0-22" id="h2-0-22" class="d">-/// A client request ID.
+</a><a href="#h2-0-23" id="h2-0-23" class="d">-pub type RequestID = Vec&lt;u8&gt;;
+</a><a href="#h2-0-24" id="h2-0-24" class="i">+/// A client request ID. Must be globally unique for the duration of the
+</a><a href="#h2-0-25" id="h2-0-25" class="i">+/// request. For simplicity, a random UUIDv4 is used -- the node ID and process
+</a><a href="#h2-0-26" id="h2-0-26" class="i">+/// ID could be incorporated for further collision avoidance, but it does not
+</a><a href="#h2-0-27" id="h2-0-27" class="i">+/// matter at this scale.
+</a><a href="#h2-0-28" id="h2-0-28" class="i">+pub type RequestID = uuid::Uuid;
+</a> 
+ /// A read sequence number, used to confirm leadership for linearizable reads.
+ pub type ReadSequence = u64;
+<b>diff --git a/<a id="h3" href="../file/src/raft/node.rs.html">src/raft/node.rs</a> b/<a href="../file/src/raft/node.rs.html">src/raft/node.rs</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -622,10 +622,9 @@ impl RawNode&lt;Follower&gt; {
+</a> 
+             // Forward client requests to the leader, or abort them if there is
+             // none (the client must retry).
+<a href="#h3-0-3" id="h3-0-3" class="d">-            Message::ClientRequest { ref id, .. } =&gt; {
+</a><a href="#h3-0-4" id="h3-0-4" class="i">+            Message::ClientRequest { id, .. } =&gt; {
+</a>                 assert_eq!(msg.from, self.id, &quot;Client request from other node&quot;);
+ 
+<a href="#h3-0-7" id="h3-0-7" class="d">-                let id = id.clone();
+</a>                 if let Some(leader) = self.role.leader {
+                     debug!(&quot;Forwarding request to leader {}: {:?}&quot;, leader, msg);
+                     self.role.forwarded.insert(id);
+<a href="#h3-1" id="h3-1" class="h">@@ -818,16 +817,13 @@ impl RawNode&lt;Leader&gt; {
+</a>         info!(&quot;Discovered new term {}&quot;, term);
+ 
+         // Cancel in-flight requests.
+<a href="#h3-1-3" id="h3-1-3" class="d">-        for write in
+</a><a href="#h3-1-4" id="h3-1-4" class="d">-            std::mem::take(&amp;mut self.role.writes).into_values().sorted_by_key(|w| w.id.clone())
+</a><a href="#h3-1-5" id="h3-1-5" class="d">-        {
+</a><a href="#h3-1-6" id="h3-1-6" class="i">+        for write in std::mem::take(&amp;mut self.role.writes).into_values().sorted_by_key(|w| w.id) {
+</a>             self.send(
+                 write.from,
+                 Message::ClientResponse { id: write.id, response: Err(Error::Abort) },
+             )?;
+         }
+<a href="#h3-1-12" id="h3-1-12" class="d">-        for read in std::mem::take(&amp;mut self.role.reads).into_iter().sorted_by_key(|r| r.id.clone())
+</a><a href="#h3-1-13" id="h3-1-13" class="d">-        {
+</a><a href="#h3-1-14" id="h3-1-14" class="i">+        for read in std::mem::take(&amp;mut self.role.reads).into_iter().sorted_by_key(|r| r.id) {
+</a>             self.send(
+                 read.from,
+                 Message::ClientResponse { id: read.id, response: Err(Error::Abort) },
+<a href="#h3-2" id="h3-2" class="h">@@ -960,7 +956,7 @@ impl RawNode&lt;Leader&gt; {
+</a>             // until it&#39;s applied and the response is returned to the client.
+             Message::ClientRequest { id, request: Request::Write(command) } =&gt; {
+                 let index = self.propose(Some(command))?;
+<a href="#h3-2-3" id="h3-2-3" class="d">-                self.role.writes.insert(index, Write { from: msg.from, id: id.clone() });
+</a><a href="#h3-2-4" id="h3-2-4" class="i">+                self.role.writes.insert(index, Write { from: msg.from, id });
+</a>                 if self.peers.is_empty() {
+                     self.maybe_commit_and_apply()?;
+                 }
+<a href="#h3-3" id="h3-3" class="h">@@ -1281,7 +1277,7 @@ mod tests {
+</a>         /// In-flight client requests.
+         requests: HashMap&lt;RequestID, Request&gt;,
+         /// The request ID to use for the next client request.
+<a href="#h3-3-3" id="h3-3-3" class="d">-        next_request_id: u8,
+</a><a href="#h3-3-4" id="h3-3-4" class="i">+        next_request_id: u64,
+</a>     }
+ 
+     impl goldenscript::Runner for TestRunner {
+<a href="#h3-4" id="h3-4" class="h">@@ -1687,9 +1683,9 @@ mod tests {
+</a>             output: &amp;mut String,
+         ) -&gt; Result&lt;(), Box&lt;dyn Error&gt;&gt; {
+             let node = self.nodes.get(&amp;id).ok_or(format!(&quot;unknown node {id}&quot;))?;
+<a href="#h3-4-3" id="h3-4-3" class="d">-            let request_id = vec![self.next_request_id];
+</a><a href="#h3-4-4" id="h3-4-4" class="i">+            let request_id = uuid::Uuid::from_u64_pair(0, self.next_request_id);
+</a>             self.next_request_id += 1;
+<a href="#h3-4-6" id="h3-4-6" class="d">-            self.requests.insert(request_id.clone(), request.clone());
+</a><a href="#h3-4-7" id="h3-4-7" class="i">+            self.requests.insert(request_id, request.clone());
+</a> 
+             let msg = Envelope {
+                 from: node.id(),
+<a href="#h3-5" id="h3-5" class="h">@@ -2004,7 +2000,7 @@ mod tests {
+</a>                 Message::ClientRequest { id, request } =&gt; {
+                     format!(
+                         &quot;ClientRequest id=0x{} {}&quot;,
+<a href="#h3-5-3" id="h3-5-3" class="d">-                        hex::encode(id),
+</a><a href="#h3-5-4" id="h3-5-4" class="i">+                        hex::encode(id).trim_start_matches(&quot;00&quot;),
+</a>                         match request {
+                             Request::Read(v) =&gt; format!(&quot;read 0x{}&quot;, hex::encode(v)),
+                             Request::Write(v) =&gt; format!(&quot;write 0x{}&quot;, hex::encode(v)),
+<a href="#h3-6" id="h3-6" class="h">@@ -2015,7 +2011,7 @@ mod tests {
+</a>                 Message::ClientResponse { id, response } =&gt; {
+                     format!(
+                         &quot;ClientResponse id=0x{} {}&quot;,
+<a href="#h3-6-3" id="h3-6-3" class="d">-                        hex::encode(id),
+</a><a href="#h3-6-4" id="h3-6-4" class="i">+                        hex::encode(id).trim_start_matches(&quot;00&quot;),
+</a>                         match response {
+                             Ok(Response::Read(v)) =&gt; format!(&quot;read 0x{}&quot;, hex::encode(v)),
+                             Ok(Response::Write(v)) =&gt; format!(&quot;write 0x{}&quot;, hex::encode(v)),
+<b>diff --git a/<a id="h4" href="../file/src/server.rs.html">src/server.rs</a> b/<a href="../file/src/server.rs.html">src/server.rs</a></b>
+<a href="#h4-0" id="h4-0" class="h">@@ -235,12 +235,12 @@ impl Server {
+</a>                 // Track inbound client requests and step them into the node.
+                 recv(request_rx) -&gt; result =&gt; {
+                     let (request, response_tx) = result.expect(&quot;request_rx disconnected&quot;);
+<a href="#h4-0-3" id="h4-0-3" class="d">-                    let id = uuid::Uuid::new_v4().into_bytes().to_vec();
+</a><a href="#h4-0-4" id="h4-0-4" class="i">+                    let id = uuid::Uuid::new_v4();
+</a>                     let msg = raft::Envelope{
+                         from: node.id(),
+                         to: node.id(),
+                         term: node.term(),
+<a href="#h4-0-9" id="h4-0-9" class="d">-                        message: raft::Message::ClientRequest{id: id.clone(), request},
+</a><a href="#h4-0-10" id="h4-0-10" class="i">+                        message: raft::Message::ClientRequest{id, request},
+</a>                     };
+                     node = node.step(msg).expect(&quot;step failed&quot;);
+                     response_txs.insert(id, response_tx);
+</pre>
+</div>
+</body>
+</html>

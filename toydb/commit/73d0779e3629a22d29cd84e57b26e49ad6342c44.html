@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>storage: buffer rows to avoid long-held mutex in MVCC iterator - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/73d0779e3629a22d29cd84e57b26e49ad6342c44.html">73d0779e3629a22d29cd84e57b26e49ad6342c44</a>
+<b>parent</b> <a href="../commit/ae3ddededb1d9898b65825bccfabf9295e61a805.html">ae3ddededb1d9898b65825bccfabf9295e61a805</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Wed, 26 Jun 2024 13:15:25 +0200
+
+storage: buffer rows to avoid long-held mutex in MVCC iterator
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/sql/engine/local.rs</a></td><td> | </td><td class="num">27</td><td><span class="i">++++++++</span><span class="d">-------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/sql/engine/raft.rs</a></td><td> | </td><td class="num">4</td><td><span class="i">++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/storage/engine.rs</a></td><td> | </td><td class="num">21</td><td><span class="i">+++++++++++++</span><span class="d">--------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">src/storage/mvcc.rs</a></td><td> | </td><td class="num">157</td><td><span class="i">++++++++++++++++++++++++++++++++++++++</span><span class="d">-----------------------------------------</span></td></tr>
+</table></pre><pre>4 files changed, 98 insertions(+), 111 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/sql/engine/local.rs.html">src/sql/engine/local.rs</a> b/<a href="../file/src/sql/engine/local.rs.html">src/sql/engine/local.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -12,7 +12,7 @@ use std::collections::{HashMap, HashSet};
+</a> /// A SQL engine using local storage. This provides the main SQL storage logic,
+ /// including with the Raft SQL engine which dispatches to this engine for
+ /// node-local SQL storage.
+<a href="#h0-0-3" id="h0-0-3" class="d">-pub struct Local&lt;E: storage::Engine&gt; {
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+pub struct Local&lt;E: storage::Engine + &#39;static&gt; {
+</a>     /// The local MVCC storage engine.
+     pub(super) mvcc: mvcc::MVCC&lt;E&gt;,
+ }
+<a href="#h0-1" id="h0-1" class="h">@@ -42,7 +42,7 @@ impl&lt;E: storage::Engine&gt; Local&lt;E&gt; {
+</a>     }
+ }
+ 
+<a href="#h0-1-3" id="h0-1-3" class="d">-impl&lt;&#39;a, E: storage::Engine + &#39;a&gt; super::Engine&lt;&#39;a&gt; for Local&lt;E&gt; {
+</a><a href="#h0-1-4" id="h0-1-4" class="i">+impl&lt;&#39;a, E: storage::Engine&gt; super::Engine&lt;&#39;a&gt; for Local&lt;E&gt; {
+</a>     type Transaction = Transaction&lt;E&gt;;
+ 
+     fn begin(&amp;self) -&gt; Result&lt;Self::Transaction&gt; {
+<a href="#h0-2" id="h0-2" class="h">@@ -59,7 +59,7 @@ impl&lt;&#39;a, E: storage::Engine + &#39;a&gt; super::Engine&lt;&#39;a&gt; for Local&lt;E&gt; {
+</a> }
+ 
+ /// A SQL transaction, wrapping an MVCC transaction.
+<a href="#h0-2-3" id="h0-2-3" class="d">-pub struct Transaction&lt;E: storage::Engine&gt; {
+</a><a href="#h0-2-4" id="h0-2-4" class="i">+pub struct Transaction&lt;E: storage::Engine + &#39;static&gt; {
+</a>     txn: mvcc::Transaction&lt;E&gt;,
+ }
+ 
+<a href="#h0-3" id="h0-3" class="h">@@ -252,7 +252,6 @@ impl&lt;E: storage::Engine&gt; super::Transaction for Transaction&lt;E&gt; {
+</a>         Ok(Box::new(
+             self.txn
+                 .scan_prefix(&amp;KeyPrefix::Row(table.into()).encode())
+<a href="#h0-3-3" id="h0-3-3" class="d">-                .iter()
+</a>                 .map(|r| r.and_then(|(_, v)| Row::decode(&amp;v)))
+                 .filter_map(move |r| match r {
+                     Ok(row) =&gt; match &amp;filter {
+<a href="#h0-4" id="h0-4" class="h">@@ -265,30 +264,23 @@ impl&lt;E: storage::Engine&gt; super::Transaction for Transaction&lt;E&gt; {
+</a>                         None =&gt; Some(Ok(row)),
+                     },
+                     err =&gt; Some(err),
+<a href="#h0-4-3" id="h0-4-3" class="d">-                })
+</a><a href="#h0-4-4" id="h0-4-4" class="d">-                // TODO: don&#39;t collect.
+</a><a href="#h0-4-5" id="h0-4-5" class="d">-                .collect::&lt;Vec&lt;_&gt;&gt;()
+</a><a href="#h0-4-6" id="h0-4-6" class="d">-                .into_iter(),
+</a><a href="#h0-4-7" id="h0-4-7" class="i">+                }),
+</a>         ))
+     }
+ 
+     fn scan_index(&amp;self, table: &amp;str, column: &amp;str) -&gt; Result&lt;super::IndexScan&gt; {
+         debug_assert!(self.has_index(table, column)?, &quot;index scan without index&quot;);
+         Ok(Box::new(
+<a href="#h0-4-14" id="h0-4-14" class="d">-            self.txn
+</a><a href="#h0-4-15" id="h0-4-15" class="d">-                .scan_prefix(&amp;KeyPrefix::Index(table.into(), column.into()).encode())
+</a><a href="#h0-4-16" id="h0-4-16" class="d">-                .iter()
+</a><a href="#h0-4-17" id="h0-4-17" class="d">-                .map(|r| {
+</a><a href="#h0-4-18" id="h0-4-18" class="i">+            self.txn.scan_prefix(&amp;KeyPrefix::Index(table.into(), column.into()).encode()).map(
+</a><a href="#h0-4-19" id="h0-4-19" class="i">+                |r| {
+</a>                     r.and_then(|(k, v)| {
+                         let Key::Index(_, _, value) = Key::decode(&amp;k)? else {
+                             return errdata!(&quot;invalid index key&quot;);
+                         };
+                         Ok((value.into_owned(), HashSet::decode(&amp;v)?))
+                     })
+<a href="#h0-4-26" id="h0-4-26" class="d">-                })
+</a><a href="#h0-4-27" id="h0-4-27" class="d">-                // TODO: don&#39;t collect.
+</a><a href="#h0-4-28" id="h0-4-28" class="d">-                .collect::&lt;Vec&lt;_&gt;&gt;()
+</a><a href="#h0-4-29" id="h0-4-29" class="d">-                .into_iter(),
+</a><a href="#h0-4-30" id="h0-4-30" class="i">+                },
+</a><a href="#h0-4-31" id="h0-4-31" class="i">+            ),
+</a>         ))
+     }
+ 
+<a href="#h0-5" id="h0-5" class="h">@@ -377,7 +369,6 @@ impl&lt;E: storage::Engine&gt; Catalog for Transaction&lt;E&gt; {
+</a>         let keys: Vec&lt;Vec&lt;u8&gt;&gt; = self
+             .txn
+             .scan_prefix(&amp;KeyPrefix::Row((&amp;table.name).into()).encode())
+<a href="#h0-5-3" id="h0-5-3" class="d">-            .iter()
+</a>             .map(|r| r.map(|(key, _)| key))
+             .collect::&lt;Result&lt;_&gt;&gt;()?;
+         for key in keys {
+<a href="#h0-6" id="h0-6" class="h">@@ -391,7 +382,6 @@ impl&lt;E: storage::Engine&gt; Catalog for Transaction&lt;E&gt; {
+</a>                 .scan_prefix(
+                     &amp;KeyPrefix::Index((&amp;table.name).into(), (&amp;column.name).into()).encode(),
+                 )
+<a href="#h0-6-3" id="h0-6-3" class="d">-                .iter()
+</a>                 .map(|r| r.map(|(key, _)| key))
+                 .collect::&lt;Result&lt;_&gt;&gt;()?;
+             for key in keys {
+<a href="#h0-7" id="h0-7" class="h">@@ -409,7 +399,6 @@ impl&lt;E: storage::Engine&gt; Catalog for Transaction&lt;E&gt; {
+</a>     fn list_tables(&amp;self) -&gt; Result&lt;Vec&lt;Table&gt;&gt; {
+         self.txn
+             .scan_prefix(&amp;KeyPrefix::Table.encode())
+<a href="#h0-7-3" id="h0-7-3" class="d">-            .iter()
+</a>             .map(|r| r.and_then(|(_, v)| Table::decode(&amp;v)))
+             .collect()
+     }
+<b>diff --git a/<a id="h1" href="../file/src/sql/engine/raft.rs.html">src/sql/engine/raft.rs</a> b/<a href="../file/src/sql/engine/raft.rs.html">src/sql/engine/raft.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -41,7 +41,7 @@ impl Raft {
+</a> 
+     /// Creates the Raft-managed state machine for the Raft engine. Receives
+     /// commands from the Raft engine and executes them on a `Local` engine.
+<a href="#h1-0-3" id="h1-0-3" class="d">-    pub fn new_state&lt;E: storage::Engine&gt;(engine: E) -&gt; Result&lt;State&lt;E&gt;&gt; {
+</a><a href="#h1-0-4" id="h1-0-4" class="i">+    pub fn new_state&lt;E: storage::Engine + &#39;static&gt;(engine: E) -&gt; Result&lt;State&lt;E&gt;&gt; {
+</a>         State::new(engine)
+     }
+ 
+<a href="#h1-1" id="h1-1" class="h">@@ -232,7 +232,7 @@ impl&lt;&#39;a&gt; Catalog for Transaction&lt;&#39;a&gt; {
+</a> /// full table scan will pull the entire table into memory, serialize it, and
+ /// send it across the network as one message. The simplest way to address this
+ /// would likely be to send batches of e.g. 1000 rows at a time.
+<a href="#h1-1-3" id="h1-1-3" class="d">-pub struct State&lt;E: storage::Engine&gt; {
+</a><a href="#h1-1-4" id="h1-1-4" class="i">+pub struct State&lt;E: storage::Engine + &#39;static&gt; {
+</a>     /// The local SQL engine.
+     local: super::Local&lt;E&gt;,
+     /// The last applied index. This tells Raft which command to apply next.
+<b>diff --git a/<a id="h2" href="../file/src/storage/engine.rs.html">src/storage/engine.rs</a> b/<a href="../file/src/storage/engine.rs.html">src/storage/engine.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -41,14 +41,7 @@ pub trait Engine: Send {
+</a>     where
+         Self: Sized, // omit in trait objects, for object safety
+     {
+<a href="#h2-0-3" id="h2-0-3" class="d">-        let start = std::ops::Bound::Included(prefix.to_vec());
+</a><a href="#h2-0-4" id="h2-0-4" class="d">-        let end = match prefix.iter().rposition(|b| *b != 0xff) {
+</a><a href="#h2-0-5" id="h2-0-5" class="d">-            Some(i) =&gt; std::ops::Bound::Excluded(
+</a><a href="#h2-0-6" id="h2-0-6" class="d">-                prefix.iter().take(i).copied().chain(std::iter::once(prefix[i] + 1)).collect(),
+</a><a href="#h2-0-7" id="h2-0-7" class="d">-            ),
+</a><a href="#h2-0-8" id="h2-0-8" class="d">-            None =&gt; std::ops::Bound::Unbounded,
+</a><a href="#h2-0-9" id="h2-0-9" class="d">-        };
+</a><a href="#h2-0-10" id="h2-0-10" class="d">-        self.scan((start, end))
+</a><a href="#h2-0-11" id="h2-0-11" class="i">+        self.scan(prefix_range(prefix))
+</a>     }
+ 
+     /// Sets a value for a key, replacing the existing value if any.
+<a href="#h2-1" id="h2-1" class="h">@@ -63,6 +56,18 @@ pub trait ScanIterator: DoubleEndedIterator&lt;Item = Result&lt;(Vec&lt;u8&gt;, Vec&lt;u8&gt;)&gt;&gt; {
+</a> 
+ impl&lt;I: DoubleEndedIterator&lt;Item = Result&lt;(Vec&lt;u8&gt;, Vec&lt;u8&gt;)&gt;&gt;&gt; ScanIterator for I {}
+ 
+<a href="#h2-1-3" id="h2-1-3" class="i">+/// Generates a key range for a prefix scan.
+</a><a href="#h2-1-4" id="h2-1-4" class="i">+pub(super) fn prefix_range(prefix: &amp;[u8]) -&gt; (std::ops::Bound&lt;Vec&lt;u8&gt;&gt;, std::ops::Bound&lt;Vec&lt;u8&gt;&gt;) {
+</a><a href="#h2-1-5" id="h2-1-5" class="i">+    let start = std::ops::Bound::Included(prefix.to_vec());
+</a><a href="#h2-1-6" id="h2-1-6" class="i">+    let end = match prefix.iter().rposition(|b| *b != 0xff) {
+</a><a href="#h2-1-7" id="h2-1-7" class="i">+        Some(i) =&gt; std::ops::Bound::Excluded(
+</a><a href="#h2-1-8" id="h2-1-8" class="i">+            prefix.iter().take(i).copied().chain(std::iter::once(prefix[i] + 1)).collect(),
+</a><a href="#h2-1-9" id="h2-1-9" class="i">+        ),
+</a><a href="#h2-1-10" id="h2-1-10" class="i">+        None =&gt; std::ops::Bound::Unbounded,
+</a><a href="#h2-1-11" id="h2-1-11" class="i">+    };
+</a><a href="#h2-1-12" id="h2-1-12" class="i">+    (start, end)
+</a><a href="#h2-1-13" id="h2-1-13" class="i">+}
+</a><a href="#h2-1-14" id="h2-1-14" class="i">+
+</a> /// Engine status.
+ #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+ pub struct Status {
+<b>diff --git a/<a id="h3" href="../file/src/storage/mvcc.rs.html">src/storage/mvcc.rs</a> b/<a href="../file/src/storage/mvcc.rs.html">src/storage/mvcc.rs</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -139,14 +139,14 @@
+</a> //! forever, both out of laziness and also because it allows unlimited time
+ //! travel queries (it&#39;s a feature, not a bug!).
+ 
+<a href="#h3-0-3" id="h3-0-3" class="d">-use super::engine::Engine;
+</a><a href="#h3-0-4" id="h3-0-4" class="i">+use super::engine::{prefix_range, Engine};
+</a> use crate::encoding::{self, bincode, Key as _, Value as _};
+ use crate::error::{Error, Result};
+ use crate::{errdata, errinput};
+ 
+ use serde::{Deserialize, Serialize};
+ use std::borrow::Cow;
+<a href="#h3-0-11" id="h3-0-11" class="d">-use std::collections::HashSet;
+</a><a href="#h3-0-12" id="h3-0-12" class="i">+use std::collections::{HashSet, VecDeque};
+</a> use std::ops::{Bound, RangeBounds};
+ use std::sync::{Arc, Mutex, MutexGuard};
+ 
+<a href="#h3-1" id="h3-1" class="h">@@ -577,7 +577,7 @@ impl&lt;E: Engine&gt; Transaction&lt;E&gt; {
+</a> 
+     /// Returns an iterator over the latest visible key/value pairs at the
+     /// transaction&#39;s version.
+<a href="#h3-1-3" id="h3-1-3" class="d">-    pub fn scan&lt;R: RangeBounds&lt;Vec&lt;u8&gt;&gt;&gt;(&amp;self, range: R) -&gt; Scan&lt;E&gt; {
+</a><a href="#h3-1-4" id="h3-1-4" class="i">+    pub fn scan(&amp;self, range: impl RangeBounds&lt;Vec&lt;u8&gt;&gt;) -&gt; ScanIterator&lt;E&gt; {
+</a>         let start = match range.start_bound() {
+             Bound::Excluded(k) =&gt; Bound::Excluded(Key::Version(k.into(), u64::MAX).encode()),
+             Bound::Included(k) =&gt; Bound::Included(Key::Version(k.into(), 0).encode()),
+<a href="#h3-2" id="h3-2" class="h">@@ -588,110 +588,105 @@ impl&lt;E: Engine&gt; Transaction&lt;E&gt; {
+</a>             Bound::Included(k) =&gt; Bound::Included(Key::Version(k.into(), u64::MAX).encode()),
+             Bound::Unbounded =&gt; Bound::Excluded(KeyPrefix::Unversioned.encode()),
+         };
+<a href="#h3-2-3" id="h3-2-3" class="d">-        let engine = self.engine.lock().expect(&quot;mutex failed&quot;);
+</a><a href="#h3-2-4" id="h3-2-4" class="d">-        Scan::new(engine, self.state(), start, end)
+</a><a href="#h3-2-5" id="h3-2-5" class="i">+        ScanIterator::new(self.engine.clone(), self.state().clone(), (start, end))
+</a>     }
+ 
+     /// Scans keys under a given prefix.
+<a href="#h3-2-9" id="h3-2-9" class="d">-    pub fn scan_prefix(&amp;self, prefix: &amp;[u8]) -&gt; Scan&lt;E&gt; {
+</a><a href="#h3-2-10" id="h3-2-10" class="i">+    pub fn scan_prefix(&amp;self, prefix: &amp;[u8]) -&gt; ScanIterator&lt;E&gt; {
+</a>         // Normally, KeyPrefix::Version will only match all versions of the
+         // exact given key. We want all keys maching the prefix, so we chop off
+         // the KeyCode byte slice terminator 0x0000 at the end.
+         let mut prefix = KeyPrefix::Version(prefix.into()).encode();
+         prefix.truncate(prefix.len() - 2);
+<a href="#h3-2-16" id="h3-2-16" class="d">-        let engine = self.engine.lock().expect(&quot;mutex error&quot;);
+</a><a href="#h3-2-17" id="h3-2-17" class="d">-        Scan::new_prefix(engine, self.state(), prefix)
+</a><a href="#h3-2-18" id="h3-2-18" class="i">+        ScanIterator::&lt;E&gt;::new(self.engine.clone(), self.state().clone(), prefix_range(&amp;prefix))
+</a>     }
+ }
+ 
+<a href="#h3-2-22" id="h3-2-22" class="d">-/// A scan result. Can produce an iterator or collect an owned Vec.
+</a><a href="#h3-2-23" id="h3-2-23" class="i">+/// An iterator over the latest live and visible key/value pairs for the txn.
+</a> ///
+<a href="#h3-2-25" id="h3-2-25" class="d">-/// This intermediate struct is unfortunately needed to hold the MutexGuard for
+</a><a href="#h3-2-26" id="h3-2-26" class="d">-/// the scan() caller, since placing it in ScanIterator along with the inner
+</a><a href="#h3-2-27" id="h3-2-27" class="d">-/// iterator borrowing from it would create a self-referential struct.
+</a><a href="#h3-2-28" id="h3-2-28" class="i">+/// The (single-threaded) engine is protected by a mutex, and holding the mutex
+</a><a href="#h3-2-29" id="h3-2-29" class="i">+/// for the duration of the iteration can cause deadlocks (e.g. when the local
+</a><a href="#h3-2-30" id="h3-2-30" class="i">+/// SQL engine pulls from two tables concurrently during a join). Instead, we
+</a><a href="#h3-2-31" id="h3-2-31" class="i">+/// pull and buffer 100 rows at a time, and release the mutex in between.
+</a> ///
+<a href="#h3-2-33" id="h3-2-33" class="d">-/// TODO: is there a better way?
+</a><a href="#h3-2-34" id="h3-2-34" class="d">-pub struct Scan&lt;&#39;a, E: Engine + &#39;a&gt; {
+</a><a href="#h3-2-35" id="h3-2-35" class="d">-    /// Access to the locked engine.
+</a><a href="#h3-2-36" id="h3-2-36" class="d">-    engine: MutexGuard&lt;&#39;a, E&gt;,
+</a><a href="#h3-2-37" id="h3-2-37" class="i">+/// This does not implement DoubleEndedIterator (reverse scans), since the SQL
+</a><a href="#h3-2-38" id="h3-2-38" class="i">+/// layer doesn&#39;t currently need it.
+</a><a href="#h3-2-39" id="h3-2-39" class="i">+pub struct ScanIterator&lt;E: Engine&gt; {
+</a><a href="#h3-2-40" id="h3-2-40" class="i">+    /// The engine.
+</a><a href="#h3-2-41" id="h3-2-41" class="i">+    engine: Arc&lt;Mutex&lt;E&gt;&gt;,
+</a>     /// The transaction state.
+<a href="#h3-2-43" id="h3-2-43" class="d">-    txn: &amp;&#39;a TransactionState,
+</a><a href="#h3-2-44" id="h3-2-44" class="d">-    /// The scan type and parameter.
+</a><a href="#h3-2-45" id="h3-2-45" class="d">-    param: ScanType,
+</a><a href="#h3-2-46" id="h3-2-46" class="i">+    txn: TransactionState,
+</a><a href="#h3-2-47" id="h3-2-47" class="i">+    /// A buffer of live and visible key/value pairs to emit.
+</a><a href="#h3-2-48" id="h3-2-48" class="i">+    buffer: VecDeque&lt;(UserKey, UserValue)&gt;,
+</a><a href="#h3-2-49" id="h3-2-49" class="i">+    /// The remaining range after the buffer.
+</a><a href="#h3-2-50" id="h3-2-50" class="i">+    remainder: Option&lt;(Bound&lt;RawKey&gt;, Bound&lt;RawKey&gt;)&gt;,
+</a> }
+ 
+<a href="#h3-2-53" id="h3-2-53" class="d">-enum ScanType {
+</a><a href="#h3-2-54" id="h3-2-54" class="d">-    Range((Bound&lt;Vec&lt;u8&gt;&gt;, Bound&lt;Vec&lt;u8&gt;&gt;)),
+</a><a href="#h3-2-55" id="h3-2-55" class="d">-    Prefix(Vec&lt;u8&gt;),
+</a><a href="#h3-2-56" id="h3-2-56" class="d">-}
+</a><a href="#h3-2-57" id="h3-2-57" class="i">+// Helper types to distinguish raw engine key/values from encoded user
+</a><a href="#h3-2-58" id="h3-2-58" class="i">+// key/values (which are encoded inside mvcc::Key). Mostly to appease Clippy&#39;s
+</a><a href="#h3-2-59" id="h3-2-59" class="i">+// type complexity lint, but TODO: consider using elsewhere.
+</a><a href="#h3-2-60" id="h3-2-60" class="i">+type RawKey = Vec&lt;u8&gt;;
+</a><a href="#h3-2-61" id="h3-2-61" class="i">+type UserKey = Vec&lt;u8&gt;;
+</a><a href="#h3-2-62" id="h3-2-62" class="i">+type UserValue = Vec&lt;u8&gt;;
+</a><a href="#h3-2-63" id="h3-2-63" class="i">+
+</a><a href="#h3-2-64" id="h3-2-64" class="i">+impl&lt;E: Engine&gt; ScanIterator&lt;E&gt; {
+</a><a href="#h3-2-65" id="h3-2-65" class="i">+    /// The number of live keys to pull from the engine at a time.
+</a><a href="#h3-2-66" id="h3-2-66" class="i">+    /// TODO: add tests that either exceed or vary this.
+</a><a href="#h3-2-67" id="h3-2-67" class="i">+    const BUFFER_SIZE: usize = 100;
+</a> 
+<a href="#h3-2-69" id="h3-2-69" class="d">-impl&lt;&#39;a, E: Engine + &#39;a&gt; Scan&lt;&#39;a, E&gt; {
+</a><a href="#h3-2-70" id="h3-2-70" class="d">-    /// Creates a new range scan.
+</a><a href="#h3-2-71" id="h3-2-71" class="i">+    /// Creates a new scan iterator.
+</a>     fn new(
+<a href="#h3-2-73" id="h3-2-73" class="d">-        engine: MutexGuard&lt;&#39;a, E&gt;,
+</a><a href="#h3-2-74" id="h3-2-74" class="d">-        txn: &amp;&#39;a TransactionState,
+</a><a href="#h3-2-75" id="h3-2-75" class="d">-        start: Bound&lt;Vec&lt;u8&gt;&gt;,
+</a><a href="#h3-2-76" id="h3-2-76" class="d">-        end: Bound&lt;Vec&lt;u8&gt;&gt;,
+</a><a href="#h3-2-77" id="h3-2-77" class="i">+        engine: Arc&lt;Mutex&lt;E&gt;&gt;,
+</a><a href="#h3-2-78" id="h3-2-78" class="i">+        txn: TransactionState,
+</a><a href="#h3-2-79" id="h3-2-79" class="i">+        range: (Bound&lt;RawKey&gt;, Bound&lt;RawKey&gt;),
+</a>     ) -&gt; Self {
+<a href="#h3-2-81" id="h3-2-81" class="d">-        Self { engine, txn, param: ScanType::Range((start, end)) }
+</a><a href="#h3-2-82" id="h3-2-82" class="d">-    }
+</a><a href="#h3-2-83" id="h3-2-83" class="d">-
+</a><a href="#h3-2-84" id="h3-2-84" class="d">-    /// Creates a new prefix scan.
+</a><a href="#h3-2-85" id="h3-2-85" class="d">-    fn new_prefix(engine: MutexGuard&lt;&#39;a, E&gt;, txn: &amp;&#39;a TransactionState, prefix: Vec&lt;u8&gt;) -&gt; Self {
+</a><a href="#h3-2-86" id="h3-2-86" class="d">-        Self { engine, txn, param: ScanType::Prefix(prefix) }
+</a><a href="#h3-2-87" id="h3-2-87" class="i">+        let buffer = VecDeque::with_capacity(Self::BUFFER_SIZE);
+</a><a href="#h3-2-88" id="h3-2-88" class="i">+        Self { engine, txn, buffer, remainder: Some(range) }
+</a>     }
+ 
+<a href="#h3-2-91" id="h3-2-91" class="d">-    /// Returns an iterator over the result.
+</a><a href="#h3-2-92" id="h3-2-92" class="d">-    pub fn iter(&amp;mut self) -&gt; ScanIterator&lt;&#39;_, E&gt; {
+</a><a href="#h3-2-93" id="h3-2-93" class="d">-        let inner = match &amp;self.param {
+</a><a href="#h3-2-94" id="h3-2-94" class="d">-            ScanType::Range(range) =&gt; self.engine.scan(range.clone()),
+</a><a href="#h3-2-95" id="h3-2-95" class="d">-            ScanType::Prefix(prefix) =&gt; self.engine.scan_prefix(prefix),
+</a><a href="#h3-2-96" id="h3-2-96" class="d">-        };
+</a><a href="#h3-2-97" id="h3-2-97" class="d">-        ScanIterator::new(self.txn, inner)
+</a><a href="#h3-2-98" id="h3-2-98" class="d">-    }
+</a><a href="#h3-2-99" id="h3-2-99" class="d">-
+</a><a href="#h3-2-100" id="h3-2-100" class="d">-    /// Collects the result to a vector.
+</a><a href="#h3-2-101" id="h3-2-101" class="d">-    pub fn to_vec(&amp;mut self) -&gt; Result&lt;Vec&lt;(Vec&lt;u8&gt;, Vec&lt;u8&gt;)&gt;&gt; {
+</a><a href="#h3-2-102" id="h3-2-102" class="d">-        self.iter().collect()
+</a><a href="#h3-2-103" id="h3-2-103" class="d">-    }
+</a><a href="#h3-2-104" id="h3-2-104" class="d">-}
+</a><a href="#h3-2-105" id="h3-2-105" class="d">-
+</a><a href="#h3-2-106" id="h3-2-106" class="d">-/// An iterator over the latest live and visible key/value pairs at the txn
+</a><a href="#h3-2-107" id="h3-2-107" class="d">-/// version. Does not implement DoubleEndedIterator (reverse scans), since the
+</a><a href="#h3-2-108" id="h3-2-108" class="d">-/// SQL layer doesn&#39;t use it.
+</a><a href="#h3-2-109" id="h3-2-109" class="d">-pub struct ScanIterator&lt;&#39;a, E: Engine + &#39;a&gt; {
+</a><a href="#h3-2-110" id="h3-2-110" class="d">-    /// Decodes and filters visible MVCC versions from the inner engine iterator.
+</a><a href="#h3-2-111" id="h3-2-111" class="d">-    inner: std::iter::Peekable&lt;VersionIterator&lt;&#39;a, E&gt;&gt;,
+</a><a href="#h3-2-112" id="h3-2-112" class="d">-}
+</a><a href="#h3-2-113" id="h3-2-113" class="d">-
+</a><a href="#h3-2-114" id="h3-2-114" class="d">-impl&lt;&#39;a, E: Engine + &#39;a&gt; ScanIterator&lt;&#39;a, E&gt; {
+</a><a href="#h3-2-115" id="h3-2-115" class="d">-    /// Creates a new scan iterator.
+</a><a href="#h3-2-116" id="h3-2-116" class="d">-    fn new(txn: &amp;&#39;a TransactionState, inner: E::ScanIterator&lt;&#39;a&gt;) -&gt; Self {
+</a><a href="#h3-2-117" id="h3-2-117" class="d">-        Self { inner: VersionIterator::new(txn, inner).peekable() }
+</a><a href="#h3-2-118" id="h3-2-118" class="d">-    }
+</a><a href="#h3-2-119" id="h3-2-119" class="i">+    /// Fills the buffer, if there&#39;s any pending items.
+</a><a href="#h3-2-120" id="h3-2-120" class="i">+    fn fill_buffer(&amp;mut self) -&gt; Result&lt;()&gt; {
+</a><a href="#h3-2-121" id="h3-2-121" class="i">+        // Check if there&#39;s anything to buffer.
+</a><a href="#h3-2-122" id="h3-2-122" class="i">+        if self.buffer.len() &gt;= Self::BUFFER_SIZE {
+</a><a href="#h3-2-123" id="h3-2-123" class="i">+            return Ok(());
+</a><a href="#h3-2-124" id="h3-2-124" class="i">+        }
+</a><a href="#h3-2-125" id="h3-2-125" class="i">+        let Some(range) = self.remainder.take() else { return Ok(()) };
+</a><a href="#h3-2-126" id="h3-2-126" class="i">+        let range_end = range.1.clone();
+</a> 
+<a href="#h3-2-128" id="h3-2-128" class="d">-    /// Fallible next(), emitting the next item, or None if exhausted.
+</a><a href="#h3-2-129" id="h3-2-129" class="d">-    fn try_next(&amp;mut self) -&gt; Result&lt;Option&lt;(Vec&lt;u8&gt;, Vec&lt;u8&gt;)&gt;&gt; {
+</a><a href="#h3-2-130" id="h3-2-130" class="d">-        while let Some((key, _version, value)) = self.inner.next().transpose()? {
+</a><a href="#h3-2-131" id="h3-2-131" class="i">+        let mut engine = self.engine.lock()?;
+</a><a href="#h3-2-132" id="h3-2-132" class="i">+        let mut iter = VersionIterator::&lt;E&gt;::new(&amp;self.txn, engine.scan(range)).peekable();
+</a><a href="#h3-2-133" id="h3-2-133" class="i">+        while let Some((key, _, value)) = iter.next().transpose()? {
+</a>             // If the next key equals this one, we&#39;re not at the latest version.
+<a href="#h3-2-135" id="h3-2-135" class="d">-            match self.inner.peek() {
+</a><a href="#h3-2-136" id="h3-2-136" class="i">+            match iter.peek() {
+</a>                 Some(Ok((next, _, _))) if next == &amp;key =&gt; continue,
+                 Some(Err(err)) =&gt; return Err(err.clone()),
+                 Some(Ok(_)) | None =&gt; {}
+             }
+<a href="#h3-2-141" id="h3-2-141" class="d">-            // If the key is live (not a tombstone), emit it.
+</a><a href="#h3-2-142" id="h3-2-142" class="d">-            if let Some(value) = bincode::deserialize(&amp;value)? {
+</a><a href="#h3-2-143" id="h3-2-143" class="d">-                return Ok(Some((key, value)));
+</a><a href="#h3-2-144" id="h3-2-144" class="i">+            // If the key is live (not a tombstone), buffer it.
+</a><a href="#h3-2-145" id="h3-2-145" class="i">+            let Some(value) = bincode::deserialize(&amp;value)? else { continue };
+</a><a href="#h3-2-146" id="h3-2-146" class="i">+            self.buffer.push_back((key, value));
+</a><a href="#h3-2-147" id="h3-2-147" class="i">+            // If we filled the buffer, save the remaining range (if any) and
+</a><a href="#h3-2-148" id="h3-2-148" class="i">+            // return. peek() has already buffered next(), so pull it.
+</a><a href="#h3-2-149" id="h3-2-149" class="i">+            if self.buffer.len() == Self::BUFFER_SIZE {
+</a><a href="#h3-2-150" id="h3-2-150" class="i">+                if let Some((next, _, _)) = iter.next().transpose()? {
+</a><a href="#h3-2-151" id="h3-2-151" class="i">+                    self.remainder = Some((Bound::Included(next), range_end));
+</a><a href="#h3-2-152" id="h3-2-152" class="i">+                }
+</a><a href="#h3-2-153" id="h3-2-153" class="i">+                return Ok(());
+</a>             }
+         }
+<a href="#h3-2-156" id="h3-2-156" class="d">-        Ok(None)
+</a><a href="#h3-2-157" id="h3-2-157" class="i">+        Ok(())
+</a>     }
+ }
+ 
+<a href="#h3-2-161" id="h3-2-161" class="d">-impl&lt;&#39;a, E: Engine&gt; Iterator for ScanIterator&lt;&#39;a, E&gt; {
+</a><a href="#h3-2-162" id="h3-2-162" class="d">-    type Item = Result&lt;(Vec&lt;u8&gt;, Vec&lt;u8&gt;)&gt;;
+</a><a href="#h3-2-163" id="h3-2-163" class="i">+impl&lt;E: Engine&gt; Iterator for ScanIterator&lt;E&gt; {
+</a><a href="#h3-2-164" id="h3-2-164" class="i">+    type Item = Result&lt;(UserKey, UserValue)&gt;;
+</a>     fn next(&amp;mut self) -&gt; Option&lt;Self::Item&gt; {
+<a href="#h3-2-166" id="h3-2-166" class="d">-        self.try_next().transpose()
+</a><a href="#h3-2-167" id="h3-2-167" class="i">+        if self.buffer.is_empty() {
+</a><a href="#h3-2-168" id="h3-2-168" class="i">+            if let Err(error) = self.fill_buffer() {
+</a><a href="#h3-2-169" id="h3-2-169" class="i">+                return Some(Err(error));
+</a><a href="#h3-2-170" id="h3-2-170" class="i">+            }
+</a><a href="#h3-2-171" id="h3-2-171" class="i">+        }
+</a><a href="#h3-2-172" id="h3-2-172" class="i">+        self.buffer.pop_front().map(Ok)
+</a>     }
+ }
+ 
+<a href="#h3-3" id="h3-3" class="h">@@ -704,7 +699,6 @@ struct VersionIterator&lt;&#39;a, E: Engine + &#39;a&gt; {
+</a>     inner: E::ScanIterator&lt;&#39;a&gt;,
+ }
+ 
+<a href="#h3-3-3" id="h3-3-3" class="d">-#[allow(clippy::type_complexity)]
+</a> impl&lt;&#39;a, E: Engine + &#39;a&gt; VersionIterator&lt;&#39;a, E&gt; {
+     /// Creates a new MVCC version iterator for the given engine iterator.
+     fn new(txn: &amp;&#39;a TransactionState, inner: E::ScanIterator&lt;&#39;a&gt;) -&gt; Self {
+<a href="#h3-4" id="h3-4" class="h">@@ -713,7 +707,7 @@ impl&lt;&#39;a, E: Engine + &#39;a&gt; VersionIterator&lt;&#39;a, E&gt; {
+</a> 
+     /// Decodes a raw engine key into an MVCC key and version, returning None if
+     /// the version is not visible.
+<a href="#h3-4-3" id="h3-4-3" class="d">-    fn decode_visible(&amp;self, key: &amp;[u8]) -&gt; Result&lt;Option&lt;(Vec&lt;u8&gt;, Version)&gt;&gt; {
+</a><a href="#h3-4-4" id="h3-4-4" class="i">+    fn decode_visible(&amp;self, key: &amp;[u8]) -&gt; Result&lt;Option&lt;(UserKey, Version)&gt;&gt; {
+</a>         let (key, version) = match Key::decode(key)? {
+             Key::Version(key, version) =&gt; (key.into_owned(), version),
+             key =&gt; return errdata!(&quot;expected Key::Version got {key:?}&quot;),
+<a href="#h3-5" id="h3-5" class="h">@@ -726,7 +720,7 @@ impl&lt;&#39;a, E: Engine + &#39;a&gt; VersionIterator&lt;&#39;a, E&gt; {
+</a>     }
+ 
+     // Fallible next(), emitting the next item, or None if exhausted.
+<a href="#h3-5-3" id="h3-5-3" class="d">-    fn try_next(&amp;mut self) -&gt; Result&lt;Option&lt;(Vec&lt;u8&gt;, Version, Vec&lt;u8&gt;)&gt;&gt; {
+</a><a href="#h3-5-4" id="h3-5-4" class="i">+    fn try_next(&amp;mut self) -&gt; Result&lt;Option&lt;(UserKey, Version, UserValue)&gt;&gt; {
+</a>         while let Some((key, value)) = self.inner.next().transpose()? {
+             if let Some((key, version)) = self.decode_visible(&amp;key)? {
+                 return Ok(Some((key, version, value)));
+<a href="#h3-6" id="h3-6" class="h">@@ -737,7 +731,7 @@ impl&lt;&#39;a, E: Engine + &#39;a&gt; VersionIterator&lt;&#39;a, E&gt; {
+</a> }
+ 
+ impl&lt;&#39;a, E: Engine&gt; Iterator for VersionIterator&lt;&#39;a, E&gt; {
+<a href="#h3-6-3" id="h3-6-3" class="d">-    type Item = Result&lt;(Vec&lt;u8&gt;, Version, Vec&lt;u8&gt;)&gt;;
+</a><a href="#h3-6-4" id="h3-6-4" class="i">+    type Item = Result&lt;(UserKey, Version, UserValue)&gt;;
+</a>     fn next(&amp;mut self) -&gt; Option&lt;Self::Item&gt; {
+         self.try_next().transpose()
+     }
+<a href="#h3-7" id="h3-7" class="h">@@ -927,8 +921,7 @@ pub mod tests {
+</a>                     )?;
+                     args.reject_rest()?;
+ 
+<a href="#h3-7-3" id="h3-7-3" class="d">-                    let mut scan = txn.scan(range);
+</a><a href="#h3-7-4" id="h3-7-4" class="d">-                    let kvs: Vec&lt;_&gt; = scan.iter().collect::&lt;crate::error::Result&lt;_&gt;&gt;()?;
+</a><a href="#h3-7-5" id="h3-7-5" class="i">+                    let kvs: Vec&lt;_&gt; = txn.scan(range).collect::&lt;crate::error::Result&lt;_&gt;&gt;()?;
+</a>                     for (key, value) in kvs {
+                         writeln!(output, &quot;{}&quot;, Self::format_key_value(&amp;key, Some(&amp;value)))?;
+                     }
+<a href="#h3-8" id="h3-8" class="h">@@ -942,8 +935,8 @@ pub mod tests {
+</a>                         Self::decode_binary(&amp;args.next_pos().ok_or(&quot;prefix not given&quot;)?.value);
+                     args.reject_rest()?;
+ 
+<a href="#h3-8-3" id="h3-8-3" class="d">-                    let mut scan = txn.scan_prefix(&amp;prefix);
+</a><a href="#h3-8-4" id="h3-8-4" class="d">-                    let kvs: Vec&lt;_&gt; = scan.iter().collect::&lt;crate::error::Result&lt;_&gt;&gt;()?;
+</a><a href="#h3-8-5" id="h3-8-5" class="i">+                    let kvs: Vec&lt;_&gt; =
+</a><a href="#h3-8-6" id="h3-8-6" class="i">+                        txn.scan_prefix(&amp;prefix).collect::&lt;crate::error::Result&lt;_&gt;&gt;()?;
+</a>                     for (key, value) in kvs {
+                         writeln!(output, &quot;{}&quot;, Self::format_key_value(&amp;key, Some(&amp;value)))?;
+                     }
+</pre>
+</div>
+</body>
+</html>

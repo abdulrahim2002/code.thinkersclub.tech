@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Renamed raft::State.read() to query() - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/9a8ff77e28ddc17b39d762883ce29da3ca4b75c7.html">9a8ff77e28ddc17b39d762883ce29da3ca4b75c7</a>
+<b>parent</b> <a href="../commit/e74e446b2e4b6304b519dbff0dd72783b6ea14a7.html">e74e446b2e4b6304b519dbff0dd72783b6ea14a7</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Sun,  1 Dec 2019 14:05:43 +0100
+
+Renamed raft::State.read() to query()
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/raft/log.rs</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/raft/mod.rs</a></td><td> | </td><td class="num">17</td><td><span class="i">++++++++++++</span><span class="d">-----</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/raft/node/leader.rs</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">src/raft/node/mod.rs</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+<tr><td class="D">D</td><td><a href="#h4">src/raft/state.rs</a></td><td> | </td><td class="num">10</td><td><span class="i"></span><span class="d">----------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h5">src/sql/engine/raft.rs</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+</table></pre><pre>6 files changed, 16 insertions(+), 19 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/raft/log.rs.html">src/raft/log.rs</a> b/<a href="../file/src/raft/log.rs.html">src/raft/log.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -1,4 +1,4 @@
+</a><a href="#h0-0-0" id="h0-0-0" class="d">-use super::state::State;
+</a><a href="#h0-0-1" id="h0-0-1" class="i">+use super::State;
+</a> use crate::kv;
+ use crate::utility::{deserialize, serialize};
+ use crate::Error;
+<b>diff --git a/<a id="h1" href="../file/src/raft/mod.rs.html">src/raft/mod.rs</a> b/<a href="../file/src/raft/mod.rs.html">src/raft/mod.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -1,10 +1,8 @@
+</a> mod log;
+ mod node;
+<a href="#h1-0-2" id="h1-0-2" class="d">-mod state;
+</a> mod transport;
+ 
+ pub use self::log::Entry;
+<a href="#h1-0-6" id="h1-0-6" class="d">-pub use self::state::State;
+</a> pub use self::transport::{Event, Message, Transport};
+ 
+ use crate::kv;
+<a href="#h1-1" id="h1-1" class="h">@@ -18,6 +16,15 @@ use uuid::Uuid;
+</a> /// heartbeat intervals and election timeouts.
+ const TICK: std::time::Duration = std::time::Duration::from_millis(100);
+ 
+<a href="#h1-1-3" id="h1-1-3" class="i">+/// A Raft-managed state machine.
+</a><a href="#h1-1-4" id="h1-1-4" class="i">+pub trait State: &#39;static + Sync + Send + std::fmt::Debug {
+</a><a href="#h1-1-5" id="h1-1-5" class="i">+    /// Mutates the state machine.
+</a><a href="#h1-1-6" id="h1-1-6" class="i">+    fn mutate(&amp;mut self, command: Vec&lt;u8&gt;) -&gt; Result&lt;Vec&lt;u8&gt;, Error&gt;;
+</a><a href="#h1-1-7" id="h1-1-7" class="i">+
+</a><a href="#h1-1-8" id="h1-1-8" class="i">+    /// Queries the state machine.
+</a><a href="#h1-1-9" id="h1-1-9" class="i">+    fn query(&amp;self, command: Vec&lt;u8&gt;) -&gt; Result&lt;Vec&lt;u8&gt;, Error&gt;;
+</a><a href="#h1-1-10" id="h1-1-10" class="i">+}
+</a><a href="#h1-1-11" id="h1-1-11" class="i">+
+</a> /// A Raft state machine representing an entire Raft cluster.
+ #[derive(Clone)]
+ pub struct Raft {
+<a href="#h1-2" id="h1-2" class="h">@@ -161,11 +168,11 @@ pub mod tests {
+</a>         }
+ 
+         // Reads the command in the internal commands list at the index
+<a href="#h1-2-3" id="h1-2-3" class="d">-        // given by the read command (1-based). Returns the stored command prefixed by
+</a><a href="#h1-2-4" id="h1-2-4" class="i">+        // given by the query command (1-based). Returns the stored command prefixed by
+</a>         // 0xbb, or 0xbb 0x00 if not found.
+<a href="#h1-2-6" id="h1-2-6" class="d">-        fn read(&amp;self, command: Vec&lt;u8&gt;) -&gt; Result&lt;Vec&lt;u8&gt;, Error&gt; {
+</a><a href="#h1-2-7" id="h1-2-7" class="i">+        fn query(&amp;self, command: Vec&lt;u8&gt;) -&gt; Result&lt;Vec&lt;u8&gt;, Error&gt; {
+</a>             if command.len() != 1 {
+<a href="#h1-2-9" id="h1-2-9" class="d">-                return Err(Error::Value(&quot;Read payload must be 1 byte&quot;.into()));
+</a><a href="#h1-2-10" id="h1-2-10" class="i">+                return Err(Error::Value(&quot;Query payload must be 1 byte&quot;.into()));
+</a>             }
+             let index = command[0] as usize;
+             Ok(vec![0xbb, self.commands.lock()?.get(index - 1).map(|c| c[0]).unwrap_or(0x00)])
+<b>diff --git a/<a id="h2" href="../file/src/raft/node/leader.rs.html">src/raft/node/leader.rs</a> b/<a href="../file/src/raft/node/leader.rs.html">src/raft/node/leader.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -113,7 +113,7 @@ impl&lt;L: kv::storage::Storage, S: State&gt; RoleNode&lt;Leader, L, S&gt; {
+</a>             match call.operation {
+                 Operation::ReadState { command, .. } =&gt; self.send(
+                     call.from.as_deref(),
+<a href="#h2-0-3" id="h2-0-3" class="d">-                    Event::RespondState { call_id: call.id, response: self.state.read(command)? },
+</a><a href="#h2-0-4" id="h2-0-4" class="i">+                    Event::RespondState { call_id: call.id, response: self.state.query(command)? },
+</a>                 )?,
+                 _ =&gt; return Err(Error::Network(format!(&quot;Unsupported call {:?}&quot;, call))),
+             }
+<b>diff --git a/<a id="h3" href="../file/src/raft/node/mod.rs.html">src/raft/node/mod.rs</a> b/<a href="../file/src/raft/node/mod.rs.html">src/raft/node/mod.rs</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -9,8 +9,8 @@ use self::candidate::Candidate;
+</a> use self::follower::Follower;
+ use self::leader::Leader;
+ use super::log::{Entry, Log};
+<a href="#h3-0-3" id="h3-0-3" class="d">-use super::state::State;
+</a> use super::transport::{Event, Message};
+<a href="#h3-0-5" id="h3-0-5" class="i">+use super::State;
+</a> use crate::kv;
+ use crate::utility::OptionDeref;
+ use crate::Error;
+<b>diff --git a/<a id="h4" href="../file/src/raft/state.rs.html">src/raft/state.rs</a> b/<a href="../file/src/raft/state.rs.html">src/raft/state.rs</a></b>
+<a href="#h4-0" id="h4-0" class="h">@@ -1,10 +0,0 @@
+</a><a href="#h4-0-0" id="h4-0-0" class="d">-use crate::Error;
+</a><a href="#h4-0-1" id="h4-0-1" class="d">-
+</a><a href="#h4-0-2" id="h4-0-2" class="d">-/// A Raft-managed state machine.
+</a><a href="#h4-0-3" id="h4-0-3" class="d">-pub trait State: &#39;static + Sync + Send + std::fmt::Debug {
+</a><a href="#h4-0-4" id="h4-0-4" class="d">-    /// Reads from the state machine.
+</a><a href="#h4-0-5" id="h4-0-5" class="d">-    fn read(&amp;self, command: Vec&lt;u8&gt;) -&gt; Result&lt;Vec&lt;u8&gt;, Error&gt;;
+</a><a href="#h4-0-6" id="h4-0-6" class="d">-
+</a><a href="#h4-0-7" id="h4-0-7" class="d">-    /// Mutates the state machine.
+</a><a href="#h4-0-8" id="h4-0-8" class="d">-    fn mutate(&amp;mut self, command: Vec&lt;u8&gt;) -&gt; Result&lt;Vec&lt;u8&gt;, Error&gt;;
+</a><a href="#h4-0-9" id="h4-0-9" class="d">-}
+</a><b>diff --git a/<a id="h5" href="../file/src/sql/engine/raft.rs.html">src/sql/engine/raft.rs</a> b/<a href="../file/src/sql/engine/raft.rs.html">src/sql/engine/raft.rs</a></b>
+<a href="#h5-0" id="h5-0" class="h">@@ -230,7 +230,7 @@ impl&lt;S: kv::storage::Storage&gt; raft::State for State&lt;S&gt; {
+</a>         }
+     }
+ 
+<a href="#h5-0-3" id="h5-0-3" class="d">-    fn read(&amp;self, command: Vec&lt;u8&gt;) -&gt; Result&lt;Vec&lt;u8&gt;, Error&gt; {
+</a><a href="#h5-0-4" id="h5-0-4" class="i">+    fn query(&amp;self, command: Vec&lt;u8&gt;) -&gt; Result&lt;Vec&lt;u8&gt;, Error&gt; {
+</a>         match deserialize(command)? {
+             Query::Read { txn_id, table, id } =&gt; serialize(
+                 self.txns
+</pre>
+</div>
+</body>
+</html>

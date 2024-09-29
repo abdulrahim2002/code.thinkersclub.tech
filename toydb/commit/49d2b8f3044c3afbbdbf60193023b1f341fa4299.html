@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Fix Clippy warnings - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/49d2b8f3044c3afbbdbf60193023b1f341fa4299.html">49d2b8f3044c3afbbdbf60193023b1f341fa4299</a>
+<b>parent</b> <a href="../commit/25260a2736d0eb0277b9768253d1a663500697f5.html">25260a2736d0eb0277b9768253d1a663500697f5</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Sat,  6 Jan 2024 21:17:47 +0100
+
+Fix Clippy warnings
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/sql/execution/aggregation.rs</a></td><td> | </td><td class="num">6</td><td><span class="i">+</span><span class="d">-----</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/sql/types/expression.rs</a></td><td> | </td><td class="num">4</td><td><span class="i">++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/storage/mvcc.rs</a></td><td> | </td><td class="num">4</td><td><span class="i">++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">tests/client/pool.rs</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+</table></pre><pre>4 files changed, 6 insertions(+), 10 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/sql/execution/aggregation.rs.html">src/sql/execution/aggregation.rs</a> b/<a href="../file/src/sql/execution/aggregation.rs.html">src/sql/execution/aggregation.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -49,11 +49,7 @@ impl&lt;T: Transaction&gt; Executor&lt;T&gt; for Aggregation&lt;T&gt; {
+</a>                         .map(|(i, c)| if i &lt; agg_count { Column { name: None } } else { c })
+                         .collect(),
+                     rows: Box::new(self.accumulators.into_iter().map(|(bucket, accs)| {
+<a href="#h0-0-3" id="h0-0-3" class="d">-                        Ok(accs
+</a><a href="#h0-0-4" id="h0-0-4" class="d">-                            .into_iter()
+</a><a href="#h0-0-5" id="h0-0-5" class="d">-                            .map(|acc| acc.aggregate())
+</a><a href="#h0-0-6" id="h0-0-6" class="d">-                            .chain(bucket.into_iter())
+</a><a href="#h0-0-7" id="h0-0-7" class="d">-                            .collect())
+</a><a href="#h0-0-8" id="h0-0-8" class="i">+                        Ok(accs.into_iter().map(|acc| acc.aggregate()).chain(bucket).collect())
+</a>                     })),
+                 })
+             }
+<b>diff --git a/<a id="h1" href="../file/src/sql/types/expression.rs.html">src/sql/types/expression.rs</a> b/<a href="../file/src/sql/types/expression.rs.html">src/sql/types/expression.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -140,7 +140,7 @@ impl Expression {
+</a>                 expr =&gt; return Err(Error::Value(format!(&quot;Can&#39;t take the positive of {}&quot;, expr))),
+             },
+             Self::Divide(lhs, rhs) =&gt; match (lhs.evaluate(row)?, rhs.evaluate(row)?) {
+<a href="#h1-0-3" id="h1-0-3" class="d">-                (Integer(_), Integer(rhs)) if rhs == 0 =&gt; {
+</a><a href="#h1-0-4" id="h1-0-4" class="i">+                (Integer(_), Integer(0)) =&gt; {
+</a>                     return Err(Error::Value(&quot;Can&#39;t divide by zero&quot;.into()))
+                 }
+                 (Integer(lhs), Integer(rhs)) =&gt; Integer(lhs / rhs),
+<a href="#h1-1" id="h1-1" class="h">@@ -184,7 +184,7 @@ impl Expression {
+</a>             },
+             Self::Modulo(lhs, rhs) =&gt; match (lhs.evaluate(row)?, rhs.evaluate(row)?) {
+                 // This uses remainder semantics, like Postgres.
+<a href="#h1-1-3" id="h1-1-3" class="d">-                (Integer(_), Integer(rhs)) if rhs == 0 =&gt; {
+</a><a href="#h1-1-4" id="h1-1-4" class="i">+                (Integer(_), Integer(0)) =&gt; {
+</a>                     return Err(Error::Value(&quot;Can&#39;t divide by zero&quot;.into()))
+                 }
+                 (Integer(lhs), Integer(rhs)) =&gt; Integer(lhs % rhs),
+<b>diff --git a/<a id="h2" href="../file/src/storage/mvcc.rs.html">src/storage/mvcc.rs</a> b/<a href="../file/src/storage/mvcc.rs.html">src/storage/mvcc.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -1500,7 +1500,7 @@ pub mod tests {
+</a>         // Full scans at all timestamps.
+         for version in 1..5 {
+             let txn = match version {
+<a href="#h2-0-3" id="h2-0-3" class="d">-                v if v == 5 =&gt; mvcc.begin_read_only()?,
+</a><a href="#h2-0-4" id="h2-0-4" class="i">+                5 =&gt; mvcc.begin_read_only()?,
+</a>                 v =&gt; mvcc.begin_as_of(v)?,
+             };
+             let mut scan = txn.scan(..)?; // see golden master
+<a href="#h2-1" id="h2-1" class="h">@@ -1555,7 +1555,7 @@ pub mod tests {
+</a>         // Full scans at all timestamps.
+         for version in 1..5 {
+             let txn = match version {
+<a href="#h2-1-3" id="h2-1-3" class="d">-                v if v == 5 =&gt; mvcc.begin_read_only()?,
+</a><a href="#h2-1-4" id="h2-1-4" class="i">+                5 =&gt; mvcc.begin_read_only()?,
+</a>                 v =&gt; mvcc.begin_as_of(v)?,
+             };
+             let mut scan = txn.scan_prefix(&amp;[])?; // see golden master
+<b>diff --git a/<a id="h3" href="../file/tests/client/pool.rs.html">tests/client/pool.rs</a> b/<a href="../file/tests/client/pool.rs.html">tests/client/pool.rs</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -24,7 +24,7 @@ async fn get() -&gt; Result&lt;()&gt; {
+</a> 
+     let mut servers = HashSet::new();
+     let mut ids = HashSet::new();
+<a href="#h3-0-3" id="h3-0-3" class="d">-    for client in vec![a, b, c, d, e] {
+</a><a href="#h3-0-4" id="h3-0-4" class="i">+    for client in [a, b, c, d, e] {
+</a>         servers.insert(client.status().await?.raft.server);
+         ids.insert(client.id());
+     }
+</pre>
+</div>
+</body>
+</html>

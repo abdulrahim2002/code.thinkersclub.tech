@@ -1,0 +1,565 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>sql: minor planner cleanups - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/3cb64d998a56b505a115dc983c170316fa19462c.html">3cb64d998a56b505a115dc983c170316fa19462c</a>
+<b>parent</b> <a href="../commit/d699d221b1a22da38585e9909b679d42f39deaff.html">d699d221b1a22da38585e9909b679d42f39deaff</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Sat, 30 May 2020 19:23:06 +0200
+
+sql: minor planner cleanups
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/sql/execution/mod.rs</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/sql/parser/ast.rs</a></td><td> | </td><td class="num">45</td><td><span class="i">++++++++++++++++++++++++++</span><span class="d">-------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/sql/parser/mod.rs</a></td><td> | </td><td class="num">4</td><td><span class="i">++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">src/sql/plan/mod.rs</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h4">src/sql/plan/planner.rs</a></td><td> | </td><td class="num">214</td><td><span class="i">++++++++++++++++++++++++++++++++++++++++++</span><span class="d">-------------------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h5">tests/sql/expression.rs</a></td><td> | </td><td class="num">8</td><td><span class="i">++++</span><span class="d">----</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h6">tests/sql/query/limit_boolean</a></td><td> | </td><td class="num">4</td><td><span class="i">++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h7">tests/sql/query/limit_float</a></td><td> | </td><td class="num">4</td><td><span class="i">++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h8">tests/sql/query/limit_neg</a></td><td> | </td><td class="num">4</td><td><span class="i">++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h9">tests/sql/query/limit_null</a></td><td> | </td><td class="num">4</td><td><span class="i">++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h10">tests/sql/query/limit_string</a></td><td> | </td><td class="num">4</td><td><span class="i">++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h11">tests/sql/query/offset_boolean</a></td><td> | </td><td class="num">4</td><td><span class="i">++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h12">tests/sql/query/offset_float</a></td><td> | </td><td class="num">4</td><td><span class="i">++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h13">tests/sql/query/offset_neg</a></td><td> | </td><td class="num">4</td><td><span class="i">++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h14">tests/sql/query/offset_null</a></td><td> | </td><td class="num">4</td><td><span class="i">++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h15">tests/sql/query/offset_string</a></td><td> | </td><td class="num">4</td><td><span class="i">++</span><span class="d">--</span></td></tr>
+</table></pre><pre>16 files changed, 167 insertions(+), 148 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/sql/execution/mod.rs.html">src/sql/execution/mod.rs</a> b/<a href="../file/src/sql/execution/mod.rs.html">src/sql/execution/mod.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -55,7 +55,7 @@ impl&lt;T: Transaction + &#39;static&gt; dyn Executor&lt;T&gt; {
+</a>             }
+             Node::CreateTable { schema } =&gt; CreateTable::new(schema),
+             Node::Delete { table, source } =&gt; Delete::new(table, Self::build(*source)),
+<a href="#h0-0-3" id="h0-0-3" class="d">-            Node::DropTable { name } =&gt; DropTable::new(name),
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+            Node::DropTable { table } =&gt; DropTable::new(table),
+</a>             Node::Filter { source, predicate } =&gt; Filter::new(Self::build(*source), predicate),
+             Node::IndexLookup { table, alias, column, keys } =&gt; {
+                 IndexLookup::new(table, alias, column, keys)
+<b>diff --git a/<a id="h1" href="../file/src/sql/parser/ast.rs.html">src/sql/parser/ast.rs</a> b/<a href="../file/src/sql/parser/ast.rs.html">src/sql/parser/ast.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -8,23 +8,35 @@ use std::mem::replace;
+</a> #[derive(Clone, Debug, PartialEq)]
+ #[allow(clippy::large_enum_variant)]
+ pub enum Statement {
+<a href="#h1-0-3" id="h1-0-3" class="d">-    /// A BEGIN statement
+</a><a href="#h1-0-4" id="h1-0-4" class="d">-    Begin { readonly: bool, version: Option&lt;u64&gt; },
+</a><a href="#h1-0-5" id="h1-0-5" class="d">-    /// A COMMIT statement
+</a><a href="#h1-0-6" id="h1-0-6" class="i">+    Begin {
+</a><a href="#h1-0-7" id="h1-0-7" class="i">+        readonly: bool,
+</a><a href="#h1-0-8" id="h1-0-8" class="i">+        version: Option&lt;u64&gt;,
+</a><a href="#h1-0-9" id="h1-0-9" class="i">+    },
+</a>     Commit,
+<a href="#h1-0-11" id="h1-0-11" class="d">-    /// A ROLLBACK statement
+</a>     Rollback,
+<a href="#h1-0-13" id="h1-0-13" class="i">+    Explain(Box&lt;Statement&gt;),
+</a> 
+<a href="#h1-0-15" id="h1-0-15" class="d">-    /// A CREATE TABLE statement
+</a><a href="#h1-0-16" id="h1-0-16" class="d">-    CreateTable { name: String, columns: Vec&lt;ColumnSpec&gt; },
+</a><a href="#h1-0-17" id="h1-0-17" class="d">-    /// A DROP TABLE statement
+</a><a href="#h1-0-18" id="h1-0-18" class="i">+    CreateTable {
+</a><a href="#h1-0-19" id="h1-0-19" class="i">+        name: String,
+</a><a href="#h1-0-20" id="h1-0-20" class="i">+        columns: Vec&lt;Column&gt;,
+</a><a href="#h1-0-21" id="h1-0-21" class="i">+    },
+</a>     DropTable(String),
+ 
+<a href="#h1-0-24" id="h1-0-24" class="d">-    /// A DELETE statement
+</a><a href="#h1-0-25" id="h1-0-25" class="d">-    Delete { table: String, r#where: Option&lt;WhereClause&gt; },
+</a><a href="#h1-0-26" id="h1-0-26" class="d">-    /// An INSERT statement
+</a><a href="#h1-0-27" id="h1-0-27" class="d">-    Insert { table: String, columns: Option&lt;Vec&lt;String&gt;&gt;, values: Vec&lt;Expressions&gt; },
+</a><a href="#h1-0-28" id="h1-0-28" class="d">-    /// A SELECT statement
+</a><a href="#h1-0-29" id="h1-0-29" class="i">+    Delete {
+</a><a href="#h1-0-30" id="h1-0-30" class="i">+        table: String,
+</a><a href="#h1-0-31" id="h1-0-31" class="i">+        r#where: Option&lt;WhereClause&gt;,
+</a><a href="#h1-0-32" id="h1-0-32" class="i">+    },
+</a><a href="#h1-0-33" id="h1-0-33" class="i">+    Insert {
+</a><a href="#h1-0-34" id="h1-0-34" class="i">+        table: String,
+</a><a href="#h1-0-35" id="h1-0-35" class="i">+        columns: Option&lt;Vec&lt;String&gt;&gt;,
+</a><a href="#h1-0-36" id="h1-0-36" class="i">+        values: Vec&lt;Expressions&gt;,
+</a><a href="#h1-0-37" id="h1-0-37" class="i">+    },
+</a><a href="#h1-0-38" id="h1-0-38" class="i">+    Update {
+</a><a href="#h1-0-39" id="h1-0-39" class="i">+        table: String,
+</a><a href="#h1-0-40" id="h1-0-40" class="i">+        set: BTreeMap&lt;String, Expression&gt;,
+</a><a href="#h1-0-41" id="h1-0-41" class="i">+        r#where: Option&lt;WhereClause&gt;,
+</a><a href="#h1-0-42" id="h1-0-42" class="i">+    },
+</a><a href="#h1-0-43" id="h1-0-43" class="i">+
+</a>     Select {
+         select: SelectClause,
+         from: Option&lt;FromClause&gt;,
+<a href="#h1-1" id="h1-1" class="h">@@ -35,16 +47,11 @@ pub enum Statement {
+</a>         limit: Option&lt;Expression&gt;,
+         offset: Option&lt;Expression&gt;,
+     },
+<a href="#h1-1-3" id="h1-1-3" class="d">-    /// An UPDATE statement
+</a><a href="#h1-1-4" id="h1-1-4" class="d">-    Update { table: String, set: BTreeMap&lt;String, Expression&gt;, r#where: Option&lt;WhereClause&gt; },
+</a><a href="#h1-1-5" id="h1-1-5" class="d">-
+</a><a href="#h1-1-6" id="h1-1-6" class="d">-    /// An EXPLAIN statement
+</a><a href="#h1-1-7" id="h1-1-7" class="d">-    Explain(Box&lt;Statement&gt;),
+</a> }
+ 
+<a href="#h1-1-10" id="h1-1-10" class="d">-/// A column specification
+</a><a href="#h1-1-11" id="h1-1-11" class="i">+/// A column
+</a> #[derive(Clone, Debug, PartialEq)]
+<a href="#h1-1-13" id="h1-1-13" class="d">-pub struct ColumnSpec {
+</a><a href="#h1-1-14" id="h1-1-14" class="i">+pub struct Column {
+</a>     pub name: String,
+     pub datatype: DataType,
+     pub primary_key: bool,
+<b>diff --git a/<a id="h2" href="../file/src/sql/parser/mod.rs.html">src/sql/parser/mod.rs</a> b/<a href="../file/src/sql/parser/mod.rs.html">src/sql/parser/mod.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -159,8 +159,8 @@ impl&lt;&#39;a&gt; Parser&lt;&#39;a&gt; {
+</a>     }
+ 
+     /// Parses a column specification
+<a href="#h2-0-3" id="h2-0-3" class="d">-    fn parse_ddl_columnspec(&amp;mut self) -&gt; Result&lt;ast::ColumnSpec&gt; {
+</a><a href="#h2-0-4" id="h2-0-4" class="d">-        let mut column = ast::ColumnSpec {
+</a><a href="#h2-0-5" id="h2-0-5" class="i">+    fn parse_ddl_columnspec(&amp;mut self) -&gt; Result&lt;ast::Column&gt; {
+</a><a href="#h2-0-6" id="h2-0-6" class="i">+        let mut column = ast::Column {
+</a>             name: self.next_ident()?,
+             datatype: match self.next()? {
+                 Token::Keyword(Keyword::Bool) =&gt; DataType::Boolean,
+<b>diff --git a/<a id="h3" href="../file/src/sql/plan/mod.rs.html">src/sql/plan/mod.rs</a> b/<a href="../file/src/sql/plan/mod.rs.html">src/sql/plan/mod.rs</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -53,7 +53,7 @@ pub enum Node {
+</a>         source: Box&lt;Node&gt;,
+     },
+     DropTable {
+<a href="#h3-0-3" id="h3-0-3" class="d">-        name: String,
+</a><a href="#h3-0-4" id="h3-0-4" class="i">+        table: String,
+</a>     },
+     Filter {
+         source: Box&lt;Node&gt;,
+<b>diff --git a/<a id="h4" href="../file/src/sql/plan/planner.rs.html">src/sql/plan/planner.rs</a> b/<a href="../file/src/sql/plan/planner.rs.html">src/sql/plan/planner.rs</a></b>
+<a href="#h4-0" id="h4-0" class="h">@@ -7,26 +7,26 @@ use crate::error::{Error, Result};
+</a> use std::collections::{HashMap, HashSet};
+ use std::mem::replace;
+ 
+<a href="#h4-0-3" id="h4-0-3" class="d">-/// The plan builder
+</a><a href="#h4-0-4" id="h4-0-4" class="i">+/// A query plan builder.
+</a> pub struct Planner&lt;&#39;a&gt; {
+     catalog: &amp;&#39;a mut dyn Catalog,
+ }
+ 
+ impl&lt;&#39;a&gt; Planner&lt;&#39;a&gt; {
+<a href="#h4-0-10" id="h4-0-10" class="d">-    /// Creates a new planner
+</a><a href="#h4-0-11" id="h4-0-11" class="i">+    /// Creates a new planner.
+</a>     pub fn new(catalog: &amp;&#39;a mut dyn Catalog) -&gt; Self {
+         Self { catalog }
+     }
+ 
+<a href="#h4-0-16" id="h4-0-16" class="d">-    /// Builds a plan tree for an AST statement
+</a><a href="#h4-0-17" id="h4-0-17" class="i">+    /// Builds a plan for an AST statement.
+</a>     pub fn build(&amp;mut self, statement: ast::Statement) -&gt; Result&lt;Plan&gt; {
+         Ok(Plan(self.build_statement(statement)?))
+     }
+ 
+<a href="#h4-0-22" id="h4-0-22" class="d">-    /// Builds a plan node for a statement
+</a><a href="#h4-0-23" id="h4-0-23" class="i">+    /// Builds a plan node for a statement.
+</a>     fn build_statement(&amp;mut self, statement: ast::Statement) -&gt; Result&lt;Node&gt; {
+         Ok(match statement {
+<a href="#h4-0-26" id="h4-0-26" class="d">-            // Transaction control and explain statements should be handled by session.
+</a><a href="#h4-0-27" id="h4-0-27" class="i">+            // Transaction control and explain statements should have been handled by session.
+</a>             ast::Statement::Begin { .. } | ast::Statement::Commit | ast::Statement::Rollback =&gt; {
+                 return Err(Error::Internal(format!(
+                     &quot;Unexpected transaction statement {:?}&quot;,
+<a href="#h4-1" id="h4-1" class="h">@@ -38,7 +38,7 @@ impl&lt;&#39;a&gt; Planner&lt;&#39;a&gt; {
+</a>                 return Err(Error::Internal(&quot;Unexpected explain statement&quot;.into()))
+             }
+ 
+<a href="#h4-1-3" id="h4-1-3" class="d">-            // Data definition language.
+</a><a href="#h4-1-4" id="h4-1-4" class="i">+            // DDL statements (schema changes).
+</a>             ast::Statement::CreateTable { name, columns } =&gt; Node::CreateTable {
+                 schema: Table::new(
+                     name,
+<a href="#h4-2" id="h4-2" class="h">@@ -47,9 +47,7 @@ impl&lt;&#39;a&gt; Planner&lt;&#39;a&gt; {
+</a>                         .map(|c| {
+                             let nullable = c.nullable.unwrap_or(!c.primary_key);
+                             let default = match c.default {
+<a href="#h4-2-3" id="h4-2-3" class="d">-                                Some(expr) =&gt; {
+</a><a href="#h4-2-4" id="h4-2-4" class="d">-                                    Some(self.build_expression_constant(expr)?.evaluate(None)?)
+</a><a href="#h4-2-5" id="h4-2-5" class="d">-                                }
+</a><a href="#h4-2-6" id="h4-2-6" class="i">+                                Some(expr) =&gt; Some(self.evaluate_constant(expr)?),
+</a>                                 None if nullable =&gt; Some(Value::Null),
+                                 None =&gt; None,
+                             };
+<a href="#h4-3" id="h4-3" class="h">@@ -68,10 +66,9 @@ impl&lt;&#39;a&gt; Planner&lt;&#39;a&gt; {
+</a>                 )?,
+             },
+ 
+<a href="#h4-3-3" id="h4-3-3" class="d">-            ast::Statement::DropTable(name) =&gt; Node::DropTable { name },
+</a><a href="#h4-3-4" id="h4-3-4" class="i">+            ast::Statement::DropTable(table) =&gt; Node::DropTable { table },
+</a> 
+             // Data modification language.
+<a href="#h4-3-7" id="h4-3-7" class="d">-            // FIXME Delete and update should handle aliases in the same way as select
+</a>             ast::Statement::Delete { table, r#where } =&gt; {
+                 let scope = &amp;mut Scope::from_table(self.catalog.must_read_table(&amp;table)?)?;
+                 Node::Delete {
+<a href="#h4-4" id="h4-4" class="h">@@ -218,12 +215,10 @@ impl&lt;&#39;a&gt; Planner&lt;&#39;a&gt; {
+</a>                 if let Some(expr) = offset {
+                     node = Node::Offset {
+                         source: Box::new(node),
+<a href="#h4-4-3" id="h4-4-3" class="d">-                        offset: match self.build_expression_constant(expr)?.evaluate(None)? {
+</a><a href="#h4-4-4" id="h4-4-4" class="d">-                            Value::Integer(i) if i &gt;= 0 =&gt; i as u64,
+</a><a href="#h4-4-5" id="h4-4-5" class="d">-                            v =&gt; {
+</a><a href="#h4-4-6" id="h4-4-6" class="d">-                                return Err(Error::Value(format!(&quot;Invalid value {} for offset&quot;, v)))
+</a><a href="#h4-4-7" id="h4-4-7" class="d">-                            }
+</a><a href="#h4-4-8" id="h4-4-8" class="d">-                        },
+</a><a href="#h4-4-9" id="h4-4-9" class="i">+                        offset: match self.evaluate_constant(expr)? {
+</a><a href="#h4-4-10" id="h4-4-10" class="i">+                            Value::Integer(i) if i &gt;= 0 =&gt; Ok(i as u64),
+</a><a href="#h4-4-11" id="h4-4-11" class="i">+                            v =&gt; Err(Error::Value(format!(&quot;Invalid offset {}&quot;, v))),
+</a><a href="#h4-4-12" id="h4-4-12" class="i">+                        }?,
+</a>                     }
+                 }
+ 
+<a href="#h4-5" id="h4-5" class="h">@@ -231,12 +226,10 @@ impl&lt;&#39;a&gt; Planner&lt;&#39;a&gt; {
+</a>                 if let Some(expr) = limit {
+                     node = Node::Limit {
+                         source: Box::new(node),
+<a href="#h4-5-3" id="h4-5-3" class="d">-                        limit: match self.build_expression_constant(expr)?.evaluate(None)? {
+</a><a href="#h4-5-4" id="h4-5-4" class="d">-                            Value::Integer(i) if i &gt;= 0 =&gt; i as u64,
+</a><a href="#h4-5-5" id="h4-5-5" class="d">-                            v =&gt; {
+</a><a href="#h4-5-6" id="h4-5-6" class="d">-                                return Err(Error::Value(format!(&quot;Invalid value {} for limit&quot;, v)))
+</a><a href="#h4-5-7" id="h4-5-7" class="d">-                            }
+</a><a href="#h4-5-8" id="h4-5-8" class="d">-                        },
+</a><a href="#h4-5-9" id="h4-5-9" class="i">+                        limit: match self.evaluate_constant(expr)? {
+</a><a href="#h4-5-10" id="h4-5-10" class="i">+                            Value::Integer(i) if i &gt;= 0 =&gt; Ok(i as u64),
+</a><a href="#h4-5-11" id="h4-5-11" class="i">+                            v =&gt; Err(Error::Value(format!(&quot;Invalid limit {}&quot;, v))),
+</a><a href="#h4-5-12" id="h4-5-12" class="i">+                        }?,
+</a>                     }
+                 }
+                 node
+<a href="#h4-6" id="h4-6" class="h">@@ -333,21 +326,6 @@ impl&lt;&#39;a&gt; Planner&lt;&#39;a&gt; {
+</a>         Ok(node)
+     }
+ 
+<a href="#h4-6-3" id="h4-6-3" class="d">-    /// Builds an expression from an AST expression
+</a><a href="#h4-6-4" id="h4-6-4" class="d">-    fn build_expression(&amp;self, scope: &amp;mut Scope, expr: ast::Expression) -&gt; Result&lt;Expression&gt; {
+</a><a href="#h4-6-5" id="h4-6-5" class="d">-        ExpressionBuilder::build(scope, expr)
+</a><a href="#h4-6-6" id="h4-6-6" class="d">-    }
+</a><a href="#h4-6-7" id="h4-6-7" class="d">-
+</a><a href="#h4-6-8" id="h4-6-8" class="d">-    /// Build a constant expression from an AST expression
+</a><a href="#h4-6-9" id="h4-6-9" class="d">-    fn build_expression_constant(&amp;self, expr: ast::Expression) -&gt; Result&lt;Expression&gt; {
+</a><a href="#h4-6-10" id="h4-6-10" class="d">-        ExpressionBuilder::build_constant(expr)
+</a><a href="#h4-6-11" id="h4-6-11" class="d">-    }
+</a><a href="#h4-6-12" id="h4-6-12" class="d">-
+</a><a href="#h4-6-13" id="h4-6-13" class="d">-    /// Builds expressions from AST expressions
+</a><a href="#h4-6-14" id="h4-6-14" class="d">-    fn build_expressions(&amp;self, scope: &amp;mut Scope, exprs: ast::Expressions) -&gt; Result&lt;Expressions&gt; {
+</a><a href="#h4-6-15" id="h4-6-15" class="d">-        ExpressionBuilder::build_many(scope, exprs)
+</a><a href="#h4-6-16" id="h4-6-16" class="d">-    }
+</a><a href="#h4-6-17" id="h4-6-17" class="d">-
+</a>     /// Extracts aggregate functions from an AST expression tree. This finds the aggregate
+     /// function calls, replaces them with ast::Expression::Column(i), maps the aggregate functions
+     /// to aggregates, and returns them along with their argument expressions.
+<a href="#h4-7" id="h4-7" class="h">@@ -451,35 +429,11 @@ impl&lt;&#39;a&gt; Planner&lt;&#39;a&gt; {
+</a>             _ =&gt; false,
+         })
+     }
+<a href="#h4-7-3" id="h4-7-3" class="d">-}
+</a><a href="#h4-7-4" id="h4-7-4" class="d">-
+</a><a href="#h4-7-5" id="h4-7-5" class="d">-/// Builds expressions.
+</a><a href="#h4-7-6" id="h4-7-6" class="d">-struct ExpressionBuilder&lt;&#39;a&gt; {
+</a><a href="#h4-7-7" id="h4-7-7" class="d">-    // Variable scope
+</a><a href="#h4-7-8" id="h4-7-8" class="d">-    scope: &amp;&#39;a Scope,
+</a><a href="#h4-7-9" id="h4-7-9" class="d">-}
+</a><a href="#h4-7-10" id="h4-7-10" class="d">-
+</a><a href="#h4-7-11" id="h4-7-11" class="d">-impl&lt;&#39;a&gt; ExpressionBuilder&lt;&#39;a&gt; {
+</a><a href="#h4-7-12" id="h4-7-12" class="d">-    /// Builds a single expression.
+</a><a href="#h4-7-13" id="h4-7-13" class="d">-    fn build(scope: &amp;&#39;a Scope, expr: ast::Expression) -&gt; Result&lt;Expression&gt; {
+</a><a href="#h4-7-14" id="h4-7-14" class="d">-        Ok(*ExpressionBuilder { scope }.make(Box::new(expr))?)
+</a><a href="#h4-7-15" id="h4-7-15" class="d">-    }
+</a><a href="#h4-7-16" id="h4-7-16" class="d">-
+</a><a href="#h4-7-17" id="h4-7-17" class="d">-    /// Builds a single expression, errors if it&#39;s not constant (i.e. has field reference).
+</a><a href="#h4-7-18" id="h4-7-18" class="d">-    fn build_constant(expr: ast::Expression) -&gt; Result&lt;Expression&gt; {
+</a><a href="#h4-7-19" id="h4-7-19" class="d">-        Ok(*ExpressionBuilder { scope: &amp;mut Scope::constant() }.make(Box::new(expr))?)
+</a><a href="#h4-7-20" id="h4-7-20" class="d">-    }
+</a> 
+<a href="#h4-7-22" id="h4-7-22" class="d">-    /// Builds multiple expressions.
+</a><a href="#h4-7-23" id="h4-7-23" class="d">-    fn build_many(scope: &amp;&#39;a Scope, exprs: ast::Expressions) -&gt; Result&lt;Expressions&gt; {
+</a><a href="#h4-7-24" id="h4-7-24" class="d">-        exprs.into_iter().map(|e| Self::build(scope, e)).collect()
+</a><a href="#h4-7-25" id="h4-7-25" class="d">-    }
+</a><a href="#h4-7-26" id="h4-7-26" class="d">-
+</a><a href="#h4-7-27" id="h4-7-27" class="d">-    /// Used internally, with more convenient signature.
+</a><a href="#h4-7-28" id="h4-7-28" class="d">-    #[allow(clippy::boxed_local)]
+</a><a href="#h4-7-29" id="h4-7-29" class="d">-    fn make(&amp;mut self, expr: Box&lt;ast::Expression&gt;) -&gt; Result&lt;Box&lt;Expression&gt;&gt; {
+</a><a href="#h4-7-30" id="h4-7-30" class="i">+    /// Builds an expression from an AST expression
+</a><a href="#h4-7-31" id="h4-7-31" class="i">+    fn build_expression(&amp;self, scope: &amp;mut Scope, expr: ast::Expression) -&gt; Result&lt;Expression&gt; {
+</a>         use Expression::*;
+<a href="#h4-7-33" id="h4-7-33" class="d">-        Ok(Box::new(match *expr {
+</a><a href="#h4-7-34" id="h4-7-34" class="i">+        Ok(match expr {
+</a>             ast::Expression::Literal(l) =&gt; Constant(match l {
+                 ast::Literal::Null =&gt; Value::Null,
+                 ast::Literal::Boolean(b) =&gt; Value::Boolean(b),
+<a href="#h4-8" id="h4-8" class="h">@@ -487,57 +441,115 @@ impl&lt;&#39;a&gt; ExpressionBuilder&lt;&#39;a&gt; {
+</a>                 ast::Literal::Float(f) =&gt; Value::Float(f),
+                 ast::Literal::String(s) =&gt; Value::String(s),
+             }),
+<a href="#h4-8-3" id="h4-8-3" class="d">-            ast::Expression::Column(i) =&gt; Field(self.scope.assert(i)?, None),
+</a><a href="#h4-8-4" id="h4-8-4" class="i">+            ast::Expression::Column(i) =&gt; Field(scope.assert(i)?, None),
+</a>             ast::Expression::Field(table, name) =&gt; {
+<a href="#h4-8-6" id="h4-8-6" class="d">-                Field(self.scope.resolve(table.as_deref(), &amp;name)?, Some((table, name)))
+</a><a href="#h4-8-7" id="h4-8-7" class="i">+                Field(scope.resolve(table.as_deref(), &amp;name)?, Some((table, name)))
+</a>             }
+<a href="#h4-8-9" id="h4-8-9" class="d">-            ast::Expression::Function(name, args) =&gt; {
+</a><a href="#h4-8-10" id="h4-8-10" class="d">-                return Err(Error::Value(format!(
+</a><a href="#h4-8-11" id="h4-8-11" class="d">-                    &quot;Unknown function {} with {} arguments&quot;,
+</a><a href="#h4-8-12" id="h4-8-12" class="d">-                    name,
+</a><a href="#h4-8-13" id="h4-8-13" class="d">-                    args.len()
+</a><a href="#h4-8-14" id="h4-8-14" class="d">-                )))
+</a><a href="#h4-8-15" id="h4-8-15" class="i">+            ast::Expression::Function(name, _) =&gt; {
+</a><a href="#h4-8-16" id="h4-8-16" class="i">+                return Err(Error::Value(format!(&quot;Unknown function {}&quot;, name,)))
+</a>             }
+             ast::Expression::Operation(op) =&gt; match op {
+                 // Logical operators
+<a href="#h4-8-20" id="h4-8-20" class="d">-                ast::Operation::And(lhs, rhs) =&gt; And(self.make(lhs)?, self.make(rhs)?),
+</a><a href="#h4-8-21" id="h4-8-21" class="d">-                ast::Operation::Not(expr) =&gt; Not(self.make(expr)?),
+</a><a href="#h4-8-22" id="h4-8-22" class="d">-                ast::Operation::Or(lhs, rhs) =&gt; Or(self.make(lhs)?, self.make(rhs)?),
+</a><a href="#h4-8-23" id="h4-8-23" class="i">+                ast::Operation::And(lhs, rhs) =&gt; And(
+</a><a href="#h4-8-24" id="h4-8-24" class="i">+                    self.build_expression(scope, *lhs)?.into(),
+</a><a href="#h4-8-25" id="h4-8-25" class="i">+                    self.build_expression(scope, *rhs)?.into(),
+</a><a href="#h4-8-26" id="h4-8-26" class="i">+                ),
+</a><a href="#h4-8-27" id="h4-8-27" class="i">+                ast::Operation::Not(expr) =&gt; Not(self.build_expression(scope, *expr)?.into()),
+</a><a href="#h4-8-28" id="h4-8-28" class="i">+                ast::Operation::Or(lhs, rhs) =&gt; Or(
+</a><a href="#h4-8-29" id="h4-8-29" class="i">+                    self.build_expression(scope, *lhs)?.into(),
+</a><a href="#h4-8-30" id="h4-8-30" class="i">+                    self.build_expression(scope, *rhs)?.into(),
+</a><a href="#h4-8-31" id="h4-8-31" class="i">+                ),
+</a> 
+                 // Comparison operators
+<a href="#h4-8-34" id="h4-8-34" class="d">-                ast::Operation::Equal(lhs, rhs) =&gt; Equal(self.make(lhs)?, self.make(rhs)?),
+</a><a href="#h4-8-35" id="h4-8-35" class="d">-                ast::Operation::GreaterThan(lhs, rhs) =&gt; {
+</a><a href="#h4-8-36" id="h4-8-36" class="d">-                    GreaterThan(self.make(lhs)?, self.make(rhs)?)
+</a><a href="#h4-8-37" id="h4-8-37" class="d">-                }
+</a><a href="#h4-8-38" id="h4-8-38" class="i">+                ast::Operation::Equal(lhs, rhs) =&gt; Equal(
+</a><a href="#h4-8-39" id="h4-8-39" class="i">+                    self.build_expression(scope, *lhs)?.into(),
+</a><a href="#h4-8-40" id="h4-8-40" class="i">+                    self.build_expression(scope, *rhs)?.into(),
+</a><a href="#h4-8-41" id="h4-8-41" class="i">+                ),
+</a><a href="#h4-8-42" id="h4-8-42" class="i">+                ast::Operation::GreaterThan(lhs, rhs) =&gt; GreaterThan(
+</a><a href="#h4-8-43" id="h4-8-43" class="i">+                    self.build_expression(scope, *lhs)?.into(),
+</a><a href="#h4-8-44" id="h4-8-44" class="i">+                    self.build_expression(scope, *rhs)?.into(),
+</a><a href="#h4-8-45" id="h4-8-45" class="i">+                ),
+</a>                 ast::Operation::GreaterThanOrEqual(lhs, rhs) =&gt; Or(
+<a href="#h4-8-47" id="h4-8-47" class="d">-                    GreaterThan(self.make(lhs.clone())?, self.make(rhs.clone())?).into(),
+</a><a href="#h4-8-48" id="h4-8-48" class="d">-                    Equal(self.make(lhs)?, self.make(rhs)?).into(),
+</a><a href="#h4-8-49" id="h4-8-49" class="i">+                    GreaterThan(
+</a><a href="#h4-8-50" id="h4-8-50" class="i">+                        self.build_expression(scope, *lhs.clone())?.into(),
+</a><a href="#h4-8-51" id="h4-8-51" class="i">+                        self.build_expression(scope, *rhs.clone())?.into(),
+</a><a href="#h4-8-52" id="h4-8-52" class="i">+                    )
+</a><a href="#h4-8-53" id="h4-8-53" class="i">+                    .into(),
+</a><a href="#h4-8-54" id="h4-8-54" class="i">+                    Equal(
+</a><a href="#h4-8-55" id="h4-8-55" class="i">+                        self.build_expression(scope, *lhs)?.into(),
+</a><a href="#h4-8-56" id="h4-8-56" class="i">+                        self.build_expression(scope, *rhs)?.into(),
+</a><a href="#h4-8-57" id="h4-8-57" class="i">+                    )
+</a><a href="#h4-8-58" id="h4-8-58" class="i">+                    .into(),
+</a><a href="#h4-8-59" id="h4-8-59" class="i">+                ),
+</a><a href="#h4-8-60" id="h4-8-60" class="i">+                ast::Operation::IsNull(expr) =&gt; IsNull(self.build_expression(scope, *expr)?.into()),
+</a><a href="#h4-8-61" id="h4-8-61" class="i">+                ast::Operation::LessThan(lhs, rhs) =&gt; LessThan(
+</a><a href="#h4-8-62" id="h4-8-62" class="i">+                    self.build_expression(scope, *lhs)?.into(),
+</a><a href="#h4-8-63" id="h4-8-63" class="i">+                    self.build_expression(scope, *rhs)?.into(),
+</a>                 ),
+<a href="#h4-8-65" id="h4-8-65" class="d">-                ast::Operation::IsNull(expr) =&gt; IsNull(self.make(expr)?),
+</a><a href="#h4-8-66" id="h4-8-66" class="d">-                ast::Operation::LessThan(lhs, rhs) =&gt; LessThan(self.make(lhs)?, self.make(rhs)?),
+</a>                 ast::Operation::LessThanOrEqual(lhs, rhs) =&gt; Or(
+<a href="#h4-8-68" id="h4-8-68" class="d">-                    LessThan(self.make(lhs.clone())?, self.make(rhs.clone())?).into(),
+</a><a href="#h4-8-69" id="h4-8-69" class="d">-                    Equal(self.make(lhs)?, self.make(rhs)?).into(),
+</a><a href="#h4-8-70" id="h4-8-70" class="i">+                    LessThan(
+</a><a href="#h4-8-71" id="h4-8-71" class="i">+                        self.build_expression(scope, *lhs.clone())?.into(),
+</a><a href="#h4-8-72" id="h4-8-72" class="i">+                        self.build_expression(scope, *rhs.clone())?.into(),
+</a><a href="#h4-8-73" id="h4-8-73" class="i">+                    )
+</a><a href="#h4-8-74" id="h4-8-74" class="i">+                    .into(),
+</a><a href="#h4-8-75" id="h4-8-75" class="i">+                    Equal(
+</a><a href="#h4-8-76" id="h4-8-76" class="i">+                        self.build_expression(scope, *lhs)?.into(),
+</a><a href="#h4-8-77" id="h4-8-77" class="i">+                        self.build_expression(scope, *rhs)?.into(),
+</a><a href="#h4-8-78" id="h4-8-78" class="i">+                    )
+</a><a href="#h4-8-79" id="h4-8-79" class="i">+                    .into(),
+</a>                 ),
+<a href="#h4-8-81" id="h4-8-81" class="d">-                ast::Operation::Like(lhs, rhs) =&gt; Like(self.make(lhs)?, self.make(rhs)?),
+</a><a href="#h4-8-82" id="h4-8-82" class="d">-                ast::Operation::NotEqual(lhs, rhs) =&gt; {
+</a><a href="#h4-8-83" id="h4-8-83" class="d">-                    Not(Equal(self.make(lhs)?, self.make(rhs)?).into())
+</a><a href="#h4-8-84" id="h4-8-84" class="d">-                }
+</a><a href="#h4-8-85" id="h4-8-85" class="i">+                ast::Operation::Like(lhs, rhs) =&gt; Like(
+</a><a href="#h4-8-86" id="h4-8-86" class="i">+                    self.build_expression(scope, *lhs)?.into(),
+</a><a href="#h4-8-87" id="h4-8-87" class="i">+                    self.build_expression(scope, *rhs)?.into(),
+</a><a href="#h4-8-88" id="h4-8-88" class="i">+                ),
+</a><a href="#h4-8-89" id="h4-8-89" class="i">+                ast::Operation::NotEqual(lhs, rhs) =&gt; Not(Equal(
+</a><a href="#h4-8-90" id="h4-8-90" class="i">+                    self.build_expression(scope, *lhs)?.into(),
+</a><a href="#h4-8-91" id="h4-8-91" class="i">+                    self.build_expression(scope, *rhs)?.into(),
+</a><a href="#h4-8-92" id="h4-8-92" class="i">+                )
+</a><a href="#h4-8-93" id="h4-8-93" class="i">+                .into()),
+</a> 
+                 // Mathematical operators
+<a href="#h4-8-96" id="h4-8-96" class="d">-                ast::Operation::Assert(expr) =&gt; Assert(self.make(expr)?),
+</a><a href="#h4-8-97" id="h4-8-97" class="d">-                ast::Operation::Add(lhs, rhs) =&gt; Add(self.make(lhs)?, self.make(rhs)?),
+</a><a href="#h4-8-98" id="h4-8-98" class="d">-                ast::Operation::Divide(lhs, rhs) =&gt; Divide(self.make(lhs)?, self.make(rhs)?),
+</a><a href="#h4-8-99" id="h4-8-99" class="d">-                ast::Operation::Exponentiate(lhs, rhs) =&gt; {
+</a><a href="#h4-8-100" id="h4-8-100" class="d">-                    Exponentiate(self.make(lhs)?, self.make(rhs)?)
+</a><a href="#h4-8-101" id="h4-8-101" class="i">+                ast::Operation::Assert(expr) =&gt; Assert(self.build_expression(scope, *expr)?.into()),
+</a><a href="#h4-8-102" id="h4-8-102" class="i">+                ast::Operation::Add(lhs, rhs) =&gt; Add(
+</a><a href="#h4-8-103" id="h4-8-103" class="i">+                    self.build_expression(scope, *lhs)?.into(),
+</a><a href="#h4-8-104" id="h4-8-104" class="i">+                    self.build_expression(scope, *rhs)?.into(),
+</a><a href="#h4-8-105" id="h4-8-105" class="i">+                ),
+</a><a href="#h4-8-106" id="h4-8-106" class="i">+                ast::Operation::Divide(lhs, rhs) =&gt; Divide(
+</a><a href="#h4-8-107" id="h4-8-107" class="i">+                    self.build_expression(scope, *lhs)?.into(),
+</a><a href="#h4-8-108" id="h4-8-108" class="i">+                    self.build_expression(scope, *rhs)?.into(),
+</a><a href="#h4-8-109" id="h4-8-109" class="i">+                ),
+</a><a href="#h4-8-110" id="h4-8-110" class="i">+                ast::Operation::Exponentiate(lhs, rhs) =&gt; Exponentiate(
+</a><a href="#h4-8-111" id="h4-8-111" class="i">+                    self.build_expression(scope, *lhs)?.into(),
+</a><a href="#h4-8-112" id="h4-8-112" class="i">+                    self.build_expression(scope, *rhs)?.into(),
+</a><a href="#h4-8-113" id="h4-8-113" class="i">+                ),
+</a><a href="#h4-8-114" id="h4-8-114" class="i">+                ast::Operation::Factorial(expr) =&gt; {
+</a><a href="#h4-8-115" id="h4-8-115" class="i">+                    Factorial(self.build_expression(scope, *expr)?.into())
+</a>                 }
+<a href="#h4-8-117" id="h4-8-117" class="d">-                ast::Operation::Factorial(expr) =&gt; Factorial(self.make(expr)?),
+</a><a href="#h4-8-118" id="h4-8-118" class="d">-                ast::Operation::Modulo(lhs, rhs) =&gt; Modulo(self.make(lhs)?, self.make(rhs)?),
+</a><a href="#h4-8-119" id="h4-8-119" class="d">-                ast::Operation::Multiply(lhs, rhs) =&gt; Multiply(self.make(lhs)?, self.make(rhs)?),
+</a><a href="#h4-8-120" id="h4-8-120" class="d">-                ast::Operation::Negate(expr) =&gt; Negate(self.make(expr)?),
+</a><a href="#h4-8-121" id="h4-8-121" class="d">-                ast::Operation::Subtract(lhs, rhs) =&gt; Subtract(self.make(lhs)?, self.make(rhs)?),
+</a><a href="#h4-8-122" id="h4-8-122" class="i">+                ast::Operation::Modulo(lhs, rhs) =&gt; Modulo(
+</a><a href="#h4-8-123" id="h4-8-123" class="i">+                    self.build_expression(scope, *lhs)?.into(),
+</a><a href="#h4-8-124" id="h4-8-124" class="i">+                    self.build_expression(scope, *rhs)?.into(),
+</a><a href="#h4-8-125" id="h4-8-125" class="i">+                ),
+</a><a href="#h4-8-126" id="h4-8-126" class="i">+                ast::Operation::Multiply(lhs, rhs) =&gt; Multiply(
+</a><a href="#h4-8-127" id="h4-8-127" class="i">+                    self.build_expression(scope, *lhs)?.into(),
+</a><a href="#h4-8-128" id="h4-8-128" class="i">+                    self.build_expression(scope, *rhs)?.into(),
+</a><a href="#h4-8-129" id="h4-8-129" class="i">+                ),
+</a><a href="#h4-8-130" id="h4-8-130" class="i">+                ast::Operation::Negate(expr) =&gt; Negate(self.build_expression(scope, *expr)?.into()),
+</a><a href="#h4-8-131" id="h4-8-131" class="i">+                ast::Operation::Subtract(lhs, rhs) =&gt; Subtract(
+</a><a href="#h4-8-132" id="h4-8-132" class="i">+                    self.build_expression(scope, *lhs)?.into(),
+</a><a href="#h4-8-133" id="h4-8-133" class="i">+                    self.build_expression(scope, *rhs)?.into(),
+</a><a href="#h4-8-134" id="h4-8-134" class="i">+                ),
+</a>             },
+<a href="#h4-8-136" id="h4-8-136" class="d">-        }))
+</a><a href="#h4-8-137" id="h4-8-137" class="i">+        })
+</a><a href="#h4-8-138" id="h4-8-138" class="i">+    }
+</a><a href="#h4-8-139" id="h4-8-139" class="i">+
+</a><a href="#h4-8-140" id="h4-8-140" class="i">+    /// Builds expressions from AST expressions
+</a><a href="#h4-8-141" id="h4-8-141" class="i">+    fn build_expressions(&amp;self, scope: &amp;mut Scope, exprs: ast::Expressions) -&gt; Result&lt;Expressions&gt; {
+</a><a href="#h4-8-142" id="h4-8-142" class="i">+        exprs.into_iter().map(|e| self.build_expression(scope, e)).collect()
+</a><a href="#h4-8-143" id="h4-8-143" class="i">+    }
+</a><a href="#h4-8-144" id="h4-8-144" class="i">+
+</a><a href="#h4-8-145" id="h4-8-145" class="i">+    /// Builds and evaluates a constant AST expression.
+</a><a href="#h4-8-146" id="h4-8-146" class="i">+    fn evaluate_constant(&amp;self, expr: ast::Expression) -&gt; Result&lt;Value&gt; {
+</a><a href="#h4-8-147" id="h4-8-147" class="i">+        self.build_expression(&amp;mut Scope::constant(), expr)?.evaluate(None)
+</a>     }
+ }
+ 
+<b>diff --git a/<a id="h5" href="../file/tests/sql/expression.rs.html">tests/sql/expression.rs</a> b/<a href="../file/tests/sql/expression.rs.html">tests/sql/expression.rs</a></b>
+<a href="#h5-0" id="h5-0" class="h">@@ -75,10 +75,10 @@ test_expr! {
+</a>     lit_string_long: &amp;format!(&quot;&#39;{}&#39;&quot;, &quot;a&quot;.repeat(4096)) =&gt; Ok(&quot;a&quot;.repeat(4096).into()),
+ 
+     // Functions
+<a href="#h5-0-3" id="h5-0-3" class="d">-    func_unknown: &quot;unknown()&quot; =&gt; Err(Error::Value(&quot;Unknown function unknown with 0 arguments&quot;.into())),
+</a><a href="#h5-0-4" id="h5-0-4" class="d">-    func_unknown_case: &quot;UnKnown ( )&quot; =&gt; Err(Error::Value(&quot;Unknown function unknown with 0 arguments&quot;.into())),
+</a><a href="#h5-0-5" id="h5-0-5" class="d">-    func_unknown_space: &quot;unknown ( )&quot; =&gt; Err(Error::Value(&quot;Unknown function unknown with 0 arguments&quot;.into())),
+</a><a href="#h5-0-6" id="h5-0-6" class="d">-    func_unknown_args: &quot;unknown(a, b, c)&quot; =&gt; Err(Error::Value(&quot;Unknown function unknown with 3 arguments&quot;.into())),
+</a><a href="#h5-0-7" id="h5-0-7" class="i">+    func_unknown: &quot;unknown()&quot; =&gt; Err(Error::Value(&quot;Unknown function unknown&quot;.into())),
+</a><a href="#h5-0-8" id="h5-0-8" class="i">+    func_unknown_case: &quot;UnKnown ( )&quot; =&gt; Err(Error::Value(&quot;Unknown function unknown&quot;.into())),
+</a><a href="#h5-0-9" id="h5-0-9" class="i">+    func_unknown_space: &quot;unknown ( )&quot; =&gt; Err(Error::Value(&quot;Unknown function unknown&quot;.into())),
+</a><a href="#h5-0-10" id="h5-0-10" class="i">+    func_unknown_args: &quot;unknown(a, b, c)&quot; =&gt; Err(Error::Value(&quot;Unknown function unknown&quot;.into())),
+</a>     func_unknown_open: &quot;unknown(a, b, c&quot; =&gt; Err(Error::Parse(&quot;Unexpected end of input&quot;.into())),
+     func_unknown_trailing_comma: &quot;unknown(a, b, c,)&quot; =&gt; Err(Error::Parse(&quot;Expected expression atom, found )&quot;.into())),
+ 
+<b>diff --git a/<a id="h6" href="../file/tests/sql/query/limit_boolean.html">tests/sql/query/limit_boolean</a> b/<a href="../file/tests/sql/query/limit_boolean.html">tests/sql/query/limit_boolean</a></b>
+<a href="#h6-0" id="h6-0" class="h">@@ -29,4 +29,4 @@ AST: Select {
+</a>     offset: None,
+ }
+ 
+<a href="#h6-0-3" id="h6-0-3" class="d">-Plan: Value(&quot;Invalid value TRUE for limit&quot;)
+</a><a href="#h6-0-4" id="h6-0-4" class="d">-\ No newline at end of file
+</a><a href="#h6-0-5" id="h6-0-5" class="i">+Plan: Value(&quot;Invalid limit TRUE&quot;)
+</a><a href="#h6-0-6" id="h6-0-6" class="i">+\ No newline at end of file
+</a><b>diff --git a/<a id="h7" href="../file/tests/sql/query/limit_float.html">tests/sql/query/limit_float</a> b/<a href="../file/tests/sql/query/limit_float.html">tests/sql/query/limit_float</a></b>
+<a href="#h7-0" id="h7-0" class="h">@@ -29,4 +29,4 @@ AST: Select {
+</a>     offset: None,
+ }
+ 
+<a href="#h7-0-3" id="h7-0-3" class="d">-Plan: Value(&quot;Invalid value 3.14 for limit&quot;)
+</a><a href="#h7-0-4" id="h7-0-4" class="d">-\ No newline at end of file
+</a><a href="#h7-0-5" id="h7-0-5" class="i">+Plan: Value(&quot;Invalid limit 3.14&quot;)
+</a><a href="#h7-0-6" id="h7-0-6" class="i">+\ No newline at end of file
+</a><b>diff --git a/<a id="h8" href="../file/tests/sql/query/limit_neg.html">tests/sql/query/limit_neg</a> b/<a href="../file/tests/sql/query/limit_neg.html">tests/sql/query/limit_neg</a></b>
+<a href="#h8-0" id="h8-0" class="h">@@ -33,4 +33,4 @@ AST: Select {
+</a>     offset: None,
+ }
+ 
+<a href="#h8-0-3" id="h8-0-3" class="d">-Plan: Value(&quot;Invalid value -1 for limit&quot;)
+</a><a href="#h8-0-4" id="h8-0-4" class="d">-\ No newline at end of file
+</a><a href="#h8-0-5" id="h8-0-5" class="i">+Plan: Value(&quot;Invalid limit -1&quot;)
+</a><a href="#h8-0-6" id="h8-0-6" class="i">+\ No newline at end of file
+</a><b>diff --git a/<a id="h9" href="../file/tests/sql/query/limit_null.html">tests/sql/query/limit_null</a> b/<a href="../file/tests/sql/query/limit_null.html">tests/sql/query/limit_null</a></b>
+<a href="#h9-0" id="h9-0" class="h">@@ -27,4 +27,4 @@ AST: Select {
+</a>     offset: None,
+ }
+ 
+<a href="#h9-0-3" id="h9-0-3" class="d">-Plan: Value(&quot;Invalid value NULL for limit&quot;)
+</a><a href="#h9-0-4" id="h9-0-4" class="d">-\ No newline at end of file
+</a><a href="#h9-0-5" id="h9-0-5" class="i">+Plan: Value(&quot;Invalid limit NULL&quot;)
+</a><a href="#h9-0-6" id="h9-0-6" class="i">+\ No newline at end of file
+</a><b>diff --git a/<a id="h10" href="../file/tests/sql/query/limit_string.html">tests/sql/query/limit_string</a> b/<a href="../file/tests/sql/query/limit_string.html">tests/sql/query/limit_string</a></b>
+<a href="#h10-0" id="h10-0" class="h">@@ -29,4 +29,4 @@ AST: Select {
+</a>     offset: None,
+ }
+ 
+<a href="#h10-0-3" id="h10-0-3" class="d">-Plan: Value(&quot;Invalid value abc for limit&quot;)
+</a><a href="#h10-0-4" id="h10-0-4" class="d">-\ No newline at end of file
+</a><a href="#h10-0-5" id="h10-0-5" class="i">+Plan: Value(&quot;Invalid limit abc&quot;)
+</a><a href="#h10-0-6" id="h10-0-6" class="i">+\ No newline at end of file
+</a><b>diff --git a/<a id="h11" href="../file/tests/sql/query/offset_boolean.html">tests/sql/query/offset_boolean</a> b/<a href="../file/tests/sql/query/offset_boolean.html">tests/sql/query/offset_boolean</a></b>
+<a href="#h11-0" id="h11-0" class="h">@@ -29,4 +29,4 @@ AST: Select {
+</a>     ),
+ }
+ 
+<a href="#h11-0-3" id="h11-0-3" class="d">-Plan: Value(&quot;Invalid value TRUE for offset&quot;)
+</a><a href="#h11-0-4" id="h11-0-4" class="d">-\ No newline at end of file
+</a><a href="#h11-0-5" id="h11-0-5" class="i">+Plan: Value(&quot;Invalid offset TRUE&quot;)
+</a><a href="#h11-0-6" id="h11-0-6" class="i">+\ No newline at end of file
+</a><b>diff --git a/<a id="h12" href="../file/tests/sql/query/offset_float.html">tests/sql/query/offset_float</a> b/<a href="../file/tests/sql/query/offset_float.html">tests/sql/query/offset_float</a></b>
+<a href="#h12-0" id="h12-0" class="h">@@ -29,4 +29,4 @@ AST: Select {
+</a>     ),
+ }
+ 
+<a href="#h12-0-3" id="h12-0-3" class="d">-Plan: Value(&quot;Invalid value 3.14 for offset&quot;)
+</a><a href="#h12-0-4" id="h12-0-4" class="d">-\ No newline at end of file
+</a><a href="#h12-0-5" id="h12-0-5" class="i">+Plan: Value(&quot;Invalid offset 3.14&quot;)
+</a><a href="#h12-0-6" id="h12-0-6" class="i">+\ No newline at end of file
+</a><b>diff --git a/<a id="h13" href="../file/tests/sql/query/offset_neg.html">tests/sql/query/offset_neg</a> b/<a href="../file/tests/sql/query/offset_neg.html">tests/sql/query/offset_neg</a></b>
+<a href="#h13-0" id="h13-0" class="h">@@ -33,4 +33,4 @@ AST: Select {
+</a>     ),
+ }
+ 
+<a href="#h13-0-3" id="h13-0-3" class="d">-Plan: Value(&quot;Invalid value -1 for offset&quot;)
+</a><a href="#h13-0-4" id="h13-0-4" class="d">-\ No newline at end of file
+</a><a href="#h13-0-5" id="h13-0-5" class="i">+Plan: Value(&quot;Invalid offset -1&quot;)
+</a><a href="#h13-0-6" id="h13-0-6" class="i">+\ No newline at end of file
+</a><b>diff --git a/<a id="h14" href="../file/tests/sql/query/offset_null.html">tests/sql/query/offset_null</a> b/<a href="../file/tests/sql/query/offset_null.html">tests/sql/query/offset_null</a></b>
+<a href="#h14-0" id="h14-0" class="h">@@ -27,4 +27,4 @@ AST: Select {
+</a>     ),
+ }
+ 
+<a href="#h14-0-3" id="h14-0-3" class="d">-Plan: Value(&quot;Invalid value NULL for offset&quot;)
+</a><a href="#h14-0-4" id="h14-0-4" class="d">-\ No newline at end of file
+</a><a href="#h14-0-5" id="h14-0-5" class="i">+Plan: Value(&quot;Invalid offset NULL&quot;)
+</a><a href="#h14-0-6" id="h14-0-6" class="i">+\ No newline at end of file
+</a><b>diff --git a/<a id="h15" href="../file/tests/sql/query/offset_string.html">tests/sql/query/offset_string</a> b/<a href="../file/tests/sql/query/offset_string.html">tests/sql/query/offset_string</a></b>
+<a href="#h15-0" id="h15-0" class="h">@@ -29,4 +29,4 @@ AST: Select {
+</a>     ),
+ }
+ 
+<a href="#h15-0-3" id="h15-0-3" class="d">-Plan: Value(&quot;Invalid value abc for offset&quot;)
+</a><a href="#h15-0-4" id="h15-0-4" class="d">-\ No newline at end of file
+</a><a href="#h15-0-5" id="h15-0-5" class="i">+Plan: Value(&quot;Invalid offset abc&quot;)
+</a><a href="#h15-0-6" id="h15-0-6" class="i">+\ No newline at end of file
+</a></pre>
+</div>
+</body>
+</html>

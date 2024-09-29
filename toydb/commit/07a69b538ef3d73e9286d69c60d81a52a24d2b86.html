@@ -1,0 +1,538 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>sql: add simple filter pushdown optimizer - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/07a69b538ef3d73e9286d69c60d81a52a24d2b86.html">07a69b538ef3d73e9286d69c60d81a52a24d2b86</a>
+<b>parent</b> <a href="../commit/64163bbb566979bc0f184b7c263bfa8d0bc63100.html">64163bbb566979bc0f184b7c263bfa8d0bc63100</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Sun, 12 Apr 2020 19:43:54 +0200
+
+sql: add simple filter pushdown optimizer
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/sql/plan/mod.rs</a></td><td> | </td><td class="num">5</td><td><span class="i">++++</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/sql/plan/optimizer.rs</a></td><td> | </td><td class="num">57</td><td><span class="i">+++++++++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">tests/sql/query/agg_boolean</a></td><td> | </td><td class="num">21</td><td><span class="i">++++++++++</span><span class="d">-----------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">tests/sql/query/agg_float</a></td><td> | </td><td class="num">21</td><td><span class="i">++++++++++</span><span class="d">-----------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h4">tests/sql/query/agg_integer</a></td><td> | </td><td class="num">21</td><td><span class="i">++++++++++</span><span class="d">-----------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h5">tests/sql/query/agg_norows</a></td><td> | </td><td class="num">17</td><td><span class="i">++++++++</span><span class="d">---------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h6">tests/sql/query/agg_norows_group</a></td><td> | </td><td class="num">17</td><td><span class="i">++++++++</span><span class="d">---------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h7">tests/sql/query/agg_string</a></td><td> | </td><td class="num">21</td><td><span class="i">++++++++++</span><span class="d">-----------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h8">tests/sql/query/where_expr</a></td><td> | </td><td class="num">57</td><td><span class="i">++++++++++++++++++++++++++++</span><span class="d">-----------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h9">tests/sql/query/where_false</a></td><td> | </td><td class="num">17</td><td><span class="i">++++++++</span><span class="d">---------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h10">tests/sql/query/where_field_unknown</a></td><td> | </td><td class="num">17</td><td><span class="i">++++++++</span><span class="d">---------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h11">tests/sql/query/where_float</a></td><td> | </td><td class="num">17</td><td><span class="i">++++++++</span><span class="d">---------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h12">tests/sql/query/where_integer</a></td><td> | </td><td class="num">17</td><td><span class="i">++++++++</span><span class="d">---------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h13">tests/sql/query/where_null</a></td><td> | </td><td class="num">15</td><td><span class="i">+++++++</span><span class="d">--------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h14">tests/sql/query/where_string</a></td><td> | </td><td class="num">17</td><td><span class="i">++++++++</span><span class="d">---------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h15">tests/sql/query/where_true</a></td><td> | </td><td class="num">17</td><td><span class="i">++++++++</span><span class="d">---------</span></td></tr>
+</table></pre><pre>16 files changed, 200 insertions(+), 154 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/sql/plan/mod.rs.html">src/sql/plan/mod.rs</a> b/<a href="../file/src/sql/plan/mod.rs.html">src/sql/plan/mod.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -32,7 +32,10 @@ impl Plan {
+</a> 
+     /// Optimizes the plan, consuming it
+     pub fn optimize(self) -&gt; Result&lt;Self, Error&gt; {
+<a href="#h0-0-3" id="h0-0-3" class="d">-        Ok(Plan(optimizer::ConstantFolder.optimize(self.0)?))
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+        let mut root = self.0;
+</a><a href="#h0-0-5" id="h0-0-5" class="i">+        root = optimizer::ConstantFolder.optimize(root)?;
+</a><a href="#h0-0-6" id="h0-0-6" class="i">+        root = optimizer::FilterPushdown.optimize(root)?;
+</a><a href="#h0-0-7" id="h0-0-7" class="i">+        Ok(Plan(root))
+</a>     }
+ }
+ 
+<b>diff --git a/<a id="h1" href="../file/src/sql/plan/optimizer.rs.html">src/sql/plan/optimizer.rs</a> b/<a href="../file/src/sql/plan/optimizer.rs.html">src/sql/plan/optimizer.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -2,6 +2,8 @@ use super::super::types::{Environment, Expression};
+</a> use super::Node;
+ use crate::Error;
+ 
+<a href="#h1-0-3" id="h1-0-3" class="i">+use std::collections::HashMap;
+</a><a href="#h1-0-4" id="h1-0-4" class="i">+
+</a> /// A plan optimizer
+ pub trait Optimizer {
+     fn optimize(&amp;mut self, node: Node) -&gt; Result&lt;Node, Error&gt;;
+<a href="#h1-1" id="h1-1" class="h">@@ -22,3 +24,58 @@ impl Optimizer for ConstantFolder {
+</a>         })
+     }
+ }
+<a href="#h1-1-3" id="h1-1-3" class="i">+
+</a><a href="#h1-1-4" id="h1-1-4" class="i">+/// A filter pushdown optimizer, which moves filter predicates into or
+</a><a href="#h1-1-5" id="h1-1-5" class="i">+/// closer to the source node.
+</a><a href="#h1-1-6" id="h1-1-6" class="i">+pub struct FilterPushdown;
+</a><a href="#h1-1-7" id="h1-1-7" class="i">+
+</a><a href="#h1-1-8" id="h1-1-8" class="i">+impl Optimizer for FilterPushdown {
+</a><a href="#h1-1-9" id="h1-1-9" class="i">+    fn optimize(&amp;mut self, node: Node) -&gt; Result&lt;Node, Error&gt; {
+</a><a href="#h1-1-10" id="h1-1-10" class="i">+        node.transform(
+</a><a href="#h1-1-11" id="h1-1-11" class="i">+            &amp;|n| match n {
+</a><a href="#h1-1-12" id="h1-1-12" class="i">+                Node::Filter { source, predicate } =&gt; Self::pushdown(predicate, *source),
+</a><a href="#h1-1-13" id="h1-1-13" class="i">+                n =&gt; Ok(n),
+</a><a href="#h1-1-14" id="h1-1-14" class="i">+            },
+</a><a href="#h1-1-15" id="h1-1-15" class="i">+            &amp;|n| Ok(n),
+</a><a href="#h1-1-16" id="h1-1-16" class="i">+        )
+</a><a href="#h1-1-17" id="h1-1-17" class="i">+    }
+</a><a href="#h1-1-18" id="h1-1-18" class="i">+}
+</a><a href="#h1-1-19" id="h1-1-19" class="i">+
+</a><a href="#h1-1-20" id="h1-1-20" class="i">+impl FilterPushdown {
+</a><a href="#h1-1-21" id="h1-1-21" class="i">+    /// Attempts to push a filter down into a target node, or returns a regular filter node.
+</a><a href="#h1-1-22" id="h1-1-22" class="i">+    fn pushdown(filter: Expression, target: Node) -&gt; Result&lt;Node, Error&gt; {
+</a><a href="#h1-1-23" id="h1-1-23" class="i">+        Ok(match target {
+</a><a href="#h1-1-24" id="h1-1-24" class="i">+            // Filter nodes immediately before a scan node without a filter can be trivially pushed
+</a><a href="#h1-1-25" id="h1-1-25" class="i">+            // down, as long as we remove any qualified fields (e.g. movies table aliased as m).
+</a><a href="#h1-1-26" id="h1-1-26" class="i">+            Node::Scan { table, alias, filter: None } =&gt; {
+</a><a href="#h1-1-27" id="h1-1-27" class="i">+                let mut map = HashMap::new();
+</a><a href="#h1-1-28" id="h1-1-28" class="i">+                map.insert(Some(table.clone()), None);
+</a><a href="#h1-1-29" id="h1-1-29" class="i">+                if let Some(alias) = &amp;alias {
+</a><a href="#h1-1-30" id="h1-1-30" class="i">+                    map.insert(Some(alias.clone()), None);
+</a><a href="#h1-1-31" id="h1-1-31" class="i">+                }
+</a><a href="#h1-1-32" id="h1-1-32" class="i">+                Node::Scan {
+</a><a href="#h1-1-33" id="h1-1-33" class="i">+                    table,
+</a><a href="#h1-1-34" id="h1-1-34" class="i">+                    alias,
+</a><a href="#h1-1-35" id="h1-1-35" class="i">+                    filter: Some(filter.transform(&amp;|e| Self::requalify(e, &amp;map), &amp;|e| Ok(e))?),
+</a><a href="#h1-1-36" id="h1-1-36" class="i">+                }
+</a><a href="#h1-1-37" id="h1-1-37" class="i">+            }
+</a><a href="#h1-1-38" id="h1-1-38" class="i">+            // FIXME We need to handle joins.
+</a><a href="#h1-1-39" id="h1-1-39" class="i">+            n =&gt; Node::Filter { predicate: filter, source: Box::new(n) },
+</a><a href="#h1-1-40" id="h1-1-40" class="i">+        })
+</a><a href="#h1-1-41" id="h1-1-41" class="i">+    }
+</a><a href="#h1-1-42" id="h1-1-42" class="i">+
+</a><a href="#h1-1-43" id="h1-1-43" class="i">+    /// Rewrites field relations, e.g. for mapping &quot;movies.id&quot; or &quot;m.id&quot; to &quot;id&quot;. If a field
+</a><a href="#h1-1-44" id="h1-1-44" class="i">+    /// cannot be rewritten, the original field is returned (to propagate errors).
+</a><a href="#h1-1-45" id="h1-1-45" class="i">+    fn requalify(
+</a><a href="#h1-1-46" id="h1-1-46" class="i">+        expr: Expression,
+</a><a href="#h1-1-47" id="h1-1-47" class="i">+        map: &amp;HashMap&lt;Option&lt;String&gt;, Option&lt;String&gt;&gt;,
+</a><a href="#h1-1-48" id="h1-1-48" class="i">+    ) -&gt; Result&lt;Expression, Error&gt; {
+</a><a href="#h1-1-49" id="h1-1-49" class="i">+        Ok(match expr {
+</a><a href="#h1-1-50" id="h1-1-50" class="i">+            Expression::Field(relation, name) =&gt; match map.get(&amp;relation) {
+</a><a href="#h1-1-51" id="h1-1-51" class="i">+                Some(mapped) =&gt; Expression::Field(mapped.clone(), name),
+</a><a href="#h1-1-52" id="h1-1-52" class="i">+                None =&gt; Expression::Field(relation, name),
+</a><a href="#h1-1-53" id="h1-1-53" class="i">+            },
+</a><a href="#h1-1-54" id="h1-1-54" class="i">+            expr =&gt; expr,
+</a><a href="#h1-1-55" id="h1-1-55" class="i">+        })
+</a><a href="#h1-1-56" id="h1-1-56" class="i">+    }
+</a><a href="#h1-1-57" id="h1-1-57" class="i">+}
+</a><b>diff --git a/<a id="h2" href="../file/tests/sql/query/agg_boolean.html">tests/sql/query/agg_boolean</a> b/<a href="../file/tests/sql/query/agg_boolean.html">tests/sql/query/agg_boolean</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -178,17 +178,16 @@ Optimized plan: Plan(
+</a>     Projection {
+         source: Aggregation {
+             source: Projection {
+<a href="#h2-0-3" id="h2-0-3" class="d">-                source: Filter {
+</a><a href="#h2-0-4" id="h2-0-4" class="d">-                    source: Scan {
+</a><a href="#h2-0-5" id="h2-0-5" class="d">-                        table: &quot;booleans&quot;,
+</a><a href="#h2-0-6" id="h2-0-6" class="d">-                        alias: None,
+</a><a href="#h2-0-7" id="h2-0-7" class="d">-                        filter: None,
+</a><a href="#h2-0-8" id="h2-0-8" class="d">-                    },
+</a><a href="#h2-0-9" id="h2-0-9" class="d">-                    predicate: Not(
+</a><a href="#h2-0-10" id="h2-0-10" class="d">-                        IsNull(
+</a><a href="#h2-0-11" id="h2-0-11" class="d">-                            Field(
+</a><a href="#h2-0-12" id="h2-0-12" class="d">-                                None,
+</a><a href="#h2-0-13" id="h2-0-13" class="d">-                                &quot;b&quot;,
+</a><a href="#h2-0-14" id="h2-0-14" class="i">+                source: Scan {
+</a><a href="#h2-0-15" id="h2-0-15" class="i">+                    table: &quot;booleans&quot;,
+</a><a href="#h2-0-16" id="h2-0-16" class="i">+                    alias: None,
+</a><a href="#h2-0-17" id="h2-0-17" class="i">+                    filter: Some(
+</a><a href="#h2-0-18" id="h2-0-18" class="i">+                        Not(
+</a><a href="#h2-0-19" id="h2-0-19" class="i">+                            IsNull(
+</a><a href="#h2-0-20" id="h2-0-20" class="i">+                                Field(
+</a><a href="#h2-0-21" id="h2-0-21" class="i">+                                    None,
+</a><a href="#h2-0-22" id="h2-0-22" class="i">+                                    &quot;b&quot;,
+</a><a href="#h2-0-23" id="h2-0-23" class="i">+                                ),
+</a>                             ),
+                         ),
+                     ),
+<b>diff --git a/<a id="h3" href="../file/tests/sql/query/agg_float.html">tests/sql/query/agg_float</a> b/<a href="../file/tests/sql/query/agg_float.html">tests/sql/query/agg_float</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -178,17 +178,16 @@ Optimized plan: Plan(
+</a>     Projection {
+         source: Aggregation {
+             source: Projection {
+<a href="#h3-0-3" id="h3-0-3" class="d">-                source: Filter {
+</a><a href="#h3-0-4" id="h3-0-4" class="d">-                    source: Scan {
+</a><a href="#h3-0-5" id="h3-0-5" class="d">-                        table: &quot;floats&quot;,
+</a><a href="#h3-0-6" id="h3-0-6" class="d">-                        alias: None,
+</a><a href="#h3-0-7" id="h3-0-7" class="d">-                        filter: None,
+</a><a href="#h3-0-8" id="h3-0-8" class="d">-                    },
+</a><a href="#h3-0-9" id="h3-0-9" class="d">-                    predicate: Not(
+</a><a href="#h3-0-10" id="h3-0-10" class="d">-                        IsNull(
+</a><a href="#h3-0-11" id="h3-0-11" class="d">-                            Field(
+</a><a href="#h3-0-12" id="h3-0-12" class="d">-                                None,
+</a><a href="#h3-0-13" id="h3-0-13" class="d">-                                &quot;f&quot;,
+</a><a href="#h3-0-14" id="h3-0-14" class="i">+                source: Scan {
+</a><a href="#h3-0-15" id="h3-0-15" class="i">+                    table: &quot;floats&quot;,
+</a><a href="#h3-0-16" id="h3-0-16" class="i">+                    alias: None,
+</a><a href="#h3-0-17" id="h3-0-17" class="i">+                    filter: Some(
+</a><a href="#h3-0-18" id="h3-0-18" class="i">+                        Not(
+</a><a href="#h3-0-19" id="h3-0-19" class="i">+                            IsNull(
+</a><a href="#h3-0-20" id="h3-0-20" class="i">+                                Field(
+</a><a href="#h3-0-21" id="h3-0-21" class="i">+                                    None,
+</a><a href="#h3-0-22" id="h3-0-22" class="i">+                                    &quot;f&quot;,
+</a><a href="#h3-0-23" id="h3-0-23" class="i">+                                ),
+</a>                             ),
+                         ),
+                     ),
+<b>diff --git a/<a id="h4" href="../file/tests/sql/query/agg_integer.html">tests/sql/query/agg_integer</a> b/<a href="../file/tests/sql/query/agg_integer.html">tests/sql/query/agg_integer</a></b>
+<a href="#h4-0" id="h4-0" class="h">@@ -178,17 +178,16 @@ Optimized plan: Plan(
+</a>     Projection {
+         source: Aggregation {
+             source: Projection {
+<a href="#h4-0-3" id="h4-0-3" class="d">-                source: Filter {
+</a><a href="#h4-0-4" id="h4-0-4" class="d">-                    source: Scan {
+</a><a href="#h4-0-5" id="h4-0-5" class="d">-                        table: &quot;integers&quot;,
+</a><a href="#h4-0-6" id="h4-0-6" class="d">-                        alias: None,
+</a><a href="#h4-0-7" id="h4-0-7" class="d">-                        filter: None,
+</a><a href="#h4-0-8" id="h4-0-8" class="d">-                    },
+</a><a href="#h4-0-9" id="h4-0-9" class="d">-                    predicate: Not(
+</a><a href="#h4-0-10" id="h4-0-10" class="d">-                        IsNull(
+</a><a href="#h4-0-11" id="h4-0-11" class="d">-                            Field(
+</a><a href="#h4-0-12" id="h4-0-12" class="d">-                                None,
+</a><a href="#h4-0-13" id="h4-0-13" class="d">-                                &quot;i&quot;,
+</a><a href="#h4-0-14" id="h4-0-14" class="i">+                source: Scan {
+</a><a href="#h4-0-15" id="h4-0-15" class="i">+                    table: &quot;integers&quot;,
+</a><a href="#h4-0-16" id="h4-0-16" class="i">+                    alias: None,
+</a><a href="#h4-0-17" id="h4-0-17" class="i">+                    filter: Some(
+</a><a href="#h4-0-18" id="h4-0-18" class="i">+                        Not(
+</a><a href="#h4-0-19" id="h4-0-19" class="i">+                            IsNull(
+</a><a href="#h4-0-20" id="h4-0-20" class="i">+                                Field(
+</a><a href="#h4-0-21" id="h4-0-21" class="i">+                                    None,
+</a><a href="#h4-0-22" id="h4-0-22" class="i">+                                    &quot;i&quot;,
+</a><a href="#h4-0-23" id="h4-0-23" class="i">+                                ),
+</a>                             ),
+                         ),
+                     ),
+<b>diff --git a/<a id="h5" href="../file/tests/sql/query/agg_norows.html">tests/sql/query/agg_norows</a> b/<a href="../file/tests/sql/query/agg_norows.html">tests/sql/query/agg_norows</a></b>
+<a href="#h5-0" id="h5-0" class="h">@@ -168,15 +168,14 @@ Optimized plan: Plan(
+</a>     Projection {
+         source: Aggregation {
+             source: Projection {
+<a href="#h5-0-3" id="h5-0-3" class="d">-                source: Filter {
+</a><a href="#h5-0-4" id="h5-0-4" class="d">-                    source: Scan {
+</a><a href="#h5-0-5" id="h5-0-5" class="d">-                        table: &quot;movies&quot;,
+</a><a href="#h5-0-6" id="h5-0-6" class="d">-                        alias: None,
+</a><a href="#h5-0-7" id="h5-0-7" class="d">-                        filter: None,
+</a><a href="#h5-0-8" id="h5-0-8" class="d">-                    },
+</a><a href="#h5-0-9" id="h5-0-9" class="d">-                    predicate: Constant(
+</a><a href="#h5-0-10" id="h5-0-10" class="d">-                        Boolean(
+</a><a href="#h5-0-11" id="h5-0-11" class="d">-                            false,
+</a><a href="#h5-0-12" id="h5-0-12" class="i">+                source: Scan {
+</a><a href="#h5-0-13" id="h5-0-13" class="i">+                    table: &quot;movies&quot;,
+</a><a href="#h5-0-14" id="h5-0-14" class="i">+                    alias: None,
+</a><a href="#h5-0-15" id="h5-0-15" class="i">+                    filter: Some(
+</a><a href="#h5-0-16" id="h5-0-16" class="i">+                        Constant(
+</a><a href="#h5-0-17" id="h5-0-17" class="i">+                            Boolean(
+</a><a href="#h5-0-18" id="h5-0-18" class="i">+                                false,
+</a><a href="#h5-0-19" id="h5-0-19" class="i">+                            ),
+</a>                         ),
+                     ),
+                 },
+<b>diff --git a/<a id="h6" href="../file/tests/sql/query/agg_norows_group.html">tests/sql/query/agg_norows_group</a> b/<a href="../file/tests/sql/query/agg_norows_group.html">tests/sql/query/agg_norows_group</a></b>
+<a href="#h6-0" id="h6-0" class="h">@@ -182,15 +182,14 @@ Optimized plan: Plan(
+</a>     Projection {
+         source: Aggregation {
+             source: Projection {
+<a href="#h6-0-3" id="h6-0-3" class="d">-                source: Filter {
+</a><a href="#h6-0-4" id="h6-0-4" class="d">-                    source: Scan {
+</a><a href="#h6-0-5" id="h6-0-5" class="d">-                        table: &quot;movies&quot;,
+</a><a href="#h6-0-6" id="h6-0-6" class="d">-                        alias: None,
+</a><a href="#h6-0-7" id="h6-0-7" class="d">-                        filter: None,
+</a><a href="#h6-0-8" id="h6-0-8" class="d">-                    },
+</a><a href="#h6-0-9" id="h6-0-9" class="d">-                    predicate: Constant(
+</a><a href="#h6-0-10" id="h6-0-10" class="d">-                        Boolean(
+</a><a href="#h6-0-11" id="h6-0-11" class="d">-                            false,
+</a><a href="#h6-0-12" id="h6-0-12" class="i">+                source: Scan {
+</a><a href="#h6-0-13" id="h6-0-13" class="i">+                    table: &quot;movies&quot;,
+</a><a href="#h6-0-14" id="h6-0-14" class="i">+                    alias: None,
+</a><a href="#h6-0-15" id="h6-0-15" class="i">+                    filter: Some(
+</a><a href="#h6-0-16" id="h6-0-16" class="i">+                        Constant(
+</a><a href="#h6-0-17" id="h6-0-17" class="i">+                            Boolean(
+</a><a href="#h6-0-18" id="h6-0-18" class="i">+                                false,
+</a><a href="#h6-0-19" id="h6-0-19" class="i">+                            ),
+</a>                         ),
+                     ),
+                 },
+<b>diff --git a/<a id="h7" href="../file/tests/sql/query/agg_string.html">tests/sql/query/agg_string</a> b/<a href="../file/tests/sql/query/agg_string.html">tests/sql/query/agg_string</a></b>
+<a href="#h7-0" id="h7-0" class="h">@@ -178,17 +178,16 @@ Optimized plan: Plan(
+</a>     Projection {
+         source: Aggregation {
+             source: Projection {
+<a href="#h7-0-3" id="h7-0-3" class="d">-                source: Filter {
+</a><a href="#h7-0-4" id="h7-0-4" class="d">-                    source: Scan {
+</a><a href="#h7-0-5" id="h7-0-5" class="d">-                        table: &quot;strings&quot;,
+</a><a href="#h7-0-6" id="h7-0-6" class="d">-                        alias: None,
+</a><a href="#h7-0-7" id="h7-0-7" class="d">-                        filter: None,
+</a><a href="#h7-0-8" id="h7-0-8" class="d">-                    },
+</a><a href="#h7-0-9" id="h7-0-9" class="d">-                    predicate: Not(
+</a><a href="#h7-0-10" id="h7-0-10" class="d">-                        IsNull(
+</a><a href="#h7-0-11" id="h7-0-11" class="d">-                            Field(
+</a><a href="#h7-0-12" id="h7-0-12" class="d">-                                None,
+</a><a href="#h7-0-13" id="h7-0-13" class="d">-                                &quot;s&quot;,
+</a><a href="#h7-0-14" id="h7-0-14" class="i">+                source: Scan {
+</a><a href="#h7-0-15" id="h7-0-15" class="i">+                    table: &quot;strings&quot;,
+</a><a href="#h7-0-16" id="h7-0-16" class="i">+                    alias: None,
+</a><a href="#h7-0-17" id="h7-0-17" class="i">+                    filter: Some(
+</a><a href="#h7-0-18" id="h7-0-18" class="i">+                        Not(
+</a><a href="#h7-0-19" id="h7-0-19" class="i">+                            IsNull(
+</a><a href="#h7-0-20" id="h7-0-20" class="i">+                                Field(
+</a><a href="#h7-0-21" id="h7-0-21" class="i">+                                    None,
+</a><a href="#h7-0-22" id="h7-0-22" class="i">+                                    &quot;s&quot;,
+</a><a href="#h7-0-23" id="h7-0-23" class="i">+                                ),
+</a>                             ),
+                         ),
+                     ),
+<b>diff --git a/<a id="h8" href="../file/tests/sql/query/where_expr.html">tests/sql/query/where_expr</a> b/<a href="../file/tests/sql/query/where_expr.html">tests/sql/query/where_expr</a></b>
+<a href="#h8-0" id="h8-0" class="h">@@ -88,40 +88,39 @@ Plan: Plan(
+</a> )
+ 
+ Optimized plan: Plan(
+<a href="#h8-0-3" id="h8-0-3" class="d">-    Filter {
+</a><a href="#h8-0-4" id="h8-0-4" class="d">-        source: Scan {
+</a><a href="#h8-0-5" id="h8-0-5" class="d">-            table: &quot;movies&quot;,
+</a><a href="#h8-0-6" id="h8-0-6" class="d">-            alias: None,
+</a><a href="#h8-0-7" id="h8-0-7" class="d">-            filter: None,
+</a><a href="#h8-0-8" id="h8-0-8" class="d">-        },
+</a><a href="#h8-0-9" id="h8-0-9" class="d">-        predicate: And(
+</a><a href="#h8-0-10" id="h8-0-10" class="d">-            Or(
+</a><a href="#h8-0-11" id="h8-0-11" class="d">-                GreaterThan(
+</a><a href="#h8-0-12" id="h8-0-12" class="d">-                    Field(
+</a><a href="#h8-0-13" id="h8-0-13" class="d">-                        None,
+</a><a href="#h8-0-14" id="h8-0-14" class="d">-                        &quot;released&quot;,
+</a><a href="#h8-0-15" id="h8-0-15" class="d">-                    ),
+</a><a href="#h8-0-16" id="h8-0-16" class="d">-                    Constant(
+</a><a href="#h8-0-17" id="h8-0-17" class="d">-                        Integer(
+</a><a href="#h8-0-18" id="h8-0-18" class="d">-                            2000,
+</a><a href="#h8-0-19" id="h8-0-19" class="i">+    Scan {
+</a><a href="#h8-0-20" id="h8-0-20" class="i">+        table: &quot;movies&quot;,
+</a><a href="#h8-0-21" id="h8-0-21" class="i">+        alias: None,
+</a><a href="#h8-0-22" id="h8-0-22" class="i">+        filter: Some(
+</a><a href="#h8-0-23" id="h8-0-23" class="i">+            And(
+</a><a href="#h8-0-24" id="h8-0-24" class="i">+                Or(
+</a><a href="#h8-0-25" id="h8-0-25" class="i">+                    GreaterThan(
+</a><a href="#h8-0-26" id="h8-0-26" class="i">+                        Field(
+</a><a href="#h8-0-27" id="h8-0-27" class="i">+                            None,
+</a><a href="#h8-0-28" id="h8-0-28" class="i">+                            &quot;released&quot;,
+</a><a href="#h8-0-29" id="h8-0-29" class="i">+                        ),
+</a><a href="#h8-0-30" id="h8-0-30" class="i">+                        Constant(
+</a><a href="#h8-0-31" id="h8-0-31" class="i">+                            Integer(
+</a><a href="#h8-0-32" id="h8-0-32" class="i">+                                2000,
+</a><a href="#h8-0-33" id="h8-0-33" class="i">+                            ),
+</a>                         ),
+                     ),
+<a href="#h8-0-36" id="h8-0-36" class="d">-                ),
+</a><a href="#h8-0-37" id="h8-0-37" class="d">-                Equal(
+</a><a href="#h8-0-38" id="h8-0-38" class="d">-                    Field(
+</a><a href="#h8-0-39" id="h8-0-39" class="d">-                        None,
+</a><a href="#h8-0-40" id="h8-0-40" class="d">-                        &quot;released&quot;,
+</a><a href="#h8-0-41" id="h8-0-41" class="d">-                    ),
+</a><a href="#h8-0-42" id="h8-0-42" class="d">-                    Constant(
+</a><a href="#h8-0-43" id="h8-0-43" class="d">-                        Integer(
+</a><a href="#h8-0-44" id="h8-0-44" class="d">-                            2000,
+</a><a href="#h8-0-45" id="h8-0-45" class="i">+                    Equal(
+</a><a href="#h8-0-46" id="h8-0-46" class="i">+                        Field(
+</a><a href="#h8-0-47" id="h8-0-47" class="i">+                            None,
+</a><a href="#h8-0-48" id="h8-0-48" class="i">+                            &quot;released&quot;,
+</a><a href="#h8-0-49" id="h8-0-49" class="i">+                        ),
+</a><a href="#h8-0-50" id="h8-0-50" class="i">+                        Constant(
+</a><a href="#h8-0-51" id="h8-0-51" class="i">+                            Integer(
+</a><a href="#h8-0-52" id="h8-0-52" class="i">+                                2000,
+</a><a href="#h8-0-53" id="h8-0-53" class="i">+                            ),
+</a>                         ),
+                     ),
+                 ),
+<a href="#h8-0-57" id="h8-0-57" class="d">-            ),
+</a><a href="#h8-0-58" id="h8-0-58" class="d">-            Field(
+</a><a href="#h8-0-59" id="h8-0-59" class="d">-                None,
+</a><a href="#h8-0-60" id="h8-0-60" class="d">-                &quot;ultrahd&quot;,
+</a><a href="#h8-0-61" id="h8-0-61" class="i">+                Field(
+</a><a href="#h8-0-62" id="h8-0-62" class="i">+                    None,
+</a><a href="#h8-0-63" id="h8-0-63" class="i">+                    &quot;ultrahd&quot;,
+</a><a href="#h8-0-64" id="h8-0-64" class="i">+                ),
+</a>             ),
+         ),
+     },
+<b>diff --git a/<a id="h9" href="../file/tests/sql/query/where_false.html">tests/sql/query/where_false</a> b/<a href="../file/tests/sql/query/where_false.html">tests/sql/query/where_false</a></b>
+<a href="#h9-0" id="h9-0" class="h">@@ -47,15 +47,14 @@ Plan: Plan(
+</a> )
+ 
+ Optimized plan: Plan(
+<a href="#h9-0-3" id="h9-0-3" class="d">-    Filter {
+</a><a href="#h9-0-4" id="h9-0-4" class="d">-        source: Scan {
+</a><a href="#h9-0-5" id="h9-0-5" class="d">-            table: &quot;movies&quot;,
+</a><a href="#h9-0-6" id="h9-0-6" class="d">-            alias: None,
+</a><a href="#h9-0-7" id="h9-0-7" class="d">-            filter: None,
+</a><a href="#h9-0-8" id="h9-0-8" class="d">-        },
+</a><a href="#h9-0-9" id="h9-0-9" class="d">-        predicate: Constant(
+</a><a href="#h9-0-10" id="h9-0-10" class="d">-            Boolean(
+</a><a href="#h9-0-11" id="h9-0-11" class="d">-                false,
+</a><a href="#h9-0-12" id="h9-0-12" class="i">+    Scan {
+</a><a href="#h9-0-13" id="h9-0-13" class="i">+        table: &quot;movies&quot;,
+</a><a href="#h9-0-14" id="h9-0-14" class="i">+        alias: None,
+</a><a href="#h9-0-15" id="h9-0-15" class="i">+        filter: Some(
+</a><a href="#h9-0-16" id="h9-0-16" class="i">+            Constant(
+</a><a href="#h9-0-17" id="h9-0-17" class="i">+                Boolean(
+</a><a href="#h9-0-18" id="h9-0-18" class="i">+                    false,
+</a><a href="#h9-0-19" id="h9-0-19" class="i">+                ),
+</a>             ),
+         ),
+     },
+<b>diff --git a/<a id="h10" href="../file/tests/sql/query/where_field_unknown.html">tests/sql/query/where_field_unknown</a> b/<a href="../file/tests/sql/query/where_field_unknown.html">tests/sql/query/where_field_unknown</a></b>
+<a href="#h10-0" id="h10-0" class="h">@@ -45,15 +45,14 @@ Plan: Plan(
+</a> )
+ 
+ Optimized plan: Plan(
+<a href="#h10-0-3" id="h10-0-3" class="d">-    Filter {
+</a><a href="#h10-0-4" id="h10-0-4" class="d">-        source: Scan {
+</a><a href="#h10-0-5" id="h10-0-5" class="d">-            table: &quot;movies&quot;,
+</a><a href="#h10-0-6" id="h10-0-6" class="d">-            alias: None,
+</a><a href="#h10-0-7" id="h10-0-7" class="d">-            filter: None,
+</a><a href="#h10-0-8" id="h10-0-8" class="d">-        },
+</a><a href="#h10-0-9" id="h10-0-9" class="d">-        predicate: Field(
+</a><a href="#h10-0-10" id="h10-0-10" class="d">-            None,
+</a><a href="#h10-0-11" id="h10-0-11" class="d">-            &quot;unknown&quot;,
+</a><a href="#h10-0-12" id="h10-0-12" class="i">+    Scan {
+</a><a href="#h10-0-13" id="h10-0-13" class="i">+        table: &quot;movies&quot;,
+</a><a href="#h10-0-14" id="h10-0-14" class="i">+        alias: None,
+</a><a href="#h10-0-15" id="h10-0-15" class="i">+        filter: Some(
+</a><a href="#h10-0-16" id="h10-0-16" class="i">+            Field(
+</a><a href="#h10-0-17" id="h10-0-17" class="i">+                None,
+</a><a href="#h10-0-18" id="h10-0-18" class="i">+                &quot;unknown&quot;,
+</a><a href="#h10-0-19" id="h10-0-19" class="i">+            ),
+</a>         ),
+     },
+ )
+<b>diff --git a/<a id="h11" href="../file/tests/sql/query/where_float.html">tests/sql/query/where_float</a> b/<a href="../file/tests/sql/query/where_float.html">tests/sql/query/where_float</a></b>
+<a href="#h11-0" id="h11-0" class="h">@@ -47,15 +47,14 @@ Plan: Plan(
+</a> )
+ 
+ Optimized plan: Plan(
+<a href="#h11-0-3" id="h11-0-3" class="d">-    Filter {
+</a><a href="#h11-0-4" id="h11-0-4" class="d">-        source: Scan {
+</a><a href="#h11-0-5" id="h11-0-5" class="d">-            table: &quot;movies&quot;,
+</a><a href="#h11-0-6" id="h11-0-6" class="d">-            alias: None,
+</a><a href="#h11-0-7" id="h11-0-7" class="d">-            filter: None,
+</a><a href="#h11-0-8" id="h11-0-8" class="d">-        },
+</a><a href="#h11-0-9" id="h11-0-9" class="d">-        predicate: Constant(
+</a><a href="#h11-0-10" id="h11-0-10" class="d">-            Float(
+</a><a href="#h11-0-11" id="h11-0-11" class="d">-                3.14,
+</a><a href="#h11-0-12" id="h11-0-12" class="i">+    Scan {
+</a><a href="#h11-0-13" id="h11-0-13" class="i">+        table: &quot;movies&quot;,
+</a><a href="#h11-0-14" id="h11-0-14" class="i">+        alias: None,
+</a><a href="#h11-0-15" id="h11-0-15" class="i">+        filter: Some(
+</a><a href="#h11-0-16" id="h11-0-16" class="i">+            Constant(
+</a><a href="#h11-0-17" id="h11-0-17" class="i">+                Float(
+</a><a href="#h11-0-18" id="h11-0-18" class="i">+                    3.14,
+</a><a href="#h11-0-19" id="h11-0-19" class="i">+                ),
+</a>             ),
+         ),
+     },
+<b>diff --git a/<a id="h12" href="../file/tests/sql/query/where_integer.html">tests/sql/query/where_integer</a> b/<a href="../file/tests/sql/query/where_integer.html">tests/sql/query/where_integer</a></b>
+<a href="#h12-0" id="h12-0" class="h">@@ -47,15 +47,14 @@ Plan: Plan(
+</a> )
+ 
+ Optimized plan: Plan(
+<a href="#h12-0-3" id="h12-0-3" class="d">-    Filter {
+</a><a href="#h12-0-4" id="h12-0-4" class="d">-        source: Scan {
+</a><a href="#h12-0-5" id="h12-0-5" class="d">-            table: &quot;movies&quot;,
+</a><a href="#h12-0-6" id="h12-0-6" class="d">-            alias: None,
+</a><a href="#h12-0-7" id="h12-0-7" class="d">-            filter: None,
+</a><a href="#h12-0-8" id="h12-0-8" class="d">-        },
+</a><a href="#h12-0-9" id="h12-0-9" class="d">-        predicate: Constant(
+</a><a href="#h12-0-10" id="h12-0-10" class="d">-            Integer(
+</a><a href="#h12-0-11" id="h12-0-11" class="d">-                7,
+</a><a href="#h12-0-12" id="h12-0-12" class="i">+    Scan {
+</a><a href="#h12-0-13" id="h12-0-13" class="i">+        table: &quot;movies&quot;,
+</a><a href="#h12-0-14" id="h12-0-14" class="i">+        alias: None,
+</a><a href="#h12-0-15" id="h12-0-15" class="i">+        filter: Some(
+</a><a href="#h12-0-16" id="h12-0-16" class="i">+            Constant(
+</a><a href="#h12-0-17" id="h12-0-17" class="i">+                Integer(
+</a><a href="#h12-0-18" id="h12-0-18" class="i">+                    7,
+</a><a href="#h12-0-19" id="h12-0-19" class="i">+                ),
+</a>             ),
+         ),
+     },
+<b>diff --git a/<a id="h13" href="../file/tests/sql/query/where_null.html">tests/sql/query/where_null</a> b/<a href="../file/tests/sql/query/where_null.html">tests/sql/query/where_null</a></b>
+<a href="#h13-0" id="h13-0" class="h">@@ -43,14 +43,13 @@ Plan: Plan(
+</a> )
+ 
+ Optimized plan: Plan(
+<a href="#h13-0-3" id="h13-0-3" class="d">-    Filter {
+</a><a href="#h13-0-4" id="h13-0-4" class="d">-        source: Scan {
+</a><a href="#h13-0-5" id="h13-0-5" class="d">-            table: &quot;movies&quot;,
+</a><a href="#h13-0-6" id="h13-0-6" class="d">-            alias: None,
+</a><a href="#h13-0-7" id="h13-0-7" class="d">-            filter: None,
+</a><a href="#h13-0-8" id="h13-0-8" class="d">-        },
+</a><a href="#h13-0-9" id="h13-0-9" class="d">-        predicate: Constant(
+</a><a href="#h13-0-10" id="h13-0-10" class="d">-            Null,
+</a><a href="#h13-0-11" id="h13-0-11" class="i">+    Scan {
+</a><a href="#h13-0-12" id="h13-0-12" class="i">+        table: &quot;movies&quot;,
+</a><a href="#h13-0-13" id="h13-0-13" class="i">+        alias: None,
+</a><a href="#h13-0-14" id="h13-0-14" class="i">+        filter: Some(
+</a><a href="#h13-0-15" id="h13-0-15" class="i">+            Constant(
+</a><a href="#h13-0-16" id="h13-0-16" class="i">+                Null,
+</a><a href="#h13-0-17" id="h13-0-17" class="i">+            ),
+</a>         ),
+     },
+ )
+<b>diff --git a/<a id="h14" href="../file/tests/sql/query/where_string.html">tests/sql/query/where_string</a> b/<a href="../file/tests/sql/query/where_string.html">tests/sql/query/where_string</a></b>
+<a href="#h14-0" id="h14-0" class="h">@@ -47,15 +47,14 @@ Plan: Plan(
+</a> )
+ 
+ Optimized plan: Plan(
+<a href="#h14-0-3" id="h14-0-3" class="d">-    Filter {
+</a><a href="#h14-0-4" id="h14-0-4" class="d">-        source: Scan {
+</a><a href="#h14-0-5" id="h14-0-5" class="d">-            table: &quot;movies&quot;,
+</a><a href="#h14-0-6" id="h14-0-6" class="d">-            alias: None,
+</a><a href="#h14-0-7" id="h14-0-7" class="d">-            filter: None,
+</a><a href="#h14-0-8" id="h14-0-8" class="d">-        },
+</a><a href="#h14-0-9" id="h14-0-9" class="d">-        predicate: Constant(
+</a><a href="#h14-0-10" id="h14-0-10" class="d">-            String(
+</a><a href="#h14-0-11" id="h14-0-11" class="d">-                &quot;abc&quot;,
+</a><a href="#h14-0-12" id="h14-0-12" class="i">+    Scan {
+</a><a href="#h14-0-13" id="h14-0-13" class="i">+        table: &quot;movies&quot;,
+</a><a href="#h14-0-14" id="h14-0-14" class="i">+        alias: None,
+</a><a href="#h14-0-15" id="h14-0-15" class="i">+        filter: Some(
+</a><a href="#h14-0-16" id="h14-0-16" class="i">+            Constant(
+</a><a href="#h14-0-17" id="h14-0-17" class="i">+                String(
+</a><a href="#h14-0-18" id="h14-0-18" class="i">+                    &quot;abc&quot;,
+</a><a href="#h14-0-19" id="h14-0-19" class="i">+                ),
+</a>             ),
+         ),
+     },
+<b>diff --git a/<a id="h15" href="../file/tests/sql/query/where_true.html">tests/sql/query/where_true</a> b/<a href="../file/tests/sql/query/where_true.html">tests/sql/query/where_true</a></b>
+<a href="#h15-0" id="h15-0" class="h">@@ -47,15 +47,14 @@ Plan: Plan(
+</a> )
+ 
+ Optimized plan: Plan(
+<a href="#h15-0-3" id="h15-0-3" class="d">-    Filter {
+</a><a href="#h15-0-4" id="h15-0-4" class="d">-        source: Scan {
+</a><a href="#h15-0-5" id="h15-0-5" class="d">-            table: &quot;movies&quot;,
+</a><a href="#h15-0-6" id="h15-0-6" class="d">-            alias: None,
+</a><a href="#h15-0-7" id="h15-0-7" class="d">-            filter: None,
+</a><a href="#h15-0-8" id="h15-0-8" class="d">-        },
+</a><a href="#h15-0-9" id="h15-0-9" class="d">-        predicate: Constant(
+</a><a href="#h15-0-10" id="h15-0-10" class="d">-            Boolean(
+</a><a href="#h15-0-11" id="h15-0-11" class="d">-                true,
+</a><a href="#h15-0-12" id="h15-0-12" class="i">+    Scan {
+</a><a href="#h15-0-13" id="h15-0-13" class="i">+        table: &quot;movies&quot;,
+</a><a href="#h15-0-14" id="h15-0-14" class="i">+        alias: None,
+</a><a href="#h15-0-15" id="h15-0-15" class="i">+        filter: Some(
+</a><a href="#h15-0-16" id="h15-0-16" class="i">+            Constant(
+</a><a href="#h15-0-17" id="h15-0-17" class="i">+                Boolean(
+</a><a href="#h15-0-18" id="h15-0-18" class="i">+                    true,
+</a><a href="#h15-0-19" id="h15-0-19" class="i">+                ),
+</a>             ),
+         ),
+     },
+</pre>
+</div>
+</body>
+</html>

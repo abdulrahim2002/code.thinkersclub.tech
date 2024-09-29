@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>raft: removed redundant base term check in Log.splice() - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/104bdfc74e69d89182e8a3aa1410d052e985fe7f.html">104bdfc74e69d89182e8a3aa1410d052e985fe7f</a>
+<b>parent</b> <a href="../commit/f0907e2850b64b514268142a313ee27725cef523.html">f0907e2850b64b514268142a313ee27725cef523</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Sat, 11 Apr 2020 12:34:31 +0200
+
+raft: removed redundant base term check in Log.splice()
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/raft/log.rs</a></td><td> | </td><td class="num">39</td><td><span class="i">+++++++</span><span class="d">--------------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/raft/node/follower.rs</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+</table></pre><pre>2 files changed, 8 insertions(+), 33 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/raft/log.rs.html">src/raft/log.rs</a> b/<a href="../file/src/raft/log.rs.html">src/raft/log.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -173,14 +173,12 @@ impl&lt;S: kv::storage::Storage&gt; Log&lt;S&gt; {
+</a>     /// * If no existing entry exists at an index, append it
+     /// * If the existing entry has a different term, replace it and following entries
+     /// * If the existing entry has the same term, assume entry is equal and skip it
+<a href="#h0-0-3" id="h0-0-3" class="i">+    ///
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+    /// The caller must have checked that the base is valid first (i.e. that it exists
+</a><a href="#h0-0-5" id="h0-0-5" class="i">+    /// and has the correct term).
+</a>     //
+<a href="#h0-0-7" id="h0-0-7" class="d">-    // FIXME Needs to be transactional
+</a><a href="#h0-0-8" id="h0-0-8" class="d">-    pub fn splice(&amp;mut self, base: u64, base_term: u64, entries: Vec&lt;Entry&gt;) -&gt; Result&lt;u64, Error&gt; {
+</a><a href="#h0-0-9" id="h0-0-9" class="d">-        if base &gt; 0 &amp;&amp; !self.has(base, base_term)? {
+</a><a href="#h0-0-10" id="h0-0-10" class="d">-            // The caller should have checked this already
+</a><a href="#h0-0-11" id="h0-0-11" class="d">-            return Err(Error::Internal(&quot;Base not found&quot;.into()));
+</a><a href="#h0-0-12" id="h0-0-12" class="d">-        }
+</a><a href="#h0-0-13" id="h0-0-13" class="d">-
+</a><a href="#h0-0-14" id="h0-0-14" class="i">+    // FIXME Should be atomic
+</a><a href="#h0-0-15" id="h0-0-15" class="i">+    pub fn splice(&amp;mut self, base: u64, entries: Vec&lt;Entry&gt;) -&gt; Result&lt;u64, Error&gt; {
+</a>         for (i, entry) in entries.into_iter().enumerate() {
+             if let Some(ref current) = self.get(base + i as u64 + 1)? {
+                 if current.term == entry.term {
+<a href="#h0-1" id="h0-1" class="h">@@ -476,7 +474,6 @@ mod tests {
+</a>             Ok(4),
+             l.splice(
+                 2,
+<a href="#h0-1-3" id="h0-1-3" class="d">-                2,
+</a>                 vec![
+                     Entry { term: 3, command: Some(vec![0x03]) },
+                     Entry { term: 4, command: Some(vec![0x04]) },
+<a href="#h0-2" id="h0-2" class="h">@@ -501,7 +498,6 @@ mod tests {
+</a>             Ok(2),
+             l.splice(
+                 0,
+<a href="#h0-2-3" id="h0-2-3" class="d">-                0,
+</a>                 vec![
+                     Entry { term: 4, command: Some(vec![0x0a]) },
+                     Entry { term: 4, command: Some(vec![0x0b]) },
+<a href="#h0-3" id="h0-3" class="h">@@ -523,7 +519,6 @@ mod tests {
+</a>             Ok(4),
+             l.splice(
+                 2,
+<a href="#h0-3-3" id="h0-3-3" class="d">-                2,
+</a>                 vec![
+                     Entry { term: 3, command: Some(vec![0x03]) },
+                     Entry { term: 4, command: Some(vec![0x04]) },
+<a href="#h0-4" id="h0-4" class="h">@@ -544,26 +539,7 @@ mod tests {
+</a>         l.append(Entry { term: 2, command: Some(vec![0x02]) }).unwrap();
+ 
+         assert_matches!(
+<a href="#h0-4-3" id="h0-4-3" class="d">-            l.splice(3, 3, vec![Entry { term: 4, command: Some(vec![0x04]) },]),
+</a><a href="#h0-4-4" id="h0-4-4" class="d">-            Err(Error::Internal(_))
+</a><a href="#h0-4-5" id="h0-4-5" class="d">-        );
+</a><a href="#h0-4-6" id="h0-4-6" class="d">-        assert_eq!(Ok(Some(Entry { term: 1, command: Some(vec![0x01]) })), l.get(1));
+</a><a href="#h0-4-7" id="h0-4-7" class="d">-        assert_eq!(Ok(Some(Entry { term: 2, command: Some(vec![0x02]) })), l.get(2));
+</a><a href="#h0-4-8" id="h0-4-8" class="d">-        assert_eq!((2, 2), l.get_last());
+</a><a href="#h0-4-9" id="h0-4-9" class="d">-    }
+</a><a href="#h0-4-10" id="h0-4-10" class="d">-
+</a><a href="#h0-4-11" id="h0-4-11" class="d">-    #[test]
+</a><a href="#h0-4-12" id="h0-4-12" class="d">-    fn splice_base_term_conflict() {
+</a><a href="#h0-4-13" id="h0-4-13" class="d">-        let (mut l, _) = setup();
+</a><a href="#h0-4-14" id="h0-4-14" class="d">-        l.append(Entry { term: 1, command: Some(vec![0x01]) }).unwrap();
+</a><a href="#h0-4-15" id="h0-4-15" class="d">-        l.append(Entry { term: 2, command: Some(vec![0x02]) }).unwrap();
+</a><a href="#h0-4-16" id="h0-4-16" class="d">-
+</a><a href="#h0-4-17" id="h0-4-17" class="d">-        assert_matches!(
+</a><a href="#h0-4-18" id="h0-4-18" class="d">-            l.splice(2, 3, vec![Entry { term: 4, command: Some(vec![0x04]) },]),
+</a><a href="#h0-4-19" id="h0-4-19" class="d">-            Err(Error::Internal(_))
+</a><a href="#h0-4-20" id="h0-4-20" class="d">-        );
+</a><a href="#h0-4-21" id="h0-4-21" class="d">-        assert_matches!(
+</a><a href="#h0-4-22" id="h0-4-22" class="d">-            l.splice(2, 0, vec![Entry { term: 4, command: Some(vec![0x04]) },]),
+</a><a href="#h0-4-23" id="h0-4-23" class="i">+            l.splice(3, vec![Entry { term: 4, command: Some(vec![0x04]) },]),
+</a>             Err(Error::Internal(_))
+         );
+         assert_eq!(Ok(Some(Entry { term: 1, command: Some(vec![0x01]) })), l.get(1));
+<a href="#h0-5" id="h0-5" class="h">@@ -583,7 +559,6 @@ mod tests {
+</a>             Ok(3),
+             l.splice(
+                 1,
+<a href="#h0-5-3" id="h0-5-3" class="d">-                1,
+</a>                 vec![
+                     Entry { term: 3, command: Some(vec![0x0b]) },
+                     Entry { term: 3, command: Some(vec![0x0c]) }
+<a href="#h0-6" id="h0-6" class="h">@@ -603,7 +578,7 @@ mod tests {
+</a>         l.append(Entry { term: 2, command: Some(vec![0x02]) }).unwrap();
+         l.append(Entry { term: 3, command: Some(vec![0x03]) }).unwrap();
+ 
+<a href="#h0-6-3" id="h0-6-3" class="d">-        assert_eq!(Ok(3), l.splice(1, 1, vec![Entry { term: 2, command: Some(vec![0x02]) },]));
+</a><a href="#h0-6-4" id="h0-6-4" class="i">+        assert_eq!(Ok(3), l.splice(1, vec![Entry { term: 2, command: Some(vec![0x02]) },]));
+</a>         assert_eq!(Ok(Some(Entry { term: 1, command: Some(vec![0x01]) })), l.get(1));
+         assert_eq!(Ok(Some(Entry { term: 2, command: Some(vec![0x02]) })), l.get(2));
+         assert_eq!(Ok(Some(Entry { term: 3, command: Some(vec![0x03]) })), l.get(3));
+<b>diff --git a/<a id="h1" href="../file/src/raft/node/follower.rs.html">src/raft/node/follower.rs</a> b/<a href="../file/src/raft/node/follower.rs.html">src/raft/node/follower.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -113,7 +113,7 @@ impl&lt;L: kv::storage::Storage, S: State&gt; RoleNode&lt;Follower, L, S&gt; {
+</a>                         debug!(&quot;Rejecting log entries at base {}&quot;, base_index);
+                         self.send(msg.from.as_deref(), Event::RejectEntries)?
+                     } else {
+<a href="#h1-0-3" id="h1-0-3" class="d">-                        let last_index = self.log.splice(base_index, base_term, entries)?;
+</a><a href="#h1-0-4" id="h1-0-4" class="i">+                        let last_index = self.log.splice(base_index, entries)?;
+</a>                         self.send(msg.from.as_deref(), Event::AcceptEntries { last_index })?
+                     }
+                 }
+</pre>
+</div>
+</body>
+</html>

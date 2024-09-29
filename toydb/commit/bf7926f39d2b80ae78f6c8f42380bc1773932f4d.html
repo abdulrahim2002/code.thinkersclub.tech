@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Added logical operators - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/bf7926f39d2b80ae78f6c8f42380bc1773932f4d.html">bf7926f39d2b80ae78f6c8f42380bc1773932f4d</a>
+<b>parent</b> <a href="../commit/3a37a37da8f29d74be52dd6c1f8bcff4a93b6629.html">3a37a37da8f29d74be52dd6c1f8bcff4a93b6629</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Mon, 26 Aug 2019 18:26:15 +0200
+
+Added logical operators
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/sql/parser/ast.rs</a></td><td> | </td><td class="num">3</td><td><span class="i">+++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/sql/parser/lexer.rs</a></td><td> | </td><td class="num">9</td><td><span class="i">+++++++++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/sql/parser/mod.rs</a></td><td> | </td><td class="num">44</td><td><span class="i">++++++++++++++++++++++++++++</span><span class="d">----------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">src/sql/plan/expression.rs</a></td><td> | </td><td class="num">32</td><td><span class="i">+++++++++++++++++++++++</span><span class="d">---------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h4">src/sql/plan/planner.rs</a></td><td> | </td><td class="num">11</td><td><span class="i">++++++++</span><span class="d">---</span></td></tr>
+</table></pre><pre>5 files changed, 71 insertions(+), 28 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/sql/parser/ast.rs.html">src/sql/parser/ast.rs</a> b/<a href="../file/src/sql/parser/ast.rs.html">src/sql/parser/ast.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -50,6 +50,7 @@ pub enum Literal {
+</a> #[derive(Clone, Debug, PartialEq)]
+ pub enum Operation {
+     Add(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+<a href="#h0-0-3" id="h0-0-3" class="i">+    And(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+</a>     Divide(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+     Equals(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+     Exponentiate(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+<a href="#h0-1" id="h0-1" class="h">@@ -59,5 +60,7 @@ pub enum Operation {
+</a>     Modulo(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+     Multiply(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+     Negate(Box&lt;Expression&gt;),
+<a href="#h0-1-3" id="h0-1-3" class="i">+    Not(Box&lt;Expression&gt;),
+</a><a href="#h0-1-4" id="h0-1-4" class="i">+    Or(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+</a>     Subtract(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+ }
+<b>diff --git a/<a id="h1" href="../file/src/sql/parser/lexer.rs.html">src/sql/parser/lexer.rs</a> b/<a href="../file/src/sql/parser/lexer.rs.html">src/sql/parser/lexer.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -61,9 +61,12 @@ impl From&lt;Keyword&gt; for Token {
+</a> /// Lexer keywords
+ #[derive(Clone, Debug, PartialEq)]
+ pub enum Keyword {
+<a href="#h1-0-3" id="h1-0-3" class="i">+    And,
+</a>     As,
+     False,
+<a href="#h1-0-6" id="h1-0-6" class="i">+    Not,
+</a>     Null,
+<a href="#h1-0-8" id="h1-0-8" class="i">+    Or,
+</a>     Select,
+     True,
+ }
+<a href="#h1-1" id="h1-1" class="h">@@ -72,8 +75,11 @@ impl Keyword {
+</a>     fn from_str(ident: &amp;str) -&gt; Option&lt;Self&gt; {
+         Some(match ident.to_uppercase().as_ref() {
+             &quot;AS&quot; =&gt; Self::As,
+<a href="#h1-1-3" id="h1-1-3" class="i">+            &quot;AND&quot; =&gt; Self::And,
+</a>             &quot;FALSE&quot; =&gt; Self::False,
+<a href="#h1-1-5" id="h1-1-5" class="i">+            &quot;NOT&quot; =&gt; Self::Not,
+</a>             &quot;NULL&quot; =&gt; Self::Null,
+<a href="#h1-1-7" id="h1-1-7" class="i">+            &quot;OR&quot; =&gt; Self::Or,
+</a>             &quot;SELECT&quot; =&gt; Self::Select,
+             &quot;TRUE&quot; =&gt; Self::True,
+             _ =&gt; return None,
+<a href="#h1-2" id="h1-2" class="h">@@ -83,8 +89,11 @@ impl Keyword {
+</a>     fn to_str(&amp;self) -&gt; &amp;str {
+         match self {
+             Self::As =&gt; &quot;AS&quot;,
+<a href="#h1-2-3" id="h1-2-3" class="i">+            Self::And =&gt; &quot;AND&quot;,
+</a>             Self::False =&gt; &quot;FALSE&quot;,
+<a href="#h1-2-5" id="h1-2-5" class="i">+            Self::Not =&gt; &quot;NOT&quot;,
+</a>             Self::Null =&gt; &quot;NULL&quot;,
+<a href="#h1-2-7" id="h1-2-7" class="i">+            Self::Or =&gt; &quot;OR&quot;,
+</a>             Self::Select =&gt; &quot;SELECT&quot;,
+             Self::True =&gt; &quot;TRUE&quot;,
+         }
+<b>diff --git a/<a id="h2" href="../file/src/sql/parser/mod.rs.html">src/sql/parser/mod.rs</a> b/<a href="../file/src/sql/parser/mod.rs.html">src/sql/parser/mod.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -174,6 +174,7 @@ const ASSOC_RIGHT: u8 = 0;
+</a> enum PrefixOperator {
+     Plus,
+     Minus,
+<a href="#h2-0-3" id="h2-0-3" class="i">+    Not,
+</a> }
+ 
+ impl PrefixOperator {
+<a href="#h2-1" id="h2-1" class="h">@@ -181,6 +182,7 @@ impl PrefixOperator {
+</a>         match self {
+             Self::Plus =&gt; rhs,
+             Self::Minus =&gt; ast::Operation::Negate(Box::new(rhs)).into(),
+<a href="#h2-1-3" id="h2-1-3" class="i">+            Self::Not =&gt; ast::Operation::Not(Box::new(rhs)).into(),
+</a>         }
+     }
+ }
+<a href="#h2-2" id="h2-2" class="h">@@ -188,7 +190,9 @@ impl PrefixOperator {
+</a> impl Operator for PrefixOperator {
+     fn from(token: &amp;Token) -&gt; Option&lt;Self&gt; {
+         match token {
+<a href="#h2-2-3" id="h2-2-3" class="i">+            Token::Exclamation =&gt; Some(Self::Not),
+</a>             Token::Minus =&gt; Some(Self::Minus),
+<a href="#h2-2-5" id="h2-2-5" class="i">+            Token::Keyword(Keyword::Not) =&gt; Some(Self::Not),
+</a>             Token::Plus =&gt; Some(Self::Plus),
+             _ =&gt; None,
+         }
+<a href="#h2-3" id="h2-3" class="h">@@ -199,12 +203,13 @@ impl Operator for PrefixOperator {
+</a>     }
+ 
+     fn prec(&amp;self) -&gt; u8 {
+<a href="#h2-3-3" id="h2-3-3" class="d">-        7
+</a><a href="#h2-3-4" id="h2-3-4" class="i">+        9
+</a>     }
+ }
+ 
+ enum InfixOperator {
+     Add,
+<a href="#h2-3-10" id="h2-3-10" class="i">+    And,
+</a>     Divide,
+     Equals,
+     Exponentiate,
+<a href="#h2-4" id="h2-4" class="h">@@ -212,6 +217,7 @@ enum InfixOperator {
+</a>     LesserThan,
+     Modulo,
+     Multiply,
+<a href="#h2-4-3" id="h2-4-3" class="i">+    Or,
+</a>     Subtract,
+ }
+ 
+<a href="#h2-5" id="h2-5" class="h">@@ -220,6 +226,7 @@ impl InfixOperator {
+</a>         let (lhs, rhs) = (Box::new(lhs), Box::new(rhs));
+         match self {
+             Self::Add =&gt; ast::Operation::Add(lhs, rhs),
+<a href="#h2-5-3" id="h2-5-3" class="i">+            Self::And =&gt; ast::Operation::And(lhs, rhs),
+</a>             Self::Divide =&gt; ast::Operation::Divide(lhs, rhs),
+             Self::Equals =&gt; ast::Operation::Equals(lhs, rhs),
+             Self::Exponentiate =&gt; ast::Operation::Exponentiate(lhs, rhs),
+<a href="#h2-6" id="h2-6" class="h">@@ -227,6 +234,7 @@ impl InfixOperator {
+</a>             Self::LesserThan =&gt; ast::Operation::LesserThan(lhs, rhs),
+             Self::Modulo =&gt; ast::Operation::Modulo(lhs, rhs),
+             Self::Multiply =&gt; ast::Operation::Multiply(lhs, rhs),
+<a href="#h2-6-3" id="h2-6-3" class="i">+            Self::Or =&gt; ast::Operation::Or(lhs, rhs),
+</a>             Self::Subtract =&gt; ast::Operation::Subtract(lhs, rhs),
+         }
+         .into()
+<a href="#h2-7" id="h2-7" class="h">@@ -235,15 +243,17 @@ impl InfixOperator {
+</a> 
+ impl Operator for InfixOperator {
+     fn from(token: &amp;Token) -&gt; Option&lt;Self&gt; {
+<a href="#h2-7-3" id="h2-7-3" class="d">-        match token {
+</a><a href="#h2-7-4" id="h2-7-4" class="d">-            Token::Plus =&gt; Some(Self::Add),
+</a><a href="#h2-7-5" id="h2-7-5" class="d">-            Token::Minus =&gt; Some(Self::Subtract),
+</a><a href="#h2-7-6" id="h2-7-6" class="d">-            Token::Asterisk =&gt; Some(Self::Multiply),
+</a><a href="#h2-7-7" id="h2-7-7" class="d">-            Token::Slash =&gt; Some(Self::Divide),
+</a><a href="#h2-7-8" id="h2-7-8" class="d">-            Token::Percent =&gt; Some(Self::Modulo),
+</a><a href="#h2-7-9" id="h2-7-9" class="d">-            Token::Caret =&gt; Some(Self::Exponentiate),
+</a><a href="#h2-7-10" id="h2-7-10" class="d">-            _ =&gt; None,
+</a><a href="#h2-7-11" id="h2-7-11" class="d">-        }
+</a><a href="#h2-7-12" id="h2-7-12" class="i">+        Some(match token {
+</a><a href="#h2-7-13" id="h2-7-13" class="i">+            Token::Plus =&gt; Self::Add,
+</a><a href="#h2-7-14" id="h2-7-14" class="i">+            Token::Minus =&gt; Self::Subtract,
+</a><a href="#h2-7-15" id="h2-7-15" class="i">+            Token::Asterisk =&gt; Self::Multiply,
+</a><a href="#h2-7-16" id="h2-7-16" class="i">+            Token::Slash =&gt; Self::Divide,
+</a><a href="#h2-7-17" id="h2-7-17" class="i">+            Token::Percent =&gt; Self::Modulo,
+</a><a href="#h2-7-18" id="h2-7-18" class="i">+            Token::Caret =&gt; Self::Exponentiate,
+</a><a href="#h2-7-19" id="h2-7-19" class="i">+            Token::Keyword(Keyword::And) =&gt; Self::And,
+</a><a href="#h2-7-20" id="h2-7-20" class="i">+            Token::Keyword(Keyword::Or) =&gt; Self::Or,
+</a><a href="#h2-7-21" id="h2-7-21" class="i">+            _ =&gt; return None,
+</a><a href="#h2-7-22" id="h2-7-22" class="i">+        })
+</a>     }
+ 
+     fn assoc(&amp;self) -&gt; u8 {
+<a href="#h2-8" id="h2-8" class="h">@@ -255,11 +265,13 @@ impl Operator for InfixOperator {
+</a> 
+     fn prec(&amp;self) -&gt; u8 {
+         match self {
+<a href="#h2-8-3" id="h2-8-3" class="d">-            Self::Equals =&gt; 1,
+</a><a href="#h2-8-4" id="h2-8-4" class="d">-            Self::GreatherThan | Self::LesserThan =&gt; 2,
+</a><a href="#h2-8-5" id="h2-8-5" class="d">-            Self::Add | Self::Subtract =&gt; 3,
+</a><a href="#h2-8-6" id="h2-8-6" class="d">-            Self::Multiply | Self::Divide | Self::Modulo =&gt; 4,
+</a><a href="#h2-8-7" id="h2-8-7" class="d">-            Self::Exponentiate =&gt; 5,
+</a><a href="#h2-8-8" id="h2-8-8" class="i">+            Self::Or =&gt; 1,
+</a><a href="#h2-8-9" id="h2-8-9" class="i">+            Self::And =&gt; 2,
+</a><a href="#h2-8-10" id="h2-8-10" class="i">+            Self::Equals =&gt; 3,
+</a><a href="#h2-8-11" id="h2-8-11" class="i">+            Self::GreatherThan | Self::LesserThan =&gt; 4,
+</a><a href="#h2-8-12" id="h2-8-12" class="i">+            Self::Add | Self::Subtract =&gt; 5,
+</a><a href="#h2-8-13" id="h2-8-13" class="i">+            Self::Multiply | Self::Divide | Self::Modulo =&gt; 6,
+</a><a href="#h2-8-14" id="h2-8-14" class="i">+            Self::Exponentiate =&gt; 7,
+</a>         }
+     }
+ }
+<a href="#h2-9" id="h2-9" class="h">@@ -290,6 +302,6 @@ impl Operator for PostfixOperator {
+</a>     }
+ 
+     fn prec(&amp;self) -&gt; u8 {
+<a href="#h2-9-3" id="h2-9-3" class="d">-        6
+</a><a href="#h2-9-4" id="h2-9-4" class="i">+        8
+</a>     }
+ }
+<b>diff --git a/<a id="h3" href="../file/src/sql/plan/expression.rs.html">src/sql/plan/expression.rs</a> b/<a href="../file/src/sql/plan/expression.rs.html">src/sql/plan/expression.rs</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -1,13 +1,12 @@
+</a> use super::super::types::Value;
+ use crate::Error;
+ 
+<a href="#h3-0-3" id="h3-0-3" class="d">-const FLOAT_ERROR = 1e-10;
+</a><a href="#h3-0-4" id="h3-0-4" class="d">-
+</a> /// An expression
+ #[derive(Debug)]
+ pub enum Expression {
+     Constant(Value),
+     Add(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+<a href="#h3-0-10" id="h3-0-10" class="i">+    And(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+</a>     Divide(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+     Exponentiate(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+     Equals(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+<a href="#h3-1" id="h3-1" class="h">@@ -17,6 +16,8 @@ pub enum Expression {
+</a>     Modulo(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+     Multiply(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+     Negate(Box&lt;Expression&gt;),
+<a href="#h3-1-3" id="h3-1-3" class="i">+    Not(Box&lt;Expression&gt;),
+</a><a href="#h3-1-4" id="h3-1-4" class="i">+    Or(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+</a>     Subtract(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+ }
+ 
+<a href="#h3-2" id="h3-2" class="h">@@ -32,6 +33,10 @@ impl Expression {
+</a>                 (Float(lhs), Float(rhs)) =&gt; Float(lhs + rhs),
+                 (lhs, rhs) =&gt; return Err(Error::Value(format!(&quot;Can&#39;t add {} and {}&quot;, lhs, rhs))),
+             },
+<a href="#h3-2-3" id="h3-2-3" class="i">+            Expression::And(lhs, rhs) =&gt; match (lhs.evaluate()?, rhs.evaluate()?) {
+</a><a href="#h3-2-4" id="h3-2-4" class="i">+                (Boolean(lhs), Boolean(rhs)) =&gt; Boolean(lhs &amp;&amp; rhs),
+</a><a href="#h3-2-5" id="h3-2-5" class="i">+                (lhs, rhs) =&gt; return Err(Error::Value(format!(&quot;Can&#39;t and {} and {}&quot;, lhs, rhs))),
+</a><a href="#h3-2-6" id="h3-2-6" class="i">+            },
+</a>             Expression::Divide(lhs, rhs) =&gt; match (lhs.evaluate()?, rhs.evaluate()?) {
+                 (Integer(lhs), Integer(rhs)) =&gt; Integer(lhs / rhs),
+                 (Integer(lhs), Float(rhs)) =&gt; Float(lhs as f64 / rhs),
+<a href="#h3-3" id="h3-3" class="h">@@ -41,6 +46,7 @@ impl Expression {
+</a>                     return Err(Error::Value(format!(&quot;Can&#39;t divide {} and {}&quot;, lhs, rhs)))
+                 }
+             },
+<a href="#h3-3-3" id="h3-3-3" class="i">+            #[allow(clippy::float_cmp)] // Up to the user if they want to compare or not
+</a>             Expression::Equals(lhs, rhs) =&gt; match (lhs.evaluate()?, rhs.evaluate()?) {
+                 (Integer(lhs), Integer(rhs)) =&gt; Boolean(lhs == rhs),
+                 (Integer(lhs), Float(rhs)) =&gt; Boolean(lhs as f64 == rhs),
+<a href="#h3-4" id="h3-4" class="h">@@ -60,9 +66,9 @@ impl Expression {
+</a>                     return Err(Error::Value(format!(&quot;Can&#39;t exponentiate {} and {}&quot;, lhs, rhs)))
+                 }
+             },
+<a href="#h3-4-3" id="h3-4-3" class="d">-            Expression::Factorial(v) =&gt; match v.evaluate()? {
+</a><a href="#h3-4-4" id="h3-4-4" class="d">-                Integer(v) =&gt; Integer((1..=v).fold(1, |a, b| a * b as i64)),
+</a><a href="#h3-4-5" id="h3-4-5" class="d">-                v =&gt; return Err(Error::Value(format!(&quot;Can&#39;t take factorial of {}&quot;, v))),
+</a><a href="#h3-4-6" id="h3-4-6" class="i">+            Expression::Factorial(expr) =&gt; match expr.evaluate()? {
+</a><a href="#h3-4-7" id="h3-4-7" class="i">+                Integer(i) =&gt; Integer((1..=i).fold(1, |a, b| a * b as i64)),
+</a><a href="#h3-4-8" id="h3-4-8" class="i">+                value =&gt; return Err(Error::Value(format!(&quot;Can&#39;t take factorial of {}&quot;, value))),
+</a>             },
+             Expression::GreaterThan(lhs, rhs) =&gt; match (lhs.evaluate()?, rhs.evaluate()?) {
+                 (Integer(lhs), Integer(rhs)) =&gt; Boolean(lhs &gt; rhs),
+<a href="#h3-5" id="h3-5" class="h">@@ -103,9 +109,17 @@ impl Expression {
+</a>                 }
+             },
+             Expression::Negate(expr) =&gt; match expr.evaluate()? {
+<a href="#h3-5-3" id="h3-5-3" class="d">-                Integer(v) =&gt; Integer(-v),
+</a><a href="#h3-5-4" id="h3-5-4" class="d">-                Float(v) =&gt; Float(-v),
+</a><a href="#h3-5-5" id="h3-5-5" class="d">-                v =&gt; return Err(Error::Value(format!(&quot;Can&#39;t negate {}&quot;, v))),
+</a><a href="#h3-5-6" id="h3-5-6" class="i">+                Integer(i) =&gt; Integer(-i),
+</a><a href="#h3-5-7" id="h3-5-7" class="i">+                Float(f) =&gt; Float(-f),
+</a><a href="#h3-5-8" id="h3-5-8" class="i">+                value =&gt; return Err(Error::Value(format!(&quot;Can&#39;t negate {}&quot;, value))),
+</a><a href="#h3-5-9" id="h3-5-9" class="i">+            },
+</a><a href="#h3-5-10" id="h3-5-10" class="i">+            Expression::Not(expr) =&gt; match expr.evaluate()? {
+</a><a href="#h3-5-11" id="h3-5-11" class="i">+                Boolean(b) =&gt; Boolean(!b),
+</a><a href="#h3-5-12" id="h3-5-12" class="i">+                value =&gt; return Err(Error::Value(format!(&quot;Can&#39;t negate {}&quot;, value))),
+</a><a href="#h3-5-13" id="h3-5-13" class="i">+            },
+</a><a href="#h3-5-14" id="h3-5-14" class="i">+            Expression::Or(lhs, rhs) =&gt; match (lhs.evaluate()?, rhs.evaluate()?) {
+</a><a href="#h3-5-15" id="h3-5-15" class="i">+                (Boolean(lhs), Boolean(rhs)) =&gt; Boolean(lhs || rhs),
+</a><a href="#h3-5-16" id="h3-5-16" class="i">+                (lhs, rhs) =&gt; return Err(Error::Value(format!(&quot;Can&#39;t or {} and {}&quot;, lhs, rhs))),
+</a>             },
+             Expression::Subtract(lhs, rhs) =&gt; match (lhs.evaluate()?, rhs.evaluate()?) {
+                 (Integer(lhs), Integer(rhs)) =&gt; Integer(lhs - rhs),
+<a href="#h3-6" id="h3-6" class="h">@@ -117,7 +131,7 @@ impl Expression {
+</a>                 }
+             },
+ 
+<a href="#h3-6-3" id="h3-6-3" class="d">-            Expression::Constant(v) =&gt; v.clone(),
+</a><a href="#h3-6-4" id="h3-6-4" class="i">+            Expression::Constant(c) =&gt; c.clone(),
+</a>         })
+     }
+ }
+<b>diff --git a/<a id="h4" href="../file/src/sql/plan/planner.rs.html">src/sql/plan/planner.rs</a> b/<a href="../file/src/sql/plan/planner.rs.html">src/sql/plan/planner.rs</a></b>
+<a href="#h4-0" id="h4-0" class="h">@@ -58,15 +58,20 @@ impl From&lt;ast::Expression&gt; for Expression {
+</a>             ast::Expression::Literal(l) =&gt; Expression::Constant(l.into()),
+             ast::Expression::Operation(op) =&gt; match op {
+                 ast::Operation::Add(lhs, rhs) =&gt; Self::Add(lhs.into(), rhs.into()),
+<a href="#h4-0-3" id="h4-0-3" class="i">+                ast::Operation::And(lhs, rhs) =&gt; Self::And(lhs.into(), rhs.into()),
+</a>                 ast::Operation::Divide(lhs, rhs) =&gt; Self::Divide(lhs.into(), rhs.into()),
+<a href="#h4-0-5" id="h4-0-5" class="d">-                ast::Operation::Exponentiate(lhs, rhs) =&gt; Self::Exponentiate(lhs.into(), rhs.into()),
+</a><a href="#h4-0-6" id="h4-0-6" class="i">+                ast::Operation::Exponentiate(lhs, rhs) =&gt; {
+</a><a href="#h4-0-7" id="h4-0-7" class="i">+                    Self::Exponentiate(lhs.into(), rhs.into())
+</a><a href="#h4-0-8" id="h4-0-8" class="i">+                }
+</a>                 ast::Operation::Equals(lhs, rhs) =&gt; Self::Equals(lhs.into(), rhs.into()),
+<a href="#h4-0-10" id="h4-0-10" class="d">-                ast::Operation::Factorial(e) =&gt; Self::Factorial(e.into()),
+</a><a href="#h4-0-11" id="h4-0-11" class="i">+                ast::Operation::Factorial(expr) =&gt; Self::Factorial(expr.into()),
+</a>                 ast::Operation::GreaterThan(lhs, rhs) =&gt; Self::GreaterThan(lhs.into(), rhs.into()),
+                 ast::Operation::LesserThan(lhs, rhs) =&gt; Self::LesserThan(lhs.into(), rhs.into()),
+                 ast::Operation::Modulo(lhs, rhs) =&gt; Self::Modulo(lhs.into(), rhs.into()),
+                 ast::Operation::Multiply(lhs, rhs) =&gt; Self::Multiply(lhs.into(), rhs.into()),
+<a href="#h4-0-16" id="h4-0-16" class="d">-                ast::Operation::Negate(e) =&gt; Self::Negate(e.into()),
+</a><a href="#h4-0-17" id="h4-0-17" class="i">+                ast::Operation::Negate(expr) =&gt; Self::Negate(expr.into()),
+</a><a href="#h4-0-18" id="h4-0-18" class="i">+                ast::Operation::Not(expr) =&gt; Self::Not(expr.into()),
+</a><a href="#h4-0-19" id="h4-0-19" class="i">+                ast::Operation::Or(lhs, rhs) =&gt; Self::Or(lhs.into(), rhs.into()),
+</a>                 ast::Operation::Subtract(lhs, rhs) =&gt; Self::Subtract(lhs.into(), rhs.into()),
+             },
+         }
+</pre>
+</div>
+</body>
+</html>

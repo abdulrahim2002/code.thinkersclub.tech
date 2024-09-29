@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>bin: clean up `toydb` binary - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/703bcb2df5cf6b408a3c97cb5dbcd8990de69253.html">703bcb2df5cf6b408a3c97cb5dbcd8990de69253</a>
+<b>parent</b> <a href="../commit/be44cf64228b6ed0d4ef16dd28deb43d7f82d323.html">be44cf64228b6ed0d4ef16dd28deb43d7f82d323</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Sun, 21 Jul 2024 21:58:31 +0200
+
+bin: clean up `toydb` binary
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">config/toydb.yaml</a></td><td> | </td><td class="num">35</td><td><span class="i">++++++++++++++++++++</span><span class="d">---------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/bin/toydb.rs</a></td><td> | </td><td class="num">155</td><td><span class="i">+++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d">------------------------------</span></td></tr>
+</table></pre><pre>2 files changed, 116 insertions(+), 74 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/config/toydb.yaml.html">config/toydb.yaml</a> b/<a href="../file/config/toydb.yaml.html">config/toydb.yaml</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -1,23 +1,27 @@
+</a><a href="#h0-0-0" id="h0-0-0" class="d">-# The node ID, peer ID/address map (empty for single node), and log level.
+</a><a href="#h0-0-1" id="h0-0-1" class="i">+# The node ID (must be unique in the cluster), and map of peer IDs and Raft
+</a><a href="#h0-0-2" id="h0-0-2" class="i">+# addresses (empty for single node).
+</a> id: 1
+ peers: {}
+<a href="#h0-0-5" id="h0-0-5" class="d">-log_level: INFO
+</a> 
+<a href="#h0-0-7" id="h0-0-7" class="d">-# Network addresses to bind the SQL and Raft servers to.
+</a><a href="#h0-0-8" id="h0-0-8" class="d">-listen_sql: 0.0.0.0:9605
+</a><a href="#h0-0-9" id="h0-0-9" class="d">-listen_raft: 0.0.0.0:9705
+</a><a href="#h0-0-10" id="h0-0-10" class="i">+# Addresses to listen for SQL and Raft connections on.
+</a><a href="#h0-0-11" id="h0-0-11" class="i">+listen_sql: localhost:9605
+</a><a href="#h0-0-12" id="h0-0-12" class="i">+listen_raft: localhost:9705
+</a><a href="#h0-0-13" id="h0-0-13" class="i">+
+</a><a href="#h0-0-14" id="h0-0-14" class="i">+# The log level. Valid values are DEBUG, INFO, WARN, and ERROR.
+</a><a href="#h0-0-15" id="h0-0-15" class="i">+log_level: INFO
+</a> 
+<a href="#h0-0-17" id="h0-0-17" class="d">-# Node data directory, and the garbage fraction threshold at which to trigger
+</a><a href="#h0-0-18" id="h0-0-18" class="d">-# database compaction when opening the database (Bitcask only).
+</a><a href="#h0-0-19" id="h0-0-19" class="i">+# Node data directory. The Raft log is stored in the file &quot;raft&quot;, and the SQL
+</a><a href="#h0-0-20" id="h0-0-20" class="i">+# database in &quot;sql&quot;.
+</a> data_dir: data
+<a href="#h0-0-22" id="h0-0-22" class="d">-compact_threshold: 0.2
+</a> 
+<a href="#h0-0-24" id="h0-0-24" class="d">-# Raft log storage engine
+</a><a href="#h0-0-25" id="h0-0-25" class="d">-# - bitcask (default): an append-only log-structured store.
+</a><a href="#h0-0-26" id="h0-0-26" class="d">-# - memory: an in-memory store using the Rust standard library&#39;s BTreeMap.
+</a><a href="#h0-0-27" id="h0-0-27" class="i">+# Storage engine to use for the Raft log and SQL database.
+</a><a href="#h0-0-28" id="h0-0-28" class="i">+#
+</a><a href="#h0-0-29" id="h0-0-29" class="i">+# * bitcask (default): an append-only log-structured store.
+</a><a href="#h0-0-30" id="h0-0-30" class="i">+# * memory: an in-memory store using the Rust standard library&#39;s BTreeMap.
+</a> storage_raft: bitcask
+<a href="#h0-0-32" id="h0-0-32" class="d">-
+</a><a href="#h0-0-33" id="h0-0-33" class="d">-# SQL key-value storage engine
+</a><a href="#h0-0-34" id="h0-0-34" class="d">-# - bitcask (default): an append-only log-structured store.
+</a><a href="#h0-0-35" id="h0-0-35" class="d">-# - memory: an in-memory store using the Rust standard library&#39;s BTreeMap.
+</a> storage_sql: bitcask
+<a href="#h0-0-37" id="h0-0-37" class="i">+
+</a><a href="#h0-0-38" id="h0-0-38" class="i">+# The minimum garbage fraction and bytes to trigger Bitcask log compaction on
+</a><a href="#h0-0-39" id="h0-0-39" class="i">+# node startup.
+</a><a href="#h0-0-40" id="h0-0-40" class="i">+compact_threshold: 0.2
+</a><a href="#h0-0-41" id="h0-0-41" class="i">+compact_min_bytes: 1000000
+</a><a href="#h0-0-42" id="h0-0-42" class="i">+\ No newline at end of file
+</a><b>diff --git a/<a id="h1" href="../file/src/bin/toydb.rs.html">src/bin/toydb.rs</a> b/<a href="../file/src/bin/toydb.rs.html">src/bin/toydb.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -1,13 +1,13 @@
+</a><a href="#h1-0-0" id="h1-0-0" class="d">-/*
+</a><a href="#h1-0-1" id="h1-0-1" class="d">- * toydb is the toyDB server. It takes configuration via a configuration file, command-line
+</a><a href="#h1-0-2" id="h1-0-2" class="d">- * parameters, and environment variables, then starts up a toyDB TCP server that communicates with
+</a><a href="#h1-0-3" id="h1-0-3" class="d">- * SQL clients (port 9605) and Raft peers (port 9705).
+</a><a href="#h1-0-4" id="h1-0-4" class="d">- */
+</a><a href="#h1-0-5" id="h1-0-5" class="i">+//! The toyDB server. Takes configuration from a config file (default
+</a><a href="#h1-0-6" id="h1-0-6" class="i">+//! config/toydb.yaml) or corresponding TOYDB_ environment variables. Listens
+</a><a href="#h1-0-7" id="h1-0-7" class="i">+//! for SQL clients (default port 9605) and Raft connections from other toyDB
+</a><a href="#h1-0-8" id="h1-0-8" class="i">+//! peers (default port 9705). The Raft log and SQL database are stored at
+</a><a href="#h1-0-9" id="h1-0-9" class="i">+//! data/raft and data/sql by default.
+</a><a href="#h1-0-10" id="h1-0-10" class="i">+//!
+</a><a href="#h1-0-11" id="h1-0-11" class="i">+//! Use the toysql command-line client to connect to the server.
+</a> 
+ #![warn(clippy::all)]
+ 
+<a href="#h1-0-15" id="h1-0-15" class="d">-use serde::Deserialize;
+</a><a href="#h1-0-16" id="h1-0-16" class="d">-use std::collections::HashMap;
+</a> use toydb::errinput;
+ use toydb::error::Result;
+ use toydb::raft;
+<a href="#h1-1" id="h1-1" class="h">@@ -15,83 +15,120 @@ use toydb::sql;
+</a> use toydb::storage;
+ use toydb::Server;
+ 
+<a href="#h1-1-3" id="h1-1-3" class="d">-const COMPACT_MIN_BYTES: u64 = 1024 * 1024;
+</a><a href="#h1-1-4" id="h1-1-4" class="d">-
+</a><a href="#h1-1-5" id="h1-1-5" class="d">-fn main() -&gt; Result&lt;()&gt; {
+</a><a href="#h1-1-6" id="h1-1-6" class="d">-    let args = clap::command!()
+</a><a href="#h1-1-7" id="h1-1-7" class="d">-        .arg(
+</a><a href="#h1-1-8" id="h1-1-8" class="d">-            clap::Arg::new(&quot;config&quot;)
+</a><a href="#h1-1-9" id="h1-1-9" class="d">-                .short(&#39;c&#39;)
+</a><a href="#h1-1-10" id="h1-1-10" class="d">-                .long(&quot;config&quot;)
+</a><a href="#h1-1-11" id="h1-1-11" class="d">-                .help(&quot;Configuration file path&quot;)
+</a><a href="#h1-1-12" id="h1-1-12" class="d">-                .default_value(&quot;config/toydb.yaml&quot;),
+</a><a href="#h1-1-13" id="h1-1-13" class="d">-        )
+</a><a href="#h1-1-14" id="h1-1-14" class="d">-        .get_matches();
+</a><a href="#h1-1-15" id="h1-1-15" class="d">-    let cfg = Config::new(args.get_one::&lt;String&gt;(&quot;config&quot;).unwrap().as_ref())?;
+</a><a href="#h1-1-16" id="h1-1-16" class="i">+use clap::Parser as _;
+</a><a href="#h1-1-17" id="h1-1-17" class="i">+use serde::Deserialize;
+</a><a href="#h1-1-18" id="h1-1-18" class="i">+use std::collections::HashMap;
+</a> 
+<a href="#h1-1-20" id="h1-1-20" class="d">-    let loglevel = cfg.log_level.parse::&lt;simplelog::LevelFilter&gt;()?;
+</a><a href="#h1-1-21" id="h1-1-21" class="d">-    let mut logconfig = simplelog::ConfigBuilder::new();
+</a><a href="#h1-1-22" id="h1-1-22" class="d">-    if loglevel != simplelog::LevelFilter::Debug {
+</a><a href="#h1-1-23" id="h1-1-23" class="d">-        logconfig.add_filter_allow_str(&quot;toydb&quot;);
+</a><a href="#h1-1-24" id="h1-1-24" class="i">+fn main() {
+</a><a href="#h1-1-25" id="h1-1-25" class="i">+    if let Err(error) = Command::parse().run() {
+</a><a href="#h1-1-26" id="h1-1-26" class="i">+        eprintln!(&quot;Error: {error}&quot;)
+</a>     }
+<a href="#h1-1-28" id="h1-1-28" class="d">-    simplelog::SimpleLogger::init(loglevel, logconfig.build())?;
+</a><a href="#h1-1-29" id="h1-1-29" class="d">-
+</a><a href="#h1-1-30" id="h1-1-30" class="d">-    let path = std::path::Path::new(&amp;cfg.data_dir);
+</a><a href="#h1-1-31" id="h1-1-31" class="d">-    let raft_log = match cfg.storage_raft.as_str() {
+</a><a href="#h1-1-32" id="h1-1-32" class="d">-        &quot;bitcask&quot; | &quot;&quot; =&gt; raft::Log::new(Box::new(storage::BitCask::new_compact(
+</a><a href="#h1-1-33" id="h1-1-33" class="d">-            path.join(&quot;log&quot;),
+</a><a href="#h1-1-34" id="h1-1-34" class="d">-            cfg.compact_threshold,
+</a><a href="#h1-1-35" id="h1-1-35" class="d">-            COMPACT_MIN_BYTES,
+</a><a href="#h1-1-36" id="h1-1-36" class="d">-        )?))?,
+</a><a href="#h1-1-37" id="h1-1-37" class="d">-        &quot;memory&quot; =&gt; raft::Log::new(Box::new(storage::Memory::new()))?,
+</a><a href="#h1-1-38" id="h1-1-38" class="d">-        name =&gt; return errinput!(&quot;invalid Raft storage engine {name}&quot;),
+</a><a href="#h1-1-39" id="h1-1-39" class="d">-    };
+</a><a href="#h1-1-40" id="h1-1-40" class="d">-    let raft_state: Box&lt;dyn raft::State&gt; = match cfg.storage_sql.as_str() {
+</a><a href="#h1-1-41" id="h1-1-41" class="d">-        &quot;bitcask&quot; | &quot;&quot; =&gt; {
+</a><a href="#h1-1-42" id="h1-1-42" class="d">-            let engine = storage::BitCask::new_compact(
+</a><a href="#h1-1-43" id="h1-1-43" class="d">-                path.join(&quot;state&quot;),
+</a><a href="#h1-1-44" id="h1-1-44" class="d">-                cfg.compact_threshold,
+</a><a href="#h1-1-45" id="h1-1-45" class="d">-                COMPACT_MIN_BYTES,
+</a><a href="#h1-1-46" id="h1-1-46" class="d">-            )?;
+</a><a href="#h1-1-47" id="h1-1-47" class="d">-            Box::new(sql::engine::Raft::new_state(engine)?)
+</a><a href="#h1-1-48" id="h1-1-48" class="d">-        }
+</a><a href="#h1-1-49" id="h1-1-49" class="d">-        &quot;memory&quot; =&gt; {
+</a><a href="#h1-1-50" id="h1-1-50" class="d">-            let engine = storage::Memory::new();
+</a><a href="#h1-1-51" id="h1-1-51" class="d">-            Box::new(sql::engine::Raft::new_state(engine)?)
+</a><a href="#h1-1-52" id="h1-1-52" class="d">-        }
+</a><a href="#h1-1-53" id="h1-1-53" class="d">-        name =&gt; return errinput!(&quot;invalid SQL storage engine {name}&quot;),
+</a><a href="#h1-1-54" id="h1-1-54" class="d">-    };
+</a><a href="#h1-1-55" id="h1-1-55" class="d">-
+</a><a href="#h1-1-56" id="h1-1-56" class="d">-    Server::new(cfg.id, cfg.peers, raft_log, raft_state)?.serve(&amp;cfg.listen_raft, &amp;cfg.listen_sql)
+</a> }
+ 
+<a href="#h1-1-59" id="h1-1-59" class="i">+/// The toyDB server configuration. Can be provided via config file (default
+</a><a href="#h1-1-60" id="h1-1-60" class="i">+/// config/toydb.yaml) or TOYDB_ environment variables.
+</a> #[derive(Debug, Deserialize)]
+ struct Config {
+<a href="#h1-1-63" id="h1-1-63" class="i">+    /// The node ID. Must be unique in the cluster.
+</a>     id: raft::NodeID,
+<a href="#h1-1-65" id="h1-1-65" class="i">+    /// The other nodes in the cluster, and their Raft TCP addresses.
+</a>     peers: HashMap&lt;raft::NodeID, String&gt;,
+<a href="#h1-1-67" id="h1-1-67" class="d">-    listen_sql: String,
+</a><a href="#h1-1-68" id="h1-1-68" class="i">+    /// The Raft listen address.
+</a>     listen_raft: String,
+<a href="#h1-1-70" id="h1-1-70" class="i">+    /// The SQL listen address.
+</a><a href="#h1-1-71" id="h1-1-71" class="i">+    listen_sql: String,
+</a><a href="#h1-1-72" id="h1-1-72" class="i">+    /// The log level.
+</a>     log_level: String,
+<a href="#h1-1-74" id="h1-1-74" class="i">+    /// The path to this node&#39;s data directory. The Raft log is stored in
+</a><a href="#h1-1-75" id="h1-1-75" class="i">+    /// the file &quot;raft&quot;, and the SQL state machine in &quot;sql&quot;.
+</a>     data_dir: String,
+<a href="#h1-1-77" id="h1-1-77" class="d">-    compact_threshold: f64,
+</a><a href="#h1-1-78" id="h1-1-78" class="i">+    /// The Raft storage engine: bitcask or memory.
+</a>     storage_raft: String,
+<a href="#h1-1-80" id="h1-1-80" class="i">+    /// The SQL storage engine: bitcask or memory.
+</a>     storage_sql: String,
+<a href="#h1-1-82" id="h1-1-82" class="i">+    /// The garbage fraction threshold at which to trigger compaction.
+</a><a href="#h1-1-83" id="h1-1-83" class="i">+    compact_threshold: f64,
+</a><a href="#h1-1-84" id="h1-1-84" class="i">+    /// The minimum bytes of garbage before triggering compaction.
+</a><a href="#h1-1-85" id="h1-1-85" class="i">+    compact_min_bytes: u64,
+</a> }
+ 
+ impl Config {
+<a href="#h1-1-89" id="h1-1-89" class="d">-    fn new(file: &amp;str) -&gt; Result&lt;Self&gt; {
+</a><a href="#h1-1-90" id="h1-1-90" class="i">+    /// Loads the configuration from the given file.
+</a><a href="#h1-1-91" id="h1-1-91" class="i">+    fn load(file: &amp;str) -&gt; Result&lt;Self&gt; {
+</a>         Ok(config::Config::builder()
+             .set_default(&quot;id&quot;, &quot;1&quot;)?
+<a href="#h1-1-94" id="h1-1-94" class="d">-            .set_default(&quot;listen_sql&quot;, &quot;0.0.0.0:9605&quot;)?
+</a><a href="#h1-1-95" id="h1-1-95" class="d">-            .set_default(&quot;listen_raft&quot;, &quot;0.0.0.0:9705&quot;)?
+</a><a href="#h1-1-96" id="h1-1-96" class="i">+            .set_default(&quot;listen_sql&quot;, &quot;localhost:9605&quot;)?
+</a><a href="#h1-1-97" id="h1-1-97" class="i">+            .set_default(&quot;listen_raft&quot;, &quot;localhost:9705&quot;)?
+</a>             .set_default(&quot;log_level&quot;, &quot;info&quot;)?
+             .set_default(&quot;data_dir&quot;, &quot;data&quot;)?
+<a href="#h1-1-100" id="h1-1-100" class="d">-            .set_default(&quot;compact_threshold&quot;, 0.2)?
+</a>             .set_default(&quot;storage_raft&quot;, &quot;bitcask&quot;)?
+             .set_default(&quot;storage_sql&quot;, &quot;bitcask&quot;)?
+<a href="#h1-1-103" id="h1-1-103" class="i">+            .set_default(&quot;compact_threshold&quot;, 0.2)?
+</a><a href="#h1-1-104" id="h1-1-104" class="i">+            .set_default(&quot;compact_min_bytes&quot;, 1_000_000)?
+</a>             .add_source(config::File::with_name(file))
+             .add_source(config::Environment::with_prefix(&quot;TOYDB&quot;))
+             .build()?
+             .try_deserialize()?)
+     }
+ }
+<a href="#h1-1-111" id="h1-1-111" class="i">+
+</a><a href="#h1-1-112" id="h1-1-112" class="i">+/// The toyDB server command.
+</a><a href="#h1-1-113" id="h1-1-113" class="i">+#[derive(clap::Parser)]
+</a><a href="#h1-1-114" id="h1-1-114" class="i">+#[command(about = &quot;Starts a toyDB server.&quot;, version, propagate_version = true)]
+</a><a href="#h1-1-115" id="h1-1-115" class="i">+struct Command {
+</a><a href="#h1-1-116" id="h1-1-116" class="i">+    /// The configuration file path.
+</a><a href="#h1-1-117" id="h1-1-117" class="i">+    #[arg(short = &#39;c&#39;, long, default_value = &quot;config/toydb.yaml&quot;)]
+</a><a href="#h1-1-118" id="h1-1-118" class="i">+    config: String,
+</a><a href="#h1-1-119" id="h1-1-119" class="i">+}
+</a><a href="#h1-1-120" id="h1-1-120" class="i">+
+</a><a href="#h1-1-121" id="h1-1-121" class="i">+impl Command {
+</a><a href="#h1-1-122" id="h1-1-122" class="i">+    /// Runs the toyDB server.
+</a><a href="#h1-1-123" id="h1-1-123" class="i">+    fn run(self) -&gt; Result&lt;()&gt; {
+</a><a href="#h1-1-124" id="h1-1-124" class="i">+        // Load the configuration.
+</a><a href="#h1-1-125" id="h1-1-125" class="i">+        let cfg = Config::load(&amp;self.config)?;
+</a><a href="#h1-1-126" id="h1-1-126" class="i">+
+</a><a href="#h1-1-127" id="h1-1-127" class="i">+        // Initialize logging.
+</a><a href="#h1-1-128" id="h1-1-128" class="i">+        let loglevel = cfg.log_level.parse()?;
+</a><a href="#h1-1-129" id="h1-1-129" class="i">+        let mut logconfig = simplelog::ConfigBuilder::new();
+</a><a href="#h1-1-130" id="h1-1-130" class="i">+        if loglevel != simplelog::LevelFilter::Debug {
+</a><a href="#h1-1-131" id="h1-1-131" class="i">+            logconfig.add_filter_allow_str(&quot;toydb&quot;);
+</a><a href="#h1-1-132" id="h1-1-132" class="i">+        }
+</a><a href="#h1-1-133" id="h1-1-133" class="i">+        simplelog::SimpleLogger::init(loglevel, logconfig.build())?;
+</a><a href="#h1-1-134" id="h1-1-134" class="i">+
+</a><a href="#h1-1-135" id="h1-1-135" class="i">+        // Initialize the Raft log storage engine.
+</a><a href="#h1-1-136" id="h1-1-136" class="i">+        let datadir = std::path::Path::new(&amp;cfg.data_dir);
+</a><a href="#h1-1-137" id="h1-1-137" class="i">+        let raft_log = match cfg.storage_raft.as_str() {
+</a><a href="#h1-1-138" id="h1-1-138" class="i">+            &quot;bitcask&quot; | &quot;&quot; =&gt; {
+</a><a href="#h1-1-139" id="h1-1-139" class="i">+                let engine = storage::BitCask::new_compact(
+</a><a href="#h1-1-140" id="h1-1-140" class="i">+                    datadir.join(&quot;raft&quot;),
+</a><a href="#h1-1-141" id="h1-1-141" class="i">+                    cfg.compact_threshold,
+</a><a href="#h1-1-142" id="h1-1-142" class="i">+                    cfg.compact_min_bytes,
+</a><a href="#h1-1-143" id="h1-1-143" class="i">+                )?;
+</a><a href="#h1-1-144" id="h1-1-144" class="i">+                raft::Log::new(Box::new(engine))?
+</a><a href="#h1-1-145" id="h1-1-145" class="i">+            }
+</a><a href="#h1-1-146" id="h1-1-146" class="i">+            &quot;memory&quot; =&gt; raft::Log::new(Box::new(storage::Memory::new()))?,
+</a><a href="#h1-1-147" id="h1-1-147" class="i">+            name =&gt; return errinput!(&quot;invalid Raft storage engine {name}&quot;),
+</a><a href="#h1-1-148" id="h1-1-148" class="i">+        };
+</a><a href="#h1-1-149" id="h1-1-149" class="i">+
+</a><a href="#h1-1-150" id="h1-1-150" class="i">+        // Initialize the SQL storage engine.
+</a><a href="#h1-1-151" id="h1-1-151" class="i">+        let raft_state: Box&lt;dyn raft::State&gt; = match cfg.storage_sql.as_str() {
+</a><a href="#h1-1-152" id="h1-1-152" class="i">+            &quot;bitcask&quot; | &quot;&quot; =&gt; {
+</a><a href="#h1-1-153" id="h1-1-153" class="i">+                let engine = storage::BitCask::new_compact(
+</a><a href="#h1-1-154" id="h1-1-154" class="i">+                    datadir.join(&quot;sql&quot;),
+</a><a href="#h1-1-155" id="h1-1-155" class="i">+                    cfg.compact_threshold,
+</a><a href="#h1-1-156" id="h1-1-156" class="i">+                    cfg.compact_min_bytes,
+</a><a href="#h1-1-157" id="h1-1-157" class="i">+                )?;
+</a><a href="#h1-1-158" id="h1-1-158" class="i">+                Box::new(sql::engine::Raft::new_state(engine)?)
+</a><a href="#h1-1-159" id="h1-1-159" class="i">+            }
+</a><a href="#h1-1-160" id="h1-1-160" class="i">+            &quot;memory&quot; =&gt; {
+</a><a href="#h1-1-161" id="h1-1-161" class="i">+                let engine = storage::Memory::new();
+</a><a href="#h1-1-162" id="h1-1-162" class="i">+                Box::new(sql::engine::Raft::new_state(engine)?)
+</a><a href="#h1-1-163" id="h1-1-163" class="i">+            }
+</a><a href="#h1-1-164" id="h1-1-164" class="i">+            name =&gt; return errinput!(&quot;invalid SQL storage engine {name}&quot;),
+</a><a href="#h1-1-165" id="h1-1-165" class="i">+        };
+</a><a href="#h1-1-166" id="h1-1-166" class="i">+
+</a><a href="#h1-1-167" id="h1-1-167" class="i">+        // Start the server.
+</a><a href="#h1-1-168" id="h1-1-168" class="i">+        Server::new(cfg.id, cfg.peers, raft_log, raft_state)?
+</a><a href="#h1-1-169" id="h1-1-169" class="i">+            .serve(&amp;cfg.listen_raft, &amp;cfg.listen_sql)
+</a><a href="#h1-1-170" id="h1-1-170" class="i">+    }
+</a><a href="#h1-1-171" id="h1-1-171" class="i">+}
+</a></pre>
+</div>
+</body>
+</html>

@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>sql: fix IS NULL/NAN operator precedence - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/b18e315e3ba5454e6d3116ba980632ddb28c19f0.html">b18e315e3ba5454e6d3116ba980632ddb28c19f0</a>
+<b>parent</b> <a href="../commit/6ba4879dbee971bacbb0791622d9b93a34b13029.html">6ba4879dbee971bacbb0791622d9b93a34b13029</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Sat, 20 Jul 2024 14:46:17 +0200
+
+sql: fix IS NULL/NAN operator precedence
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">docs/sql.md</a></td><td> | </td><td class="num">23</td><td><span class="i">++++++++++++</span><span class="d">-----------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/sql/mod.rs</a></td><td> | </td><td class="num">6</td><td><span class="i">+++++</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/sql/parser/parser.rs</a></td><td> | </td><td class="num">25</td><td><span class="i">++++++++++++++++++</span><span class="d">-------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">src/sql/testscripts/expressions/op_precedence</a></td><td> | </td><td class="num">105</td><td><span class="i">++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d">-----------------------------</span></td></tr>
+</table></pre><pre>4 files changed, 101 insertions(+), 58 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/docs/sql.md.html">docs/sql.md</a> b/<a href="../file/docs/sql.md.html">docs/sql.md</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -143,17 +143,18 @@ String operators operate on string operands.
+</a> 
+ The operator precedence (order of operations) is as follows:
+ 
+<a href="#h0-0-3" id="h0-0-3" class="d">-| Precedence | Operator                 | Associativity |
+</a><a href="#h0-0-4" id="h0-0-4" class="d">-|------------|--------------------------|---------------|
+</a><a href="#h0-0-5" id="h0-0-5" class="d">-| 9          | `+`, `-`, `NOT` (prefix) | Right         |
+</a><a href="#h0-0-6" id="h0-0-6" class="d">-| 8          | `!`, `IS` (postfix)      | Left          |
+</a><a href="#h0-0-7" id="h0-0-7" class="d">-| 7          | `^`                      | Right         |
+</a><a href="#h0-0-8" id="h0-0-8" class="d">-| 6          | `*`, `/`, `%`            | Left          |
+</a><a href="#h0-0-9" id="h0-0-9" class="d">-| 5          | `+`, `-`                 | Left          |
+</a><a href="#h0-0-10" id="h0-0-10" class="d">-| 4          | `&gt;`, `&gt;=`, `&lt;`, `&lt;=`     | Left          |
+</a><a href="#h0-0-11" id="h0-0-11" class="d">-| 3          | `=`, `!=`, `LIKE`        | Left          |
+</a><a href="#h0-0-12" id="h0-0-12" class="d">-| 2          | `AND`                    | Left          |
+</a><a href="#h0-0-13" id="h0-0-13" class="d">-| 1          | `OR`                     | Left          |
+</a><a href="#h0-0-14" id="h0-0-14" class="i">+| Precedence | Operator                | Associativity |
+</a><a href="#h0-0-15" id="h0-0-15" class="i">+|------------|-------------------------|---------------|
+</a><a href="#h0-0-16" id="h0-0-16" class="i">+| 10         | `+`, `-` (prefix)       | Right         |
+</a><a href="#h0-0-17" id="h0-0-17" class="i">+| 9          | `!` (postfix)           | Left          |
+</a><a href="#h0-0-18" id="h0-0-18" class="i">+| 8          | `^`                     | Right         |
+</a><a href="#h0-0-19" id="h0-0-19" class="i">+| 7          | `*`, `/`, `%`           | Left          |
+</a><a href="#h0-0-20" id="h0-0-20" class="i">+| 6          | `+`, `-`                | Left          |
+</a><a href="#h0-0-21" id="h0-0-21" class="i">+| 5          | `&gt;`, `&gt;=`, `&lt;`, `&lt;=`    | Left          |
+</a><a href="#h0-0-22" id="h0-0-22" class="i">+| 4          | `=`, `!=`, `LIKE`, `IS` | Left          |
+</a><a href="#h0-0-23" id="h0-0-23" class="i">+| 3          | `NOT`                   | Right         |
+</a><a href="#h0-0-24" id="h0-0-24" class="i">+| 2          | `AND`                   | Left          |
+</a><a href="#h0-0-25" id="h0-0-25" class="i">+| 1          | `OR`                    | Left          |
+</a> 
+ Precedence can be overridden by wrapping an expression in parentheses, e.g. `(1 + 2) * 3`.
+ 
+<b>diff --git a/<a id="h1" href="../file/src/sql/mod.rs.html">src/sql/mod.rs</a> b/<a href="../file/src/sql/mod.rs.html">src/sql/mod.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -214,7 +214,11 @@ mod tests {
+</a>             let mut tags = command.tags.clone();
+ 
+             // Parse and build the expression.
+<a href="#h1-0-3" id="h1-0-3" class="d">-            let ast = Parser::new(input).parse_expression()?;
+</a><a href="#h1-0-4" id="h1-0-4" class="i">+            let mut parser = Parser::new(input);
+</a><a href="#h1-0-5" id="h1-0-5" class="i">+            let ast = parser.parse_expression()?;
+</a><a href="#h1-0-6" id="h1-0-6" class="i">+            if let Some(next) = parser.lexer.next().transpose()? {
+</a><a href="#h1-0-7" id="h1-0-7" class="i">+                return Err(format!(&quot;unconsumed token {next}&quot;).into());
+</a><a href="#h1-0-8" id="h1-0-8" class="i">+            }
+</a>             let mut expr = Planner::&lt;Catalog&gt;::build_expression(ast, &amp;Scope::new())?;
+ 
+             // If requested, convert the expression to conjunctive normal form.
+<b>diff --git a/<a id="h2" href="../file/src/sql/parser/parser.rs.html">src/sql/parser/parser.rs</a> b/<a href="../file/src/sql/parser/parser.rs.html">src/sql/parser/parser.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -13,7 +13,7 @@ use crate::sql::types::DataType;
+</a> /// does not know e.g. whether a given table or column exists, or which kind of
+ /// join to use -- that is the job of the planner.
+ pub struct Parser&lt;&#39;a&gt; {
+<a href="#h2-0-3" id="h2-0-3" class="d">-    lexer: std::iter::Peekable&lt;Lexer&lt;&#39;a&gt;&gt;,
+</a><a href="#h2-0-4" id="h2-0-4" class="i">+    pub lexer: std::iter::Peekable&lt;Lexer&lt;&#39;a&gt;&gt;,
+</a> }
+ 
+ impl&lt;&#39;a&gt; Parser&lt;&#39;a&gt; {
+<a href="#h2-1" id="h2-1" class="h">@@ -494,7 +494,7 @@ impl&lt;&#39;a&gt; Parser&lt;&#39;a&gt; {
+</a>         } else {
+             self.parse_expression_atom()?
+         };
+<a href="#h2-1-3" id="h2-1-3" class="d">-        // Apply any postfix operators.
+</a><a href="#h2-1-4" id="h2-1-4" class="i">+        // Apply any postfix operators for the left-hand atom.
+</a>         while let Some(postfix) = self.parse_postfix_operator(min_precedence)? {
+             lhs = postfix.build(lhs)
+         }
+<a href="#h2-2" id="h2-2" class="h">@@ -502,7 +502,12 @@ impl&lt;&#39;a&gt; Parser&lt;&#39;a&gt; {
+</a>         while let Some(infix) = self.parse_infix_operator(min_precedence)? {
+             let at_precedence = infix.precedence() + infix.associativity();
+             let rhs = self.parse_expression_at(at_precedence)?;
+<a href="#h2-2-3" id="h2-2-3" class="d">-            lhs = infix.build(lhs, rhs)
+</a><a href="#h2-2-4" id="h2-2-4" class="i">+            lhs = infix.build(lhs, rhs);
+</a><a href="#h2-2-5" id="h2-2-5" class="i">+        }
+</a><a href="#h2-2-6" id="h2-2-6" class="i">+        // Apply any postfix operators after the binary operator. Consider e.g.
+</a><a href="#h2-2-7" id="h2-2-7" class="i">+        // 1 + NULL IS NULL.
+</a><a href="#h2-2-8" id="h2-2-8" class="i">+        while let Some(postfix) = self.parse_postfix_operator(min_precedence)? {
+</a><a href="#h2-2-9" id="h2-2-9" class="i">+            lhs = postfix.build(lhs)
+</a>         }
+         Ok(lhs)
+     }
+<a href="#h2-3" id="h2-3" class="h">@@ -658,7 +663,7 @@ impl PrefixOperator {
+</a>     fn precedence(&amp;self) -&gt; Precedence {
+         match self {
+             Self::Not =&gt; 3,
+<a href="#h2-3-3" id="h2-3-3" class="d">-            _ =&gt; 10,
+</a><a href="#h2-3-4" id="h2-3-4" class="i">+            Self::Minus | Self::Plus =&gt; 10,
+</a>         }
+     }
+ 
+<a href="#h2-4" id="h2-4" class="h">@@ -700,12 +705,15 @@ enum InfixOperator {
+</a> 
+ impl InfixOperator {
+     /// The operator precedence.
+<a href="#h2-4-3" id="h2-4-3" class="i">+    ///
+</a><a href="#h2-4-4" id="h2-4-4" class="i">+    /// Mostly follows Postgres, except IS and LIKE having same precedence as =.
+</a><a href="#h2-4-5" id="h2-4-5" class="i">+    /// This is similar to SQLite and MySQL.
+</a>     fn precedence(&amp;self) -&gt; Precedence {
+         match self {
+             Self::Or =&gt; 1,
+             Self::And =&gt; 2,
+             // Self::Not =&gt; 3
+<a href="#h2-4-11" id="h2-4-11" class="d">-            Self::Equal | Self::NotEqual | Self::Like =&gt; 4,
+</a><a href="#h2-4-12" id="h2-4-12" class="i">+            Self::Equal | Self::NotEqual | Self::Like =&gt; 4, // and Self::Is
+</a>             Self::GreaterThan
+             | Self::GreaterThanOrEqual
+             | Self::LessThan
+<a href="#h2-5" id="h2-5" class="h">@@ -757,9 +765,12 @@ enum PostfixOperator {
+</a> }
+ 
+ impl PostfixOperator {
+<a href="#h2-5-3" id="h2-5-3" class="d">-    // The operator precedence. Postfix operators are below most prefix operators.
+</a><a href="#h2-5-4" id="h2-5-4" class="i">+    // The operator precedence.
+</a>     fn precedence(&amp;self) -&gt; Precedence {
+<a href="#h2-5-6" id="h2-5-6" class="d">-        9
+</a><a href="#h2-5-7" id="h2-5-7" class="i">+        match self {
+</a><a href="#h2-5-8" id="h2-5-8" class="i">+            Self::IsNaN | Self::IsNotNaN | Self::IsNotNull | Self::IsNull =&gt; 4,
+</a><a href="#h2-5-9" id="h2-5-9" class="i">+            Self::Factorial =&gt; 9,
+</a><a href="#h2-5-10" id="h2-5-10" class="i">+        }
+</a>     }
+ 
+     /// Builds an AST expression for the operator.
+<b>diff --git a/<a id="h3" href="../file/src/sql/testscripts/expressions/op_precedence.html">src/sql/testscripts/expressions/op_precedence</a> b/<a href="../file/src/sql/testscripts/expressions/op_precedence.html">src/sql/testscripts/expressions/op_precedence</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -1,13 +1,13 @@
+</a> # Tests operator precedence. Test each precedence level against the operators
+<a href="#h3-0-1" id="h3-0-1" class="d">-# immediately below it, in order. The levels are:
+</a><a href="#h3-0-2" id="h3-0-2" class="i">+# beside and immediately below it, in order. The levels are:
+</a> #
+ # 10: prefix +, -
+<a href="#h3-0-5" id="h3-0-5" class="d">-# 9: postfix !, IS NULL, IS NOT NULL, IS NAN, IS NOT NAN
+</a><a href="#h3-0-6" id="h3-0-6" class="i">+# 9: postfix !
+</a> # 8: ^ (left-associative)
+ # 7: *, /, %
+ # 6: +, -
+ # 5: &gt;, &gt;=, &lt;, &lt;=
+<a href="#h3-0-11" id="h3-0-11" class="d">-# 4: =, !=, LIKE
+</a><a href="#h3-0-12" id="h3-0-12" class="i">+# 4: =, !=, LIKE, IS
+</a> # 3: NOT
+ # 2: AND
+ # 1: OR
+<a href="#h3-1" id="h3-1" class="h">@@ -44,35 +44,6 @@ Integer(-9)
+</a> Integer(64)
+ Integer(40320)
+ 
+<a href="#h3-1-3" id="h3-1-3" class="d">-# IS NAN.
+</a><a href="#h3-1-4" id="h3-1-4" class="d">-!&gt; 2.0 ^ NAN IS NAN
+</a><a href="#h3-1-5" id="h3-1-5" class="d">-&gt; (2.0 ^ NAN) IS NAN
+</a><a href="#h3-1-6" id="h3-1-6" class="d">----
+</a><a href="#h3-1-7" id="h3-1-7" class="d">-Error: invalid input: can&#39;t exponentiate 2 and TRUE
+</a><a href="#h3-1-8" id="h3-1-8" class="d">-Boolean(true)
+</a><a href="#h3-1-9" id="h3-1-9" class="d">-
+</a><a href="#h3-1-10" id="h3-1-10" class="d">-# IS NOT NAN.
+</a><a href="#h3-1-11" id="h3-1-11" class="d">-!&gt; 2.0 ^ NAN IS NOT NAN
+</a><a href="#h3-1-12" id="h3-1-12" class="d">-&gt; (2.0 ^ NAN) IS NOT NAN
+</a><a href="#h3-1-13" id="h3-1-13" class="d">----
+</a><a href="#h3-1-14" id="h3-1-14" class="d">-Error: invalid input: can&#39;t exponentiate 2 and FALSE
+</a><a href="#h3-1-15" id="h3-1-15" class="d">-Boolean(false)
+</a><a href="#h3-1-16" id="h3-1-16" class="d">-
+</a><a href="#h3-1-17" id="h3-1-17" class="d">-
+</a><a href="#h3-1-18" id="h3-1-18" class="d">-# IS NULL.
+</a><a href="#h3-1-19" id="h3-1-19" class="d">-!&gt; 2 ^ NULL IS NULL
+</a><a href="#h3-1-20" id="h3-1-20" class="d">-&gt; (2 ^ NULL) IS NULL
+</a><a href="#h3-1-21" id="h3-1-21" class="d">----
+</a><a href="#h3-1-22" id="h3-1-22" class="d">-Error: invalid input: can&#39;t exponentiate 2 and TRUE
+</a><a href="#h3-1-23" id="h3-1-23" class="d">-Boolean(true)
+</a><a href="#h3-1-24" id="h3-1-24" class="d">-
+</a><a href="#h3-1-25" id="h3-1-25" class="d">-# IS NOT NULL.
+</a><a href="#h3-1-26" id="h3-1-26" class="d">-!&gt; 2 ^ NULL IS NOT NULL
+</a><a href="#h3-1-27" id="h3-1-27" class="d">-&gt; (2 ^ NULL) IS NOT NULL
+</a><a href="#h3-1-28" id="h3-1-28" class="d">----
+</a><a href="#h3-1-29" id="h3-1-29" class="d">-Error: invalid input: can&#39;t exponentiate 2 and FALSE
+</a><a href="#h3-1-30" id="h3-1-30" class="d">-Boolean(false)
+</a><a href="#h3-1-31" id="h3-1-31" class="d">-
+</a> # ^, which is also left-associative.
+ &gt; 2 ^ 3 ^ 2
+ &gt; (2 ^ 3) ^ 2
+<a href="#h3-2" id="h3-2" class="h">@@ -210,6 +181,8 @@ Error: invalid input: can&#39;t subtract 2 and TRUE
+</a> !&gt; 5 &gt; (3 != TRUE)
+ !&gt; 5 &gt; 3 LIKE &#39;abc&#39;
+ !&gt; 5 &gt; (3 LIKE &#39;abc&#39;)
+<a href="#h3-2-3" id="h3-2-3" class="i">+&gt; 5 &gt; 3 IS NULL
+</a><a href="#h3-2-4" id="h3-2-4" class="i">+!&gt; 5 &gt; (3 IS NULL)
+</a> ---
+ Boolean(false)
+ Error: invalid input: can&#39;t compare 3 and TRUE
+<a href="#h3-3" id="h3-3" class="h">@@ -225,6 +198,8 @@ Boolean(false)
+</a> Error: invalid input: can&#39;t compare 3 and TRUE
+ Error: invalid input: can&#39;t LIKE TRUE and abc
+ Error: invalid input: can&#39;t LIKE 3 and abc
+<a href="#h3-3-3" id="h3-3-3" class="i">+Boolean(false)
+</a><a href="#h3-3-4" id="h3-3-4" class="i">+Error: invalid input: can&#39;t compare 5 and FALSE
+</a> 
+ # &gt;=
+ &gt; 5 &gt;= 3 &lt; TRUE
+<a href="#h3-4" id="h3-4" class="h">@@ -241,6 +216,8 @@ Error: invalid input: can&#39;t LIKE 3 and abc
+</a> !&gt; 5 &gt;= (3 != TRUE)
+ !&gt; 5 &gt;= 3 LIKE &#39;abc&#39;
+ !&gt; 5 &gt;= (3 LIKE &#39;abc&#39;)
+<a href="#h3-4-3" id="h3-4-3" class="i">+&gt; 5 &gt;= 3 IS NULL
+</a><a href="#h3-4-4" id="h3-4-4" class="i">+!&gt; 5 &gt;= (3 IS NULL)
+</a> ---
+ Boolean(false)
+ Error: invalid input: can&#39;t compare 3 and TRUE
+<a href="#h3-5" id="h3-5" class="h">@@ -256,6 +233,8 @@ Boolean(false)
+</a> Error: invalid input: can&#39;t compare 3 and TRUE
+ Error: invalid input: can&#39;t LIKE TRUE and abc
+ Error: invalid input: can&#39;t LIKE 3 and abc
+<a href="#h3-5-3" id="h3-5-3" class="i">+Boolean(false)
+</a><a href="#h3-5-4" id="h3-5-4" class="i">+Error: invalid input: can&#39;t compare 5 and FALSE
+</a> 
+ # &lt;
+ &gt; 5 &lt; 3 &lt; TRUE
+<a href="#h3-6" id="h3-6" class="h">@@ -272,6 +251,8 @@ Error: invalid input: can&#39;t LIKE 3 and abc
+</a> !&gt; 5 &lt; (3 != TRUE)
+ !&gt; 5 &lt; 3 LIKE &#39;abc&#39;
+ !&gt; 5 &lt; (3 LIKE &#39;abc&#39;)
+<a href="#h3-6-3" id="h3-6-3" class="i">+&gt; 5 &lt; 3 IS NULL
+</a><a href="#h3-6-4" id="h3-6-4" class="i">+!&gt; 5 &lt; (3 IS NULL)
+</a> ---
+ Boolean(true)
+ Error: invalid input: can&#39;t compare 3 and TRUE
+<a href="#h3-7" id="h3-7" class="h">@@ -287,6 +268,8 @@ Boolean(true)
+</a> Error: invalid input: can&#39;t compare 3 and TRUE
+ Error: invalid input: can&#39;t LIKE FALSE and abc
+ Error: invalid input: can&#39;t LIKE 3 and abc
+<a href="#h3-7-3" id="h3-7-3" class="i">+Boolean(false)
+</a><a href="#h3-7-4" id="h3-7-4" class="i">+Error: invalid input: can&#39;t compare 5 and FALSE
+</a> 
+ # &lt;=
+ &gt; 5 &lt;= 3 &lt; TRUE
+<a href="#h3-8" id="h3-8" class="h">@@ -303,6 +286,8 @@ Error: invalid input: can&#39;t LIKE 3 and abc
+</a> !&gt; 5 &lt;= (3 != TRUE)
+ !&gt; 5 &lt;= 3 LIKE &#39;abc&#39;
+ !&gt; 5 &lt;= (3 LIKE &#39;abc&#39;)
+<a href="#h3-8-3" id="h3-8-3" class="i">+&gt; 5 &lt;= 3 IS NULL
+</a><a href="#h3-8-4" id="h3-8-4" class="i">+!&gt; 5 &lt;= (3 IS NULL)
+</a> ---
+ Boolean(true)
+ Error: invalid input: can&#39;t compare 3 and TRUE
+<a href="#h3-9" id="h3-9" class="h">@@ -318,44 +303,86 @@ Boolean(true)
+</a> Error: invalid input: can&#39;t compare 3 and TRUE
+ Error: invalid input: can&#39;t LIKE FALSE and abc
+ Error: invalid input: can&#39;t LIKE 3 and abc
+<a href="#h3-9-3" id="h3-9-3" class="i">+Boolean(false)
+</a><a href="#h3-9-4" id="h3-9-4" class="i">+Error: invalid input: can&#39;t compare 5 and FALSE
+</a> 
+ # =
+ &gt; 1 = 1 != FALSE
+ !&gt; 1 = (1 != FALSE)
+ !&gt; 1 = 1 LIKE &#39;abc&#39;
+ !&gt; 1 = (1 LIKE &#39;abc&#39;)
+<a href="#h3-9-11" id="h3-9-11" class="d">-&gt; 1 = 1 AND TRUE
+</a><a href="#h3-9-12" id="h3-9-12" class="d">-!&gt; 1 = (1 AND TRUE)
+</a><a href="#h3-9-13" id="h3-9-13" class="i">+&gt; 1 = NULL IS NULL
+</a><a href="#h3-9-14" id="h3-9-14" class="i">+!&gt; 1 = (NULL IS NULL)
+</a><a href="#h3-9-15" id="h3-9-15" class="i">+&gt; NOT 1 = 1
+</a><a href="#h3-9-16" id="h3-9-16" class="i">+!&gt; (NOT 1) = 1
+</a> ---
+ Boolean(true)
+ Error: invalid input: can&#39;t compare 1 and FALSE
+ Error: invalid input: can&#39;t LIKE TRUE and abc
+ Error: invalid input: can&#39;t LIKE 1 and abc
+ Boolean(true)
+<a href="#h3-9-23" id="h3-9-23" class="d">-Error: invalid input: can&#39;t and 1 and TRUE
+</a><a href="#h3-9-24" id="h3-9-24" class="i">+Error: invalid input: can&#39;t compare 1 and TRUE
+</a><a href="#h3-9-25" id="h3-9-25" class="i">+Boolean(false)
+</a><a href="#h3-9-26" id="h3-9-26" class="i">+Error: invalid input: can&#39;t negate 1
+</a> 
+ # !=
+ &gt; 1 != 1 != FALSE
+ !&gt; 1 != (1 != FALSE)
+ !&gt; 1 != 1 LIKE &#39;abc&#39;
+ !&gt; 1 != (1 LIKE &#39;abc&#39;)
+<a href="#h3-9-33" id="h3-9-33" class="d">-&gt; 1 != 1 AND TRUE
+</a><a href="#h3-9-34" id="h3-9-34" class="d">-!&gt; 1 != (1 AND TRUE)
+</a><a href="#h3-9-35" id="h3-9-35" class="i">+&gt; 1 != NULL IS NULL
+</a><a href="#h3-9-36" id="h3-9-36" class="i">+!&gt; 1 != (NULL IS NULL)
+</a><a href="#h3-9-37" id="h3-9-37" class="i">+&gt; NOT 1 != 1
+</a><a href="#h3-9-38" id="h3-9-38" class="i">+!&gt; (NOT 1) != 1
+</a> ---
+ Boolean(false)
+ Error: invalid input: can&#39;t compare 1 and FALSE
+ Error: invalid input: can&#39;t LIKE FALSE and abc
+ Error: invalid input: can&#39;t LIKE 1 and abc
+<a href="#h3-9-44" id="h3-9-44" class="d">-Boolean(false)
+</a><a href="#h3-9-45" id="h3-9-45" class="d">-Error: invalid input: can&#39;t and 1 and TRUE
+</a><a href="#h3-9-46" id="h3-9-46" class="i">+Boolean(true)
+</a><a href="#h3-9-47" id="h3-9-47" class="i">+Error: invalid input: can&#39;t compare 1 and TRUE
+</a><a href="#h3-9-48" id="h3-9-48" class="i">+Boolean(true)
+</a><a href="#h3-9-49" id="h3-9-49" class="i">+Error: invalid input: can&#39;t negate 1
+</a> 
+ # LIKE
+<a href="#h3-9-52" id="h3-9-52" class="i">+&gt; &#39;abc&#39; LIKE NULL IS NULL
+</a><a href="#h3-9-53" id="h3-9-53" class="i">+!&gt; &#39;abc&#39; LIKE (NULL IS NULL)
+</a> &gt; NOT &#39;abc&#39; LIKE &#39;abc&#39;
+ !&gt; (NOT &#39;abc&#39;) LIKE &#39;abc&#39;
+ ---
+<a href="#h3-9-57" id="h3-9-57" class="i">+Boolean(true)
+</a><a href="#h3-9-58" id="h3-9-58" class="i">+Error: invalid input: can&#39;t LIKE abc and TRUE
+</a> Boolean(false)
+ Error: invalid input: can&#39;t negate abc
+ 
+<a href="#h3-9-62" id="h3-9-62" class="i">+# IS NULL
+</a><a href="#h3-9-63" id="h3-9-63" class="i">+&gt; NOT NULL IS NULL
+</a><a href="#h3-9-64" id="h3-9-64" class="i">+&gt; (NOT NULL) IS NULL
+</a><a href="#h3-9-65" id="h3-9-65" class="i">+---
+</a><a href="#h3-9-66" id="h3-9-66" class="i">+Boolean(false)
+</a><a href="#h3-9-67" id="h3-9-67" class="i">+Boolean(true)
+</a><a href="#h3-9-68" id="h3-9-68" class="i">+
+</a><a href="#h3-9-69" id="h3-9-69" class="i">+# IS NOT NULL
+</a><a href="#h3-9-70" id="h3-9-70" class="i">+&gt; NOT NULL IS NOT NULL
+</a><a href="#h3-9-71" id="h3-9-71" class="i">+&gt; (NOT NULL) IS NOT NULL
+</a><a href="#h3-9-72" id="h3-9-72" class="i">+---
+</a><a href="#h3-9-73" id="h3-9-73" class="i">+Boolean(true)
+</a><a href="#h3-9-74" id="h3-9-74" class="i">+Boolean(false)
+</a><a href="#h3-9-75" id="h3-9-75" class="i">+
+</a><a href="#h3-9-76" id="h3-9-76" class="i">+# IS NAN
+</a><a href="#h3-9-77" id="h3-9-77" class="i">+&gt; NOT NAN IS NAN
+</a><a href="#h3-9-78" id="h3-9-78" class="i">+!&gt; (NOT NAN) IS NAN
+</a><a href="#h3-9-79" id="h3-9-79" class="i">+---
+</a><a href="#h3-9-80" id="h3-9-80" class="i">+Boolean(false)
+</a><a href="#h3-9-81" id="h3-9-81" class="i">+Error: invalid input: can&#39;t negate NaN
+</a><a href="#h3-9-82" id="h3-9-82" class="i">+
+</a><a href="#h3-9-83" id="h3-9-83" class="i">+# IS NOT NAN
+</a><a href="#h3-9-84" id="h3-9-84" class="i">+&gt; NOT NAN IS NOT NAN
+</a><a href="#h3-9-85" id="h3-9-85" class="i">+!&gt; (NOT NAN) IS NOT NAN
+</a><a href="#h3-9-86" id="h3-9-86" class="i">+---
+</a><a href="#h3-9-87" id="h3-9-87" class="i">+Boolean(true)
+</a><a href="#h3-9-88" id="h3-9-88" class="i">+Error: invalid input: can&#39;t negate NaN
+</a><a href="#h3-9-89" id="h3-9-89" class="i">+
+</a> # NOT.
+ &gt; NOT TRUE AND FALSE
+ &gt; NOT (TRUE AND FALSE)
+</pre>
+</div>
+</body>
+</html>

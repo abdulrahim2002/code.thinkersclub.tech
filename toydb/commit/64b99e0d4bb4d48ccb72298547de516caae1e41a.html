@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Make `storage::engine::Engine` object safe - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/64b99e0d4bb4d48ccb72298547de516caae1e41a.html">64b99e0d4bb4d48ccb72298547de516caae1e41a</a>
+<b>parent</b> <a href="../commit/117d33a9e4f15a5b3759ae3f773ac877d3c8c8be.html">117d33a9e4f15a5b3759ae3f773ac877d3c8c8be</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Sun,  7 Jan 2024 10:03:43 +0100
+
+Make `storage::engine::Engine` object safe
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/storage/debug.rs</a></td><td> | </td><td class="num">9</td><td><span class="i">++++++++</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/storage/engine/bitcask.rs</a></td><td> | </td><td class="num">7</td><td><span class="i">+++++++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/storage/engine/memory.rs</a></td><td> | </td><td class="num">7</td><td><span class="i">+++++++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">src/storage/engine/mod.rs</a></td><td> | </td><td class="num">21</td><td><span class="i">++++++++++++++++</span><span class="d">-----</span></td></tr>
+</table></pre><pre>4 files changed, 38 insertions(+), 6 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/storage/debug.rs.html">src/storage/debug.rs</a> b/<a href="../file/src/storage/debug.rs.html">src/storage/debug.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -3,7 +3,7 @@
+</a> use std::collections::HashSet;
+ 
+ use super::bincode;
+<a href="#h0-0-3" id="h0-0-3" class="d">-use super::engine::{self, Status};
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+use super::engine::{self, ScanIterator, Status};
+</a> use super::mvcc::{self, TransactionState};
+ use crate::error::Result;
+ 
+<a href="#h0-1" id="h0-1" class="h">@@ -139,6 +139,13 @@ impl&lt;E: engine::Engine&gt; engine::Engine for Engine&lt;E&gt; {
+</a>         self.inner.scan(range)
+     }
+ 
+<a href="#h0-1-3" id="h0-1-3" class="i">+    fn scan_dyn(
+</a><a href="#h0-1-4" id="h0-1-4" class="i">+        &amp;mut self,
+</a><a href="#h0-1-5" id="h0-1-5" class="i">+        range: (std::ops::Bound&lt;Vec&lt;u8&gt;&gt;, std::ops::Bound&lt;Vec&lt;u8&gt;&gt;),
+</a><a href="#h0-1-6" id="h0-1-6" class="i">+    ) -&gt; Box&lt;dyn ScanIterator + &#39;_&gt; {
+</a><a href="#h0-1-7" id="h0-1-7" class="i">+        Box::new(self.scan(range))
+</a><a href="#h0-1-8" id="h0-1-8" class="i">+    }
+</a><a href="#h0-1-9" id="h0-1-9" class="i">+
+</a>     fn set(&amp;mut self, key: &amp;[u8], value: Vec&lt;u8&gt;) -&gt; Result&lt;()&gt; {
+         self.inner.set(key, value.clone())?;
+         self.write_log.push((key.to_vec(), Some(value)));
+<b>diff --git a/<a id="h1" href="../file/src/storage/engine/bitcask.rs.html">src/storage/engine/bitcask.rs</a> b/<a href="../file/src/storage/engine/bitcask.rs.html">src/storage/engine/bitcask.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -117,6 +117,13 @@ impl Engine for BitCask {
+</a>         ScanIterator { inner: self.keydir.range(range), log: &amp;mut self.log }
+     }
+ 
+<a href="#h1-0-3" id="h1-0-3" class="i">+    fn scan_dyn(
+</a><a href="#h1-0-4" id="h1-0-4" class="i">+        &amp;mut self,
+</a><a href="#h1-0-5" id="h1-0-5" class="i">+        range: (std::ops::Bound&lt;Vec&lt;u8&gt;&gt;, std::ops::Bound&lt;Vec&lt;u8&gt;&gt;),
+</a><a href="#h1-0-6" id="h1-0-6" class="i">+    ) -&gt; Box&lt;dyn super::ScanIterator + &#39;_&gt; {
+</a><a href="#h1-0-7" id="h1-0-7" class="i">+        Box::new(self.scan(range))
+</a><a href="#h1-0-8" id="h1-0-8" class="i">+    }
+</a><a href="#h1-0-9" id="h1-0-9" class="i">+
+</a>     fn set(&amp;mut self, key: &amp;[u8], value: Vec&lt;u8&gt;) -&gt; Result&lt;()&gt; {
+         let (pos, len) = self.log.write_entry(key, Some(&amp;*value))?;
+         let value_len = value.len() as u32;
+<b>diff --git a/<a id="h2" href="../file/src/storage/engine/memory.rs.html">src/storage/engine/memory.rs</a> b/<a href="../file/src/storage/engine/memory.rs.html">src/storage/engine/memory.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -40,6 +40,13 @@ impl Engine for Memory {
+</a>         ScanIterator { inner: self.data.range(range) }
+     }
+ 
+<a href="#h2-0-3" id="h2-0-3" class="i">+    fn scan_dyn(
+</a><a href="#h2-0-4" id="h2-0-4" class="i">+        &amp;mut self,
+</a><a href="#h2-0-5" id="h2-0-5" class="i">+        range: (std::ops::Bound&lt;Vec&lt;u8&gt;&gt;, std::ops::Bound&lt;Vec&lt;u8&gt;&gt;),
+</a><a href="#h2-0-6" id="h2-0-6" class="i">+    ) -&gt; Box&lt;dyn super::ScanIterator + &#39;_&gt; {
+</a><a href="#h2-0-7" id="h2-0-7" class="i">+        Box::new(self.scan(range))
+</a><a href="#h2-0-8" id="h2-0-8" class="i">+    }
+</a><a href="#h2-0-9" id="h2-0-9" class="i">+
+</a>     fn set(&amp;mut self, key: &amp;[u8], value: Vec&lt;u8&gt;) -&gt; Result&lt;()&gt; {
+         self.data.insert(key.to_vec(), value);
+         Ok(())
+<b>diff --git a/<a id="h3" href="../file/src/storage/engine/mod.rs.html">src/storage/engine/mod.rs</a> b/<a href="../file/src/storage/engine/mod.rs.html">src/storage/engine/mod.rs</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -18,11 +18,10 @@ use serde::{Deserialize, Serialize};
+</a> /// mutable reference -- serialized access can&#39;t be avoided anyway, since both
+ /// Raft execution and file access is serial.
+ pub trait Engine: std::fmt::Display + Send + Sync {
+<a href="#h3-0-3" id="h3-0-3" class="d">-    /// The iterator returned by scan(). Traits can&#39;t return &quot;impl Trait&quot;, and
+</a><a href="#h3-0-4" id="h3-0-4" class="d">-    /// we don&#39;t want to use trait objects, so the type must be specified.
+</a><a href="#h3-0-5" id="h3-0-5" class="i">+    /// The iterator returned by scan().
+</a>     type ScanIterator&lt;&#39;a&gt;: ScanIterator + &#39;a
+     where
+<a href="#h3-0-8" id="h3-0-8" class="d">-        Self: &#39;a;
+</a><a href="#h3-0-9" id="h3-0-9" class="i">+        Self: Sized + &#39;a; // omit in trait objects, for object safety
+</a> 
+     /// Deletes a key, or does nothing if it does not exist.
+     fn delete(&amp;mut self, key: &amp;[u8]) -&gt; Result&lt;()&gt;;
+<a href="#h3-1" id="h3-1" class="h">@@ -34,10 +33,22 @@ pub trait Engine: std::fmt::Display + Send + Sync {
+</a>     fn get(&amp;mut self, key: &amp;[u8]) -&gt; Result&lt;Option&lt;Vec&lt;u8&gt;&gt;&gt;;
+ 
+     /// Iterates over an ordered range of key/value pairs.
+<a href="#h3-1-3" id="h3-1-3" class="d">-    fn scan(&amp;mut self, range: impl std::ops::RangeBounds&lt;Vec&lt;u8&gt;&gt;) -&gt; Self::ScanIterator&lt;&#39;_&gt;;
+</a><a href="#h3-1-4" id="h3-1-4" class="i">+    fn scan(&amp;mut self, range: impl std::ops::RangeBounds&lt;Vec&lt;u8&gt;&gt;) -&gt; Self::ScanIterator&lt;&#39;_&gt;
+</a><a href="#h3-1-5" id="h3-1-5" class="i">+    where
+</a><a href="#h3-1-6" id="h3-1-6" class="i">+        Self: Sized; // omit in trait objects, for object safety
+</a><a href="#h3-1-7" id="h3-1-7" class="i">+
+</a><a href="#h3-1-8" id="h3-1-8" class="i">+    /// Like scan, but can be used from trait objects. The iterator will use
+</a><a href="#h3-1-9" id="h3-1-9" class="i">+    /// dynamic dispatch, which has a minor performance penalty.
+</a><a href="#h3-1-10" id="h3-1-10" class="i">+    fn scan_dyn(
+</a><a href="#h3-1-11" id="h3-1-11" class="i">+        &amp;mut self,
+</a><a href="#h3-1-12" id="h3-1-12" class="i">+        range: (std::ops::Bound&lt;Vec&lt;u8&gt;&gt;, std::ops::Bound&lt;Vec&lt;u8&gt;&gt;),
+</a><a href="#h3-1-13" id="h3-1-13" class="i">+    ) -&gt; Box&lt;dyn ScanIterator + &#39;_&gt;;
+</a> 
+     /// Iterates over all key/value pairs starting with prefix.
+<a href="#h3-1-16" id="h3-1-16" class="d">-    fn scan_prefix(&amp;mut self, prefix: &amp;[u8]) -&gt; Self::ScanIterator&lt;&#39;_&gt; {
+</a><a href="#h3-1-17" id="h3-1-17" class="i">+    fn scan_prefix(&amp;mut self, prefix: &amp;[u8]) -&gt; Self::ScanIterator&lt;&#39;_&gt;
+</a><a href="#h3-1-18" id="h3-1-18" class="i">+    where
+</a><a href="#h3-1-19" id="h3-1-19" class="i">+        Self: Sized, // omit in trait objects, for object safety
+</a><a href="#h3-1-20" id="h3-1-20" class="i">+    {
+</a>         let start = std::ops::Bound::Included(prefix.to_vec());
+         let end = match prefix.iter().rposition(|b| *b != 0xff) {
+             Some(i) =&gt; std::ops::Bound::Excluded(
+</pre>
+</div>
+</body>
+</html>

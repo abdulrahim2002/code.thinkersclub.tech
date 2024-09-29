@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>sql: merge `IsNaN` and `IsNull` into an `Is` operation - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/2b9c91ba1c4cdbca859fb2fe926f073c95dc8297.html">2b9c91ba1c4cdbca859fb2fe926f073c95dc8297</a>
+<b>parent</b> <a href="../commit/b18e315e3ba5454e6d3116ba980632ddb28c19f0.html">b18e315e3ba5454e6d3116ba980632ddb28c19f0</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Sat, 20 Jul 2024 15:11:45 +0200
+
+sql: merge `IsNaN` and `IsNull` into an `Is` operation
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/sql/parser/ast.rs</a></td><td> | </td><td class="num">9</td><td><span class="i">+++</span><span class="d">------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/sql/parser/parser.rs</a></td><td> | </td><td class="num">37</td><td><span class="i">++++++++++++++++++</span><span class="d">-------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/sql/planner/planner.rs</a></td><td> | </td><td class="num">11</td><td><span class="i">+++++++++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">src/sql/types/expression.rs</a></td><td> | </td><td class="num">37</td><td><span class="i">+++++++++++++++</span><span class="d">----------------------</span></td></tr>
+</table></pre><pre>4 files changed, 45 insertions(+), 49 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/sql/parser/ast.rs.html">src/sql/parser/ast.rs</a> b/<a href="../file/src/sql/parser/ast.rs.html">src/sql/parser/ast.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -166,8 +166,7 @@ pub enum Operator {
+</a>     Equal(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+     GreaterThan(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+     GreaterThanOrEqual(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+<a href="#h0-0-3" id="h0-0-3" class="d">-    IsNaN(Box&lt;Expression&gt;),
+</a><a href="#h0-0-4" id="h0-0-4" class="d">-    IsNull(Box&lt;Expression&gt;),
+</a><a href="#h0-0-5" id="h0-0-5" class="i">+    Is(Box&lt;Expression&gt;, Literal), // NULL or f64 NAN
+</a>     LessThan(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+     LessThanOrEqual(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+     NotEqual(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+<a href="#h0-1" id="h0-1" class="h">@@ -212,8 +211,7 @@ impl Expression {
+</a> 
+             Self::Operator(Factorial(expr))
+             | Self::Operator(Identity(expr))
+<a href="#h0-1-3" id="h0-1-3" class="d">-            | Self::Operator(IsNaN(expr))
+</a><a href="#h0-1-4" id="h0-1-4" class="d">-            | Self::Operator(IsNull(expr))
+</a><a href="#h0-1-5" id="h0-1-5" class="i">+            | Self::Operator(Is(expr, _))
+</a>             | Self::Operator(Negate(expr))
+             | Self::Operator(Not(expr)) =&gt; expr.walk(visitor),
+ 
+<a href="#h0-2" id="h0-2" class="h">@@ -259,8 +257,7 @@ impl Expression {
+</a> 
+             Self::Operator(Factorial(expr))
+             | Self::Operator(Identity(expr))
+<a href="#h0-2-3" id="h0-2-3" class="d">-            | Self::Operator(IsNaN(expr))
+</a><a href="#h0-2-4" id="h0-2-4" class="d">-            | Self::Operator(IsNull(expr))
+</a><a href="#h0-2-5" id="h0-2-5" class="i">+            | Self::Operator(Is(expr, _))
+</a>             | Self::Operator(Negate(expr))
+             | Self::Operator(Not(expr)) =&gt; expr.collect(visitor, c),
+ 
+<b>diff --git a/<a id="h1" href="../file/src/sql/parser/parser.rs.html">src/sql/parser/parser.rs</a> b/<a href="../file/src/sql/parser/parser.rs.html">src/sql/parser/parser.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -621,18 +621,21 @@ impl&lt;&#39;a&gt; Parser&lt;&#39;a&gt; {
+</a>         if let Some(Token::Keyword(Keyword::Is)) = self.peek()? {
+             // We can&#39;t consume tokens unless the precedence is satisfied, so we
+             // assume IS NULL (they all have the same precedence).
+<a href="#h1-0-3" id="h1-0-3" class="d">-            if PostfixOperator::IsNull.precedence() &lt; min_precedence {
+</a><a href="#h1-0-4" id="h1-0-4" class="i">+            if PostfixOperator::Is(ast::Literal::Null).precedence() &lt; min_precedence {
+</a>                 return Ok(None);
+             }
+             self.expect(Keyword::Is.into())?;
+             let not = self.next_is(Keyword::Not.into());
+<a href="#h1-0-9" id="h1-0-9" class="d">-            return Ok(match self.next()? {
+</a><a href="#h1-0-10" id="h1-0-10" class="d">-                Token::Keyword(Keyword::NaN) if not =&gt; Some(PostfixOperator::IsNotNaN),
+</a><a href="#h1-0-11" id="h1-0-11" class="d">-                Token::Keyword(Keyword::NaN) =&gt; Some(PostfixOperator::IsNaN),
+</a><a href="#h1-0-12" id="h1-0-12" class="d">-                Token::Keyword(Keyword::Null) if not =&gt; Some(PostfixOperator::IsNotNull),
+</a><a href="#h1-0-13" id="h1-0-13" class="d">-                Token::Keyword(Keyword::Null) =&gt; Some(PostfixOperator::IsNull),
+</a><a href="#h1-0-14" id="h1-0-14" class="i">+            let value = match self.next()? {
+</a><a href="#h1-0-15" id="h1-0-15" class="i">+                Token::Keyword(Keyword::NaN) =&gt; ast::Literal::Float(f64::NAN),
+</a><a href="#h1-0-16" id="h1-0-16" class="i">+                Token::Keyword(Keyword::Null) =&gt; ast::Literal::Null,
+</a>                 token =&gt; return errinput!(&quot;unexpected token {token}&quot;),
+<a href="#h1-0-18" id="h1-0-18" class="d">-            });
+</a><a href="#h1-0-19" id="h1-0-19" class="i">+            };
+</a><a href="#h1-0-20" id="h1-0-20" class="i">+            let operator = match not {
+</a><a href="#h1-0-21" id="h1-0-21" class="i">+                false =&gt; PostfixOperator::Is(value),
+</a><a href="#h1-0-22" id="h1-0-22" class="i">+                true =&gt; PostfixOperator::IsNot(value),
+</a><a href="#h1-0-23" id="h1-0-23" class="i">+            };
+</a><a href="#h1-0-24" id="h1-0-24" class="i">+            return Ok(Some(operator));
+</a>         }
+ 
+         self.next_if_map(|token| {
+<a href="#h1-1" id="h1-1" class="h">@@ -674,7 +677,7 @@ impl PrefixOperator {
+</a>     }
+ 
+     /// Builds an AST expression for the operator.
+<a href="#h1-1-3" id="h1-1-3" class="d">-    fn build(&amp;self, rhs: ast::Expression) -&gt; ast::Expression {
+</a><a href="#h1-1-4" id="h1-1-4" class="i">+    fn build(self, rhs: ast::Expression) -&gt; ast::Expression {
+</a>         let rhs = Box::new(rhs);
+         match self {
+             Self::Plus =&gt; ast::Operator::Identity(rhs).into(),
+<a href="#h1-2" id="h1-2" class="h">@@ -733,7 +736,7 @@ impl InfixOperator {
+</a>     }
+ 
+     /// Builds an AST expression for the infix operator.
+<a href="#h1-2-3" id="h1-2-3" class="d">-    fn build(&amp;self, lhs: ast::Expression, rhs: ast::Expression) -&gt; ast::Expression {
+</a><a href="#h1-2-4" id="h1-2-4" class="i">+    fn build(self, lhs: ast::Expression, rhs: ast::Expression) -&gt; ast::Expression {
+</a>         let (lhs, rhs) = (Box::new(lhs), Box::new(rhs));
+         match self {
+             Self::Add =&gt; ast::Operator::Add(lhs, rhs).into(),
+<a href="#h1-3" id="h1-3" class="h">@@ -758,30 +761,26 @@ impl InfixOperator {
+</a> /// Postfix operators.
+ enum PostfixOperator {
+     Factorial,
+<a href="#h1-3-3" id="h1-3-3" class="d">-    IsNaN,
+</a><a href="#h1-3-4" id="h1-3-4" class="d">-    IsNotNaN,
+</a><a href="#h1-3-5" id="h1-3-5" class="d">-    IsNotNull,
+</a><a href="#h1-3-6" id="h1-3-6" class="d">-    IsNull,
+</a><a href="#h1-3-7" id="h1-3-7" class="i">+    Is(ast::Literal),
+</a><a href="#h1-3-8" id="h1-3-8" class="i">+    IsNot(ast::Literal),
+</a> }
+ 
+ impl PostfixOperator {
+     // The operator precedence.
+     fn precedence(&amp;self) -&gt; Precedence {
+         match self {
+<a href="#h1-3-15" id="h1-3-15" class="d">-            Self::IsNaN | Self::IsNotNaN | Self::IsNotNull | Self::IsNull =&gt; 4,
+</a><a href="#h1-3-16" id="h1-3-16" class="i">+            Self::Is(_) | Self::IsNot(_) =&gt; 4,
+</a>             Self::Factorial =&gt; 9,
+         }
+     }
+ 
+     /// Builds an AST expression for the operator.
+<a href="#h1-3-22" id="h1-3-22" class="d">-    fn build(&amp;self, lhs: ast::Expression) -&gt; ast::Expression {
+</a><a href="#h1-3-23" id="h1-3-23" class="i">+    fn build(self, lhs: ast::Expression) -&gt; ast::Expression {
+</a>         let lhs = Box::new(lhs);
+         match self {
+             Self::Factorial =&gt; ast::Operator::Factorial(lhs).into(),
+<a href="#h1-3-27" id="h1-3-27" class="d">-            Self::IsNaN =&gt; ast::Operator::IsNaN(lhs).into(),
+</a><a href="#h1-3-28" id="h1-3-28" class="d">-            Self::IsNotNaN =&gt; ast::Operator::Not(ast::Operator::IsNaN(lhs).into()).into(),
+</a><a href="#h1-3-29" id="h1-3-29" class="d">-            Self::IsNotNull =&gt; ast::Operator::Not(ast::Operator::IsNull(lhs).into()).into(),
+</a><a href="#h1-3-30" id="h1-3-30" class="d">-            Self::IsNull =&gt; ast::Operator::IsNull(lhs).into(),
+</a><a href="#h1-3-31" id="h1-3-31" class="i">+            Self::Is(v) =&gt; ast::Operator::Is(lhs, v).into(),
+</a><a href="#h1-3-32" id="h1-3-32" class="i">+            Self::IsNot(v) =&gt; ast::Operator::Not(ast::Operator::Is(lhs, v).into()).into(),
+</a>         }
+     }
+ }
+<b>diff --git a/<a id="h2" href="../file/src/sql/planner/planner.rs.html">src/sql/planner/planner.rs</a> b/<a href="../file/src/sql/planner/planner.rs.html">src/sql/planner/planner.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -529,8 +529,15 @@ impl&lt;&#39;a, C: Catalog&gt; Planner&lt;&#39;a, C&gt; {
+</a>                     GreaterThan(build(lhs.clone())?, build(rhs.clone())?).into(),
+                     Equal(build(lhs)?, build(rhs)?).into(),
+                 ),
+<a href="#h2-0-3" id="h2-0-3" class="d">-                ast::Operator::IsNaN(expr) =&gt; IsNaN(build(expr)?),
+</a><a href="#h2-0-4" id="h2-0-4" class="d">-                ast::Operator::IsNull(expr) =&gt; IsNull(build(expr)?),
+</a><a href="#h2-0-5" id="h2-0-5" class="i">+                ast::Operator::Is(expr, literal) =&gt; {
+</a><a href="#h2-0-6" id="h2-0-6" class="i">+                    let expr = build(expr)?;
+</a><a href="#h2-0-7" id="h2-0-7" class="i">+                    let value = match literal {
+</a><a href="#h2-0-8" id="h2-0-8" class="i">+                        ast::Literal::Null =&gt; Value::Null,
+</a><a href="#h2-0-9" id="h2-0-9" class="i">+                        ast::Literal::Float(f) if f.is_nan() =&gt; Value::Float(f),
+</a><a href="#h2-0-10" id="h2-0-10" class="i">+                        value =&gt; panic!(&quot;invalid IS value {value:?}&quot;), // enforced by parser
+</a><a href="#h2-0-11" id="h2-0-11" class="i">+                    };
+</a><a href="#h2-0-12" id="h2-0-12" class="i">+                    Is(expr, value)
+</a><a href="#h2-0-13" id="h2-0-13" class="i">+                }
+</a>                 ast::Operator::LessThan(lhs, rhs) =&gt; LessThan(build(lhs)?, build(rhs)?),
+                 ast::Operator::LessThanOrEqual(lhs, rhs) =&gt; Or(
+                     LessThan(build(lhs.clone())?, build(rhs.clone())?).into(),
+<b>diff --git a/<a id="h3" href="../file/src/sql/types/expression.rs.html">src/sql/types/expression.rs</a> b/<a href="../file/src/sql/types/expression.rs.html">src/sql/types/expression.rs</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -31,10 +31,8 @@ pub enum Expression {
+</a>     GreaterThan(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+     /// &lt; comparison of two values: a &lt; b.
+     LessThan(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+<a href="#h3-0-3" id="h3-0-3" class="d">-    /// Returns true if the value is null.
+</a><a href="#h3-0-4" id="h3-0-4" class="d">-    IsNull(Box&lt;Expression&gt;),
+</a><a href="#h3-0-5" id="h3-0-5" class="d">-    /// Returns true if the value is a f64 NaN.
+</a><a href="#h3-0-6" id="h3-0-6" class="d">-    IsNaN(Box&lt;Expression&gt;),
+</a><a href="#h3-0-7" id="h3-0-7" class="i">+    /// Checks for the given value: IS NULL or IS NAN.
+</a><a href="#h3-0-8" id="h3-0-8" class="i">+    Is(Box&lt;Expression&gt;, Value),
+</a> 
+     /// Adds two numbers: a + b.
+     Add(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+<a href="#h3-1" id="h3-1" class="h">@@ -79,8 +77,9 @@ impl Expression {
+</a>             Self::Equal(lhs, rhs) =&gt; format!(&quot;{} = {}&quot;, format(lhs), format(rhs)),
+             Self::GreaterThan(lhs, rhs) =&gt; format!(&quot;{} &gt; {}&quot;, format(lhs), format(rhs)),
+             Self::LessThan(lhs, rhs) =&gt; format!(&quot;{} &lt; {}&quot;, format(lhs), format(rhs)),
+<a href="#h3-1-3" id="h3-1-3" class="d">-            Self::IsNull(expr) =&gt; format!(&quot;{} IS NULL&quot;, format(expr)),
+</a><a href="#h3-1-4" id="h3-1-4" class="d">-            Self::IsNaN(expr) =&gt; format!(&quot;{} IS NAN&quot;, format(expr)),
+</a><a href="#h3-1-5" id="h3-1-5" class="i">+            Self::Is(expr, Value::Null) =&gt; format!(&quot;{} IS NULL&quot;, format(expr)),
+</a><a href="#h3-1-6" id="h3-1-6" class="i">+            Self::Is(expr, Value::Float(f)) if f.is_nan() =&gt; format!(&quot;{} IS NAN&quot;, format(expr)),
+</a><a href="#h3-1-7" id="h3-1-7" class="i">+            Self::Is(_, v) =&gt; panic!(&quot;unexpected IS value {v}&quot;),
+</a> 
+             Self::Add(lhs, rhs) =&gt; format!(&quot;{} + {}&quot;, format(lhs), format(rhs)),
+             Self::Divide(lhs, rhs) =&gt; format!(&quot;{} / {}&quot;, format(lhs), format(rhs)),
+<a href="#h3-2" id="h3-2" class="h">@@ -175,12 +174,13 @@ impl Expression {
+</a>                 (Null, _) | (_, Null) =&gt; Null,
+                 (lhs, rhs) =&gt; return errinput!(&quot;can&#39;t compare {lhs} and {rhs}&quot;),
+             },
+<a href="#h3-2-3" id="h3-2-3" class="d">-            Self::IsNull(expr) =&gt; Boolean(expr.evaluate(row)? == Null),
+</a><a href="#h3-2-4" id="h3-2-4" class="d">-            Self::IsNaN(expr) =&gt; match expr.evaluate(row)? {
+</a><a href="#h3-2-5" id="h3-2-5" class="i">+            Self::Is(expr, Null) =&gt; Boolean(expr.evaluate(row)? == Null),
+</a><a href="#h3-2-6" id="h3-2-6" class="i">+            Self::Is(expr, Float(f)) if f.is_nan() =&gt; match expr.evaluate(row)? {
+</a>                 Float(f) =&gt; Boolean(f.is_nan()),
+                 Null =&gt; Null,
+                 v =&gt; return errinput!(&quot;IS NAN can&#39;t be used with {}&quot;, v.datatype().unwrap()),
+             },
+<a href="#h3-2-11" id="h3-2-11" class="i">+            Self::Is(_, v) =&gt; return errinput!(&quot;invalid IS value {v}&quot;),
+</a> 
+             // Mathematical operations. Inputs must be numbers, but integers and
+             // floats are interchangeable (float when mixed). NULLs yield NULL.
+<a href="#h3-3" id="h3-3" class="h">@@ -248,8 +248,7 @@ impl Expression {
+</a> 
+                 Self::Factorial(expr)
+                 | Self::Identity(expr)
+<a href="#h3-3-3" id="h3-3-3" class="d">-                | Self::IsNaN(expr)
+</a><a href="#h3-3-4" id="h3-3-4" class="d">-                | Self::IsNull(expr)
+</a><a href="#h3-3-5" id="h3-3-5" class="i">+                | Self::Is(expr, _)
+</a>                 | Self::Negate(expr)
+                 | Self::Not(expr)
+                 | Self::SquareRoot(expr) =&gt; expr.walk(visitor),
+<a href="#h3-4" id="h3-4" class="h">@@ -296,8 +295,7 @@ impl Expression {
+</a> 
+             Self::Factorial(expr) =&gt; Self::Factorial(transform(expr)?),
+             Self::Identity(expr) =&gt; Self::Identity(transform(expr)?),
+<a href="#h3-4-3" id="h3-4-3" class="d">-            Self::IsNaN(expr) =&gt; Self::IsNaN(transform(expr)?),
+</a><a href="#h3-4-4" id="h3-4-4" class="d">-            Self::IsNull(expr) =&gt; Self::IsNull(transform(expr)?),
+</a><a href="#h3-4-5" id="h3-4-5" class="i">+            Self::Is(expr, value) =&gt; Self::Is(transform(expr)?, value),
+</a>             Self::Negate(expr) =&gt; Self::Negate(transform(expr)?),
+             Self::Not(expr) =&gt; Self::Not(transform(expr)?),
+ 
+<a href="#h3-5" id="h3-5" class="h">@@ -387,8 +385,8 @@ impl Expression {
+</a>                 (Column(f), Constant(_)) | (Constant(_), Column(f)) =&gt; Some(*f),
+                 _ =&gt; None,
+             },
+<a href="#h3-5-3" id="h3-5-3" class="d">-            // IS NULL and IS NAN can use index lookups, since we index these.
+</a><a href="#h3-5-4" id="h3-5-4" class="d">-            IsNull(expr) | IsNaN(expr) =&gt; match expr.as_ref() {
+</a><a href="#h3-5-5" id="h3-5-5" class="i">+            // IS NULL and IS NAN can use index lookups.
+</a><a href="#h3-5-6" id="h3-5-6" class="i">+            Is(expr, _) =&gt; match expr.as_ref() {
+</a>                 Column(f) =&gt; Some(*f),
+                 _ =&gt; None,
+             },
+<a href="#h3-6" id="h3-6" class="h">@@ -416,14 +414,9 @@ impl Expression {
+</a>                 (Column(f), Constant(v)) | (Constant(v), Column(f)) =&gt; Some((f, vec![v])),
+                 _ =&gt; None,
+             },
+<a href="#h3-6-3" id="h3-6-3" class="d">-            // IS NULL index lookups should look up NULL.
+</a><a href="#h3-6-4" id="h3-6-4" class="d">-            IsNull(expr) =&gt; match *expr {
+</a><a href="#h3-6-5" id="h3-6-5" class="d">-                Column(f) =&gt; Some((f, vec![Value::Null])),
+</a><a href="#h3-6-6" id="h3-6-6" class="d">-                _ =&gt; None,
+</a><a href="#h3-6-7" id="h3-6-7" class="d">-            },
+</a><a href="#h3-6-8" id="h3-6-8" class="d">-            // IS NAN index lookups should look up NAN.
+</a><a href="#h3-6-9" id="h3-6-9" class="d">-            IsNaN(expr) =&gt; match *expr {
+</a><a href="#h3-6-10" id="h3-6-10" class="d">-                Column(f) =&gt; Some((f, vec![Value::Float(f64::NAN)])),
+</a><a href="#h3-6-11" id="h3-6-11" class="i">+            // IS NULL and IS NAN can use index lookups.
+</a><a href="#h3-6-12" id="h3-6-12" class="i">+            Is(expr, value) =&gt; match *expr {
+</a><a href="#h3-6-13" id="h3-6-13" class="i">+                Column(f) =&gt; Some((f, vec![value])),
+</a>                 _ =&gt; None,
+             },
+             Or(lhs, rhs) =&gt; match (lhs.into_column_values(), rhs.into_column_values()) {
+</pre>
+</div>
+</body>
+</html>

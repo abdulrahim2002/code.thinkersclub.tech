@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>write.rs - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../../../../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../../../../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../../../../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../../../../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../../../../"><img src="../../../../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../../../../log.html">Log</a> | <a href="../../../../files.html">Files</a> | <a href="../../../../refs.html">Refs</a> | <a href="../../../../file/README.md.html">README</a> | <a href="../../../../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<p> write.rs (3514B)</p><hr/><pre id="blob">
+<a href="#l1" class="line" id="l1">      1</a><code class="language-auto"> use crate::errinput;</code>
+<a href="#l2" class="line" id="l2">      2</a><code class="language-auto"> use crate::error::Result;</code>
+<a href="#l3" class="line" id="l3">      3</a><code class="language-auto"> use crate::sql::engine::Transaction;</code>
+<a href="#l4" class="line" id="l4">      4</a><code class="language-auto"> use crate::sql::types::{Expression, Rows, Table, Value};</code>
+<a href="#l5" class="line" id="l5">      5</a><code class="language-auto"> </code>
+<a href="#l6" class="line" id="l6">      6</a><code class="language-auto"> use itertools::Itertools as _;</code>
+<a href="#l7" class="line" id="l7">      7</a><code class="language-auto"> use std::collections::{BTreeMap, HashMap};</code>
+<a href="#l8" class="line" id="l8">      8</a><code class="language-auto"> </code>
+<a href="#l9" class="line" id="l9">      9</a><code class="language-auto"> /// Deletes rows, taking primary keys from the source (i.e. DELETE) using the</code>
+<a href="#l10" class="line" id="l10">     10</a><code class="language-auto"> /// primary_key column index. Returns the number of rows deleted.</code>
+<a href="#l11" class="line" id="l11">     11</a><code class="language-auto"> pub fn delete(</code>
+<a href="#l12" class="line" id="l12">     12</a><code class="language-auto">     txn: &amp;impl Transaction,</code>
+<a href="#l13" class="line" id="l13">     13</a><code class="language-auto">     table: String,</code>
+<a href="#l14" class="line" id="l14">     14</a><code class="language-auto">     primary_key: usize,</code>
+<a href="#l15" class="line" id="l15">     15</a><code class="language-auto">     source: Rows,</code>
+<a href="#l16" class="line" id="l16">     16</a><code class="language-auto"> ) -&gt; Result&lt;u64&gt; {</code>
+<a href="#l17" class="line" id="l17">     17</a><code class="language-auto">     let ids: Vec&lt;Value&gt; =</code>
+<a href="#l18" class="line" id="l18">     18</a><code class="language-auto">         source.map_ok(|row| row.into_iter().nth(primary_key).expect(&quot;short row&quot;)).try_collect()?;</code>
+<a href="#l19" class="line" id="l19">     19</a><code class="language-auto">     let count = ids.len() as u64;</code>
+<a href="#l20" class="line" id="l20">     20</a><code class="language-auto">     txn.delete(&amp;table, &amp;ids)?;</code>
+<a href="#l21" class="line" id="l21">     21</a><code class="language-auto">     Ok(count)</code>
+<a href="#l22" class="line" id="l22">     22</a><code class="language-auto"> }</code>
+<a href="#l23" class="line" id="l23">     23</a><code class="language-auto"> </code>
+<a href="#l24" class="line" id="l24">     24</a><code class="language-auto"> /// Inserts rows into a table (i.e. INSERT) from the given source.</code>
+<a href="#l25" class="line" id="l25">     25</a><code class="language-auto"> ///</code>
+<a href="#l26" class="line" id="l26">     26</a><code class="language-auto"> /// If given, column_map contains the mapping of table -&gt; source columns for all</code>
+<a href="#l27" class="line" id="l27">     27</a><code class="language-auto"> /// columns in source. Otherwise, every column in source is the corresponding</code>
+<a href="#l28" class="line" id="l28">     28</a><code class="language-auto"> /// column in table, but the source may not have all columns in table (there may</code>
+<a href="#l29" class="line" id="l29">     29</a><code class="language-auto"> /// be a missing tail).</code>
+<a href="#l30" class="line" id="l30">     30</a><code class="language-auto"> pub fn insert(</code>
+<a href="#l31" class="line" id="l31">     31</a><code class="language-auto">     txn: &amp;impl Transaction,</code>
+<a href="#l32" class="line" id="l32">     32</a><code class="language-auto">     table: Table,</code>
+<a href="#l33" class="line" id="l33">     33</a><code class="language-auto">     column_map: Option&lt;HashMap&lt;usize, usize&gt;&gt;,</code>
+<a href="#l34" class="line" id="l34">     34</a><code class="language-auto">     mut source: Rows,</code>
+<a href="#l35" class="line" id="l35">     35</a><code class="language-auto"> ) -&gt; Result&lt;u64&gt; {</code>
+<a href="#l36" class="line" id="l36">     36</a><code class="language-auto">     let mut rows = Vec::new();</code>
+<a href="#l37" class="line" id="l37">     37</a><code class="language-auto">     while let Some(values) = source.next().transpose()? {</code>
+<a href="#l38" class="line" id="l38">     38</a><code class="language-auto">         // Fast path: the row is already complete, with no column mapping.</code>
+<a href="#l39" class="line" id="l39">     39</a><code class="language-auto">         if values.len() == table.columns.len() &amp;&amp; column_map.is_none() {</code>
+<a href="#l40" class="line" id="l40">     40</a><code class="language-auto">             rows.push(values);</code>
+<a href="#l41" class="line" id="l41">     41</a><code class="language-auto">             continue;</code>
+<a href="#l42" class="line" id="l42">     42</a><code class="language-auto">         }</code>
+<a href="#l43" class="line" id="l43">     43</a><code class="language-auto">         if values.len() &gt; table.columns.len() {</code>
+<a href="#l44" class="line" id="l44">     44</a><code class="language-auto">             return errinput!(&quot;too many values for table {}&quot;, table.name);</code>
+<a href="#l45" class="line" id="l45">     45</a><code class="language-auto">         }</code>
+<a href="#l46" class="line" id="l46">     46</a><code class="language-auto">         if let Some(column_map) = &amp;column_map {</code>
+<a href="#l47" class="line" id="l47">     47</a><code class="language-auto">             if column_map.len() != values.len() {</code>
+<a href="#l48" class="line" id="l48">     48</a><code class="language-auto">                 return errinput!(&quot;column and value counts do not match&quot;);</code>
+<a href="#l49" class="line" id="l49">     49</a><code class="language-auto">             }</code>
+<a href="#l50" class="line" id="l50">     50</a><code class="language-auto">         }</code>
+<a href="#l51" class="line" id="l51">     51</a><code class="language-auto"> </code>
+<a href="#l52" class="line" id="l52">     52</a><code class="language-auto">         // Map source columns to table columns, and fill in default values.</code>
+<a href="#l53" class="line" id="l53">     53</a><code class="language-auto">         let mut row = Vec::with_capacity(table.columns.len());</code>
+<a href="#l54" class="line" id="l54">     54</a><code class="language-auto">         for (i, column) in table.columns.iter().enumerate() {</code>
+<a href="#l55" class="line" id="l55">     55</a><code class="language-auto">             if column_map.is_none() &amp;&amp; i &lt; values.len() {</code>
+<a href="#l56" class="line" id="l56">     56</a><code class="language-auto">                 // Pass through the source column to the table column.</code>
+<a href="#l57" class="line" id="l57">     57</a><code class="language-auto">                 row.push(values[i].clone())</code>
+<a href="#l58" class="line" id="l58">     58</a><code class="language-auto">             } else if let Some(vi) = column_map.as_ref().and_then(|c| c.get(&amp;i)).copied() {</code>
+<a href="#l59" class="line" id="l59">     59</a><code class="language-auto">                 // Map the source column to the table column.</code>
+<a href="#l60" class="line" id="l60">     60</a><code class="language-auto">                 row.push(values[vi].clone())</code>
+<a href="#l61" class="line" id="l61">     61</a><code class="language-auto">             } else if let Some(default) = &amp;column.default {</code>
+<a href="#l62" class="line" id="l62">     62</a><code class="language-auto">                 // Column not given in source, use the default.</code>
+<a href="#l63" class="line" id="l63">     63</a><code class="language-auto">                 row.push(default.clone())</code>
+<a href="#l64" class="line" id="l64">     64</a><code class="language-auto">             } else {</code>
+<a href="#l65" class="line" id="l65">     65</a><code class="language-auto">                 return errinput!(&quot;no value given for column {} with no default&quot;, column.name);</code>
+<a href="#l66" class="line" id="l66">     66</a><code class="language-auto">             }</code>
+<a href="#l67" class="line" id="l67">     67</a><code class="language-auto">         }</code>
+<a href="#l68" class="line" id="l68">     68</a><code class="language-auto">         rows.push(row);</code>
+<a href="#l69" class="line" id="l69">     69</a><code class="language-auto">     }</code>
+<a href="#l70" class="line" id="l70">     70</a><code class="language-auto">     let count = rows.len() as u64;</code>
+<a href="#l71" class="line" id="l71">     71</a><code class="language-auto">     txn.insert(&amp;table.name, rows)?;</code>
+<a href="#l72" class="line" id="l72">     72</a><code class="language-auto">     Ok(count)</code>
+<a href="#l73" class="line" id="l73">     73</a><code class="language-auto"> }</code>
+<a href="#l74" class="line" id="l74">     74</a><code class="language-auto"> </code>
+<a href="#l75" class="line" id="l75">     75</a><code class="language-auto"> /// Updates rows passed in from the source (i.e. UPDATE). Returns the number of</code>
+<a href="#l76" class="line" id="l76">     76</a><code class="language-auto"> /// rows updated.</code>
+<a href="#l77" class="line" id="l77">     77</a><code class="language-auto"> pub fn update(</code>
+<a href="#l78" class="line" id="l78">     78</a><code class="language-auto">     txn: &amp;impl Transaction,</code>
+<a href="#l79" class="line" id="l79">     79</a><code class="language-auto">     table: String,</code>
+<a href="#l80" class="line" id="l80">     80</a><code class="language-auto">     primary_key: usize,</code>
+<a href="#l81" class="line" id="l81">     81</a><code class="language-auto">     mut source: Rows,</code>
+<a href="#l82" class="line" id="l82">     82</a><code class="language-auto">     expressions: Vec&lt;(usize, Expression)&gt;,</code>
+<a href="#l83" class="line" id="l83">     83</a><code class="language-auto"> ) -&gt; Result&lt;u64&gt; {</code>
+<a href="#l84" class="line" id="l84">     84</a><code class="language-auto">     let mut updates = BTreeMap::new();</code>
+<a href="#l85" class="line" id="l85">     85</a><code class="language-auto">     while let Some(row) = source.next().transpose()? {</code>
+<a href="#l86" class="line" id="l86">     86</a><code class="language-auto">         let mut update = row.clone();</code>
+<a href="#l87" class="line" id="l87">     87</a><code class="language-auto">         for (column, expr) in &amp;expressions {</code>
+<a href="#l88" class="line" id="l88">     88</a><code class="language-auto">             update[*column] = expr.evaluate(Some(&amp;row))?;</code>
+<a href="#l89" class="line" id="l89">     89</a><code class="language-auto">         }</code>
+<a href="#l90" class="line" id="l90">     90</a><code class="language-auto">         let id = row.into_iter().nth(primary_key).expect(&quot;short row&quot;);</code>
+<a href="#l91" class="line" id="l91">     91</a><code class="language-auto">         updates.insert(id, update);</code>
+<a href="#l92" class="line" id="l92">     92</a><code class="language-auto">     }</code>
+<a href="#l93" class="line" id="l93">     93</a><code class="language-auto">     let count = updates.len() as u64;</code>
+<a href="#l94" class="line" id="l94">     94</a><code class="language-auto">     txn.update(&amp;table, updates)?;</code>
+<a href="#l95" class="line" id="l95">     95</a><code class="language-auto">     Ok(count)</code>
+<a href="#l96" class="line" id="l96">     96</a><code class="language-auto"> }</code>
+</pre>
+</div>
+</body>
+</html>

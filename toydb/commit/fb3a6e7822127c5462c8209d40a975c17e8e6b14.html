@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>sql: use borrows rather than clone for engine - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/fb3a6e7822127c5462c8209d40a975c17e8e6b14.html">fb3a6e7822127c5462c8209d40a975c17e8e6b14</a>
+<b>parent</b> <a href="../commit/ba2abb7e6d52ec03160ddc7b1e2e099d6c4c0dcd.html">ba2abb7e6d52ec03160ddc7b1e2e099d6c4c0dcd</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Mon, 17 Jun 2024 21:01:41 +0200
+
+sql: use borrows rather than clone for engine
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/server.rs</a></td><td> | </td><td class="num">16</td><td><span class="i">++++++</span><span class="d">----------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/sql/engine/engine.rs</a></td><td> | </td><td class="num">15</td><td><span class="i">+++++</span><span class="d">----------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/sql/engine/local.rs</a></td><td> | </td><td class="num">9</td><td><span class="i">+</span><span class="d">--------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">src/sql/engine/raft.rs</a></td><td> | </td><td class="num">24</td><td><span class="i">+++++++++++</span><span class="d">-------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h4">src/sql/engine/session.rs</a></td><td> | </td><td class="num">12</td><td><span class="i">++++++</span><span class="d">------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h5">src/storage/mvcc.rs</a></td><td> | </td><td class="num">6</td><td><span class="i"></span><span class="d">------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h6">tests/sql/expression.rs</a></td><td> | </td><td class="num">3</td><td><span class="i">++</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h7">tests/sql/mod.rs</a></td><td> | </td><td class="num">12</td><td><span class="i">+++++++</span><span class="d">-----</span></td></tr>
+</table></pre><pre>8 files changed, 38 insertions(+), 59 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/server.rs.html">src/server.rs</a> b/<a href="../file/src/server.rs.html">src/server.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -103,7 +103,8 @@ impl Server {
+</a>             });
+ 
+             // Serve inbound SQL connections.
+<a href="#h0-0-3" id="h0-0-3" class="d">-            s.spawn(move || Self::sql_accept(id, sql_listener, raft_request_tx));
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+            let sql_engine = sql::engine::Raft::new(raft_request_tx);
+</a><a href="#h0-0-5" id="h0-0-5" class="i">+            s.spawn(move || Self::sql_accept(id, sql_listener, sql_engine));
+</a>         });
+ 
+         Ok(())
+<a href="#h0-1" id="h0-1" class="h">@@ -249,11 +250,7 @@ impl Server {
+</a>     }
+ 
+     /// Accepts new SQL client connections and spawns session threads for them.
+<a href="#h0-1-3" id="h0-1-3" class="d">-    fn sql_accept(
+</a><a href="#h0-1-4" id="h0-1-4" class="d">-        id: raft::NodeID,
+</a><a href="#h0-1-5" id="h0-1-5" class="d">-        listener: TcpListener,
+</a><a href="#h0-1-6" id="h0-1-6" class="d">-        raft_request_tx: Sender&lt;(raft::Request, Sender&lt;Result&lt;raft::Response&gt;&gt;)&gt;,
+</a><a href="#h0-1-7" id="h0-1-7" class="d">-    ) {
+</a><a href="#h0-1-8" id="h0-1-8" class="i">+    fn sql_accept(id: raft::NodeID, listener: TcpListener, sql_engine: sql::engine::Raft) {
+</a>         std::thread::scope(|s| loop {
+             let (socket, peer) = match listener.accept() {
+                 Ok(sp) =&gt; sp,
+<a href="#h0-2" id="h0-2" class="h">@@ -262,10 +259,10 @@ impl Server {
+</a>                     continue;
+                 }
+             };
+<a href="#h0-2-3" id="h0-2-3" class="d">-            let raft_request_tx = raft_request_tx.clone();
+</a><a href="#h0-2-4" id="h0-2-4" class="i">+            let session = sql_engine.session();
+</a>             s.spawn(move || {
+                 debug!(&quot;Client {peer} connected&quot;);
+<a href="#h0-2-7" id="h0-2-7" class="d">-                match Self::sql_session(id, socket, raft_request_tx) {
+</a><a href="#h0-2-8" id="h0-2-8" class="i">+                match Self::sql_session(id, socket, session) {
+</a>                     Ok(()) =&gt; debug!(&quot;Client {peer} disconnected&quot;),
+                     Err(err) =&gt; error!(&quot;Client {peer} error: {err}&quot;),
+                 }
+<a href="#h0-3" id="h0-3" class="h">@@ -278,9 +275,8 @@ impl Server {
+</a>     fn sql_session(
+         id: raft::NodeID,
+         socket: TcpStream,
+<a href="#h0-3-3" id="h0-3-3" class="d">-        raft_request_tx: Sender&lt;(raft::Request, Sender&lt;Result&lt;raft::Response&gt;&gt;)&gt;,
+</a><a href="#h0-3-4" id="h0-3-4" class="i">+        mut session: sql::engine::Session&lt;sql::engine::Raft&gt;,
+</a>     ) -&gt; Result&lt;()&gt; {
+<a href="#h0-3-6" id="h0-3-6" class="d">-        let mut session = sql::engine::Raft::new(raft_request_tx).session();
+</a>         let mut reader = std::io::BufReader::new(socket.try_clone()?);
+         let mut writer = std::io::BufWriter::new(socket);
+ 
+<b>diff --git a/<a id="h1" href="../file/src/sql/engine/engine.rs.html">src/sql/engine/engine.rs</a> b/<a href="../file/src/sql/engine/engine.rs.html">src/sql/engine/engine.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -10,25 +10,20 @@ use crate::storage::mvcc;
+</a> use std::collections::HashSet;
+ 
+ /// The SQL engine interface.
+<a href="#h1-0-3" id="h1-0-3" class="d">-pub trait Engine: Clone {
+</a><a href="#h1-0-4" id="h1-0-4" class="i">+pub trait Engine&lt;&#39;a&gt;: Sized {
+</a>     /// The transaction type.
+<a href="#h1-0-6" id="h1-0-6" class="d">-    ///
+</a><a href="#h1-0-7" id="h1-0-7" class="d">-    /// TODO: consider letting transactions and sessions have a shared borrow to
+</a><a href="#h1-0-8" id="h1-0-8" class="d">-    /// the engine rather than cloning the arc/mutex.
+</a><a href="#h1-0-9" id="h1-0-9" class="d">-    type Transaction: Transaction;
+</a><a href="#h1-0-10" id="h1-0-10" class="i">+    type Transaction: Transaction + &#39;a;
+</a> 
+     /// Begins a read-write transaction.
+     fn begin(&amp;self) -&gt; Result&lt;Self::Transaction&gt;;
+     /// Begins a read-only transaction.
+     fn begin_read_only(&amp;self) -&gt; Result&lt;Self::Transaction&gt;;
+     /// Begins a read-only transaction as of a historical version.
+<a href="#h1-0-17" id="h1-0-17" class="d">-    fn begin_as_of(&amp;self, version: u64) -&gt; Result&lt;Self::Transaction&gt;;
+</a><a href="#h1-0-18" id="h1-0-18" class="i">+    fn begin_as_of(&amp;self, version: mvcc::Version) -&gt; Result&lt;Self::Transaction&gt;;
+</a> 
+     /// Creates a client session for executing SQL statements.
+<a href="#h1-0-21" id="h1-0-21" class="d">-    ///
+</a><a href="#h1-0-22" id="h1-0-22" class="d">-    /// TODO: the session should have a borrow to the engine.
+</a><a href="#h1-0-23" id="h1-0-23" class="d">-    fn session(&amp;self) -&gt; Session&lt;Self&gt; {
+</a><a href="#h1-0-24" id="h1-0-24" class="d">-        Session::new(self.clone())
+</a><a href="#h1-0-25" id="h1-0-25" class="i">+    fn session(&amp;&#39;a self) -&gt; Session&lt;&#39;a, Self&gt; {
+</a><a href="#h1-0-26" id="h1-0-26" class="i">+        Session::new(self)
+</a>     }
+ }
+ 
+<b>diff --git a/<a id="h2" href="../file/src/sql/engine/local.rs.html">src/sql/engine/local.rs</a> b/<a href="../file/src/sql/engine/local.rs.html">src/sql/engine/local.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -17,13 +17,6 @@ pub struct Local&lt;E: storage::Engine&gt; {
+</a>     pub(super) kv: storage::mvcc::MVCC&lt;E&gt;,
+ }
+ 
+<a href="#h2-0-3" id="h2-0-3" class="d">-// FIXME Implement Clone manually due to https://github.com/rust-lang/rust/issues/26925
+</a><a href="#h2-0-4" id="h2-0-4" class="d">-impl&lt;E: storage::Engine&gt; Clone for Local&lt;E&gt; {
+</a><a href="#h2-0-5" id="h2-0-5" class="d">-    fn clone(&amp;self) -&gt; Self {
+</a><a href="#h2-0-6" id="h2-0-6" class="d">-        Local { kv: self.kv.clone() }
+</a><a href="#h2-0-7" id="h2-0-7" class="d">-    }
+</a><a href="#h2-0-8" id="h2-0-8" class="d">-}
+</a><a href="#h2-0-9" id="h2-0-9" class="d">-
+</a> impl&lt;E: storage::Engine&gt; Local&lt;E&gt; {
+     /// Creates a new key/value-based SQL engine
+     pub fn new(engine: E) -&gt; Self {
+<a href="#h2-1" id="h2-1" class="h">@@ -49,7 +42,7 @@ impl&lt;E: storage::Engine&gt; Local&lt;E&gt; {
+</a>     }
+ }
+ 
+<a href="#h2-1-3" id="h2-1-3" class="d">-impl&lt;E: storage::Engine&gt; super::Engine for Local&lt;E&gt; {
+</a><a href="#h2-1-4" id="h2-1-4" class="i">+impl&lt;&#39;a, E: storage::Engine + &#39;a&gt; super::Engine&lt;&#39;a&gt; for Local&lt;E&gt; {
+</a>     type Transaction = Transaction&lt;E&gt;;
+ 
+     fn begin(&amp;self) -&gt; Result&lt;Self::Transaction&gt; {
+<b>diff --git a/<a id="h3" href="../file/src/sql/engine/raft.rs.html">src/sql/engine/raft.rs</a> b/<a href="../file/src/sql/engine/raft.rs.html">src/sql/engine/raft.rs</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -5,7 +5,7 @@ use crate::encoding::{self, bincode, Value as _};
+</a> use crate::errdata;
+ use crate::error::Result;
+ use crate::raft::{self, Entry};
+<a href="#h3-0-3" id="h3-0-3" class="d">-use crate::storage::{self, mvcc::TransactionState};
+</a><a href="#h3-0-4" id="h3-0-4" class="i">+use crate::storage::{self, mvcc, mvcc::TransactionState};
+</a> 
+ use crossbeam::channel::Sender;
+ use serde::{de::DeserializeOwned, Deserialize, Serialize};
+<a href="#h3-1" id="h3-1" class="h">@@ -69,11 +69,10 @@ impl encoding::Value for Query {}
+</a> #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+ pub struct Status {
+     pub raft: raft::Status,
+<a href="#h3-1-3" id="h3-1-3" class="d">-    pub mvcc: storage::mvcc::Status,
+</a><a href="#h3-1-4" id="h3-1-4" class="i">+    pub mvcc: mvcc::Status,
+</a> }
+ 
+ /// A client for the local Raft node.
+<a href="#h3-1-8" id="h3-1-8" class="d">-#[derive(Clone)]
+</a> struct Client {
+     tx: Sender&lt;(raft::Request, Sender&lt;Result&lt;raft::Response&gt;&gt;)&gt;,
+ }
+<a href="#h3-2" id="h3-2" class="h">@@ -119,15 +118,14 @@ impl Client {
+</a> }
+ 
+ /// A SQL engine using a Raft state machine.
+<a href="#h3-2-3" id="h3-2-3" class="d">-#[derive(Clone)]
+</a> pub struct Raft {
+<a href="#h3-2-5" id="h3-2-5" class="d">-    client: Client,
+</a><a href="#h3-2-6" id="h3-2-6" class="i">+    tx: Sender&lt;(raft::Request, Sender&lt;Result&lt;raft::Response&gt;&gt;)&gt;,
+</a> }
+ 
+ impl Raft {
+     /// Creates a new Raft-based SQL engine.
+     pub fn new(tx: Sender&lt;(raft::Request, Sender&lt;Result&lt;raft::Response&gt;&gt;)&gt;) -&gt; Self {
+<a href="#h3-2-12" id="h3-2-12" class="d">-        Self { client: Client::new(tx) }
+</a><a href="#h3-2-13" id="h3-2-13" class="i">+        Self { tx }
+</a>     }
+ 
+     /// Creates an underlying state machine for a Raft engine.
+<a href="#h3-3" id="h3-3" class="h">@@ -137,28 +135,28 @@ impl Raft {
+</a> 
+     /// Returns Raft SQL engine status.
+     pub fn status(&amp;self) -&gt; Result&lt;Status&gt; {
+<a href="#h3-3-3" id="h3-3-3" class="d">-        Ok(Status { raft: self.client.status()?, mvcc: self.client.query(Query::Status)? })
+</a><a href="#h3-3-4" id="h3-3-4" class="i">+        let client = Client::new(self.tx.clone());
+</a><a href="#h3-3-5" id="h3-3-5" class="i">+        Ok(Status { raft: client.status()?, mvcc: client.query(Query::Status)? })
+</a>     }
+ }
+ 
+<a href="#h3-3-9" id="h3-3-9" class="d">-impl super::Engine for Raft {
+</a><a href="#h3-3-10" id="h3-3-10" class="i">+impl&lt;&#39;a&gt; super::Engine&lt;&#39;a&gt; for Raft {
+</a>     type Transaction = Transaction;
+ 
+     fn begin(&amp;self) -&gt; Result&lt;Self::Transaction&gt; {
+<a href="#h3-3-14" id="h3-3-14" class="d">-        Transaction::begin(self.client.clone(), false, None)
+</a><a href="#h3-3-15" id="h3-3-15" class="i">+        Transaction::begin(Client::new(self.tx.clone()), false, None)
+</a>     }
+ 
+     fn begin_read_only(&amp;self) -&gt; Result&lt;Self::Transaction&gt; {
+<a href="#h3-3-19" id="h3-3-19" class="d">-        Transaction::begin(self.client.clone(), true, None)
+</a><a href="#h3-3-20" id="h3-3-20" class="i">+        Transaction::begin(Client::new(self.tx.clone()), true, None)
+</a>     }
+ 
+     fn begin_as_of(&amp;self, version: u64) -&gt; Result&lt;Self::Transaction&gt; {
+<a href="#h3-3-24" id="h3-3-24" class="d">-        Transaction::begin(self.client.clone(), true, Some(version))
+</a><a href="#h3-3-25" id="h3-3-25" class="i">+        Transaction::begin(Client::new(self.tx.clone()), true, Some(version))
+</a>     }
+ }
+ 
+ /// A Raft-based SQL transaction.
+<a href="#h3-3-30" id="h3-3-30" class="d">-#[derive(Clone)]
+</a> pub struct Transaction {
+     client: Client,
+     state: TransactionState,
+<a href="#h3-4" id="h3-4" class="h">@@ -177,7 +175,7 @@ impl Transaction {
+</a> }
+ 
+ impl super::Transaction for Transaction {
+<a href="#h3-4-3" id="h3-4-3" class="d">-    fn version(&amp;self) -&gt; u64 {
+</a><a href="#h3-4-4" id="h3-4-4" class="i">+    fn version(&amp;self) -&gt; mvcc::Version {
+</a>         self.state.version
+     }
+ 
+<b>diff --git a/<a id="h4" href="../file/src/sql/engine/session.rs.html">src/sql/engine/session.rs</a> b/<a href="../file/src/sql/engine/session.rs.html">src/sql/engine/session.rs</a></b>
+<a href="#h4-0" id="h4-0" class="h">@@ -10,15 +10,15 @@ use crate::{errdata, errinput};
+</a> use serde::{Deserialize, Serialize};
+ 
+ /// An SQL session, which handles transaction control and simplified query execution
+<a href="#h4-0-3" id="h4-0-3" class="d">-pub struct Session&lt;E: Engine + &#39;static&gt; {
+</a><a href="#h4-0-4" id="h4-0-4" class="i">+pub struct Session&lt;&#39;a, E: Engine&lt;&#39;a&gt;&gt; {
+</a>     /// The underlying engine
+<a href="#h4-0-6" id="h4-0-6" class="d">-    engine: E,
+</a><a href="#h4-0-7" id="h4-0-7" class="i">+    engine: &amp;&#39;a E,
+</a>     /// The current session transaction, if any
+     txn: Option&lt;E::Transaction&gt;,
+ }
+ 
+<a href="#h4-0-12" id="h4-0-12" class="d">-impl&lt;E: Engine + &#39;static&gt; Session&lt;E&gt; {
+</a><a href="#h4-0-13" id="h4-0-13" class="d">-    pub fn new(engine: E) -&gt; Self {
+</a><a href="#h4-0-14" id="h4-0-14" class="i">+impl&lt;&#39;a, E: Engine&lt;&#39;a&gt;&gt; Session&lt;&#39;a, E&gt; {
+</a><a href="#h4-0-15" id="h4-0-15" class="i">+    pub fn new(engine: &amp;&#39;a E) -&gt; Self {
+</a>         Self { engine, txn: None }
+     }
+ 
+<a href="#h4-1" id="h4-1" class="h">@@ -122,13 +122,13 @@ impl&lt;E: Engine + &#39;static&gt; Session&lt;E&gt; {
+</a>     }
+ }
+ 
+<a href="#h4-1-3" id="h4-1-3" class="d">-impl Session&lt;Raft&gt; {
+</a><a href="#h4-1-4" id="h4-1-4" class="i">+impl&lt;&#39;a&gt; Session&lt;&#39;a, Raft&gt; {
+</a>     pub fn status(&amp;self) -&gt; Result&lt;Status&gt; {
+         self.engine.status()
+     }
+ }
+ 
+<a href="#h4-1-10" id="h4-1-10" class="d">-impl&lt;E: Engine + &#39;static&gt; Drop for Session&lt;E&gt; {
+</a><a href="#h4-1-11" id="h4-1-11" class="i">+impl&lt;&#39;a, E: Engine&lt;&#39;a&gt;&gt; Drop for Session&lt;&#39;a, E&gt; {
+</a>     fn drop(&amp;mut self) {
+         self.execute(&quot;ROLLBACK&quot;).ok();
+     }
+<b>diff --git a/<a id="h5" href="../file/src/storage/mvcc.rs.html">src/storage/mvcc.rs</a> b/<a href="../file/src/storage/mvcc.rs.html">src/storage/mvcc.rs</a></b>
+<a href="#h5-0" id="h5-0" class="h">@@ -227,12 +227,6 @@ pub struct MVCC&lt;E: Engine&gt; {
+</a>     engine: Arc&lt;Mutex&lt;E&gt;&gt;,
+ }
+ 
+<a href="#h5-0-3" id="h5-0-3" class="d">-impl&lt;E: Engine&gt; Clone for MVCC&lt;E&gt; {
+</a><a href="#h5-0-4" id="h5-0-4" class="d">-    fn clone(&amp;self) -&gt; Self {
+</a><a href="#h5-0-5" id="h5-0-5" class="d">-        MVCC { engine: self.engine.clone() }
+</a><a href="#h5-0-6" id="h5-0-6" class="d">-    }
+</a><a href="#h5-0-7" id="h5-0-7" class="d">-}
+</a><a href="#h5-0-8" id="h5-0-8" class="d">-
+</a> impl&lt;E: Engine&gt; MVCC&lt;E&gt; {
+     /// Creates a new MVCC engine with the given storage engine.
+     pub fn new(engine: E) -&gt; Self {
+<b>diff --git a/<a id="h6" href="../file/tests/sql/expression.rs.html">tests/sql/expression.rs</a> b/<a href="../file/tests/sql/expression.rs.html">tests/sql/expression.rs</a></b>
+<a href="#h6-0" id="h6-0" class="h">@@ -5,7 +5,8 @@ use toydb::sql::types::Value;
+</a> 
+ fn eval_expr(expr: &amp;str) -&gt; Result&lt;Value&gt; {
+     let engine = super::setup(Vec::new())?;
+<a href="#h6-0-3" id="h6-0-3" class="d">-    engine.session().execute(&amp;format!(&quot;SELECT {}&quot;, expr))?.into_value()
+</a><a href="#h6-0-4" id="h6-0-4" class="i">+    let mut session = engine.session();
+</a><a href="#h6-0-5" id="h6-0-5" class="i">+    session.execute(&amp;format!(&quot;SELECT {}&quot;, expr))?.into_value()
+</a> }
+ 
+ macro_rules! test_expr {
+<b>diff --git a/<a id="h7" href="../file/tests/sql/mod.rs.html">tests/sql/mod.rs</a> b/<a href="../file/tests/sql/mod.rs.html">tests/sql/mod.rs</a></b>
+<a href="#h7-0" id="h7-0" class="h">@@ -10,11 +10,13 @@ use toydb::storage;
+</a> /// Sets up a basic in-memory SQL engine with an initial dataset.
+ fn setup(queries: Vec&lt;&amp;str&gt;) -&gt; Result&lt;Local&lt;storage::Memory&gt;&gt; {
+     let engine = Local::new(storage::Memory::new());
+<a href="#h7-0-3" id="h7-0-3" class="d">-    let mut session = engine.session();
+</a><a href="#h7-0-4" id="h7-0-4" class="d">-    session.execute(&quot;BEGIN&quot;)?;
+</a><a href="#h7-0-5" id="h7-0-5" class="d">-    for query in queries {
+</a><a href="#h7-0-6" id="h7-0-6" class="d">-        session.execute(query)?;
+</a><a href="#h7-0-7" id="h7-0-7" class="i">+    {
+</a><a href="#h7-0-8" id="h7-0-8" class="i">+        let mut session = engine.session();
+</a><a href="#h7-0-9" id="h7-0-9" class="i">+        session.execute(&quot;BEGIN&quot;)?;
+</a><a href="#h7-0-10" id="h7-0-10" class="i">+        for query in queries {
+</a><a href="#h7-0-11" id="h7-0-11" class="i">+            session.execute(query)?;
+</a><a href="#h7-0-12" id="h7-0-12" class="i">+        }
+</a><a href="#h7-0-13" id="h7-0-13" class="i">+        session.execute(&quot;COMMIT&quot;)?;
+</a>     }
+<a href="#h7-0-15" id="h7-0-15" class="d">-    session.execute(&quot;COMMIT&quot;)?;
+</a>     Ok(engine)
+ }
+</pre>
+</div>
+</body>
+</html>

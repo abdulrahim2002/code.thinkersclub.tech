@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Tweak Raft heartbeat logic. - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/d76cb23cbacf037a0112a882242c9188483b638f.html">d76cb23cbacf037a0112a882242c9188483b638f</a>
+<b>parent</b> <a href="../commit/b44b0bf2b70fdb128ac8d524cc4a2d4ff7136a3a.html">b44b0bf2b70fdb128ac8d524cc4a2d4ff7136a3a</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Sun, 19 Nov 2023 14:39:58 +0100
+
+Tweak Raft heartbeat logic.
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/raft/node/candidate.rs</a></td><td> | </td><td class="num">3</td><td><span class="i">+</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/raft/node/leader.rs</a></td><td> | </td><td class="num">28</td><td><span class="i">++++++++++++++++</span><span class="d">------------</span></td></tr>
+</table></pre><pre>2 files changed, 17 insertions(+), 14 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/raft/node/candidate.rs.html">src/raft/node/candidate.rs</a> b/<a href="../file/src/raft/node/candidate.rs.html">src/raft/node/candidate.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -55,9 +55,8 @@ impl RoleNode&lt;Candidate&gt; {
+</a>         info!(&quot;Won election for term {}, becoming leader&quot;, self.term);
+         let peers = self.peers.clone();
+         let (last_index, _) = self.log.get_last_index();
+<a href="#h0-0-3" id="h0-0-3" class="d">-        let (commit_index, commit_term) = self.log.get_commit_index();
+</a>         let mut node = self.become_role(Leader::new(peers, last_index));
+<a href="#h0-0-5" id="h0-0-5" class="d">-        node.send(Address::Broadcast, Event::Heartbeat { commit_index, commit_term })?;
+</a><a href="#h0-0-6" id="h0-0-6" class="i">+        node.heartbeat()?;
+</a>         node.append(None)?;
+         Ok(node)
+     }
+<b>diff --git a/<a id="h1" href="../file/src/raft/node/leader.rs.html">src/raft/node/leader.rs</a> b/<a href="../file/src/raft/node/leader.rs.html">src/raft/node/leader.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -8,7 +8,7 @@ use std::collections::HashMap;
+</a> // A leader serves requests and replicates the log to followers.
+ #[derive(Debug)]
+ pub struct Leader {
+<a href="#h1-0-3" id="h1-0-3" class="d">-    /// Number of ticks since last heartbeat.
+</a><a href="#h1-0-4" id="h1-0-4" class="i">+    /// Number of ticks since last periodic heartbeat.
+</a>     since_heartbeat: Ticks,
+     /// The next index to replicate to a peer.
+     peer_next_index: HashMap&lt;NodeID, Index&gt;,
+<a href="#h1-1" id="h1-1" class="h">@@ -157,7 +157,7 @@ impl RoleNode&lt;Leader&gt; {
+</a>             }
+ 
+             Event::ClientRequest { id, request: Request::Query(command) } =&gt; {
+<a href="#h1-1-3" id="h1-1-3" class="d">-                let (commit_index, commit_term) = self.log.get_commit_index();
+</a><a href="#h1-1-4" id="h1-1-4" class="i">+                let (commit_index, _) = self.log.get_commit_index();
+</a>                 self.state_tx.send(Instruction::Query {
+                     id,
+                     address: msg.from,
+<a href="#h1-2" id="h1-2" class="h">@@ -171,9 +171,7 @@ impl RoleNode&lt;Leader&gt; {
+</a>                     index: commit_index,
+                     address: Address::Node(self.id),
+                 })?;
+<a href="#h1-2-3" id="h1-2-3" class="d">-                if !self.peers.is_empty() {
+</a><a href="#h1-2-4" id="h1-2-4" class="d">-                    self.send(Address::Broadcast, Event::Heartbeat { commit_index, commit_term })?;
+</a><a href="#h1-2-5" id="h1-2-5" class="d">-                }
+</a><a href="#h1-2-6" id="h1-2-6" class="i">+                self.heartbeat()?;
+</a>             }
+ 
+             Event::ClientRequest { id, request: Request::Mutate(command) } =&gt; {
+<a href="#h1-3" id="h1-3" class="h">@@ -216,16 +214,22 @@ impl RoleNode&lt;Leader&gt; {
+</a> 
+     /// Processes a logical clock tick.
+     pub fn tick(mut self) -&gt; Result&lt;Node&gt; {
+<a href="#h1-3-3" id="h1-3-3" class="d">-        if !self.peers.is_empty() {
+</a><a href="#h1-3-4" id="h1-3-4" class="d">-            self.role.since_heartbeat += 1;
+</a><a href="#h1-3-5" id="h1-3-5" class="d">-            if self.role.since_heartbeat &gt;= HEARTBEAT_INTERVAL {
+</a><a href="#h1-3-6" id="h1-3-6" class="d">-                let (commit_index, commit_term) = self.log.get_commit_index();
+</a><a href="#h1-3-7" id="h1-3-7" class="d">-                self.send(Address::Broadcast, Event::Heartbeat { commit_index, commit_term })?;
+</a><a href="#h1-3-8" id="h1-3-8" class="d">-                self.role.since_heartbeat = 0;
+</a><a href="#h1-3-9" id="h1-3-9" class="d">-            }
+</a><a href="#h1-3-10" id="h1-3-10" class="i">+        self.role.since_heartbeat += 1;
+</a><a href="#h1-3-11" id="h1-3-11" class="i">+        if self.role.since_heartbeat &gt;= HEARTBEAT_INTERVAL {
+</a><a href="#h1-3-12" id="h1-3-12" class="i">+            self.heartbeat()?;
+</a><a href="#h1-3-13" id="h1-3-13" class="i">+            self.role.since_heartbeat = 0;
+</a>         }
+         Ok(self.into())
+     }
+<a href="#h1-3-17" id="h1-3-17" class="i">+
+</a><a href="#h1-3-18" id="h1-3-18" class="i">+    /// Broadcasts a heartbeat to all peers.
+</a><a href="#h1-3-19" id="h1-3-19" class="i">+    pub(super) fn heartbeat(&amp;mut self) -&gt; Result&lt;()&gt; {
+</a><a href="#h1-3-20" id="h1-3-20" class="i">+        let (commit_index, commit_term) = self.log.get_commit_index();
+</a><a href="#h1-3-21" id="h1-3-21" class="i">+        self.send(Address::Broadcast, Event::Heartbeat { commit_index, commit_term })?;
+</a><a href="#h1-3-22" id="h1-3-22" class="i">+        // NB: We don&#39;t reset self.since_heartbeat here, because we want to send
+</a><a href="#h1-3-23" id="h1-3-23" class="i">+        // periodic heartbeats regardless of any on-demand heartbeats.
+</a><a href="#h1-3-24" id="h1-3-24" class="i">+        Ok(())
+</a><a href="#h1-3-25" id="h1-3-25" class="i">+    }
+</a> }
+ 
+ #[cfg(test)]
+</pre>
+</div>
+</body>
+</html>

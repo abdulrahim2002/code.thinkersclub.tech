@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>sql/engine: don&#39;t replicate read-only txn begins - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/2c28305fbb59f07a35d9c7b6a6727fee82b4baae.html">2c28305fbb59f07a35d9c7b6a6727fee82b4baae</a>
+<b>parent</b> <a href="../commit/ebaa5da088f9a27e5a398e353632b77c74503152.html">ebaa5da088f9a27e5a398e353632b77c74503152</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Sat, 13 Apr 2024 14:08:21 +0200
+
+sql/engine: don&#39;t replicate read-only txn begins
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/sql/engine/raft.rs</a></td><td> | </td><td class="num">41</td><td><span class="i">++++++++++++++++++++++++++</span><span class="d">---------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">tests/e2e/client.rs</a></td><td> | </td><td class="num">6</td><td><span class="i">+++</span><span class="d">---</span></td></tr>
+</table></pre><pre>2 files changed, 29 insertions(+), 18 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/sql/engine/raft.rs.html">src/sql/engine/raft.rs</a> b/<a href="../file/src/sql/engine/raft.rs.html">src/sql/engine/raft.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -15,8 +15,8 @@ use std::collections::HashSet;
+</a> /// TODO: use Cows for these.
+ #[derive(Clone, Serialize, Deserialize)]
+ enum Mutation {
+<a href="#h0-0-3" id="h0-0-3" class="d">-    /// Begins a transaction
+</a><a href="#h0-0-4" id="h0-0-4" class="d">-    Begin { read_only: bool, as_of: Option&lt;u64&gt; },
+</a><a href="#h0-0-5" id="h0-0-5" class="i">+    /// Begins a read-write transaction
+</a><a href="#h0-0-6" id="h0-0-6" class="i">+    Begin,
+</a>     /// Commits the given transaction
+     Commit(TransactionState),
+     /// Rolls back the given transaction
+<a href="#h0-1" id="h0-1" class="h">@@ -40,6 +40,8 @@ enum Mutation {
+</a> /// TODO: use Cows for these.
+ #[derive(Clone, Serialize, Deserialize)]
+ enum Query {
+<a href="#h0-1-3" id="h0-1-3" class="i">+    /// Begins a read-only transaction
+</a><a href="#h0-1-4" id="h0-1-4" class="i">+    BeginReadOnly { as_of: Option&lt;u64&gt; },
+</a>     /// Fetches engine status
+     Status,
+ 
+<a href="#h0-2" id="h0-2" class="h">@@ -160,7 +162,11 @@ pub struct Transaction {
+</a> impl Transaction {
+     /// Starts a transaction in the given mode.
+     fn begin(client: Client, read_only: bool, as_of: Option&lt;u64&gt;) -&gt; Result&lt;Self&gt; {
+<a href="#h0-2-3" id="h0-2-3" class="d">-        let state = client.mutate(Mutation::Begin { read_only, as_of })?;
+</a><a href="#h0-2-4" id="h0-2-4" class="i">+        let state = if read_only || as_of.is_some() {
+</a><a href="#h0-2-5" id="h0-2-5" class="i">+            client.query(Query::BeginReadOnly { as_of })?
+</a><a href="#h0-2-6" id="h0-2-6" class="i">+        } else {
+</a><a href="#h0-2-7" id="h0-2-7" class="i">+            client.mutate(Mutation::Begin)?
+</a><a href="#h0-2-8" id="h0-2-8" class="i">+        };
+</a>         Ok(Self { client, state })
+     }
+ }
+<a href="#h0-3" id="h0-3" class="h">@@ -175,11 +181,17 @@ impl super::Transaction for Transaction {
+</a>     }
+ 
+     fn commit(self) -&gt; Result&lt;()&gt; {
+<a href="#h0-3-3" id="h0-3-3" class="d">-        self.client.mutate(Mutation::Commit(self.state.clone()))
+</a><a href="#h0-3-4" id="h0-3-4" class="i">+        if !self.read_only() {
+</a><a href="#h0-3-5" id="h0-3-5" class="i">+            self.client.mutate(Mutation::Commit(self.state.clone()))?
+</a><a href="#h0-3-6" id="h0-3-6" class="i">+        }
+</a><a href="#h0-3-7" id="h0-3-7" class="i">+        Ok(())
+</a>     }
+ 
+     fn rollback(self) -&gt; Result&lt;()&gt; {
+<a href="#h0-3-11" id="h0-3-11" class="d">-        self.client.mutate(Mutation::Rollback(self.state.clone()))
+</a><a href="#h0-3-12" id="h0-3-12" class="i">+        if !self.read_only() {
+</a><a href="#h0-3-13" id="h0-3-13" class="i">+            self.client.mutate(Mutation::Rollback(self.state.clone()))?;
+</a><a href="#h0-3-14" id="h0-3-14" class="i">+        }
+</a><a href="#h0-3-15" id="h0-3-15" class="i">+        Ok(())
+</a>     }
+ 
+     fn create(&amp;mut self, table: &amp;str, row: Row) -&gt; Result&lt;()&gt; {
+<a href="#h0-4" id="h0-4" class="h">@@ -294,16 +306,7 @@ impl&lt;E: storage::Engine&gt; State&lt;E&gt; {
+</a>     /// Mutates the state machine.
+     fn mutate(&amp;mut self, mutation: Mutation) -&gt; Result&lt;Vec&lt;u8&gt;&gt; {
+         match mutation {
+<a href="#h0-4-3" id="h0-4-3" class="d">-            Mutation::Begin { read_only, as_of } =&gt; {
+</a><a href="#h0-4-4" id="h0-4-4" class="d">-                let txn = if !read_only {
+</a><a href="#h0-4-5" id="h0-4-5" class="d">-                    self.engine.begin()?
+</a><a href="#h0-4-6" id="h0-4-6" class="d">-                } else if let Some(version) = as_of {
+</a><a href="#h0-4-7" id="h0-4-7" class="d">-                    self.engine.begin_as_of(version)?
+</a><a href="#h0-4-8" id="h0-4-8" class="d">-                } else {
+</a><a href="#h0-4-9" id="h0-4-9" class="d">-                    self.engine.begin_read_only()?
+</a><a href="#h0-4-10" id="h0-4-10" class="d">-                };
+</a><a href="#h0-4-11" id="h0-4-11" class="d">-                bincode::serialize(&amp;txn.state())
+</a><a href="#h0-4-12" id="h0-4-12" class="d">-            }
+</a><a href="#h0-4-13" id="h0-4-13" class="i">+            Mutation::Begin =&gt; bincode::serialize(&amp;self.engine.begin()?.state()),
+</a>             Mutation::Commit(txn) =&gt; bincode::serialize(&amp;self.engine.resume(txn)?.commit()?),
+             Mutation::Rollback(txn) =&gt; bincode::serialize(&amp;self.engine.resume(txn)?.rollback()?),
+ 
+<a href="#h0-5" id="h0-5" class="h">@@ -349,6 +352,14 @@ impl&lt;E: storage::Engine&gt; raft::State for State&lt;E&gt; {
+</a> 
+     fn read(&amp;self, command: Vec&lt;u8&gt;) -&gt; Result&lt;Vec&lt;u8&gt;&gt; {
+         match bincode::deserialize(&amp;command)? {
+<a href="#h0-5-3" id="h0-5-3" class="i">+            Query::BeginReadOnly { as_of } =&gt; {
+</a><a href="#h0-5-4" id="h0-5-4" class="i">+                let txn = if let Some(version) = as_of {
+</a><a href="#h0-5-5" id="h0-5-5" class="i">+                    self.engine.begin_as_of(version)?
+</a><a href="#h0-5-6" id="h0-5-6" class="i">+                } else {
+</a><a href="#h0-5-7" id="h0-5-7" class="i">+                    self.engine.begin_read_only()?
+</a><a href="#h0-5-8" id="h0-5-8" class="i">+                };
+</a><a href="#h0-5-9" id="h0-5-9" class="i">+                bincode::serialize(&amp;txn.state())
+</a><a href="#h0-5-10" id="h0-5-10" class="i">+            }
+</a>             Query::Read { txn, table, id } =&gt; {
+                 bincode::serialize(&amp;self.engine.resume(txn)?.read(&amp;table, &amp;id)?)
+             }
+<b>diff --git a/<a id="h1" href="../file/tests/e2e/client.rs.html">tests/e2e/client.rs</a> b/<a href="../file/tests/e2e/client.rs.html">tests/e2e/client.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -129,9 +129,9 @@ fn status() -&gt; Result&lt;()&gt; {
+</a>                 storage: storage::engine::Status {
+                     name: &quot;bitcask&quot;.to_string(),
+                     keys: 29,
+<a href="#h1-0-3" id="h1-0-3" class="d">-                    size: 1324,
+</a><a href="#h1-0-4" id="h1-0-4" class="d">-                    total_disk_size: 1831,
+</a><a href="#h1-0-5" id="h1-0-5" class="d">-                    live_disk_size: 1556,
+</a><a href="#h1-0-6" id="h1-0-6" class="i">+                    size: 1322,
+</a><a href="#h1-0-7" id="h1-0-7" class="i">+                    total_disk_size: 1829,
+</a><a href="#h1-0-8" id="h1-0-8" class="i">+                    live_disk_size: 1554,
+</a>                     garbage_disk_size: 275
+                 },
+             },
+</pre>
+</div>
+</body>
+</html>

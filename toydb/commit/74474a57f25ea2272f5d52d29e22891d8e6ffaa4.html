@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>kv: use MessagePack options for MVCC values - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/74474a57f25ea2272f5d52d29e22891d8e6ffaa4.html">74474a57f25ea2272f5d52d29e22891d8e6ffaa4</a>
+<b>parent</b> <a href="../commit/3fa4095c60259f849d1e7b79cabca332b452e5f1.html">3fa4095c60259f849d1e7b79cabca332b452e5f1</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Sun, 29 Dec 2019 13:20:23 +0100
+
+kv: use MessagePack options for MVCC values
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/kv/mvcc.rs</a></td><td> | </td><td class="num">45</td><td><span class="i">+++++++++</span><span class="d">------------------------------------</span></td></tr>
+</table></pre><pre>1 file changed, 9 insertions(+), 36 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/kv/mvcc.rs.html">src/kv/mvcc.rs</a> b/<a href="../file/src/kv/mvcc.rs.html">src/kv/mvcc.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -137,7 +137,7 @@ impl&lt;S: Storage&gt; Transaction&lt;S&gt; {
+</a>         let key = Key::Record(key.to_vec(), self.id).encode();
+         let update_key = Key::TxnUpdate(self.id, key.clone()).encode();
+         storage.write(&amp;update_key, Vec::new())?;
+<a href="#h0-0-3" id="h0-0-3" class="d">-        storage.write(&amp;key, Value::Delete.encode())?;
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+        storage.write(&amp;key, serialize(&amp;None::&lt;Vec&lt;u8&gt;&gt;)?)?;
+</a>         Ok(())
+     }
+ 
+<a href="#h0-1" id="h0-1" class="h">@@ -155,10 +155,7 @@ impl&lt;S: Storage&gt; Transaction&lt;S&gt; {
+</a>             if !self.snapshot.is_visible(version) {
+                 continue;
+             }
+<a href="#h0-1-3" id="h0-1-3" class="d">-            return match Value::decode(v)? {
+</a><a href="#h0-1-4" id="h0-1-4" class="d">-                Value::Set(v) =&gt; Ok(Some(v)),
+</a><a href="#h0-1-5" id="h0-1-5" class="d">-                Value::Delete =&gt; Ok(None),
+</a><a href="#h0-1-6" id="h0-1-6" class="d">-            };
+</a><a href="#h0-1-7" id="h0-1-7" class="i">+            return deserialize(&amp;v);
+</a>         }
+         Ok(None)
+     }
+<a href="#h0-2" id="h0-2" class="h">@@ -178,7 +175,7 @@ impl&lt;S: Storage&gt; Transaction&lt;S&gt; {
+</a>         let key = Key::Record(key.to_vec(), self.id).encode();
+         let update_key = Key::TxnUpdate(self.id, key.clone()).encode();
+         storage.write(&amp;update_key, Vec::new())?;
+<a href="#h0-2-3" id="h0-2-3" class="d">-        storage.write(&amp;key, Value::Set(value).encode())?;
+</a><a href="#h0-2-4" id="h0-2-4" class="i">+        storage.write(&amp;key, serialize(&amp;Some(value))?)?;
+</a>         Ok(())
+     }
+ 
+<a href="#h0-3" id="h0-3" class="h">@@ -339,9 +336,9 @@ impl&lt;&#39;a, S: Storage&gt; Iterator for Scan&lt;&#39;a, S&gt; {
+</a>                     if !self.snapshot.is_visible(version) {
+                         continue;
+                     }
+<a href="#h0-3-3" id="h0-3-3" class="d">-                    let value = match Value::decode(v).unwrap() {
+</a><a href="#h0-3-4" id="h0-3-4" class="d">-                        Value::Set(value) =&gt; value,
+</a><a href="#h0-3-5" id="h0-3-5" class="d">-                        Value::Delete =&gt; {
+</a><a href="#h0-3-6" id="h0-3-6" class="i">+                    let value = match deserialize(&amp;v).unwrap() {
+</a><a href="#h0-3-7" id="h0-3-7" class="i">+                        Some(value) =&gt; value,
+</a><a href="#h0-3-8" id="h0-3-8" class="i">+                        None =&gt; {
+</a>                             let mut clear_seen = false;
+                             if let Some((k, _)) = &amp;self.seen {
+                                 if k == &amp;key {
+<a href="#h0-4" id="h0-4" class="h">@@ -398,9 +395,9 @@ impl&lt;&#39;a, S: Storage&gt; DoubleEndedIterator for Scan&lt;&#39;a, S&gt; {
+</a>                         }
+                     }
+                     self.rev_ignore = Some(key.clone());
+<a href="#h0-4-3" id="h0-4-3" class="d">-                    let value = match Value::decode(v).unwrap() {
+</a><a href="#h0-4-4" id="h0-4-4" class="d">-                        Value::Set(value) =&gt; value,
+</a><a href="#h0-4-5" id="h0-4-5" class="d">-                        Value::Delete =&gt; continue,
+</a><a href="#h0-4-6" id="h0-4-6" class="i">+                    let value = match deserialize(&amp;v).unwrap() {
+</a><a href="#h0-4-7" id="h0-4-7" class="i">+                        Some(value) =&gt; value,
+</a><a href="#h0-4-8" id="h0-4-8" class="i">+                        None =&gt; continue,
+</a>                     };
+                     return Some(Ok((key, value)));
+                 }
+<a href="#h0-5" id="h0-5" class="h">@@ -509,30 +506,6 @@ impl Key {
+</a>     }
+ }
+ 
+<a href="#h0-5-3" id="h0-5-3" class="d">-enum Value {
+</a><a href="#h0-5-4" id="h0-5-4" class="d">-    Delete,
+</a><a href="#h0-5-5" id="h0-5-5" class="d">-    Set(Vec&lt;u8&gt;),
+</a><a href="#h0-5-6" id="h0-5-6" class="d">-}
+</a><a href="#h0-5-7" id="h0-5-7" class="d">-
+</a><a href="#h0-5-8" id="h0-5-8" class="d">-impl Value {
+</a><a href="#h0-5-9" id="h0-5-9" class="d">-    fn decode(value: Vec&lt;u8&gt;) -&gt; Result&lt;Self, Error&gt; {
+</a><a href="#h0-5-10" id="h0-5-10" class="d">-        let mut iter = value.into_iter();
+</a><a href="#h0-5-11" id="h0-5-11" class="d">-        match iter.next() {
+</a><a href="#h0-5-12" id="h0-5-12" class="d">-            Some(0x00) =&gt; Ok(Value::Delete),
+</a><a href="#h0-5-13" id="h0-5-13" class="d">-            Some(0xff) =&gt; Ok(Value::Set(iter.collect())),
+</a><a href="#h0-5-14" id="h0-5-14" class="d">-            None =&gt; Err(Error::Value(&quot;No MVCC value found&quot;.into())),
+</a><a href="#h0-5-15" id="h0-5-15" class="d">-            _ =&gt; Err(Error::Value(&quot;Unable to decode invalid MVCC value&quot;.into())),
+</a><a href="#h0-5-16" id="h0-5-16" class="d">-        }
+</a><a href="#h0-5-17" id="h0-5-17" class="d">-    }
+</a><a href="#h0-5-18" id="h0-5-18" class="d">-
+</a><a href="#h0-5-19" id="h0-5-19" class="d">-    fn encode(self) -&gt; Vec&lt;u8&gt; {
+</a><a href="#h0-5-20" id="h0-5-20" class="d">-        match self {
+</a><a href="#h0-5-21" id="h0-5-21" class="d">-            Self::Delete =&gt; vec![0x00],
+</a><a href="#h0-5-22" id="h0-5-22" class="d">-            Self::Set(value) =&gt; [vec![0xff], value].concat(),
+</a><a href="#h0-5-23" id="h0-5-23" class="d">-        }
+</a><a href="#h0-5-24" id="h0-5-24" class="d">-    }
+</a><a href="#h0-5-25" id="h0-5-25" class="d">-}
+</a><a href="#h0-5-26" id="h0-5-26" class="d">-
+</a> #[cfg(test)]
+ pub mod tests {
+     use super::super::storage::Test;
+</pre>
+</div>
+</body>
+</html>

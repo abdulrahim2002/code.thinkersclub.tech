@@ -1,0 +1,934 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Add BitCask store implementation. - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/8acfa05fd582886c3ba5c2d9a429ac34bc85a630.html">8acfa05fd582886c3ba5c2d9a429ac34bc85a630</a>
+<b>parent</b> <a href="../commit/b220a751dfc3ac77643a3ef5f35a0ad55593710e.html">b220a751dfc3ac77643a3ef5f35a0ad55593710e</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Mon, 21 Aug 2023 22:06:22 +0200
+
+Add BitCask store implementation.
+
+This patch adds a very simple BitCask implementation.
+
+See: https://riak.com/assets/bitcask-intro.pdf
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">Cargo.lock</a></td><td> | </td><td class="num">11</td><td><span class="i">+++++++++++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">Cargo.toml</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">config/toydb.yaml</a></td><td> | </td><td class="num">14</td><td><span class="i">++++++++++</span><span class="d">----</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">src/bin/toydb.rs</a></td><td> | </td><td class="num">5</td><td><span class="i">+++++</span><span class="d"></span></td></tr>
+<tr><td class="A">A</td><td><a href="#h4">src/storage/kv/bitcask.rs</a></td><td> | </td><td class="num">602</td><td><span class="i">+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d"></span></td></tr>
+<tr><td class="A">A</td><td><a href="#h5">src/storage/kv/golden/bitcask/compact-after</a></td><td> | </td><td class="num">30</td><td><span class="i">++++++++++++++++++++++++++++++</span><span class="d"></span></td></tr>
+<tr><td class="A">A</td><td><a href="#h6">src/storage/kv/golden/bitcask/compact-before</a></td><td> | </td><td class="num">72</td><td><span class="i">++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d"></span></td></tr>
+<tr><td class="A">A</td><td><a href="#h7">src/storage/kv/golden/bitcask/log</a></td><td> | </td><td class="num">72</td><td><span class="i">++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h8">src/storage/kv/mod.rs</a></td><td> | </td><td class="num">2</td><td><span class="i">++</span><span class="d"></span></td></tr>
+</table></pre><pre>9 files changed, 805 insertions(+), 4 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/Cargo.lock.html">Cargo.lock</a> b/<a href="../file/Cargo.lock.html">Cargo.lock</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -469,6 +469,16 @@ dependencies = [
+</a> ]
+ 
+ [[package]]
+<a href="#h0-0-3" id="h0-0-3" class="i">+name = &quot;fs4&quot;
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+version = &quot;0.6.6&quot;
+</a><a href="#h0-0-5" id="h0-0-5" class="i">+source = &quot;registry+https://github.com/rust-lang/crates.io-index&quot;
+</a><a href="#h0-0-6" id="h0-0-6" class="i">+checksum = &quot;2eeb4ed9e12f43b7fa0baae3f9cdda28352770132ef2e09a23760c29cae8bd47&quot;
+</a><a href="#h0-0-7" id="h0-0-7" class="i">+dependencies = [
+</a><a href="#h0-0-8" id="h0-0-8" class="i">+ &quot;rustix&quot;,
+</a><a href="#h0-0-9" id="h0-0-9" class="i">+ &quot;windows-sys 0.48.0&quot;,
+</a><a href="#h0-0-10" id="h0-0-10" class="i">+]
+</a><a href="#h0-0-11" id="h0-0-11" class="i">+
+</a><a href="#h0-0-12" id="h0-0-12" class="i">+[[package]]
+</a> name = &quot;fuchsia-cprng&quot;
+ version = &quot;0.1.1&quot;
+ source = &quot;registry+https://github.com/rust-lang/crates.io-index&quot;
+<a href="#h0-1" id="h0-1" class="h">@@ -1591,6 +1601,7 @@ dependencies = [
+</a>  &quot;clap 4.3.21&quot;,
+  &quot;config&quot;,
+  &quot;derivative&quot;,
+<a href="#h0-1-3" id="h0-1-3" class="i">+ &quot;fs4&quot;,
+</a>  &quot;futures&quot;,
+  &quot;futures-util&quot;,
+  &quot;goldenfile&quot;,
+<b>diff --git a/<a id="h1" href="../file/Cargo.toml.html">Cargo.toml</a> b/<a href="../file/Cargo.toml.html">Cargo.toml</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -11,6 +11,7 @@ bincode = &quot;~1.3.3&quot;
+</a> clap = { version = &quot;~4.3.21&quot;, features = [&quot;cargo&quot;] }
+ config = &quot;~0.13.3&quot;
+ derivative = &quot;~2.2.0&quot;
+<a href="#h1-0-3" id="h1-0-3" class="i">+fs4 = &quot;0.6.6&quot;
+</a> futures = &quot;~0.3.15&quot;
+ futures-util = &quot;~0.3.15&quot;
+ lazy_static = &quot;~1.4.0&quot;
+<b>diff --git a/<a id="h2" href="../file/config/toydb.yaml.html">config/toydb.yaml</a> b/<a href="../file/config/toydb.yaml.html">config/toydb.yaml</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -7,11 +7,16 @@ log_level: INFO
+</a> listen_sql: 0.0.0.0:9605
+ listen_raft: 0.0.0.0:9705
+ 
+<a href="#h2-0-3" id="h2-0-3" class="d">-# Node data directory, and whether to fsync writes. Fsyncing guarantees that committed data is
+</a><a href="#h2-0-4" id="h2-0-4" class="d">-# persisted to disk, but has a high performance penalty. Disabling fsync and relying on cluster
+</a><a href="#h2-0-5" id="h2-0-5" class="d">-# redundancy for data durability may be a reasonable trade-off, although this can compromise Raft
+</a><a href="#h2-0-6" id="h2-0-6" class="d">-# linearizability guarantees in rare edge cases where committed entries lose majority.
+</a><a href="#h2-0-7" id="h2-0-7" class="i">+# Node data directory, and the garbage ratio threshold at which to trigger
+</a><a href="#h2-0-8" id="h2-0-8" class="i">+# database compaction when opening the database (Bitcask only).
+</a> data_dir: data
+<a href="#h2-0-10" id="h2-0-10" class="i">+compact_threshold: 0.2
+</a><a href="#h2-0-11" id="h2-0-11" class="i">+
+</a><a href="#h2-0-12" id="h2-0-12" class="i">+# Whether to fsync writes. Fsyncing guarantees that committed data is persisted
+</a><a href="#h2-0-13" id="h2-0-13" class="i">+# to disk, but has a high performance penalty. Disabling fsync and relying on
+</a><a href="#h2-0-14" id="h2-0-14" class="i">+# cluster redundancy for data durability may be a reasonable trade-off, although
+</a><a href="#h2-0-15" id="h2-0-15" class="i">+# this can compromise Raft linearizability guarantees in rare edge cases where
+</a><a href="#h2-0-16" id="h2-0-16" class="i">+# committed entries lose majority.
+</a> sync: true
+ 
+ # Raft log storage engine
+<a href="#h2-1" id="h2-1" class="h">@@ -20,6 +25,7 @@ sync: true
+</a> storage_raft: hybrid
+ 
+ # SQL key-value storage engine
+<a href="#h2-1-3" id="h2-1-3" class="i">+# - bitcask: uses BitCask, an append-only log-structure store.
+</a> # - memory: (default) uses an in-memory B+tree. Durability is provided by the Raft log.
+ # - stdmemory: uses the Rust standard library BTreeMap.
+ storage_sql: memory
+<b>diff --git a/<a id="h3" href="../file/src/bin/toydb.rs.html">src/bin/toydb.rs</a> b/<a href="../file/src/bin/toydb.rs.html">src/bin/toydb.rs</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -39,6 +39,9 @@ async fn main() -&gt; Result&lt;()&gt; {
+</a>         name =&gt; return Err(Error::Config(format!(&quot;Unknown Raft storage engine {}&quot;, name))),
+     };
+     let sql_store: Box&lt;dyn storage::kv::Store&gt; = match cfg.storage_sql.as_str() {
+<a href="#h3-0-3" id="h3-0-3" class="i">+        &quot;bitcask&quot; =&gt; {
+</a><a href="#h3-0-4" id="h3-0-4" class="i">+            Box::new(storage::kv::BitCask::new_compact(path.join(&quot;state&quot;), cfg.compact_threshold)?)
+</a><a href="#h3-0-5" id="h3-0-5" class="i">+        }
+</a>         &quot;memory&quot; | &quot;&quot; =&gt; Box::new(storage::kv::Memory::new()),
+         &quot;stdmemory&quot; =&gt; Box::new(storage::kv::StdMemory::new()),
+         name =&gt; return Err(Error::Config(format!(&quot;Unknown SQL storage engine {}&quot;, name))),
+<a href="#h3-1" id="h3-1" class="h">@@ -60,6 +63,7 @@ struct Config {
+</a>     listen_raft: String,
+     log_level: String,
+     data_dir: String,
+<a href="#h3-1-3" id="h3-1-3" class="i">+    compact_threshold: f64,
+</a>     sync: bool,
+     storage_raft: String,
+     storage_sql: String,
+<a href="#h3-2" id="h3-2" class="h">@@ -74,6 +78,7 @@ impl Config {
+</a>             .set_default(&quot;listen_raft&quot;, &quot;0.0.0.0:9705&quot;)?
+             .set_default(&quot;log_level&quot;, &quot;info&quot;)?
+             .set_default(&quot;data_dir&quot;, &quot;data&quot;)?
+<a href="#h3-2-3" id="h3-2-3" class="i">+            .set_default(&quot;compact_threshold&quot;, 0.2)?
+</a>             .set_default(&quot;sync&quot;, true)?
+             .set_default(&quot;storage_raft&quot;, &quot;hybrid&quot;)?
+             .set_default(&quot;storage_sql&quot;, &quot;memory&quot;)?
+<b>diff --git a/<a id="h4" href="../file/src/storage/kv/bitcask.rs.html">src/storage/kv/bitcask.rs</a> b/<a href="../file/src/storage/kv/bitcask.rs.html">src/storage/kv/bitcask.rs</a></b>
+<a href="#h4-0" id="h4-0" class="h">@@ -0,0 +1,602 @@
+</a><a href="#h4-0-0" id="h4-0-0" class="i">+use super::{Range, Scan, Store};
+</a><a href="#h4-0-1" id="h4-0-1" class="i">+use crate::error::Result;
+</a><a href="#h4-0-2" id="h4-0-2" class="i">+
+</a><a href="#h4-0-3" id="h4-0-3" class="i">+use fs4::FileExt;
+</a><a href="#h4-0-4" id="h4-0-4" class="i">+use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write};
+</a><a href="#h4-0-5" id="h4-0-5" class="i">+use std::path::PathBuf;
+</a><a href="#h4-0-6" id="h4-0-6" class="i">+
+</a><a href="#h4-0-7" id="h4-0-7" class="i">+/// A very simple variant of BitCask, itself a very simple log-structured
+</a><a href="#h4-0-8" id="h4-0-8" class="i">+/// key-value store used e.g. by the Riak database. It is not compatible with
+</a><a href="#h4-0-9" id="h4-0-9" class="i">+/// BitCask databases generated by other implementations. See:
+</a><a href="#h4-0-10" id="h4-0-10" class="i">+/// https://riak.com/assets/bitcask-intro.pdf
+</a><a href="#h4-0-11" id="h4-0-11" class="i">+///
+</a><a href="#h4-0-12" id="h4-0-12" class="i">+/// BitCask writes key-value pairs to an append-only log file, and keeps a
+</a><a href="#h4-0-13" id="h4-0-13" class="i">+/// mapping of keys to file positions in memory. All live keys must fit in
+</a><a href="#h4-0-14" id="h4-0-14" class="i">+/// memory. Deletes write a tombstone value to the log file. To remove old
+</a><a href="#h4-0-15" id="h4-0-15" class="i">+/// garbage, logs can be compacted by writing new logs containing only live
+</a><a href="#h4-0-16" id="h4-0-16" class="i">+/// data, skipping replaced values and tombstones.
+</a><a href="#h4-0-17" id="h4-0-17" class="i">+///
+</a><a href="#h4-0-18" id="h4-0-18" class="i">+/// This implementation makes several significant simplifications over
+</a><a href="#h4-0-19" id="h4-0-19" class="i">+/// standard BitCask:
+</a><a href="#h4-0-20" id="h4-0-20" class="i">+///
+</a><a href="#h4-0-21" id="h4-0-21" class="i">+/// - Instead of writing multiple fixed-size log files, it uses a single
+</a><a href="#h4-0-22" id="h4-0-22" class="i">+///   append-only log file of arbitrary size. This increases the compaction
+</a><a href="#h4-0-23" id="h4-0-23" class="i">+///   volume, since the entire log file must be rewritten on every compaction,
+</a><a href="#h4-0-24" id="h4-0-24" class="i">+///   and can exceed the filesystem&#39;s file size limit, but ToyDB databases are
+</a><a href="#h4-0-25" id="h4-0-25" class="i">+///   expected to be small.
+</a><a href="#h4-0-26" id="h4-0-26" class="i">+///
+</a><a href="#h4-0-27" id="h4-0-27" class="i">+/// - Compactions lock the database for reads and writes. This is ok since ToyDB
+</a><a href="#h4-0-28" id="h4-0-28" class="i">+///   only compacts during node startup and files are expected to be small.
+</a><a href="#h4-0-29" id="h4-0-29" class="i">+///
+</a><a href="#h4-0-30" id="h4-0-30" class="i">+/// - Hint files are not used, the log itself is scanned when opened to
+</a><a href="#h4-0-31" id="h4-0-31" class="i">+///   build the keydir. Hint files only omit values, and ToyDB values are
+</a><a href="#h4-0-32" id="h4-0-32" class="i">+///   expected to be small, so the hint files would be nearly as large as
+</a><a href="#h4-0-33" id="h4-0-33" class="i">+///   the compacted log files themselves.
+</a><a href="#h4-0-34" id="h4-0-34" class="i">+///
+</a><a href="#h4-0-35" id="h4-0-35" class="i">+/// - Log entries don&#39;t contain timestamps or checksums.
+</a><a href="#h4-0-36" id="h4-0-36" class="i">+///
+</a><a href="#h4-0-37" id="h4-0-37" class="i">+/// The structure of a log entry is:
+</a><a href="#h4-0-38" id="h4-0-38" class="i">+///
+</a><a href="#h4-0-39" id="h4-0-39" class="i">+/// - Key length as big-endian u64 (8 bytes)
+</a><a href="#h4-0-40" id="h4-0-40" class="i">+/// - Value length as big-endian i64, or -1 for tombstones (8 bytes)
+</a><a href="#h4-0-41" id="h4-0-41" class="i">+/// - Key as raw bytes
+</a><a href="#h4-0-42" id="h4-0-42" class="i">+/// - Value as raw bytes
+</a><a href="#h4-0-43" id="h4-0-43" class="i">+pub struct BitCask {
+</a><a href="#h4-0-44" id="h4-0-44" class="i">+    /// The active append-only log file.
+</a><a href="#h4-0-45" id="h4-0-45" class="i">+    log: Log,
+</a><a href="#h4-0-46" id="h4-0-46" class="i">+    /// Maps keys to a value position and length in the log file.
+</a><a href="#h4-0-47" id="h4-0-47" class="i">+    keydir: KeyDir,
+</a><a href="#h4-0-48" id="h4-0-48" class="i">+}
+</a><a href="#h4-0-49" id="h4-0-49" class="i">+
+</a><a href="#h4-0-50" id="h4-0-50" class="i">+/// Maps keys to a value position and length in the log file.
+</a><a href="#h4-0-51" id="h4-0-51" class="i">+type KeyDir = std::collections::BTreeMap&lt;Vec&lt;u8&gt;, (u64, u64)&gt;;
+</a><a href="#h4-0-52" id="h4-0-52" class="i">+
+</a><a href="#h4-0-53" id="h4-0-53" class="i">+impl BitCask {
+</a><a href="#h4-0-54" id="h4-0-54" class="i">+    /// Opens or creates a BitCask database in the given file.
+</a><a href="#h4-0-55" id="h4-0-55" class="i">+    pub fn new(path: PathBuf) -&gt; Result&lt;Self&gt; {
+</a><a href="#h4-0-56" id="h4-0-56" class="i">+        let mut log = Log::new(path)?;
+</a><a href="#h4-0-57" id="h4-0-57" class="i">+        let keydir = log.build_keydir()?;
+</a><a href="#h4-0-58" id="h4-0-58" class="i">+        Ok(Self { log, keydir })
+</a><a href="#h4-0-59" id="h4-0-59" class="i">+    }
+</a><a href="#h4-0-60" id="h4-0-60" class="i">+
+</a><a href="#h4-0-61" id="h4-0-61" class="i">+    /// Opens a BitCask database, and automatically compacts it if the amount
+</a><a href="#h4-0-62" id="h4-0-62" class="i">+    /// of garbage exceeds the given ratio when opened.
+</a><a href="#h4-0-63" id="h4-0-63" class="i">+    pub fn new_compact(path: PathBuf, garbage_ratio_threshold: f64) -&gt; Result&lt;Self&gt; {
+</a><a href="#h4-0-64" id="h4-0-64" class="i">+        let mut s = Self::new(path)?;
+</a><a href="#h4-0-65" id="h4-0-65" class="i">+
+</a><a href="#h4-0-66" id="h4-0-66" class="i">+        let (live_bytes, total_bytes) = s.compute_sizes()?;
+</a><a href="#h4-0-67" id="h4-0-67" class="i">+        let garbage_bytes = total_bytes - live_bytes;
+</a><a href="#h4-0-68" id="h4-0-68" class="i">+        let garbage_ratio = garbage_bytes as f64 / total_bytes as f64;
+</a><a href="#h4-0-69" id="h4-0-69" class="i">+        if garbage_bytes &gt; 0 &amp;&amp; garbage_ratio &gt;= garbage_ratio_threshold {
+</a><a href="#h4-0-70" id="h4-0-70" class="i">+            log::info!(
+</a><a href="#h4-0-71" id="h4-0-71" class="i">+                &quot;Compacting {} to remove {:.1}MB garbage ({:.0}% of {:.1}MB)&quot;,
+</a><a href="#h4-0-72" id="h4-0-72" class="i">+                s.log.path.display(),
+</a><a href="#h4-0-73" id="h4-0-73" class="i">+                garbage_bytes / 1024 / 1024,
+</a><a href="#h4-0-74" id="h4-0-74" class="i">+                garbage_ratio * 100.0,
+</a><a href="#h4-0-75" id="h4-0-75" class="i">+                total_bytes / 1024 / 1024
+</a><a href="#h4-0-76" id="h4-0-76" class="i">+            );
+</a><a href="#h4-0-77" id="h4-0-77" class="i">+            s.compact()?;
+</a><a href="#h4-0-78" id="h4-0-78" class="i">+            log::info!(
+</a><a href="#h4-0-79" id="h4-0-79" class="i">+                &quot;Compacted {} to size {:.1}MB&quot;,
+</a><a href="#h4-0-80" id="h4-0-80" class="i">+                s.log.path.display(),
+</a><a href="#h4-0-81" id="h4-0-81" class="i">+                live_bytes / 1024 / 1024
+</a><a href="#h4-0-82" id="h4-0-82" class="i">+            );
+</a><a href="#h4-0-83" id="h4-0-83" class="i">+        }
+</a><a href="#h4-0-84" id="h4-0-84" class="i">+
+</a><a href="#h4-0-85" id="h4-0-85" class="i">+        Ok(s)
+</a><a href="#h4-0-86" id="h4-0-86" class="i">+    }
+</a><a href="#h4-0-87" id="h4-0-87" class="i">+}
+</a><a href="#h4-0-88" id="h4-0-88" class="i">+
+</a><a href="#h4-0-89" id="h4-0-89" class="i">+impl std::fmt::Display for BitCask {
+</a><a href="#h4-0-90" id="h4-0-90" class="i">+    fn fmt(&amp;self, f: &amp;mut std::fmt::Formatter&lt;&#39;_&gt;) -&gt; std::fmt::Result {
+</a><a href="#h4-0-91" id="h4-0-91" class="i">+        write!(f, &quot;bitcask&quot;)
+</a><a href="#h4-0-92" id="h4-0-92" class="i">+    }
+</a><a href="#h4-0-93" id="h4-0-93" class="i">+}
+</a><a href="#h4-0-94" id="h4-0-94" class="i">+
+</a><a href="#h4-0-95" id="h4-0-95" class="i">+impl Store for BitCask {
+</a><a href="#h4-0-96" id="h4-0-96" class="i">+    fn delete(&amp;mut self, key: &amp;[u8]) -&gt; Result&lt;()&gt; {
+</a><a href="#h4-0-97" id="h4-0-97" class="i">+        self.log.write_entry(key, None)?;
+</a><a href="#h4-0-98" id="h4-0-98" class="i">+        self.keydir.remove(key);
+</a><a href="#h4-0-99" id="h4-0-99" class="i">+        Ok(())
+</a><a href="#h4-0-100" id="h4-0-100" class="i">+    }
+</a><a href="#h4-0-101" id="h4-0-101" class="i">+
+</a><a href="#h4-0-102" id="h4-0-102" class="i">+    fn flush(&amp;mut self) -&gt; Result&lt;()&gt; {
+</a><a href="#h4-0-103" id="h4-0-103" class="i">+        Ok(self.log.file.sync_all()?)
+</a><a href="#h4-0-104" id="h4-0-104" class="i">+    }
+</a><a href="#h4-0-105" id="h4-0-105" class="i">+
+</a><a href="#h4-0-106" id="h4-0-106" class="i">+    fn get(&amp;mut self, key: &amp;[u8]) -&gt; Result&lt;Option&lt;Vec&lt;u8&gt;&gt;&gt; {
+</a><a href="#h4-0-107" id="h4-0-107" class="i">+        if let Some((value_pos, value_len)) = self.keydir.get(key) {
+</a><a href="#h4-0-108" id="h4-0-108" class="i">+            Ok(Some(self.log.read_value(*value_pos, *value_len)?))
+</a><a href="#h4-0-109" id="h4-0-109" class="i">+        } else {
+</a><a href="#h4-0-110" id="h4-0-110" class="i">+            Ok(None)
+</a><a href="#h4-0-111" id="h4-0-111" class="i">+        }
+</a><a href="#h4-0-112" id="h4-0-112" class="i">+    }
+</a><a href="#h4-0-113" id="h4-0-113" class="i">+
+</a><a href="#h4-0-114" id="h4-0-114" class="i">+    fn scan(&amp;mut self, range: Range) -&gt; Scan {
+</a><a href="#h4-0-115" id="h4-0-115" class="i">+        Box::new(self.keydir.range(range).map(|(key, (value_pos, value_len))| {
+</a><a href="#h4-0-116" id="h4-0-116" class="i">+            Ok((key.clone(), self.log.read_value(*value_pos, *value_len)?))
+</a><a href="#h4-0-117" id="h4-0-117" class="i">+        }))
+</a><a href="#h4-0-118" id="h4-0-118" class="i">+    }
+</a><a href="#h4-0-119" id="h4-0-119" class="i">+
+</a><a href="#h4-0-120" id="h4-0-120" class="i">+    fn set(&amp;mut self, key: &amp;[u8], value: Vec&lt;u8&gt;) -&gt; Result&lt;()&gt; {
+</a><a href="#h4-0-121" id="h4-0-121" class="i">+        let (pos, len) = self.log.write_entry(key, Some(&amp;*value))?;
+</a><a href="#h4-0-122" id="h4-0-122" class="i">+        let value_len = value.len() as u64;
+</a><a href="#h4-0-123" id="h4-0-123" class="i">+        self.keydir.insert(key.to_vec(), (pos + len - value_len, value_len));
+</a><a href="#h4-0-124" id="h4-0-124" class="i">+        Ok(())
+</a><a href="#h4-0-125" id="h4-0-125" class="i">+    }
+</a><a href="#h4-0-126" id="h4-0-126" class="i">+}
+</a><a href="#h4-0-127" id="h4-0-127" class="i">+
+</a><a href="#h4-0-128" id="h4-0-128" class="i">+impl BitCask {
+</a><a href="#h4-0-129" id="h4-0-129" class="i">+    /// Compacts the current log file by writing out a new log file containing
+</a><a href="#h4-0-130" id="h4-0-130" class="i">+    /// only live keys and replacing the current file with it.
+</a><a href="#h4-0-131" id="h4-0-131" class="i">+    pub fn compact(&amp;mut self) -&gt; Result&lt;()&gt; {
+</a><a href="#h4-0-132" id="h4-0-132" class="i">+        let mut tmp_path = self.log.path.clone();
+</a><a href="#h4-0-133" id="h4-0-133" class="i">+        tmp_path.set_extension(&quot;new&quot;);
+</a><a href="#h4-0-134" id="h4-0-134" class="i">+        let (mut new_log, new_keydir) = self.write_log(tmp_path)?;
+</a><a href="#h4-0-135" id="h4-0-135" class="i">+
+</a><a href="#h4-0-136" id="h4-0-136" class="i">+        std::fs::rename(&amp;new_log.path, &amp;self.log.path)?;
+</a><a href="#h4-0-137" id="h4-0-137" class="i">+        new_log.path = self.log.path.clone();
+</a><a href="#h4-0-138" id="h4-0-138" class="i">+
+</a><a href="#h4-0-139" id="h4-0-139" class="i">+        self.log = new_log;
+</a><a href="#h4-0-140" id="h4-0-140" class="i">+        self.keydir = new_keydir;
+</a><a href="#h4-0-141" id="h4-0-141" class="i">+        Ok(())
+</a><a href="#h4-0-142" id="h4-0-142" class="i">+    }
+</a><a href="#h4-0-143" id="h4-0-143" class="i">+
+</a><a href="#h4-0-144" id="h4-0-144" class="i">+    /// Computes the live and total sizes of the log file, by iterating over the
+</a><a href="#h4-0-145" id="h4-0-145" class="i">+    /// keydir and fetching the file&#39;s size from the filesystem metadata. The
+</a><a href="#h4-0-146" id="h4-0-146" class="i">+    /// garbage size (i.e. old, replaced entries and tombstones) is the
+</a><a href="#h4-0-147" id="h4-0-147" class="i">+    /// difference between these values.
+</a><a href="#h4-0-148" id="h4-0-148" class="i">+    ///
+</a><a href="#h4-0-149" id="h4-0-149" class="i">+    /// We could keep track of these values during mutations, but it&#39;s not
+</a><a href="#h4-0-150" id="h4-0-150" class="i">+    /// currently needed -- we only use this to determine whether to compact the
+</a><a href="#h4-0-151" id="h4-0-151" class="i">+    /// database when it&#39;s initially opened, so we&#39;d need to run basically the
+</a><a href="#h4-0-152" id="h4-0-152" class="i">+    /// same computations anyway.
+</a><a href="#h4-0-153" id="h4-0-153" class="i">+    pub fn compute_sizes(&amp;mut self) -&gt; Result&lt;(u64, u64)&gt; {
+</a><a href="#h4-0-154" id="h4-0-154" class="i">+        let total_size = self.log.file.metadata()?.len();
+</a><a href="#h4-0-155" id="h4-0-155" class="i">+        let live_size = self
+</a><a href="#h4-0-156" id="h4-0-156" class="i">+            .keydir
+</a><a href="#h4-0-157" id="h4-0-157" class="i">+            .iter()
+</a><a href="#h4-0-158" id="h4-0-158" class="i">+            .fold(0, |size, (key, (_, value_len))| size + 8 + 8 + key.len() as u64 + value_len);
+</a><a href="#h4-0-159" id="h4-0-159" class="i">+        Ok((live_size, total_size))
+</a><a href="#h4-0-160" id="h4-0-160" class="i">+    }
+</a><a href="#h4-0-161" id="h4-0-161" class="i">+
+</a><a href="#h4-0-162" id="h4-0-162" class="i">+    /// Writes out a new log file with the live entries of the current log file
+</a><a href="#h4-0-163" id="h4-0-163" class="i">+    /// and returns it along with its keydir. Entries are written in key order.
+</a><a href="#h4-0-164" id="h4-0-164" class="i">+    fn write_log(&amp;mut self, path: PathBuf) -&gt; Result&lt;(Log, KeyDir)&gt; {
+</a><a href="#h4-0-165" id="h4-0-165" class="i">+        let mut new_keydir = KeyDir::new();
+</a><a href="#h4-0-166" id="h4-0-166" class="i">+        let mut new_log = Log::new(path)?;
+</a><a href="#h4-0-167" id="h4-0-167" class="i">+        new_log.file.set_len(0)?; // truncate file if it exists
+</a><a href="#h4-0-168" id="h4-0-168" class="i">+        for (key, (value_pos, value_len)) in self.keydir.iter() {
+</a><a href="#h4-0-169" id="h4-0-169" class="i">+            let value = self.log.read_value(*value_pos, *value_len)?;
+</a><a href="#h4-0-170" id="h4-0-170" class="i">+            let (pos, len) = new_log.write_entry(key, Some(&amp;value))?;
+</a><a href="#h4-0-171" id="h4-0-171" class="i">+            new_keydir.insert(key.clone(), (pos + len - value_len, *value_len));
+</a><a href="#h4-0-172" id="h4-0-172" class="i">+        }
+</a><a href="#h4-0-173" id="h4-0-173" class="i">+        Ok((new_log, new_keydir))
+</a><a href="#h4-0-174" id="h4-0-174" class="i">+    }
+</a><a href="#h4-0-175" id="h4-0-175" class="i">+}
+</a><a href="#h4-0-176" id="h4-0-176" class="i">+
+</a><a href="#h4-0-177" id="h4-0-177" class="i">+/// Attempt to flush the file when the database is closed.
+</a><a href="#h4-0-178" id="h4-0-178" class="i">+impl Drop for BitCask {
+</a><a href="#h4-0-179" id="h4-0-179" class="i">+    fn drop(&amp;mut self) {
+</a><a href="#h4-0-180" id="h4-0-180" class="i">+        if let Err(error) = self.flush() {
+</a><a href="#h4-0-181" id="h4-0-181" class="i">+            log::error!(&quot;failed to flush file: {}&quot;, error)
+</a><a href="#h4-0-182" id="h4-0-182" class="i">+        }
+</a><a href="#h4-0-183" id="h4-0-183" class="i">+    }
+</a><a href="#h4-0-184" id="h4-0-184" class="i">+}
+</a><a href="#h4-0-185" id="h4-0-185" class="i">+
+</a><a href="#h4-0-186" id="h4-0-186" class="i">+/// A BitCask append-only log file, containing a sequence of key/value
+</a><a href="#h4-0-187" id="h4-0-187" class="i">+/// entries encoded as follows;
+</a><a href="#h4-0-188" id="h4-0-188" class="i">+///
+</a><a href="#h4-0-189" id="h4-0-189" class="i">+/// - Key length as big-endian u64 (8 bytes)
+</a><a href="#h4-0-190" id="h4-0-190" class="i">+/// - Value length as big-endian i64, or -1 for tombstones (8 bytes)
+</a><a href="#h4-0-191" id="h4-0-191" class="i">+/// - Key as raw bytes
+</a><a href="#h4-0-192" id="h4-0-192" class="i">+/// - Value as raw bytes
+</a><a href="#h4-0-193" id="h4-0-193" class="i">+struct Log {
+</a><a href="#h4-0-194" id="h4-0-194" class="i">+    /// Path to the log file.
+</a><a href="#h4-0-195" id="h4-0-195" class="i">+    path: PathBuf,
+</a><a href="#h4-0-196" id="h4-0-196" class="i">+    /// The opened file containing the log.
+</a><a href="#h4-0-197" id="h4-0-197" class="i">+    file: std::fs::File,
+</a><a href="#h4-0-198" id="h4-0-198" class="i">+}
+</a><a href="#h4-0-199" id="h4-0-199" class="i">+
+</a><a href="#h4-0-200" id="h4-0-200" class="i">+impl Log {
+</a><a href="#h4-0-201" id="h4-0-201" class="i">+    /// Opens a log file, or creates one if it does not exist. Takes out an
+</a><a href="#h4-0-202" id="h4-0-202" class="i">+    /// exclusive lock on the file until it is closed, or errors if the lock is
+</a><a href="#h4-0-203" id="h4-0-203" class="i">+    /// already held.
+</a><a href="#h4-0-204" id="h4-0-204" class="i">+    fn new(path: PathBuf) -&gt; Result&lt;Self&gt; {
+</a><a href="#h4-0-205" id="h4-0-205" class="i">+        if let Some(dir) = path.parent() {
+</a><a href="#h4-0-206" id="h4-0-206" class="i">+            std::fs::create_dir_all(dir)?
+</a><a href="#h4-0-207" id="h4-0-207" class="i">+        }
+</a><a href="#h4-0-208" id="h4-0-208" class="i">+        let file = std::fs::OpenOptions::new().read(true).write(true).create(true).open(&amp;path)?;
+</a><a href="#h4-0-209" id="h4-0-209" class="i">+        file.try_lock_exclusive()?;
+</a><a href="#h4-0-210" id="h4-0-210" class="i">+        Ok(Self { path, file })
+</a><a href="#h4-0-211" id="h4-0-211" class="i">+    }
+</a><a href="#h4-0-212" id="h4-0-212" class="i">+
+</a><a href="#h4-0-213" id="h4-0-213" class="i">+    /// Builds a keydir by scanning the log file. If an incomplete entry is
+</a><a href="#h4-0-214" id="h4-0-214" class="i">+    /// encountered, it is assumed to be caused by an incomplete write operation
+</a><a href="#h4-0-215" id="h4-0-215" class="i">+    /// and the remainder of the file is truncated.
+</a><a href="#h4-0-216" id="h4-0-216" class="i">+    fn build_keydir(&amp;mut self) -&gt; Result&lt;KeyDir&gt; {
+</a><a href="#h4-0-217" id="h4-0-217" class="i">+        let mut len_buf = [0u8; 8];
+</a><a href="#h4-0-218" id="h4-0-218" class="i">+        let mut keydir = KeyDir::new();
+</a><a href="#h4-0-219" id="h4-0-219" class="i">+        let file_len = self.file.metadata()?.len();
+</a><a href="#h4-0-220" id="h4-0-220" class="i">+        let mut r = BufReader::new(&amp;mut self.file);
+</a><a href="#h4-0-221" id="h4-0-221" class="i">+        let mut pos = r.seek(SeekFrom::Start(0))?;
+</a><a href="#h4-0-222" id="h4-0-222" class="i">+
+</a><a href="#h4-0-223" id="h4-0-223" class="i">+        while pos &lt; file_len {
+</a><a href="#h4-0-224" id="h4-0-224" class="i">+            // Read the next entry from the file, returning the key, value
+</a><a href="#h4-0-225" id="h4-0-225" class="i">+            // position, and value length or None for tombstones.
+</a><a href="#h4-0-226" id="h4-0-226" class="i">+            let result = || -&gt; std::result::Result&lt;(Vec&lt;u8&gt;, u64, Option&lt;u64&gt;), std::io::Error&gt; {
+</a><a href="#h4-0-227" id="h4-0-227" class="i">+                r.read_exact(&amp;mut len_buf)?;
+</a><a href="#h4-0-228" id="h4-0-228" class="i">+                let key_len = u64::from_be_bytes(len_buf);
+</a><a href="#h4-0-229" id="h4-0-229" class="i">+                r.read_exact(&amp;mut len_buf)?;
+</a><a href="#h4-0-230" id="h4-0-230" class="i">+                let value_len_or_tombstone = match i64::from_be_bytes(len_buf) {
+</a><a href="#h4-0-231" id="h4-0-231" class="i">+                    l if l &gt;= 0 =&gt; Some(l as u64),
+</a><a href="#h4-0-232" id="h4-0-232" class="i">+                    _ =&gt; None, // -1 for tombstones
+</a><a href="#h4-0-233" id="h4-0-233" class="i">+                };
+</a><a href="#h4-0-234" id="h4-0-234" class="i">+                let value_pos = pos + 8 + 8 + key_len;
+</a><a href="#h4-0-235" id="h4-0-235" class="i">+
+</a><a href="#h4-0-236" id="h4-0-236" class="i">+                let mut key = vec![0; key_len as usize];
+</a><a href="#h4-0-237" id="h4-0-237" class="i">+                r.read_exact(&amp;mut key)?;
+</a><a href="#h4-0-238" id="h4-0-238" class="i">+
+</a><a href="#h4-0-239" id="h4-0-239" class="i">+                if let Some(value_len) = value_len_or_tombstone {
+</a><a href="#h4-0-240" id="h4-0-240" class="i">+                    if value_pos + value_len &gt; file_len {
+</a><a href="#h4-0-241" id="h4-0-241" class="i">+                        return Err(std::io::Error::new(
+</a><a href="#h4-0-242" id="h4-0-242" class="i">+                            std::io::ErrorKind::UnexpectedEof,
+</a><a href="#h4-0-243" id="h4-0-243" class="i">+                            &quot;value extends beyond end of file&quot;,
+</a><a href="#h4-0-244" id="h4-0-244" class="i">+                        ));
+</a><a href="#h4-0-245" id="h4-0-245" class="i">+                    }
+</a><a href="#h4-0-246" id="h4-0-246" class="i">+                    r.seek_relative(value_len as i64)?; // avoids discarding buffer
+</a><a href="#h4-0-247" id="h4-0-247" class="i">+                }
+</a><a href="#h4-0-248" id="h4-0-248" class="i">+
+</a><a href="#h4-0-249" id="h4-0-249" class="i">+                Ok((key, value_pos, value_len_or_tombstone))
+</a><a href="#h4-0-250" id="h4-0-250" class="i">+            }();
+</a><a href="#h4-0-251" id="h4-0-251" class="i">+
+</a><a href="#h4-0-252" id="h4-0-252" class="i">+            match result {
+</a><a href="#h4-0-253" id="h4-0-253" class="i">+                // Populate the keydir with the entry, or remove it on tombstones.
+</a><a href="#h4-0-254" id="h4-0-254" class="i">+                Ok((key, value_pos, Some(value_len))) =&gt; {
+</a><a href="#h4-0-255" id="h4-0-255" class="i">+                    keydir.insert(key, (value_pos, value_len));
+</a><a href="#h4-0-256" id="h4-0-256" class="i">+                    pos = value_pos + value_len;
+</a><a href="#h4-0-257" id="h4-0-257" class="i">+                }
+</a><a href="#h4-0-258" id="h4-0-258" class="i">+                Ok((key, value_pos, None)) =&gt; {
+</a><a href="#h4-0-259" id="h4-0-259" class="i">+                    keydir.remove(&amp;key);
+</a><a href="#h4-0-260" id="h4-0-260" class="i">+                    pos = value_pos;
+</a><a href="#h4-0-261" id="h4-0-261" class="i">+                }
+</a><a href="#h4-0-262" id="h4-0-262" class="i">+                // If an incomplete entry was found at the end of the file, assume an
+</a><a href="#h4-0-263" id="h4-0-263" class="i">+                // incomplete write and truncate the file.
+</a><a href="#h4-0-264" id="h4-0-264" class="i">+                Err(err) if err.kind() == std::io::ErrorKind::UnexpectedEof =&gt; {
+</a><a href="#h4-0-265" id="h4-0-265" class="i">+                    log::error!(&quot;Found incomplete entry at offset {}, truncating file&quot;, pos);
+</a><a href="#h4-0-266" id="h4-0-266" class="i">+                    self.file.set_len(pos)?;
+</a><a href="#h4-0-267" id="h4-0-267" class="i">+                    break;
+</a><a href="#h4-0-268" id="h4-0-268" class="i">+                }
+</a><a href="#h4-0-269" id="h4-0-269" class="i">+                Err(err) =&gt; return Err(err.into()),
+</a><a href="#h4-0-270" id="h4-0-270" class="i">+            }
+</a><a href="#h4-0-271" id="h4-0-271" class="i">+        }
+</a><a href="#h4-0-272" id="h4-0-272" class="i">+
+</a><a href="#h4-0-273" id="h4-0-273" class="i">+        Ok(keydir)
+</a><a href="#h4-0-274" id="h4-0-274" class="i">+    }
+</a><a href="#h4-0-275" id="h4-0-275" class="i">+
+</a><a href="#h4-0-276" id="h4-0-276" class="i">+    /// Reads a value from the log file.
+</a><a href="#h4-0-277" id="h4-0-277" class="i">+    fn read_value(&amp;mut self, value_pos: u64, value_len: u64) -&gt; Result&lt;Vec&lt;u8&gt;&gt; {
+</a><a href="#h4-0-278" id="h4-0-278" class="i">+        let mut value = vec![0; value_len as usize];
+</a><a href="#h4-0-279" id="h4-0-279" class="i">+        self.file.seek(SeekFrom::Start(value_pos))?;
+</a><a href="#h4-0-280" id="h4-0-280" class="i">+        self.file.read_exact(&amp;mut value)?;
+</a><a href="#h4-0-281" id="h4-0-281" class="i">+        Ok(value)
+</a><a href="#h4-0-282" id="h4-0-282" class="i">+    }
+</a><a href="#h4-0-283" id="h4-0-283" class="i">+
+</a><a href="#h4-0-284" id="h4-0-284" class="i">+    /// Appends a key/value entry to the log file, using a None value for
+</a><a href="#h4-0-285" id="h4-0-285" class="i">+    /// tombstones. It returns the position and length of the entry.
+</a><a href="#h4-0-286" id="h4-0-286" class="i">+    fn write_entry(&amp;mut self, key: &amp;[u8], value: Option&lt;&amp;[u8]&gt;) -&gt; Result&lt;(u64, u64)&gt; {
+</a><a href="#h4-0-287" id="h4-0-287" class="i">+        let key_len = key.len() as u64;
+</a><a href="#h4-0-288" id="h4-0-288" class="i">+        let value_len = value.map_or(0, |v| v.len() as u64);
+</a><a href="#h4-0-289" id="h4-0-289" class="i">+        let value_len_or_tombstone = value.map_or(-1, |v| v.len() as i64);
+</a><a href="#h4-0-290" id="h4-0-290" class="i">+        let len = 8 + 8 + key_len + value_len;
+</a><a href="#h4-0-291" id="h4-0-291" class="i">+
+</a><a href="#h4-0-292" id="h4-0-292" class="i">+        let pos = self.file.seek(SeekFrom::End(0))?;
+</a><a href="#h4-0-293" id="h4-0-293" class="i">+        let mut w = BufWriter::with_capacity(len as usize, &amp;mut self.file);
+</a><a href="#h4-0-294" id="h4-0-294" class="i">+        w.write_all(&amp;key_len.to_be_bytes())?;
+</a><a href="#h4-0-295" id="h4-0-295" class="i">+        w.write_all(&amp;value_len_or_tombstone.to_be_bytes())?;
+</a><a href="#h4-0-296" id="h4-0-296" class="i">+        w.write_all(key)?;
+</a><a href="#h4-0-297" id="h4-0-297" class="i">+        if let Some(value) = value {
+</a><a href="#h4-0-298" id="h4-0-298" class="i">+            w.write_all(value)?;
+</a><a href="#h4-0-299" id="h4-0-299" class="i">+        }
+</a><a href="#h4-0-300" id="h4-0-300" class="i">+        w.flush()?;
+</a><a href="#h4-0-301" id="h4-0-301" class="i">+
+</a><a href="#h4-0-302" id="h4-0-302" class="i">+        Ok((pos, len))
+</a><a href="#h4-0-303" id="h4-0-303" class="i">+    }
+</a><a href="#h4-0-304" id="h4-0-304" class="i">+
+</a><a href="#h4-0-305" id="h4-0-305" class="i">+    #[cfg(test)]
+</a><a href="#h4-0-306" id="h4-0-306" class="i">+    /// Prints the entire log file to the given writer in human-readable form.
+</a><a href="#h4-0-307" id="h4-0-307" class="i">+    fn print&lt;W: Write&gt;(&amp;mut self, w: &amp;mut W) -&gt; Result&lt;()&gt; {
+</a><a href="#h4-0-308" id="h4-0-308" class="i">+        let mut len_buf = [0u8; 8];
+</a><a href="#h4-0-309" id="h4-0-309" class="i">+        let file_len = self.file.metadata()?.len();
+</a><a href="#h4-0-310" id="h4-0-310" class="i">+        let mut r = BufReader::new(&amp;mut self.file);
+</a><a href="#h4-0-311" id="h4-0-311" class="i">+        let mut pos = r.seek(SeekFrom::Start(0))?;
+</a><a href="#h4-0-312" id="h4-0-312" class="i">+        let mut idx = 0;
+</a><a href="#h4-0-313" id="h4-0-313" class="i">+
+</a><a href="#h4-0-314" id="h4-0-314" class="i">+        while pos &lt; file_len {
+</a><a href="#h4-0-315" id="h4-0-315" class="i">+            writeln!(w, &quot;entry = {}, offset {}&quot;, idx, pos)?;
+</a><a href="#h4-0-316" id="h4-0-316" class="i">+
+</a><a href="#h4-0-317" id="h4-0-317" class="i">+            r.read_exact(&amp;mut len_buf)?;
+</a><a href="#h4-0-318" id="h4-0-318" class="i">+            let key_len = u64::from_be_bytes(len_buf);
+</a><a href="#h4-0-319" id="h4-0-319" class="i">+            writeln!(w, &quot;klen  = {} {:x?}&quot;, key_len, len_buf)?;
+</a><a href="#h4-0-320" id="h4-0-320" class="i">+
+</a><a href="#h4-0-321" id="h4-0-321" class="i">+            r.read_exact(&amp;mut len_buf)?;
+</a><a href="#h4-0-322" id="h4-0-322" class="i">+            let value_len_or_tombstone = i64::from_be_bytes(len_buf); // NB: -1 for tombstones
+</a><a href="#h4-0-323" id="h4-0-323" class="i">+            let value_len = value_len_or_tombstone.max(0) as u64;
+</a><a href="#h4-0-324" id="h4-0-324" class="i">+            writeln!(w, &quot;vlen  = {} {:x?}&quot;, value_len_or_tombstone, len_buf)?;
+</a><a href="#h4-0-325" id="h4-0-325" class="i">+
+</a><a href="#h4-0-326" id="h4-0-326" class="i">+            let mut key = vec![0; key_len as usize];
+</a><a href="#h4-0-327" id="h4-0-327" class="i">+            r.read_exact(&amp;mut key)?;
+</a><a href="#h4-0-328" id="h4-0-328" class="i">+            write!(w, &quot;key   = &quot;)?;
+</a><a href="#h4-0-329" id="h4-0-329" class="i">+            if let Ok(str) = std::str::from_utf8(&amp;key) {
+</a><a href="#h4-0-330" id="h4-0-330" class="i">+                write!(w, r#&quot;&quot;{}&quot; &quot;#, str)?;
+</a><a href="#h4-0-331" id="h4-0-331" class="i">+            }
+</a><a href="#h4-0-332" id="h4-0-332" class="i">+            writeln!(w, &quot;{:x?}&quot;, key)?;
+</a><a href="#h4-0-333" id="h4-0-333" class="i">+
+</a><a href="#h4-0-334" id="h4-0-334" class="i">+            let mut value = vec![0; value_len as usize];
+</a><a href="#h4-0-335" id="h4-0-335" class="i">+            r.read_exact(&amp;mut value)?;
+</a><a href="#h4-0-336" id="h4-0-336" class="i">+            write!(w, &quot;value = &quot;)?;
+</a><a href="#h4-0-337" id="h4-0-337" class="i">+            if value_len_or_tombstone &lt; 0 {
+</a><a href="#h4-0-338" id="h4-0-338" class="i">+                write!(w, &quot;tombstone &quot;)?;
+</a><a href="#h4-0-339" id="h4-0-339" class="i">+            } else if let Ok(str) = std::str::from_utf8(&amp;value) {
+</a><a href="#h4-0-340" id="h4-0-340" class="i">+                if str.chars().all(|c| !c.is_control()) {
+</a><a href="#h4-0-341" id="h4-0-341" class="i">+                    write!(w, r#&quot;&quot;{}&quot; &quot;#, str)?;
+</a><a href="#h4-0-342" id="h4-0-342" class="i">+                }
+</a><a href="#h4-0-343" id="h4-0-343" class="i">+            }
+</a><a href="#h4-0-344" id="h4-0-344" class="i">+            write!(w, &quot;{:x?}\n\n&quot;, value)?;
+</a><a href="#h4-0-345" id="h4-0-345" class="i">+
+</a><a href="#h4-0-346" id="h4-0-346" class="i">+            pos += 8 + 8 + key_len + value_len;
+</a><a href="#h4-0-347" id="h4-0-347" class="i">+            idx += 1;
+</a><a href="#h4-0-348" id="h4-0-348" class="i">+        }
+</a><a href="#h4-0-349" id="h4-0-349" class="i">+        Ok(())
+</a><a href="#h4-0-350" id="h4-0-350" class="i">+    }
+</a><a href="#h4-0-351" id="h4-0-351" class="i">+}
+</a><a href="#h4-0-352" id="h4-0-352" class="i">+
+</a><a href="#h4-0-353" id="h4-0-353" class="i">+#[cfg(test)]
+</a><a href="#h4-0-354" id="h4-0-354" class="i">+mod tests {
+</a><a href="#h4-0-355" id="h4-0-355" class="i">+    use super::*;
+</a><a href="#h4-0-356" id="h4-0-356" class="i">+
+</a><a href="#h4-0-357" id="h4-0-357" class="i">+    const GOLDEN_DIR: &amp;str = &quot;src/storage/kv/golden/bitcask&quot;;
+</a><a href="#h4-0-358" id="h4-0-358" class="i">+
+</a><a href="#h4-0-359" id="h4-0-359" class="i">+    super::super::tests::test_store!({
+</a><a href="#h4-0-360" id="h4-0-360" class="i">+        let path = tempdir::TempDir::new(&quot;toydb&quot;)?.path().join(&quot;toydb&quot;);
+</a><a href="#h4-0-361" id="h4-0-361" class="i">+        BitCask::new(path)?
+</a><a href="#h4-0-362" id="h4-0-362" class="i">+    });
+</a><a href="#h4-0-363" id="h4-0-363" class="i">+
+</a><a href="#h4-0-364" id="h4-0-364" class="i">+    /// Creates a new BitCask store for testing.
+</a><a href="#h4-0-365" id="h4-0-365" class="i">+    fn setup() -&gt; Result&lt;BitCask&gt; {
+</a><a href="#h4-0-366" id="h4-0-366" class="i">+        BitCask::new(tempdir::TempDir::new(&quot;toydb&quot;)?.path().join(&quot;toydb&quot;))
+</a><a href="#h4-0-367" id="h4-0-367" class="i">+    }
+</a><a href="#h4-0-368" id="h4-0-368" class="i">+
+</a><a href="#h4-0-369" id="h4-0-369" class="i">+    /// Writes various values primarily for testing log file handling.
+</a><a href="#h4-0-370" id="h4-0-370" class="i">+    ///
+</a><a href="#h4-0-371" id="h4-0-371" class="i">+    /// - &#39;&#39;: empty key and value
+</a><a href="#h4-0-372" id="h4-0-372" class="i">+    /// - a: write
+</a><a href="#h4-0-373" id="h4-0-373" class="i">+    /// - b: write, write
+</a><a href="#h4-0-374" id="h4-0-374" class="i">+    /// - c: write, delete, write
+</a><a href="#h4-0-375" id="h4-0-375" class="i">+    /// - d: delete, write
+</a><a href="#h4-0-376" id="h4-0-376" class="i">+    /// - e: write, delete
+</a><a href="#h4-0-377" id="h4-0-377" class="i">+    /// - f: delete
+</a><a href="#h4-0-378" id="h4-0-378" class="i">+    fn setup_log(s: &amp;mut BitCask) -&gt; Result&lt;()&gt; {
+</a><a href="#h4-0-379" id="h4-0-379" class="i">+        s.set(b&quot;b&quot;, vec![0x01])?;
+</a><a href="#h4-0-380" id="h4-0-380" class="i">+        s.set(b&quot;b&quot;, vec![0x02])?;
+</a><a href="#h4-0-381" id="h4-0-381" class="i">+
+</a><a href="#h4-0-382" id="h4-0-382" class="i">+        s.set(b&quot;e&quot;, vec![0x05])?;
+</a><a href="#h4-0-383" id="h4-0-383" class="i">+        s.delete(b&quot;e&quot;)?;
+</a><a href="#h4-0-384" id="h4-0-384" class="i">+
+</a><a href="#h4-0-385" id="h4-0-385" class="i">+        s.set(b&quot;c&quot;, vec![0x00])?;
+</a><a href="#h4-0-386" id="h4-0-386" class="i">+        s.delete(b&quot;c&quot;)?;
+</a><a href="#h4-0-387" id="h4-0-387" class="i">+        s.set(b&quot;c&quot;, vec![0x03])?;
+</a><a href="#h4-0-388" id="h4-0-388" class="i">+
+</a><a href="#h4-0-389" id="h4-0-389" class="i">+        s.set(b&quot;&quot;, vec![])?;
+</a><a href="#h4-0-390" id="h4-0-390" class="i">+
+</a><a href="#h4-0-391" id="h4-0-391" class="i">+        s.set(b&quot;a&quot;, vec![0x01])?;
+</a><a href="#h4-0-392" id="h4-0-392" class="i">+
+</a><a href="#h4-0-393" id="h4-0-393" class="i">+        s.delete(b&quot;f&quot;)?;
+</a><a href="#h4-0-394" id="h4-0-394" class="i">+
+</a><a href="#h4-0-395" id="h4-0-395" class="i">+        s.delete(b&quot;d&quot;)?;
+</a><a href="#h4-0-396" id="h4-0-396" class="i">+        s.set(b&quot;d&quot;, vec![0x04])?;
+</a><a href="#h4-0-397" id="h4-0-397" class="i">+
+</a><a href="#h4-0-398" id="h4-0-398" class="i">+        // Make sure the scan yields the expected results.
+</a><a href="#h4-0-399" id="h4-0-399" class="i">+        assert_eq!(
+</a><a href="#h4-0-400" id="h4-0-400" class="i">+            vec![
+</a><a href="#h4-0-401" id="h4-0-401" class="i">+                (b&quot;&quot;.to_vec(), vec![]),
+</a><a href="#h4-0-402" id="h4-0-402" class="i">+                (b&quot;a&quot;.to_vec(), vec![0x01]),
+</a><a href="#h4-0-403" id="h4-0-403" class="i">+                (b&quot;b&quot;.to_vec(), vec![0x02]),
+</a><a href="#h4-0-404" id="h4-0-404" class="i">+                (b&quot;c&quot;.to_vec(), vec![0x03]),
+</a><a href="#h4-0-405" id="h4-0-405" class="i">+                (b&quot;d&quot;.to_vec(), vec![0x04]),
+</a><a href="#h4-0-406" id="h4-0-406" class="i">+            ],
+</a><a href="#h4-0-407" id="h4-0-407" class="i">+            s.scan(Range::from(..)).collect::&lt;Result&lt;Vec&lt;_&gt;&gt;&gt;()?,
+</a><a href="#h4-0-408" id="h4-0-408" class="i">+        );
+</a><a href="#h4-0-409" id="h4-0-409" class="i">+
+</a><a href="#h4-0-410" id="h4-0-410" class="i">+        Ok(())
+</a><a href="#h4-0-411" id="h4-0-411" class="i">+    }
+</a><a href="#h4-0-412" id="h4-0-412" class="i">+
+</a><a href="#h4-0-413" id="h4-0-413" class="i">+    #[test]
+</a><a href="#h4-0-414" id="h4-0-414" class="i">+    /// Tests that logs are written correctly using a golden file.
+</a><a href="#h4-0-415" id="h4-0-415" class="i">+    fn log() -&gt; Result&lt;()&gt; {
+</a><a href="#h4-0-416" id="h4-0-416" class="i">+        let mut s = setup()?;
+</a><a href="#h4-0-417" id="h4-0-417" class="i">+        setup_log(&amp;mut s)?;
+</a><a href="#h4-0-418" id="h4-0-418" class="i">+
+</a><a href="#h4-0-419" id="h4-0-419" class="i">+        let mut mint = goldenfile::Mint::new(GOLDEN_DIR);
+</a><a href="#h4-0-420" id="h4-0-420" class="i">+        s.log.print(&amp;mut mint.new_goldenfile(&quot;log&quot;)?)?;
+</a><a href="#h4-0-421" id="h4-0-421" class="i">+        Ok(())
+</a><a href="#h4-0-422" id="h4-0-422" class="i">+    }
+</a><a href="#h4-0-423" id="h4-0-423" class="i">+
+</a><a href="#h4-0-424" id="h4-0-424" class="i">+    #[test]
+</a><a href="#h4-0-425" id="h4-0-425" class="i">+    /// Tests that writing and then reading a file yields the same results.
+</a><a href="#h4-0-426" id="h4-0-426" class="i">+    fn reopen() -&gt; Result&lt;()&gt; {
+</a><a href="#h4-0-427" id="h4-0-427" class="i">+        // NB: Don&#39;t use setup(), because the tempdir will be removed when
+</a><a href="#h4-0-428" id="h4-0-428" class="i">+        // the path falls out of scope.
+</a><a href="#h4-0-429" id="h4-0-429" class="i">+        let path = tempdir::TempDir::new(&quot;toydb&quot;)?.path().join(&quot;toydb&quot;);
+</a><a href="#h4-0-430" id="h4-0-430" class="i">+        let mut s = BitCask::new(path.clone())?;
+</a><a href="#h4-0-431" id="h4-0-431" class="i">+        setup_log(&amp;mut s)?;
+</a><a href="#h4-0-432" id="h4-0-432" class="i">+
+</a><a href="#h4-0-433" id="h4-0-433" class="i">+        let expect = s.scan(Range::from(..)).collect::&lt;Result&lt;Vec&lt;_&gt;&gt;&gt;()?;
+</a><a href="#h4-0-434" id="h4-0-434" class="i">+        drop(s);
+</a><a href="#h4-0-435" id="h4-0-435" class="i">+        let mut s = BitCask::new(path)?;
+</a><a href="#h4-0-436" id="h4-0-436" class="i">+        assert_eq!(expect, s.scan(Range::from(..)).collect::&lt;Result&lt;Vec&lt;_&gt;&gt;&gt;()?,);
+</a><a href="#h4-0-437" id="h4-0-437" class="i">+
+</a><a href="#h4-0-438" id="h4-0-438" class="i">+        Ok(())
+</a><a href="#h4-0-439" id="h4-0-439" class="i">+    }
+</a><a href="#h4-0-440" id="h4-0-440" class="i">+
+</a><a href="#h4-0-441" id="h4-0-441" class="i">+    #[test]
+</a><a href="#h4-0-442" id="h4-0-442" class="i">+    /// Tests log compaction, by writing golden files of the before/after state,
+</a><a href="#h4-0-443" id="h4-0-443" class="i">+    /// and checking that the database contains the same results, even after
+</a><a href="#h4-0-444" id="h4-0-444" class="i">+    /// reopening the file.
+</a><a href="#h4-0-445" id="h4-0-445" class="i">+    fn compact() -&gt; Result&lt;()&gt; {
+</a><a href="#h4-0-446" id="h4-0-446" class="i">+        // NB: Don&#39;t use setup(), because the tempdir will be removed when
+</a><a href="#h4-0-447" id="h4-0-447" class="i">+        // the path falls out of scope.
+</a><a href="#h4-0-448" id="h4-0-448" class="i">+        let path = tempdir::TempDir::new(&quot;toydb&quot;)?.path().join(&quot;toydb&quot;);
+</a><a href="#h4-0-449" id="h4-0-449" class="i">+        let mut s = BitCask::new(path.clone())?;
+</a><a href="#h4-0-450" id="h4-0-450" class="i">+        setup_log(&amp;mut s)?;
+</a><a href="#h4-0-451" id="h4-0-451" class="i">+
+</a><a href="#h4-0-452" id="h4-0-452" class="i">+        // Dump the initial log file.
+</a><a href="#h4-0-453" id="h4-0-453" class="i">+        let mut mint = goldenfile::Mint::new(GOLDEN_DIR);
+</a><a href="#h4-0-454" id="h4-0-454" class="i">+        s.log.print(&amp;mut mint.new_goldenfile(&quot;compact-before&quot;)?)?;
+</a><a href="#h4-0-455" id="h4-0-455" class="i">+        let expect = s.scan(Range::from(..)).collect::&lt;Result&lt;Vec&lt;_&gt;&gt;&gt;()?;
+</a><a href="#h4-0-456" id="h4-0-456" class="i">+
+</a><a href="#h4-0-457" id="h4-0-457" class="i">+        // Compact the log file and assert the new log file contents.
+</a><a href="#h4-0-458" id="h4-0-458" class="i">+        s.compact()?;
+</a><a href="#h4-0-459" id="h4-0-459" class="i">+        assert_eq!(path, s.log.path);
+</a><a href="#h4-0-460" id="h4-0-460" class="i">+        assert_eq!(expect, s.scan(Range::from(..)).collect::&lt;Result&lt;Vec&lt;_&gt;&gt;&gt;()?,);
+</a><a href="#h4-0-461" id="h4-0-461" class="i">+        s.log.print(&amp;mut mint.new_goldenfile(&quot;compact-after&quot;)?)?;
+</a><a href="#h4-0-462" id="h4-0-462" class="i">+
+</a><a href="#h4-0-463" id="h4-0-463" class="i">+        // Reopen the log file and assert that the contents are the same.
+</a><a href="#h4-0-464" id="h4-0-464" class="i">+        drop(s);
+</a><a href="#h4-0-465" id="h4-0-465" class="i">+        let mut s = BitCask::new(path)?;
+</a><a href="#h4-0-466" id="h4-0-466" class="i">+        assert_eq!(expect, s.scan(Range::from(..)).collect::&lt;Result&lt;Vec&lt;_&gt;&gt;&gt;()?,);
+</a><a href="#h4-0-467" id="h4-0-467" class="i">+
+</a><a href="#h4-0-468" id="h4-0-468" class="i">+        Ok(())
+</a><a href="#h4-0-469" id="h4-0-469" class="i">+    }
+</a><a href="#h4-0-470" id="h4-0-470" class="i">+
+</a><a href="#h4-0-471" id="h4-0-471" class="i">+    #[test]
+</a><a href="#h4-0-472" id="h4-0-472" class="i">+    /// Tests that new_compact() will automatically compact the file when appropriate.
+</a><a href="#h4-0-473" id="h4-0-473" class="i">+    fn new_compact() -&gt; Result&lt;()&gt; {
+</a><a href="#h4-0-474" id="h4-0-474" class="i">+        // Create an initial log file with a few entries.
+</a><a href="#h4-0-475" id="h4-0-475" class="i">+        let dir = tempdir::TempDir::new(&quot;toydb&quot;)?;
+</a><a href="#h4-0-476" id="h4-0-476" class="i">+        let path = dir.path().join(&quot;orig&quot;);
+</a><a href="#h4-0-477" id="h4-0-477" class="i">+        let compactpath = dir.path().join(&quot;compact&quot;);
+</a><a href="#h4-0-478" id="h4-0-478" class="i">+
+</a><a href="#h4-0-479" id="h4-0-479" class="i">+        let mut s = BitCask::new_compact(path.clone(), 0.2)?;
+</a><a href="#h4-0-480" id="h4-0-480" class="i">+        setup_log(&amp;mut s)?;
+</a><a href="#h4-0-481" id="h4-0-481" class="i">+        let (live_bytes, total_bytes) = s.compute_sizes()?;
+</a><a href="#h4-0-482" id="h4-0-482" class="i">+        let garbage_ratio = (total_bytes - live_bytes) as f64 / total_bytes as f64;
+</a><a href="#h4-0-483" id="h4-0-483" class="i">+        drop(s);
+</a><a href="#h4-0-484" id="h4-0-484" class="i">+
+</a><a href="#h4-0-485" id="h4-0-485" class="i">+        // Test a few threshold value and assert whether it should trigger compaction.
+</a><a href="#h4-0-486" id="h4-0-486" class="i">+        let cases = vec![
+</a><a href="#h4-0-487" id="h4-0-487" class="i">+            (-1.0, true),
+</a><a href="#h4-0-488" id="h4-0-488" class="i">+            (0.0, true),
+</a><a href="#h4-0-489" id="h4-0-489" class="i">+            (garbage_ratio - 0.001, true),
+</a><a href="#h4-0-490" id="h4-0-490" class="i">+            (garbage_ratio, true),
+</a><a href="#h4-0-491" id="h4-0-491" class="i">+            (garbage_ratio + 0.001, false),
+</a><a href="#h4-0-492" id="h4-0-492" class="i">+            (1.0, false),
+</a><a href="#h4-0-493" id="h4-0-493" class="i">+            (2.0, false),
+</a><a href="#h4-0-494" id="h4-0-494" class="i">+        ];
+</a><a href="#h4-0-495" id="h4-0-495" class="i">+        for (threshold, expect_compact) in cases.into_iter() {
+</a><a href="#h4-0-496" id="h4-0-496" class="i">+            std::fs::copy(&amp;path, &amp;compactpath)?;
+</a><a href="#h4-0-497" id="h4-0-497" class="i">+            let mut s = BitCask::new_compact(compactpath.clone(), threshold)?;
+</a><a href="#h4-0-498" id="h4-0-498" class="i">+            let (new_live, new_total) = s.compute_sizes()?;
+</a><a href="#h4-0-499" id="h4-0-499" class="i">+            assert_eq!(new_live, live_bytes);
+</a><a href="#h4-0-500" id="h4-0-500" class="i">+            if expect_compact {
+</a><a href="#h4-0-501" id="h4-0-501" class="i">+                assert_eq!(new_total, live_bytes);
+</a><a href="#h4-0-502" id="h4-0-502" class="i">+            } else {
+</a><a href="#h4-0-503" id="h4-0-503" class="i">+                assert_eq!(new_total, total_bytes);
+</a><a href="#h4-0-504" id="h4-0-504" class="i">+            }
+</a><a href="#h4-0-505" id="h4-0-505" class="i">+        }
+</a><a href="#h4-0-506" id="h4-0-506" class="i">+
+</a><a href="#h4-0-507" id="h4-0-507" class="i">+        Ok(())
+</a><a href="#h4-0-508" id="h4-0-508" class="i">+    }
+</a><a href="#h4-0-509" id="h4-0-509" class="i">+
+</a><a href="#h4-0-510" id="h4-0-510" class="i">+    #[test]
+</a><a href="#h4-0-511" id="h4-0-511" class="i">+    /// Tests that exclusive locks are taken out on log files, released when the
+</a><a href="#h4-0-512" id="h4-0-512" class="i">+    /// database is closed, and that an error is returned if a lock is already
+</a><a href="#h4-0-513" id="h4-0-513" class="i">+    /// held.
+</a><a href="#h4-0-514" id="h4-0-514" class="i">+    fn log_lock() -&gt; Result&lt;()&gt; {
+</a><a href="#h4-0-515" id="h4-0-515" class="i">+        let path = tempdir::TempDir::new(&quot;toydb&quot;)?.path().join(&quot;toydb&quot;);
+</a><a href="#h4-0-516" id="h4-0-516" class="i">+        let s = BitCask::new(path.clone())?;
+</a><a href="#h4-0-517" id="h4-0-517" class="i">+
+</a><a href="#h4-0-518" id="h4-0-518" class="i">+        assert!(BitCask::new(path.clone()).is_err());
+</a><a href="#h4-0-519" id="h4-0-519" class="i">+        drop(s);
+</a><a href="#h4-0-520" id="h4-0-520" class="i">+        assert!(BitCask::new(path.clone()).is_ok());
+</a><a href="#h4-0-521" id="h4-0-521" class="i">+
+</a><a href="#h4-0-522" id="h4-0-522" class="i">+        Ok(())
+</a><a href="#h4-0-523" id="h4-0-523" class="i">+    }
+</a><a href="#h4-0-524" id="h4-0-524" class="i">+
+</a><a href="#h4-0-525" id="h4-0-525" class="i">+    #[test]
+</a><a href="#h4-0-526" id="h4-0-526" class="i">+    /// Tests that an incomplete write at the end of the log file can be
+</a><a href="#h4-0-527" id="h4-0-527" class="i">+    /// recovered by discarding the last entry.
+</a><a href="#h4-0-528" id="h4-0-528" class="i">+    fn recovery() -&gt; Result&lt;()&gt; {
+</a><a href="#h4-0-529" id="h4-0-529" class="i">+        // Create an initial log file with a few entries.
+</a><a href="#h4-0-530" id="h4-0-530" class="i">+        let dir = tempdir::TempDir::new(&quot;toydb&quot;)?;
+</a><a href="#h4-0-531" id="h4-0-531" class="i">+        let path = dir.path().join(&quot;complete&quot;);
+</a><a href="#h4-0-532" id="h4-0-532" class="i">+        let truncpath = dir.path().join(&quot;truncated&quot;);
+</a><a href="#h4-0-533" id="h4-0-533" class="i">+
+</a><a href="#h4-0-534" id="h4-0-534" class="i">+        let mut log = Log::new(path.clone())?;
+</a><a href="#h4-0-535" id="h4-0-535" class="i">+        let mut ends = vec![];
+</a><a href="#h4-0-536" id="h4-0-536" class="i">+
+</a><a href="#h4-0-537" id="h4-0-537" class="i">+        let (pos, len) = log.write_entry(&quot;deleted&quot;.as_bytes(), Some(&amp;[1, 2, 3]))?;
+</a><a href="#h4-0-538" id="h4-0-538" class="i">+        ends.push(pos + len);
+</a><a href="#h4-0-539" id="h4-0-539" class="i">+
+</a><a href="#h4-0-540" id="h4-0-540" class="i">+        let (pos, len) = log.write_entry(&quot;deleted&quot;.as_bytes(), None)?;
+</a><a href="#h4-0-541" id="h4-0-541" class="i">+        ends.push(pos + len);
+</a><a href="#h4-0-542" id="h4-0-542" class="i">+
+</a><a href="#h4-0-543" id="h4-0-543" class="i">+        let (pos, len) = log.write_entry(&amp;[], Some(&amp;[]))?;
+</a><a href="#h4-0-544" id="h4-0-544" class="i">+        ends.push(pos + len);
+</a><a href="#h4-0-545" id="h4-0-545" class="i">+
+</a><a href="#h4-0-546" id="h4-0-546" class="i">+        let (pos, len) = log.write_entry(&quot;key&quot;.as_bytes(), Some(&amp;[1, 2, 3, 4, 5]))?;
+</a><a href="#h4-0-547" id="h4-0-547" class="i">+        ends.push(pos + len);
+</a><a href="#h4-0-548" id="h4-0-548" class="i">+
+</a><a href="#h4-0-549" id="h4-0-549" class="i">+        drop(log);
+</a><a href="#h4-0-550" id="h4-0-550" class="i">+
+</a><a href="#h4-0-551" id="h4-0-551" class="i">+        // Copy the file, and truncate it at each byte, then try to open it
+</a><a href="#h4-0-552" id="h4-0-552" class="i">+        // and assert that we always retain a prefix of entries.
+</a><a href="#h4-0-553" id="h4-0-553" class="i">+        let size = std::fs::metadata(&amp;path)?.len();
+</a><a href="#h4-0-554" id="h4-0-554" class="i">+        for pos in 0..=size {
+</a><a href="#h4-0-555" id="h4-0-555" class="i">+            std::fs::copy(&amp;path, &amp;truncpath)?;
+</a><a href="#h4-0-556" id="h4-0-556" class="i">+            let f = std::fs::OpenOptions::new().write(true).open(&amp;truncpath)?;
+</a><a href="#h4-0-557" id="h4-0-557" class="i">+            f.set_len(pos)?;
+</a><a href="#h4-0-558" id="h4-0-558" class="i">+            drop(f);
+</a><a href="#h4-0-559" id="h4-0-559" class="i">+
+</a><a href="#h4-0-560" id="h4-0-560" class="i">+            let mut expect = vec![];
+</a><a href="#h4-0-561" id="h4-0-561" class="i">+            if pos &gt;= ends[0] {
+</a><a href="#h4-0-562" id="h4-0-562" class="i">+                expect.push((b&quot;deleted&quot;.to_vec(), vec![1, 2, 3]))
+</a><a href="#h4-0-563" id="h4-0-563" class="i">+            }
+</a><a href="#h4-0-564" id="h4-0-564" class="i">+            if pos &gt;= ends[1] {
+</a><a href="#h4-0-565" id="h4-0-565" class="i">+                expect.pop(); // &quot;deleted&quot; key removed
+</a><a href="#h4-0-566" id="h4-0-566" class="i">+            }
+</a><a href="#h4-0-567" id="h4-0-567" class="i">+            if pos &gt;= ends[2] {
+</a><a href="#h4-0-568" id="h4-0-568" class="i">+                expect.push((b&quot;&quot;.to_vec(), vec![]))
+</a><a href="#h4-0-569" id="h4-0-569" class="i">+            }
+</a><a href="#h4-0-570" id="h4-0-570" class="i">+            if pos &gt;= ends[3] {
+</a><a href="#h4-0-571" id="h4-0-571" class="i">+                expect.push((b&quot;key&quot;.to_vec(), vec![1, 2, 3, 4, 5]))
+</a><a href="#h4-0-572" id="h4-0-572" class="i">+            }
+</a><a href="#h4-0-573" id="h4-0-573" class="i">+
+</a><a href="#h4-0-574" id="h4-0-574" class="i">+            let mut s = BitCask::new(truncpath.clone())?;
+</a><a href="#h4-0-575" id="h4-0-575" class="i">+            assert_eq!(expect, s.scan(Range::from(..)).collect::&lt;Result&lt;Vec&lt;_&gt;&gt;&gt;()?);
+</a><a href="#h4-0-576" id="h4-0-576" class="i">+        }
+</a><a href="#h4-0-577" id="h4-0-577" class="i">+
+</a><a href="#h4-0-578" id="h4-0-578" class="i">+        Ok(())
+</a><a href="#h4-0-579" id="h4-0-579" class="i">+    }
+</a><a href="#h4-0-580" id="h4-0-580" class="i">+
+</a><a href="#h4-0-581" id="h4-0-581" class="i">+    #[test]
+</a><a href="#h4-0-582" id="h4-0-582" class="i">+    /// Tests compute_sizes(), both for a log file with known garbage, and
+</a><a href="#h4-0-583" id="h4-0-583" class="i">+    /// after compacting it when the live size must equal the file size.
+</a><a href="#h4-0-584" id="h4-0-584" class="i">+    fn compute_sizes() -&gt; Result&lt;()&gt; {
+</a><a href="#h4-0-585" id="h4-0-585" class="i">+        let mut s = setup()?;
+</a><a href="#h4-0-586" id="h4-0-586" class="i">+        setup_log(&amp;mut s)?;
+</a><a href="#h4-0-587" id="h4-0-587" class="i">+
+</a><a href="#h4-0-588" id="h4-0-588" class="i">+        // Before compaction, the log contains garbage, so the live size must be
+</a><a href="#h4-0-589" id="h4-0-589" class="i">+        // less than the log size.
+</a><a href="#h4-0-590" id="h4-0-590" class="i">+        let (live_size, total_size) = s.compute_sizes()?;
+</a><a href="#h4-0-591" id="h4-0-591" class="i">+        assert_eq!(total_size, s.log.file.metadata()?.len());
+</a><a href="#h4-0-592" id="h4-0-592" class="i">+        assert!(live_size &lt; total_size);
+</a><a href="#h4-0-593" id="h4-0-593" class="i">+
+</a><a href="#h4-0-594" id="h4-0-594" class="i">+        // After compaction, the live size should not have changed. Furthermore,
+</a><a href="#h4-0-595" id="h4-0-595" class="i">+        // the log now only contains live data, so the live size must equal the
+</a><a href="#h4-0-596" id="h4-0-596" class="i">+        // log file size.
+</a><a href="#h4-0-597" id="h4-0-597" class="i">+        s.compact()?;
+</a><a href="#h4-0-598" id="h4-0-598" class="i">+        assert_eq!((live_size, live_size), s.compute_sizes()?);
+</a><a href="#h4-0-599" id="h4-0-599" class="i">+        Ok(())
+</a><a href="#h4-0-600" id="h4-0-600" class="i">+    }
+</a><a href="#h4-0-601" id="h4-0-601" class="i">+}
+</a><b>diff --git a/<a id="h5" href="../file/src/storage/kv/golden/bitcask/compact-after.html">src/storage/kv/golden/bitcask/compact-after</a> b/<a href="../file/src/storage/kv/golden/bitcask/compact-after.html">src/storage/kv/golden/bitcask/compact-after</a></b>
+<a href="#h5-0" id="h5-0" class="h">@@ -0,0 +1,30 @@
+</a><a href="#h5-0-0" id="h5-0-0" class="i">+entry = 0, offset 0
+</a><a href="#h5-0-1" id="h5-0-1" class="i">+klen  = 0 [0, 0, 0, 0, 0, 0, 0, 0]
+</a><a href="#h5-0-2" id="h5-0-2" class="i">+vlen  = 0 [0, 0, 0, 0, 0, 0, 0, 0]
+</a><a href="#h5-0-3" id="h5-0-3" class="i">+key   = &quot;&quot; []
+</a><a href="#h5-0-4" id="h5-0-4" class="i">+value = &quot;&quot; []
+</a><a href="#h5-0-5" id="h5-0-5" class="i">+
+</a><a href="#h5-0-6" id="h5-0-6" class="i">+entry = 1, offset 16
+</a><a href="#h5-0-7" id="h5-0-7" class="i">+klen  = 1 [0, 0, 0, 0, 0, 0, 0, 1]
+</a><a href="#h5-0-8" id="h5-0-8" class="i">+vlen  = 1 [0, 0, 0, 0, 0, 0, 0, 1]
+</a><a href="#h5-0-9" id="h5-0-9" class="i">+key   = &quot;a&quot; [61]
+</a><a href="#h5-0-10" id="h5-0-10" class="i">+value = [1]
+</a><a href="#h5-0-11" id="h5-0-11" class="i">+
+</a><a href="#h5-0-12" id="h5-0-12" class="i">+entry = 2, offset 34
+</a><a href="#h5-0-13" id="h5-0-13" class="i">+klen  = 1 [0, 0, 0, 0, 0, 0, 0, 1]
+</a><a href="#h5-0-14" id="h5-0-14" class="i">+vlen  = 1 [0, 0, 0, 0, 0, 0, 0, 1]
+</a><a href="#h5-0-15" id="h5-0-15" class="i">+key   = &quot;b&quot; [62]
+</a><a href="#h5-0-16" id="h5-0-16" class="i">+value = [2]
+</a><a href="#h5-0-17" id="h5-0-17" class="i">+
+</a><a href="#h5-0-18" id="h5-0-18" class="i">+entry = 3, offset 52
+</a><a href="#h5-0-19" id="h5-0-19" class="i">+klen  = 1 [0, 0, 0, 0, 0, 0, 0, 1]
+</a><a href="#h5-0-20" id="h5-0-20" class="i">+vlen  = 1 [0, 0, 0, 0, 0, 0, 0, 1]
+</a><a href="#h5-0-21" id="h5-0-21" class="i">+key   = &quot;c&quot; [63]
+</a><a href="#h5-0-22" id="h5-0-22" class="i">+value = [3]
+</a><a href="#h5-0-23" id="h5-0-23" class="i">+
+</a><a href="#h5-0-24" id="h5-0-24" class="i">+entry = 4, offset 70
+</a><a href="#h5-0-25" id="h5-0-25" class="i">+klen  = 1 [0, 0, 0, 0, 0, 0, 0, 1]
+</a><a href="#h5-0-26" id="h5-0-26" class="i">+vlen  = 1 [0, 0, 0, 0, 0, 0, 0, 1]
+</a><a href="#h5-0-27" id="h5-0-27" class="i">+key   = &quot;d&quot; [64]
+</a><a href="#h5-0-28" id="h5-0-28" class="i">+value = [4]
+</a><a href="#h5-0-29" id="h5-0-29" class="i">+
+</a><b>diff --git a/<a id="h6" href="../file/src/storage/kv/golden/bitcask/compact-before.html">src/storage/kv/golden/bitcask/compact-before</a> b/<a href="../file/src/storage/kv/golden/bitcask/compact-before.html">src/storage/kv/golden/bitcask/compact-before</a></b>
+<a href="#h6-0" id="h6-0" class="h">@@ -0,0 +1,72 @@
+</a><a href="#h6-0-0" id="h6-0-0" class="i">+entry = 0, offset 0
+</a><a href="#h6-0-1" id="h6-0-1" class="i">+klen  = 1 [0, 0, 0, 0, 0, 0, 0, 1]
+</a><a href="#h6-0-2" id="h6-0-2" class="i">+vlen  = 1 [0, 0, 0, 0, 0, 0, 0, 1]
+</a><a href="#h6-0-3" id="h6-0-3" class="i">+key   = &quot;b&quot; [62]
+</a><a href="#h6-0-4" id="h6-0-4" class="i">+value = [1]
+</a><a href="#h6-0-5" id="h6-0-5" class="i">+
+</a><a href="#h6-0-6" id="h6-0-6" class="i">+entry = 1, offset 18
+</a><a href="#h6-0-7" id="h6-0-7" class="i">+klen  = 1 [0, 0, 0, 0, 0, 0, 0, 1]
+</a><a href="#h6-0-8" id="h6-0-8" class="i">+vlen  = 1 [0, 0, 0, 0, 0, 0, 0, 1]
+</a><a href="#h6-0-9" id="h6-0-9" class="i">+key   = &quot;b&quot; [62]
+</a><a href="#h6-0-10" id="h6-0-10" class="i">+value = [2]
+</a><a href="#h6-0-11" id="h6-0-11" class="i">+
+</a><a href="#h6-0-12" id="h6-0-12" class="i">+entry = 2, offset 36
+</a><a href="#h6-0-13" id="h6-0-13" class="i">+klen  = 1 [0, 0, 0, 0, 0, 0, 0, 1]
+</a><a href="#h6-0-14" id="h6-0-14" class="i">+vlen  = 1 [0, 0, 0, 0, 0, 0, 0, 1]
+</a><a href="#h6-0-15" id="h6-0-15" class="i">+key   = &quot;e&quot; [65]
+</a><a href="#h6-0-16" id="h6-0-16" class="i">+value = [5]
+</a><a href="#h6-0-17" id="h6-0-17" class="i">+
+</a><a href="#h6-0-18" id="h6-0-18" class="i">+entry = 3, offset 54
+</a><a href="#h6-0-19" id="h6-0-19" class="i">+klen  = 1 [0, 0, 0, 0, 0, 0, 0, 1]
+</a><a href="#h6-0-20" id="h6-0-20" class="i">+vlen  = -1 [ff, ff, ff, ff, ff, ff, ff, ff]
+</a><a href="#h6-0-21" id="h6-0-21" class="i">+key   = &quot;e&quot; [65]
+</a><a href="#h6-0-22" id="h6-0-22" class="i">+value = tombstone []
+</a><a href="#h6-0-23" id="h6-0-23" class="i">+
+</a><a href="#h6-0-24" id="h6-0-24" class="i">+entry = 4, offset 71
+</a><a href="#h6-0-25" id="h6-0-25" class="i">+klen  = 1 [0, 0, 0, 0, 0, 0, 0, 1]
+</a><a href="#h6-0-26" id="h6-0-26" class="i">+vlen  = 1 [0, 0, 0, 0, 0, 0, 0, 1]
+</a><a href="#h6-0-27" id="h6-0-27" class="i">+key   = &quot;c&quot; [63]
+</a><a href="#h6-0-28" id="h6-0-28" class="i">+value = [0]
+</a><a href="#h6-0-29" id="h6-0-29" class="i">+
+</a><a href="#h6-0-30" id="h6-0-30" class="i">+entry = 5, offset 89
+</a><a href="#h6-0-31" id="h6-0-31" class="i">+klen  = 1 [0, 0, 0, 0, 0, 0, 0, 1]
+</a><a href="#h6-0-32" id="h6-0-32" class="i">+vlen  = -1 [ff, ff, ff, ff, ff, ff, ff, ff]
+</a><a href="#h6-0-33" id="h6-0-33" class="i">+key   = &quot;c&quot; [63]
+</a><a href="#h6-0-34" id="h6-0-34" class="i">+value = tombstone []
+</a><a href="#h6-0-35" id="h6-0-35" class="i">+
+</a><a href="#h6-0-36" id="h6-0-36" class="i">+entry = 6, offset 106
+</a><a href="#h6-0-37" id="h6-0-37" class="i">+klen  = 1 [0, 0, 0, 0, 0, 0, 0, 1]
+</a><a href="#h6-0-38" id="h6-0-38" class="i">+vlen  = 1 [0, 0, 0, 0, 0, 0, 0, 1]
+</a><a href="#h6-0-39" id="h6-0-39" class="i">+key   = &quot;c&quot; [63]
+</a><a href="#h6-0-40" id="h6-0-40" class="i">+value = [3]
+</a><a href="#h6-0-41" id="h6-0-41" class="i">+
+</a><a href="#h6-0-42" id="h6-0-42" class="i">+entry = 7, offset 124
+</a><a href="#h6-0-43" id="h6-0-43" class="i">+klen  = 0 [0, 0, 0, 0, 0, 0, 0, 0]
+</a><a href="#h6-0-44" id="h6-0-44" class="i">+vlen  = 0 [0, 0, 0, 0, 0, 0, 0, 0]
+</a><a href="#h6-0-45" id="h6-0-45" class="i">+key   = &quot;&quot; []
+</a><a href="#h6-0-46" id="h6-0-46" class="i">+value = &quot;&quot; []
+</a><a href="#h6-0-47" id="h6-0-47" class="i">+
+</a><a href="#h6-0-48" id="h6-0-48" class="i">+entry = 8, offset 140
+</a><a href="#h6-0-49" id="h6-0-49" class="i">+klen  = 1 [0, 0, 0, 0, 0, 0, 0, 1]
+</a><a href="#h6-0-50" id="h6-0-50" class="i">+vlen  = 1 [0, 0, 0, 0, 0, 0, 0, 1]
+</a><a href="#h6-0-51" id="h6-0-51" class="i">+key   = &quot;a&quot; [61]
+</a><a href="#h6-0-52" id="h6-0-52" class="i">+value = [1]
+</a><a href="#h6-0-53" id="h6-0-53" class="i">+
+</a><a href="#h6-0-54" id="h6-0-54" class="i">+entry = 9, offset 158
+</a><a href="#h6-0-55" id="h6-0-55" class="i">+klen  = 1 [0, 0, 0, 0, 0, 0, 0, 1]
+</a><a href="#h6-0-56" id="h6-0-56" class="i">+vlen  = -1 [ff, ff, ff, ff, ff, ff, ff, ff]
+</a><a href="#h6-0-57" id="h6-0-57" class="i">+key   = &quot;f&quot; [66]
+</a><a href="#h6-0-58" id="h6-0-58" class="i">+value = tombstone []
+</a><a href="#h6-0-59" id="h6-0-59" class="i">+
+</a><a href="#h6-0-60" id="h6-0-60" class="i">+entry = 10, offset 175
+</a><a href="#h6-0-61" id="h6-0-61" class="i">+klen  = 1 [0, 0, 0, 0, 0, 0, 0, 1]
+</a><a href="#h6-0-62" id="h6-0-62" class="i">+vlen  = -1 [ff, ff, ff, ff, ff, ff, ff, ff]
+</a><a href="#h6-0-63" id="h6-0-63" class="i">+key   = &quot;d&quot; [64]
+</a><a href="#h6-0-64" id="h6-0-64" class="i">+value = tombstone []
+</a><a href="#h6-0-65" id="h6-0-65" class="i">+
+</a><a href="#h6-0-66" id="h6-0-66" class="i">+entry = 11, offset 192
+</a><a href="#h6-0-67" id="h6-0-67" class="i">+klen  = 1 [0, 0, 0, 0, 0, 0, 0, 1]
+</a><a href="#h6-0-68" id="h6-0-68" class="i">+vlen  = 1 [0, 0, 0, 0, 0, 0, 0, 1]
+</a><a href="#h6-0-69" id="h6-0-69" class="i">+key   = &quot;d&quot; [64]
+</a><a href="#h6-0-70" id="h6-0-70" class="i">+value = [4]
+</a><a href="#h6-0-71" id="h6-0-71" class="i">+
+</a><b>diff --git a/<a id="h7" href="../file/src/storage/kv/golden/bitcask/log.html">src/storage/kv/golden/bitcask/log</a> b/<a href="../file/src/storage/kv/golden/bitcask/log.html">src/storage/kv/golden/bitcask/log</a></b>
+<a href="#h7-0" id="h7-0" class="h">@@ -0,0 +1,72 @@
+</a><a href="#h7-0-0" id="h7-0-0" class="i">+entry = 0, offset 0
+</a><a href="#h7-0-1" id="h7-0-1" class="i">+klen  = 1 [0, 0, 0, 0, 0, 0, 0, 1]
+</a><a href="#h7-0-2" id="h7-0-2" class="i">+vlen  = 1 [0, 0, 0, 0, 0, 0, 0, 1]
+</a><a href="#h7-0-3" id="h7-0-3" class="i">+key   = &quot;b&quot; [62]
+</a><a href="#h7-0-4" id="h7-0-4" class="i">+value = [1]
+</a><a href="#h7-0-5" id="h7-0-5" class="i">+
+</a><a href="#h7-0-6" id="h7-0-6" class="i">+entry = 1, offset 18
+</a><a href="#h7-0-7" id="h7-0-7" class="i">+klen  = 1 [0, 0, 0, 0, 0, 0, 0, 1]
+</a><a href="#h7-0-8" id="h7-0-8" class="i">+vlen  = 1 [0, 0, 0, 0, 0, 0, 0, 1]
+</a><a href="#h7-0-9" id="h7-0-9" class="i">+key   = &quot;b&quot; [62]
+</a><a href="#h7-0-10" id="h7-0-10" class="i">+value = [2]
+</a><a href="#h7-0-11" id="h7-0-11" class="i">+
+</a><a href="#h7-0-12" id="h7-0-12" class="i">+entry = 2, offset 36
+</a><a href="#h7-0-13" id="h7-0-13" class="i">+klen  = 1 [0, 0, 0, 0, 0, 0, 0, 1]
+</a><a href="#h7-0-14" id="h7-0-14" class="i">+vlen  = 1 [0, 0, 0, 0, 0, 0, 0, 1]
+</a><a href="#h7-0-15" id="h7-0-15" class="i">+key   = &quot;e&quot; [65]
+</a><a href="#h7-0-16" id="h7-0-16" class="i">+value = [5]
+</a><a href="#h7-0-17" id="h7-0-17" class="i">+
+</a><a href="#h7-0-18" id="h7-0-18" class="i">+entry = 3, offset 54
+</a><a href="#h7-0-19" id="h7-0-19" class="i">+klen  = 1 [0, 0, 0, 0, 0, 0, 0, 1]
+</a><a href="#h7-0-20" id="h7-0-20" class="i">+vlen  = -1 [ff, ff, ff, ff, ff, ff, ff, ff]
+</a><a href="#h7-0-21" id="h7-0-21" class="i">+key   = &quot;e&quot; [65]
+</a><a href="#h7-0-22" id="h7-0-22" class="i">+value = tombstone []
+</a><a href="#h7-0-23" id="h7-0-23" class="i">+
+</a><a href="#h7-0-24" id="h7-0-24" class="i">+entry = 4, offset 71
+</a><a href="#h7-0-25" id="h7-0-25" class="i">+klen  = 1 [0, 0, 0, 0, 0, 0, 0, 1]
+</a><a href="#h7-0-26" id="h7-0-26" class="i">+vlen  = 1 [0, 0, 0, 0, 0, 0, 0, 1]
+</a><a href="#h7-0-27" id="h7-0-27" class="i">+key   = &quot;c&quot; [63]
+</a><a href="#h7-0-28" id="h7-0-28" class="i">+value = [0]
+</a><a href="#h7-0-29" id="h7-0-29" class="i">+
+</a><a href="#h7-0-30" id="h7-0-30" class="i">+entry = 5, offset 89
+</a><a href="#h7-0-31" id="h7-0-31" class="i">+klen  = 1 [0, 0, 0, 0, 0, 0, 0, 1]
+</a><a href="#h7-0-32" id="h7-0-32" class="i">+vlen  = -1 [ff, ff, ff, ff, ff, ff, ff, ff]
+</a><a href="#h7-0-33" id="h7-0-33" class="i">+key   = &quot;c&quot; [63]
+</a><a href="#h7-0-34" id="h7-0-34" class="i">+value = tombstone []
+</a><a href="#h7-0-35" id="h7-0-35" class="i">+
+</a><a href="#h7-0-36" id="h7-0-36" class="i">+entry = 6, offset 106
+</a><a href="#h7-0-37" id="h7-0-37" class="i">+klen  = 1 [0, 0, 0, 0, 0, 0, 0, 1]
+</a><a href="#h7-0-38" id="h7-0-38" class="i">+vlen  = 1 [0, 0, 0, 0, 0, 0, 0, 1]
+</a><a href="#h7-0-39" id="h7-0-39" class="i">+key   = &quot;c&quot; [63]
+</a><a href="#h7-0-40" id="h7-0-40" class="i">+value = [3]
+</a><a href="#h7-0-41" id="h7-0-41" class="i">+
+</a><a href="#h7-0-42" id="h7-0-42" class="i">+entry = 7, offset 124
+</a><a href="#h7-0-43" id="h7-0-43" class="i">+klen  = 0 [0, 0, 0, 0, 0, 0, 0, 0]
+</a><a href="#h7-0-44" id="h7-0-44" class="i">+vlen  = 0 [0, 0, 0, 0, 0, 0, 0, 0]
+</a><a href="#h7-0-45" id="h7-0-45" class="i">+key   = &quot;&quot; []
+</a><a href="#h7-0-46" id="h7-0-46" class="i">+value = &quot;&quot; []
+</a><a href="#h7-0-47" id="h7-0-47" class="i">+
+</a><a href="#h7-0-48" id="h7-0-48" class="i">+entry = 8, offset 140
+</a><a href="#h7-0-49" id="h7-0-49" class="i">+klen  = 1 [0, 0, 0, 0, 0, 0, 0, 1]
+</a><a href="#h7-0-50" id="h7-0-50" class="i">+vlen  = 1 [0, 0, 0, 0, 0, 0, 0, 1]
+</a><a href="#h7-0-51" id="h7-0-51" class="i">+key   = &quot;a&quot; [61]
+</a><a href="#h7-0-52" id="h7-0-52" class="i">+value = [1]
+</a><a href="#h7-0-53" id="h7-0-53" class="i">+
+</a><a href="#h7-0-54" id="h7-0-54" class="i">+entry = 9, offset 158
+</a><a href="#h7-0-55" id="h7-0-55" class="i">+klen  = 1 [0, 0, 0, 0, 0, 0, 0, 1]
+</a><a href="#h7-0-56" id="h7-0-56" class="i">+vlen  = -1 [ff, ff, ff, ff, ff, ff, ff, ff]
+</a><a href="#h7-0-57" id="h7-0-57" class="i">+key   = &quot;f&quot; [66]
+</a><a href="#h7-0-58" id="h7-0-58" class="i">+value = tombstone []
+</a><a href="#h7-0-59" id="h7-0-59" class="i">+
+</a><a href="#h7-0-60" id="h7-0-60" class="i">+entry = 10, offset 175
+</a><a href="#h7-0-61" id="h7-0-61" class="i">+klen  = 1 [0, 0, 0, 0, 0, 0, 0, 1]
+</a><a href="#h7-0-62" id="h7-0-62" class="i">+vlen  = -1 [ff, ff, ff, ff, ff, ff, ff, ff]
+</a><a href="#h7-0-63" id="h7-0-63" class="i">+key   = &quot;d&quot; [64]
+</a><a href="#h7-0-64" id="h7-0-64" class="i">+value = tombstone []
+</a><a href="#h7-0-65" id="h7-0-65" class="i">+
+</a><a href="#h7-0-66" id="h7-0-66" class="i">+entry = 11, offset 192
+</a><a href="#h7-0-67" id="h7-0-67" class="i">+klen  = 1 [0, 0, 0, 0, 0, 0, 0, 1]
+</a><a href="#h7-0-68" id="h7-0-68" class="i">+vlen  = 1 [0, 0, 0, 0, 0, 0, 0, 1]
+</a><a href="#h7-0-69" id="h7-0-69" class="i">+key   = &quot;d&quot; [64]
+</a><a href="#h7-0-70" id="h7-0-70" class="i">+value = [4]
+</a><a href="#h7-0-71" id="h7-0-71" class="i">+
+</a><b>diff --git a/<a id="h8" href="../file/src/storage/kv/mod.rs.html">src/storage/kv/mod.rs</a> b/<a href="../file/src/storage/kv/mod.rs.html">src/storage/kv/mod.rs</a></b>
+<a href="#h8-0" id="h8-0" class="h">@@ -1,3 +1,4 @@
+</a><a href="#h8-0-0" id="h8-0-0" class="i">+mod bitcask;
+</a> pub mod encoding;
+ mod memory;
+ pub mod mvcc;
+<a href="#h8-1" id="h8-1" class="h">@@ -5,6 +6,7 @@ mod std_memory;
+</a> #[cfg(test)]
+ mod test;
+ 
+<a href="#h8-1-3" id="h8-1-3" class="i">+pub use bitcask::BitCask;
+</a> pub use memory::Memory;
+ pub use mvcc::MVCC;
+ pub use std_memory::StdMemory;
+</pre>
+</div>
+</body>
+</html>

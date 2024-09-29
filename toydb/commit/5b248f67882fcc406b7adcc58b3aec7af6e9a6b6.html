@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>kv: some MVCC cleanups - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/5b248f67882fcc406b7adcc58b3aec7af6e9a6b6.html">5b248f67882fcc406b7adcc58b3aec7af6e9a6b6</a>
+<b>parent</b> <a href="../commit/4b6ccd32882086c7739d98e52cdc642e3335b3c0.html">4b6ccd32882086c7739d98e52cdc642e3335b3c0</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Sat, 28 Dec 2019 23:16:50 +0100
+
+kv: some MVCC cleanups
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/kv/mvcc.rs</a></td><td> | </td><td class="num">104</td><td><span class="i">+++++++++++++++++++++++++++++++</span><span class="d">------------------------------------------------</span></td></tr>
+</table></pre><pre>1 file changed, 41 insertions(+), 63 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/kv/mvcc.rs.html">src/kv/mvcc.rs</a> b/<a href="../file/src/kv/mvcc.rs.html">src/kv/mvcc.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -36,41 +36,6 @@ impl&lt;S: Storage&gt; MVCC&lt;S&gt; {
+</a>     }
+ }
+ 
+<a href="#h0-0-3" id="h0-0-3" class="d">-/// An MVCC transaction mode.
+</a><a href="#h0-0-4" id="h0-0-4" class="d">-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+</a><a href="#h0-0-5" id="h0-0-5" class="d">-pub enum Mode {
+</a><a href="#h0-0-6" id="h0-0-6" class="d">-    /// A read-write transaction.
+</a><a href="#h0-0-7" id="h0-0-7" class="d">-    ReadWrite,
+</a><a href="#h0-0-8" id="h0-0-8" class="d">-    /// A read-only transaction.
+</a><a href="#h0-0-9" id="h0-0-9" class="d">-    ReadOnly,
+</a><a href="#h0-0-10" id="h0-0-10" class="d">-    /// A read-only transaction running in a snapshot of a given version.
+</a><a href="#h0-0-11" id="h0-0-11" class="d">-    ///
+</a><a href="#h0-0-12" id="h0-0-12" class="d">-    /// The version must refer to a committed transaction ID. Any changes visible to the original
+</a><a href="#h0-0-13" id="h0-0-13" class="d">-    /// transaction will be visible in the snapshot (i.e. transactions that had not committed before
+</a><a href="#h0-0-14" id="h0-0-14" class="d">-    /// the snapshot transaction started will not be visible, even though they have a lower version).
+</a><a href="#h0-0-15" id="h0-0-15" class="d">-    Snapshot { version: u64 },
+</a><a href="#h0-0-16" id="h0-0-16" class="d">-}
+</a><a href="#h0-0-17" id="h0-0-17" class="d">-
+</a><a href="#h0-0-18" id="h0-0-18" class="d">-impl Mode {
+</a><a href="#h0-0-19" id="h0-0-19" class="d">-    /// Asserts that the mode can mutate data, otherwise throws `Error::ReadOnly`.
+</a><a href="#h0-0-20" id="h0-0-20" class="d">-    fn assert_mutable(&amp;self) -&gt; Result&lt;(), Error&gt; {
+</a><a href="#h0-0-21" id="h0-0-21" class="d">-        if self.is_mutable() {
+</a><a href="#h0-0-22" id="h0-0-22" class="d">-            Ok(())
+</a><a href="#h0-0-23" id="h0-0-23" class="d">-        } else {
+</a><a href="#h0-0-24" id="h0-0-24" class="d">-            Err(Error::ReadOnly)
+</a><a href="#h0-0-25" id="h0-0-25" class="d">-        }
+</a><a href="#h0-0-26" id="h0-0-26" class="d">-    }
+</a><a href="#h0-0-27" id="h0-0-27" class="d">-
+</a><a href="#h0-0-28" id="h0-0-28" class="d">-    /// Checks whether the transaction mode can mutate data.
+</a><a href="#h0-0-29" id="h0-0-29" class="d">-    fn is_mutable(&amp;self) -&gt; bool {
+</a><a href="#h0-0-30" id="h0-0-30" class="d">-        match self {
+</a><a href="#h0-0-31" id="h0-0-31" class="d">-            Self::ReadWrite =&gt; true,
+</a><a href="#h0-0-32" id="h0-0-32" class="d">-            Self::ReadOnly =&gt; false,
+</a><a href="#h0-0-33" id="h0-0-33" class="d">-            Self::Snapshot { .. } =&gt; false,
+</a><a href="#h0-0-34" id="h0-0-34" class="d">-        }
+</a><a href="#h0-0-35" id="h0-0-35" class="d">-    }
+</a><a href="#h0-0-36" id="h0-0-36" class="d">-}
+</a><a href="#h0-0-37" id="h0-0-37" class="d">-
+</a> /// An MVCC transaction.
+ pub struct Transaction&lt;S: Storage&gt; {
+     /// The underlying storage for the transaction. Shared between transactions using a mutex.
+<a href="#h0-1" id="h0-1" class="h">@@ -83,7 +48,7 @@ pub struct Transaction&lt;S: Storage&gt; {
+</a>     id: u64,
+ }
+ 
+<a href="#h0-1-3" id="h0-1-3" class="d">-impl&lt;&#39;a, S: Storage&gt; Transaction&lt;S&gt; {
+</a><a href="#h0-1-4" id="h0-1-4" class="i">+impl&lt;S: Storage&gt; Transaction&lt;S&gt; {
+</a>     /// Begins a new transaction in the given mode.
+     fn begin(storage: Arc&lt;RwLock&lt;S&gt;&gt;, mode: Mode) -&gt; Result&lt;Self, Error&gt; {
+         let mut session = storage.write()?;
+<a href="#h0-2" id="h0-2" class="h">@@ -142,8 +107,10 @@ impl&lt;&#39;a, S: Storage&gt; Transaction&lt;S&gt; {
+</a>         let mut session = self.storage.write()?;
+         if self.mode.is_mutable() {
+             let mut keys: Vec&lt;Vec&lt;u8&gt;&gt; = Vec::new();
+<a href="#h0-2-3" id="h0-2-3" class="d">-            let mut scan = session
+</a><a href="#h0-2-4" id="h0-2-4" class="d">-                .scan(&amp;Key::TxnUpdateStart(self.id).encode()..&amp;Key::TxnUpdateEnd(self.id).encode());
+</a><a href="#h0-2-5" id="h0-2-5" class="i">+            let mut scan = session.scan(
+</a><a href="#h0-2-6" id="h0-2-6" class="i">+                &amp;Key::TxnUpdate(self.id, vec![]).encode()
+</a><a href="#h0-2-7" id="h0-2-7" class="i">+                    ..&amp;Key::TxnUpdate(self.id + 1, vec![]).encode(),
+</a><a href="#h0-2-8" id="h0-2-8" class="i">+            );
+</a>             while let Some((key, _)) = scan.next().transpose()? {
+                 keys.push(key.clone());
+                 match Key::decode(key)? {
+<a href="#h0-3" id="h0-3" class="h">@@ -271,6 +238,41 @@ impl Snapshot {
+</a>     }
+ }
+ 
+<a href="#h0-3-3" id="h0-3-3" class="i">+/// An MVCC transaction mode.
+</a><a href="#h0-3-4" id="h0-3-4" class="i">+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+</a><a href="#h0-3-5" id="h0-3-5" class="i">+pub enum Mode {
+</a><a href="#h0-3-6" id="h0-3-6" class="i">+    /// A read-write transaction.
+</a><a href="#h0-3-7" id="h0-3-7" class="i">+    ReadWrite,
+</a><a href="#h0-3-8" id="h0-3-8" class="i">+    /// A read-only transaction.
+</a><a href="#h0-3-9" id="h0-3-9" class="i">+    ReadOnly,
+</a><a href="#h0-3-10" id="h0-3-10" class="i">+    /// A read-only transaction running in a snapshot of a given version.
+</a><a href="#h0-3-11" id="h0-3-11" class="i">+    ///
+</a><a href="#h0-3-12" id="h0-3-12" class="i">+    /// The version must refer to a committed transaction ID. Any changes visible to the original
+</a><a href="#h0-3-13" id="h0-3-13" class="i">+    /// transaction will be visible in the snapshot (i.e. transactions that had not committed before
+</a><a href="#h0-3-14" id="h0-3-14" class="i">+    /// the snapshot transaction started will not be visible, even though they have a lower version).
+</a><a href="#h0-3-15" id="h0-3-15" class="i">+    Snapshot { version: u64 },
+</a><a href="#h0-3-16" id="h0-3-16" class="i">+}
+</a><a href="#h0-3-17" id="h0-3-17" class="i">+
+</a><a href="#h0-3-18" id="h0-3-18" class="i">+impl Mode {
+</a><a href="#h0-3-19" id="h0-3-19" class="i">+    /// Asserts that the mode can mutate data, otherwise throws `Error::ReadOnly`.
+</a><a href="#h0-3-20" id="h0-3-20" class="i">+    fn assert_mutable(&amp;self) -&gt; Result&lt;(), Error&gt; {
+</a><a href="#h0-3-21" id="h0-3-21" class="i">+        if self.is_mutable() {
+</a><a href="#h0-3-22" id="h0-3-22" class="i">+            Ok(())
+</a><a href="#h0-3-23" id="h0-3-23" class="i">+        } else {
+</a><a href="#h0-3-24" id="h0-3-24" class="i">+            Err(Error::ReadOnly)
+</a><a href="#h0-3-25" id="h0-3-25" class="i">+        }
+</a><a href="#h0-3-26" id="h0-3-26" class="i">+    }
+</a><a href="#h0-3-27" id="h0-3-27" class="i">+
+</a><a href="#h0-3-28" id="h0-3-28" class="i">+    /// Checks whether the transaction mode can mutate data.
+</a><a href="#h0-3-29" id="h0-3-29" class="i">+    fn is_mutable(&amp;self) -&gt; bool {
+</a><a href="#h0-3-30" id="h0-3-30" class="i">+        match self {
+</a><a href="#h0-3-31" id="h0-3-31" class="i">+            Self::ReadWrite =&gt; true,
+</a><a href="#h0-3-32" id="h0-3-32" class="i">+            Self::ReadOnly =&gt; false,
+</a><a href="#h0-3-33" id="h0-3-33" class="i">+            Self::Snapshot { .. } =&gt; false,
+</a><a href="#h0-3-34" id="h0-3-34" class="i">+        }
+</a><a href="#h0-3-35" id="h0-3-35" class="i">+    }
+</a><a href="#h0-3-36" id="h0-3-36" class="i">+}
+</a><a href="#h0-3-37" id="h0-3-37" class="i">+
+</a> /// A key range scan
+ pub struct Scan&lt;&#39;a, S: Storage&gt; {
+     storage: RwLockReadGuard&lt;&#39;a, S&gt;,
+<a href="#h0-4" id="h0-4" class="h">@@ -408,12 +410,8 @@ enum Key {
+</a>     TxnActive(u64),
+     /// Transaction snapshot, containing concurrent transactions at start.
+     TxnSnapshot(u64),
+<a href="#h0-4-3" id="h0-4-3" class="d">-    /// Start of transaction update range for a given transaction ID.
+</a><a href="#h0-4-4" id="h0-4-4" class="d">-    TxnUpdateStart(u64),
+</a>     /// Update entry for a transaction ID and key.
+     TxnUpdate(u64, Vec&lt;u8&gt;),
+<a href="#h0-4-7" id="h0-4-7" class="d">-    /// End of transaction update range for a given transaction ID.
+</a><a href="#h0-4-8" id="h0-4-8" class="d">-    TxnUpdateEnd(u64),
+</a>     Record(Vec&lt;u8&gt;, u64),
+     RecordStart,
+     RecordEnd,
+<a href="#h0-5" id="h0-5" class="h">@@ -450,14 +448,6 @@ impl Key {
+</a>                 let mut id = [0; 8];
+                 id.copy_from_slice(&amp;bytes[0..8]);
+                 let id = u64::from_be_bytes(id);
+<a href="#h0-5-3" id="h0-5-3" class="d">-                if bytes.len() == 10 {
+</a><a href="#h0-5-4" id="h0-5-4" class="d">-                    return match bytes[9] {
+</a><a href="#h0-5-5" id="h0-5-5" class="d">-                        0x00 =&gt; Ok(Key::TxnUpdateStart(id)),
+</a><a href="#h0-5-6" id="h0-5-6" class="d">-                        0xff =&gt; Ok(Key::TxnUpdateEnd(id)),
+</a><a href="#h0-5-7" id="h0-5-7" class="d">-                        _ =&gt; return Err(Error::Value(&quot;Invalid MVCC update key&quot;.into())),
+</a><a href="#h0-5-8" id="h0-5-8" class="d">-                    };
+</a><a href="#h0-5-9" id="h0-5-9" class="d">-                }
+</a><a href="#h0-5-10" id="h0-5-10" class="d">-
+</a>                 let key = bytes[9..].to_vec();
+                 Ok(Key::TxnUpdate(id, key))
+             }
+<a href="#h0-6" id="h0-6" class="h">@@ -482,13 +472,7 @@ impl Key {
+</a>             Self::TxnNext =&gt; vec![0x01],
+             Self::TxnActive(id) =&gt; [vec![0x02], id.to_be_bytes().to_vec()].concat(),
+             Self::TxnSnapshot(version) =&gt; [vec![0x03], version.to_be_bytes().to_vec()].concat(),
+<a href="#h0-6-3" id="h0-6-3" class="d">-            Self::TxnUpdateStart(id) =&gt; {
+</a><a href="#h0-6-4" id="h0-6-4" class="d">-                [vec![0x04], id.to_be_bytes().to_vec(), vec![0x00]].concat()
+</a><a href="#h0-6-5" id="h0-6-5" class="d">-            }
+</a><a href="#h0-6-6" id="h0-6-6" class="d">-            Self::TxnUpdate(id, key) =&gt; {
+</a><a href="#h0-6-7" id="h0-6-7" class="d">-                [vec![0x04], id.to_be_bytes().to_vec(), vec![0x00], key].concat()
+</a><a href="#h0-6-8" id="h0-6-8" class="d">-            }
+</a><a href="#h0-6-9" id="h0-6-9" class="d">-            Self::TxnUpdateEnd(id) =&gt; [vec![0x04], id.to_be_bytes().to_vec(), vec![0xff]].concat(),
+</a><a href="#h0-6-10" id="h0-6-10" class="i">+            Self::TxnUpdate(id, key) =&gt; [vec![0x04], id.to_be_bytes().to_vec(), key].concat(),
+</a>             Self::RecordStart =&gt; vec![0xf0],
+             Self::Record(key, version) =&gt; {
+                 // We have to use 0x00 as a key/version separator, and use 0x00 0xff as an
+<a href="#h0-7" id="h0-7" class="h">@@ -532,12 +516,6 @@ impl Key {
+</a>     }
+ }
+ 
+<a href="#h0-7-3" id="h0-7-3" class="d">-impl Into&lt;Vec&lt;u8&gt;&gt; for Key {
+</a><a href="#h0-7-4" id="h0-7-4" class="d">-    fn into(self) -&gt; Vec&lt;u8&gt; {
+</a><a href="#h0-7-5" id="h0-7-5" class="d">-        self.encode()
+</a><a href="#h0-7-6" id="h0-7-6" class="d">-    }
+</a><a href="#h0-7-7" id="h0-7-7" class="d">-}
+</a><a href="#h0-7-8" id="h0-7-8" class="d">-
+</a> enum Value {
+     Delete,
+     Set(Vec&lt;u8&gt;),
+</pre>
+</div>
+</body>
+</html>

@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>bank: use with_txn() for serialization retries, with 4 default workers - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/504afa3ccce885ac98f740034c51209536a53218.html">504afa3ccce885ac98f740034c51209536a53218</a>
+<b>parent</b> <a href="../commit/a7b546d6c9ab74dea5899068bf669cf0da6a4e6f.html">a7b546d6c9ab74dea5899068bf669cf0da6a4e6f</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Sat, 11 Apr 2020 19:00:20 +0200
+
+bank: use with_txn() for serialization retries, with 4 default workers
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/bin/bank.rs</a></td><td> | </td><td class="num">100</td><td><span class="i">+++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d">--------------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/client.rs</a></td><td> | </td><td class="num">8</td><td><span class="i">+++++</span><span class="d">---</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">tests/client/mod.rs</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+</table></pre><pre>3 files changed, 66 insertions(+), 43 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/bin/bank.rs.html">src/bin/bank.rs</a> b/<a href="../file/src/bin/bank.rs.html">src/bin/bank.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -47,7 +47,7 @@ fn main() -&gt; Result&lt;(), Error&gt; {
+</a>                 .help(&quot;Concurrent workers to spawn&quot;)
+                 .takes_value(true)
+                 .required(true)
+<a href="#h0-0-3" id="h0-0-3" class="d">-                .default_value(&quot;1&quot;),
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+                .default_value(&quot;4&quot;),
+</a>         )
+         .arg(
+             clap::Arg::with_name(&quot;transactions&quot;)
+<a href="#h0-1" id="h0-1" class="h">@@ -136,51 +136,71 @@ impl Bank {
+</a>     }
+ 
+     // Processes transactions for a customer
+<a href="#h0-1-3" id="h0-1-3" class="d">-    fn process(&amp;self, i: i64, rx: crossbeam::channel::Receiver&lt;(i64, i64)&gt;) -&gt; Result&lt;(), Error&gt; {
+</a><a href="#h0-1-4" id="h0-1-4" class="i">+    fn process(&amp;self, tid: i64, rx: crossbeam::channel::Receiver&lt;(i64, i64)&gt;) -&gt; Result&lt;(), Error&gt; {
+</a>         let mut rng = rand::thread_rng();
+         let mut client = self.client()?;
+         for (from, to) in rx {
+<a href="#h0-1-8" id="h0-1-8" class="i">+            let mut amount = 0;
+</a><a href="#h0-1-9" id="h0-1-9" class="i">+            let mut from_account = 0;
+</a><a href="#h0-1-10" id="h0-1-10" class="i">+            let mut to_account = 0;
+</a><a href="#h0-1-11" id="h0-1-11" class="i">+            let mut attempts = 0;
+</a>             let start = std::time::Instant::now();
+<a href="#h0-1-13" id="h0-1-13" class="d">-            client.query(&quot;BEGIN&quot;)?;
+</a><a href="#h0-1-14" id="h0-1-14" class="d">-            let f = get_integers(client.query(&amp;format!(
+</a><a href="#h0-1-15" id="h0-1-15" class="d">-                &quot;SELECT a.id, a.balance
+</a><a href="#h0-1-16" id="h0-1-16" class="d">-                FROM account a JOIN customer c ON a.customer_id = c.id
+</a><a href="#h0-1-17" id="h0-1-17" class="d">-                WHERE c.id = {}
+</a><a href="#h0-1-18" id="h0-1-18" class="d">-                ORDER BY a.balance DESC
+</a><a href="#h0-1-19" id="h0-1-19" class="d">-                LIMIT 1&quot;,
+</a><a href="#h0-1-20" id="h0-1-20" class="d">-                from
+</a><a href="#h0-1-21" id="h0-1-21" class="d">-            ))?)?;
+</a><a href="#h0-1-22" id="h0-1-22" class="d">-            let (from_account, from_balance) = (f[0], f[1]);
+</a><a href="#h0-1-23" id="h0-1-23" class="d">-            let to_account = get_integers(client.query(&amp;format!(
+</a><a href="#h0-1-24" id="h0-1-24" class="d">-                &quot;SELECT a.id, a.balance
+</a><a href="#h0-1-25" id="h0-1-25" class="d">-                FROM account a JOIN customer c ON a.customer_id = c.id
+</a><a href="#h0-1-26" id="h0-1-26" class="d">-                WHERE c.id = {}
+</a><a href="#h0-1-27" id="h0-1-27" class="d">-                ORDER BY a.balance ASC
+</a><a href="#h0-1-28" id="h0-1-28" class="d">-                LIMIT 1&quot;,
+</a><a href="#h0-1-29" id="h0-1-29" class="d">-                to
+</a><a href="#h0-1-30" id="h0-1-30" class="d">-            ))?)?[0];
+</a> 
+<a href="#h0-1-32" id="h0-1-32" class="d">-            let amount = rng.gen_range(0, from_balance);
+</a><a href="#h0-1-33" id="h0-1-33" class="i">+            let result = client.with_txn(|t| {
+</a><a href="#h0-1-34" id="h0-1-34" class="i">+                attempts += 1;
+</a><a href="#h0-1-35" id="h0-1-35" class="i">+                let f = get_integers(t.query(&amp;format!(
+</a><a href="#h0-1-36" id="h0-1-36" class="i">+                    &quot;SELECT a.id, a.balance
+</a><a href="#h0-1-37" id="h0-1-37" class="i">+                    FROM account a JOIN customer c ON a.customer_id = c.id
+</a><a href="#h0-1-38" id="h0-1-38" class="i">+                    WHERE c.id = {}
+</a><a href="#h0-1-39" id="h0-1-39" class="i">+                    ORDER BY a.balance DESC
+</a><a href="#h0-1-40" id="h0-1-40" class="i">+                    LIMIT 1&quot;,
+</a><a href="#h0-1-41" id="h0-1-41" class="i">+                    from
+</a><a href="#h0-1-42" id="h0-1-42" class="i">+                ))?)?;
+</a><a href="#h0-1-43" id="h0-1-43" class="i">+                from_account = f[0];
+</a><a href="#h0-1-44" id="h0-1-44" class="i">+                let from_balance = f[1];
+</a><a href="#h0-1-45" id="h0-1-45" class="i">+                to_account = get_integers(t.query(&amp;format!(
+</a><a href="#h0-1-46" id="h0-1-46" class="i">+                    &quot;SELECT a.id, a.balance
+</a><a href="#h0-1-47" id="h0-1-47" class="i">+                    FROM account a JOIN customer c ON a.customer_id = c.id
+</a><a href="#h0-1-48" id="h0-1-48" class="i">+                    WHERE c.id = {}
+</a><a href="#h0-1-49" id="h0-1-49" class="i">+                    ORDER BY a.balance ASC
+</a><a href="#h0-1-50" id="h0-1-50" class="i">+                    LIMIT 1&quot;,
+</a><a href="#h0-1-51" id="h0-1-51" class="i">+                    to
+</a><a href="#h0-1-52" id="h0-1-52" class="i">+                ))?)?[0];
+</a> 
+<a href="#h0-1-54" id="h0-1-54" class="d">-            client.query(&amp;format!(
+</a><a href="#h0-1-55" id="h0-1-55" class="d">-                &quot;UPDATE account SET balance = balance - {} WHERE id = {}&quot;,
+</a><a href="#h0-1-56" id="h0-1-56" class="d">-                amount, from_account,
+</a><a href="#h0-1-57" id="h0-1-57" class="d">-            ))?;
+</a><a href="#h0-1-58" id="h0-1-58" class="d">-            client.query(&amp;format!(
+</a><a href="#h0-1-59" id="h0-1-59" class="d">-                &quot;UPDATE account SET balance = balance + {} WHERE id = {}&quot;,
+</a><a href="#h0-1-60" id="h0-1-60" class="d">-                amount, to_account,
+</a><a href="#h0-1-61" id="h0-1-61" class="d">-            ))?;
+</a><a href="#h0-1-62" id="h0-1-62" class="d">-            client.query(&quot;COMMIT&quot;)?;
+</a><a href="#h0-1-63" id="h0-1-63" class="d">-            println!(
+</a><a href="#h0-1-64" id="h0-1-64" class="d">-                &quot;Thread {} transferred {: &gt;4} from {: &gt;3} ({:0&gt;4}) to {: &gt;3} ({:0&gt;4}) in {:.3}s&quot;,
+</a><a href="#h0-1-65" id="h0-1-65" class="d">-                i,
+</a><a href="#h0-1-66" id="h0-1-66" class="d">-                amount,
+</a><a href="#h0-1-67" id="h0-1-67" class="d">-                from,
+</a><a href="#h0-1-68" id="h0-1-68" class="d">-                from_account,
+</a><a href="#h0-1-69" id="h0-1-69" class="d">-                to,
+</a><a href="#h0-1-70" id="h0-1-70" class="d">-                to_account,
+</a><a href="#h0-1-71" id="h0-1-71" class="d">-                start.elapsed().as_secs_f64()
+</a><a href="#h0-1-72" id="h0-1-72" class="d">-            );
+</a><a href="#h0-1-73" id="h0-1-73" class="i">+                amount = rng.gen_range(0, from_balance);
+</a><a href="#h0-1-74" id="h0-1-74" class="i">+
+</a><a href="#h0-1-75" id="h0-1-75" class="i">+                t.query(&amp;format!(
+</a><a href="#h0-1-76" id="h0-1-76" class="i">+                    &quot;UPDATE account SET balance = balance - {} WHERE id = {}&quot;,
+</a><a href="#h0-1-77" id="h0-1-77" class="i">+                    amount, from_account,
+</a><a href="#h0-1-78" id="h0-1-78" class="i">+                ))?;
+</a><a href="#h0-1-79" id="h0-1-79" class="i">+                t.query(&amp;format!(
+</a><a href="#h0-1-80" id="h0-1-80" class="i">+                    &quot;UPDATE account SET balance = balance + {} WHERE id = {}&quot;,
+</a><a href="#h0-1-81" id="h0-1-81" class="i">+                    amount, to_account,
+</a><a href="#h0-1-82" id="h0-1-82" class="i">+                ))?;
+</a><a href="#h0-1-83" id="h0-1-83" class="i">+                Ok(())
+</a><a href="#h0-1-84" id="h0-1-84" class="i">+            });
+</a><a href="#h0-1-85" id="h0-1-85" class="i">+            match result {
+</a><a href="#h0-1-86" id="h0-1-86" class="i">+                Err(Error::Serialization) =&gt; println!(
+</a><a href="#h0-1-87" id="h0-1-87" class="i">+                    &quot;Thread {} serialization failure for {} to {}, giving up after {:.3}s ({} attempts)&quot;,
+</a><a href="#h0-1-88" id="h0-1-88" class="i">+                    tid,
+</a><a href="#h0-1-89" id="h0-1-89" class="i">+                    from,
+</a><a href="#h0-1-90" id="h0-1-90" class="i">+                    to,
+</a><a href="#h0-1-91" id="h0-1-91" class="i">+                    start.elapsed().as_secs_f64(),
+</a><a href="#h0-1-92" id="h0-1-92" class="i">+                    attempts
+</a><a href="#h0-1-93" id="h0-1-93" class="i">+                ),
+</a><a href="#h0-1-94" id="h0-1-94" class="i">+                Ok(_) =&gt; println!(
+</a><a href="#h0-1-95" id="h0-1-95" class="i">+                    &quot;Thread {} transferred {: &gt;4} from {: &gt;3} ({:0&gt;4}) to {: &gt;3} ({:0&gt;4}) in {:.3}s ({} attempts)&quot;,
+</a><a href="#h0-1-96" id="h0-1-96" class="i">+                    tid,
+</a><a href="#h0-1-97" id="h0-1-97" class="i">+                    amount,
+</a><a href="#h0-1-98" id="h0-1-98" class="i">+                    from,
+</a><a href="#h0-1-99" id="h0-1-99" class="i">+                    from_account,
+</a><a href="#h0-1-100" id="h0-1-100" class="i">+                    to,
+</a><a href="#h0-1-101" id="h0-1-101" class="i">+                    to_account,
+</a><a href="#h0-1-102" id="h0-1-102" class="i">+                    start.elapsed().as_secs_f64(),
+</a><a href="#h0-1-103" id="h0-1-103" class="i">+                    attempts
+</a><a href="#h0-1-104" id="h0-1-104" class="i">+                ),
+</a><a href="#h0-1-105" id="h0-1-105" class="i">+                Err(err) =&gt; return Err(err),
+</a><a href="#h0-1-106" id="h0-1-106" class="i">+            }
+</a>         }
+         Ok(())
+     }
+<b>diff --git a/<a id="h1" href="../file/src/client.rs.html">src/client.rs</a> b/<a href="../file/src/client.rs.html">src/client.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -15,6 +15,7 @@ use rand::Rng as _;
+</a> pub struct Client {
+     client: service::ToyDBClient,
+     txn: Option&lt;(u64, Mode)&gt;,
+<a href="#h1-0-3" id="h1-0-3" class="i">+    pub txn_retries: u64,
+</a> }
+ 
+ impl Client {
+<a href="#h1-1" id="h1-1" class="h">@@ -23,6 +24,7 @@ impl Client {
+</a>         Ok(Self {
+             client: service::ToyDBClient::new_plain(host, port, grpc::ClientConf::new())?,
+             txn: None,
+<a href="#h1-1-3" id="h1-1-3" class="i">+            txn_retries: 8,
+</a>         })
+     }
+ 
+<a href="#h1-2" id="h1-2" class="h">@@ -100,12 +102,12 @@ impl Client {
+</a> 
+     /// Runs a transaction as a closure, automatically handling serialization failures by
+     /// retrying the closure with exponential backoff. The returned result is from the final commit.
+<a href="#h1-2-3" id="h1-2-3" class="d">-    pub fn with_txn&lt;F&gt;(&amp;mut self, f: F) -&gt; Result&lt;ResultSet, Error&gt;
+</a><a href="#h1-2-4" id="h1-2-4" class="i">+    pub fn with_txn&lt;F&gt;(&amp;mut self, mut f: F) -&gt; Result&lt;ResultSet, Error&gt;
+</a>     where
+<a href="#h1-2-6" id="h1-2-6" class="d">-        F: Fn(&amp;mut Self) -&gt; Result&lt;(), Error&gt;,
+</a><a href="#h1-2-7" id="h1-2-7" class="i">+        F: FnMut(&amp;mut Self) -&gt; Result&lt;(), Error&gt;,
+</a>     {
+         let mut rng = rand::thread_rng();
+<a href="#h1-2-10" id="h1-2-10" class="d">-        for i in 0..5 {
+</a><a href="#h1-2-11" id="h1-2-11" class="i">+        for i in 0..self.txn_retries {
+</a>             if i &gt; 0 {
+                 std::thread::sleep(std::time::Duration::from_millis(
+                     2_u64.pow(i as u32 - 1) * rng.gen_range(75, 125),
+<b>diff --git a/<a id="h2" href="../file/tests/client/mod.rs.html">tests/client/mod.rs</a> b/<a href="../file/tests/client/mod.rs.html">tests/client/mod.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -414,6 +414,7 @@ fn query_txn_concurrent() -&gt; Result&lt;(), Error&gt; {
+</a> fn query_with_txn() -&gt; Result&lt;(), Error&gt; {
+     let (mut a, teardown) = setup_movies()?;
+     let mut b = toydb::Client::new(&quot;127.0.0.1&quot;, 9605)?;
+<a href="#h2-0-3" id="h2-0-3" class="i">+    b.txn_retries = 4;
+</a>     defer!(teardown());
+ 
+     // We first let with_txn() time out after retrying.
+</pre>
+</div>
+</body>
+</html>

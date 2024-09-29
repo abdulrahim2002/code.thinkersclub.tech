@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Add storage::Engine.scan_prefix(). - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/bcc4b0b500332ff15033c43ec865f30e1667af58.html">bcc4b0b500332ff15033c43ec865f30e1667af58</a>
+<b>parent</b> <a href="../commit/fb99ca68363474f65d5ceafbfc7a124412c7dacf.html">fb99ca68363474f65d5ceafbfc7a124412c7dacf</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Wed,  6 Sep 2023 19:54:04 +0200
+
+Add storage::Engine.scan_prefix().
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/storage/engine/mod.rs</a></td><td> | </td><td class="num">148</td><td><span class="i">++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d">-------</span></td></tr>
+</table></pre><pre>1 file changed, 136 insertions(+), 12 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/storage/engine/mod.rs.html">src/storage/engine/mod.rs</a> b/<a href="../file/src/storage/engine/mod.rs.html">src/storage/engine/mod.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -34,6 +34,18 @@ pub trait Engine: std::fmt::Display + Send + Sync {
+</a> 
+     /// Sets a value for a key, replacing the existing value if any.
+     fn set(&amp;mut self, key: &amp;[u8], value: Vec&lt;u8&gt;) -&gt; Result&lt;()&gt;;
+<a href="#h0-0-3" id="h0-0-3" class="i">+
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+    /// Iterates over all key/value pairs starting with prefix.
+</a><a href="#h0-0-5" id="h0-0-5" class="i">+    fn scan_prefix(&amp;mut self, prefix: &amp;[u8]) -&gt; Self::ScanIterator&lt;&#39;_&gt; {
+</a><a href="#h0-0-6" id="h0-0-6" class="i">+        let start = std::ops::Bound::Included(prefix.to_vec());
+</a><a href="#h0-0-7" id="h0-0-7" class="i">+        let end = match prefix.iter().rposition(|b| *b != 0xff) {
+</a><a href="#h0-0-8" id="h0-0-8" class="i">+            Some(i) =&gt; std::ops::Bound::Excluded(
+</a><a href="#h0-0-9" id="h0-0-9" class="i">+                prefix.iter().take(i).copied().chain(std::iter::once(prefix[i] + 1)).collect(),
+</a><a href="#h0-0-10" id="h0-0-10" class="i">+            ),
+</a><a href="#h0-0-11" id="h0-0-11" class="i">+            None =&gt; std::ops::Bound::Unbounded,
+</a><a href="#h0-0-12" id="h0-0-12" class="i">+        };
+</a><a href="#h0-0-13" id="h0-0-13" class="i">+        self.scan((start, end))
+</a><a href="#h0-0-14" id="h0-0-14" class="i">+    }
+</a> }
+ 
+ #[cfg(test)]
+<a href="#h0-1" id="h0-1" class="h">@@ -41,6 +53,19 @@ mod tests {
+</a>     /// Generates common tests for any Engine implementation.
+     macro_rules! test_engine {
+         ($setup:expr) =&gt; {
+<a href="#h0-1-3" id="h0-1-3" class="i">+            #[track_caller]
+</a><a href="#h0-1-4" id="h0-1-4" class="i">+            /// Asserts that a scan yields the expected items.
+</a><a href="#h0-1-5" id="h0-1-5" class="i">+            fn assert_scan&lt;I&gt;(iter: I, expect: Vec&lt;(&amp;[u8], Vec&lt;u8&gt;)&gt;) -&gt; Result&lt;()&gt;
+</a><a href="#h0-1-6" id="h0-1-6" class="i">+            where
+</a><a href="#h0-1-7" id="h0-1-7" class="i">+                I: Iterator&lt;Item = Result&lt;(Vec&lt;u8&gt;, Vec&lt;u8&gt;)&gt;&gt;,
+</a><a href="#h0-1-8" id="h0-1-8" class="i">+            {
+</a><a href="#h0-1-9" id="h0-1-9" class="i">+                assert_eq!(
+</a><a href="#h0-1-10" id="h0-1-10" class="i">+                    iter.collect::&lt;Result&lt;Vec&lt;_&gt;&gt;&gt;()?,
+</a><a href="#h0-1-11" id="h0-1-11" class="i">+                    expect.into_iter().map(|(k, v)| (k.to_vec(), v)).collect::&lt;Vec&lt;_&gt;&gt;()
+</a><a href="#h0-1-12" id="h0-1-12" class="i">+                );
+</a><a href="#h0-1-13" id="h0-1-13" class="i">+                Ok(())
+</a><a href="#h0-1-14" id="h0-1-14" class="i">+            }
+</a><a href="#h0-1-15" id="h0-1-15" class="i">+
+</a>             /// Tests Engine point operations, i.e. set, get, and delete.
+             #[test]
+             fn point_ops() -&gt; Result&lt;()&gt; {
+<a href="#h0-2" id="h0-2" class="h">@@ -125,18 +150,6 @@ mod tests {
+</a>                 s.set(b&quot;c&quot;, vec![3])?;
+                 s.set(b&quot;C&quot;, vec![3])?;
+ 
+<a href="#h0-2-3" id="h0-2-3" class="d">-                #[track_caller]
+</a><a href="#h0-2-4" id="h0-2-4" class="d">-                fn assert_scan&lt;I&gt;(iter: I, expect: Vec&lt;(&amp;[u8], Vec&lt;u8&gt;)&gt;) -&gt; Result&lt;()&gt;
+</a><a href="#h0-2-5" id="h0-2-5" class="d">-                where
+</a><a href="#h0-2-6" id="h0-2-6" class="d">-                    I: Iterator&lt;Item = Result&lt;(Vec&lt;u8&gt;, Vec&lt;u8&gt;)&gt;&gt;,
+</a><a href="#h0-2-7" id="h0-2-7" class="d">-                {
+</a><a href="#h0-2-8" id="h0-2-8" class="d">-                    assert_eq!(
+</a><a href="#h0-2-9" id="h0-2-9" class="d">-                        iter.collect::&lt;Result&lt;Vec&lt;_&gt;&gt;&gt;()?,
+</a><a href="#h0-2-10" id="h0-2-10" class="d">-                        expect.into_iter().map(|(k, v)| (k.to_vec(), v)).collect::&lt;Vec&lt;_&gt;&gt;()
+</a><a href="#h0-2-11" id="h0-2-11" class="d">-                    );
+</a><a href="#h0-2-12" id="h0-2-12" class="d">-                    Ok(())
+</a><a href="#h0-2-13" id="h0-2-13" class="d">-                }
+</a><a href="#h0-2-14" id="h0-2-14" class="d">-
+</a>                 // Forward/reverse scans.
+                 assert_scan(
+                     s.scan(b&quot;b&quot;.to_vec()..b&quot;bz&quot;.to_vec()),
+<a href="#h0-3" id="h0-3" class="h">@@ -180,6 +193,117 @@ mod tests {
+</a>             }
+ 
+             #[test]
+<a href="#h0-3-3" id="h0-3-3" class="i">+            /// Tests prefix scans.
+</a><a href="#h0-3-4" id="h0-3-4" class="i">+            fn scan_prefix() -&gt; Result&lt;()&gt; {
+</a><a href="#h0-3-5" id="h0-3-5" class="i">+                let mut s = $setup;
+</a><a href="#h0-3-6" id="h0-3-6" class="i">+                s.set(b&quot;a&quot;, vec![1])?;
+</a><a href="#h0-3-7" id="h0-3-7" class="i">+                s.set(b&quot;b&quot;, vec![2])?;
+</a><a href="#h0-3-8" id="h0-3-8" class="i">+                s.set(b&quot;ba&quot;, vec![2, 1])?;
+</a><a href="#h0-3-9" id="h0-3-9" class="i">+                s.set(b&quot;bb&quot;, vec![2, 2])?;
+</a><a href="#h0-3-10" id="h0-3-10" class="i">+                s.set(b&quot;b\xff&quot;, vec![2, 0xff])?;
+</a><a href="#h0-3-11" id="h0-3-11" class="i">+                s.set(b&quot;b\xff\x00&quot;, vec![2, 0xff, 0x00])?;
+</a><a href="#h0-3-12" id="h0-3-12" class="i">+                s.set(b&quot;b\xffb&quot;, vec![2, 0xff, 2])?;
+</a><a href="#h0-3-13" id="h0-3-13" class="i">+                s.set(b&quot;b\xff\xff&quot;, vec![2, 0xff, 0xff])?;
+</a><a href="#h0-3-14" id="h0-3-14" class="i">+                s.set(b&quot;c&quot;, vec![3])?;
+</a><a href="#h0-3-15" id="h0-3-15" class="i">+                s.set(b&quot;\xff&quot;, vec![0xff])?;
+</a><a href="#h0-3-16" id="h0-3-16" class="i">+                s.set(b&quot;\xff\xff&quot;, vec![0xff, 0xff])?;
+</a><a href="#h0-3-17" id="h0-3-17" class="i">+                s.set(b&quot;\xff\xff\xff&quot;, vec![0xff, 0xff, 0xff])?;
+</a><a href="#h0-3-18" id="h0-3-18" class="i">+                s.set(b&quot;\xff\xff\xff\xff&quot;, vec![0xff, 0xff, 0xff, 0xff])?;
+</a><a href="#h0-3-19" id="h0-3-19" class="i">+
+</a><a href="#h0-3-20" id="h0-3-20" class="i">+                assert_scan(
+</a><a href="#h0-3-21" id="h0-3-21" class="i">+                    s.scan_prefix(b&quot;&quot;),
+</a><a href="#h0-3-22" id="h0-3-22" class="i">+                    vec![
+</a><a href="#h0-3-23" id="h0-3-23" class="i">+                        (b&quot;a&quot;, vec![1]),
+</a><a href="#h0-3-24" id="h0-3-24" class="i">+                        (b&quot;b&quot;, vec![2]),
+</a><a href="#h0-3-25" id="h0-3-25" class="i">+                        (b&quot;ba&quot;, vec![2, 1]),
+</a><a href="#h0-3-26" id="h0-3-26" class="i">+                        (b&quot;bb&quot;, vec![2, 2]),
+</a><a href="#h0-3-27" id="h0-3-27" class="i">+                        (b&quot;b\xff&quot;, vec![2, 0xff]),
+</a><a href="#h0-3-28" id="h0-3-28" class="i">+                        (b&quot;b\xff\x00&quot;, vec![2, 0xff, 0x00]),
+</a><a href="#h0-3-29" id="h0-3-29" class="i">+                        (b&quot;b\xffb&quot;, vec![2, 0xff, 2]),
+</a><a href="#h0-3-30" id="h0-3-30" class="i">+                        (b&quot;b\xff\xff&quot;, vec![2, 0xff, 0xff]),
+</a><a href="#h0-3-31" id="h0-3-31" class="i">+                        (b&quot;c&quot;, vec![3]),
+</a><a href="#h0-3-32" id="h0-3-32" class="i">+                        (b&quot;\xff&quot;, vec![0xff]),
+</a><a href="#h0-3-33" id="h0-3-33" class="i">+                        (b&quot;\xff\xff&quot;, vec![0xff, 0xff]),
+</a><a href="#h0-3-34" id="h0-3-34" class="i">+                        (b&quot;\xff\xff\xff&quot;, vec![0xff, 0xff, 0xff]),
+</a><a href="#h0-3-35" id="h0-3-35" class="i">+                        (b&quot;\xff\xff\xff\xff&quot;, vec![0xff, 0xff, 0xff, 0xff]),
+</a><a href="#h0-3-36" id="h0-3-36" class="i">+                    ],
+</a><a href="#h0-3-37" id="h0-3-37" class="i">+                )?;
+</a><a href="#h0-3-38" id="h0-3-38" class="i">+
+</a><a href="#h0-3-39" id="h0-3-39" class="i">+                assert_scan(
+</a><a href="#h0-3-40" id="h0-3-40" class="i">+                    s.scan_prefix(b&quot;b&quot;),
+</a><a href="#h0-3-41" id="h0-3-41" class="i">+                    vec![
+</a><a href="#h0-3-42" id="h0-3-42" class="i">+                        (b&quot;b&quot;, vec![2]),
+</a><a href="#h0-3-43" id="h0-3-43" class="i">+                        (b&quot;ba&quot;, vec![2, 1]),
+</a><a href="#h0-3-44" id="h0-3-44" class="i">+                        (b&quot;bb&quot;, vec![2, 2]),
+</a><a href="#h0-3-45" id="h0-3-45" class="i">+                        (b&quot;b\xff&quot;, vec![2, 0xff]),
+</a><a href="#h0-3-46" id="h0-3-46" class="i">+                        (b&quot;b\xff\x00&quot;, vec![2, 0xff, 0x00]),
+</a><a href="#h0-3-47" id="h0-3-47" class="i">+                        (b&quot;b\xffb&quot;, vec![2, 0xff, 2]),
+</a><a href="#h0-3-48" id="h0-3-48" class="i">+                        (b&quot;b\xff\xff&quot;, vec![2, 0xff, 0xff]),
+</a><a href="#h0-3-49" id="h0-3-49" class="i">+                    ],
+</a><a href="#h0-3-50" id="h0-3-50" class="i">+                )?;
+</a><a href="#h0-3-51" id="h0-3-51" class="i">+
+</a><a href="#h0-3-52" id="h0-3-52" class="i">+                assert_scan(s.scan_prefix(b&quot;bb&quot;), vec![(b&quot;bb&quot;, vec![2, 2])])?;
+</a><a href="#h0-3-53" id="h0-3-53" class="i">+
+</a><a href="#h0-3-54" id="h0-3-54" class="i">+                assert_scan(s.scan_prefix(b&quot;bq&quot;), vec![])?;
+</a><a href="#h0-3-55" id="h0-3-55" class="i">+
+</a><a href="#h0-3-56" id="h0-3-56" class="i">+                assert_scan(
+</a><a href="#h0-3-57" id="h0-3-57" class="i">+                    s.scan_prefix(b&quot;b\xff&quot;),
+</a><a href="#h0-3-58" id="h0-3-58" class="i">+                    vec![
+</a><a href="#h0-3-59" id="h0-3-59" class="i">+                        (b&quot;b\xff&quot;, vec![2, 0xff]),
+</a><a href="#h0-3-60" id="h0-3-60" class="i">+                        (b&quot;b\xff\x00&quot;, vec![2, 0xff, 0x00]),
+</a><a href="#h0-3-61" id="h0-3-61" class="i">+                        (b&quot;b\xffb&quot;, vec![2, 0xff, 2]),
+</a><a href="#h0-3-62" id="h0-3-62" class="i">+                        (b&quot;b\xff\xff&quot;, vec![2, 0xff, 0xff]),
+</a><a href="#h0-3-63" id="h0-3-63" class="i">+                    ],
+</a><a href="#h0-3-64" id="h0-3-64" class="i">+                )?;
+</a><a href="#h0-3-65" id="h0-3-65" class="i">+
+</a><a href="#h0-3-66" id="h0-3-66" class="i">+                assert_scan(
+</a><a href="#h0-3-67" id="h0-3-67" class="i">+                    s.scan_prefix(b&quot;b\xff\x00&quot;),
+</a><a href="#h0-3-68" id="h0-3-68" class="i">+                    vec![(b&quot;b\xff\x00&quot;, vec![2, 0xff, 0x00])],
+</a><a href="#h0-3-69" id="h0-3-69" class="i">+                )?;
+</a><a href="#h0-3-70" id="h0-3-70" class="i">+
+</a><a href="#h0-3-71" id="h0-3-71" class="i">+                assert_scan(
+</a><a href="#h0-3-72" id="h0-3-72" class="i">+                    s.scan_prefix(b&quot;b\xff\xff&quot;),
+</a><a href="#h0-3-73" id="h0-3-73" class="i">+                    vec![(b&quot;b\xff\xff&quot;, vec![2, 0xff, 0xff])],
+</a><a href="#h0-3-74" id="h0-3-74" class="i">+                )?;
+</a><a href="#h0-3-75" id="h0-3-75" class="i">+
+</a><a href="#h0-3-76" id="h0-3-76" class="i">+                assert_scan(
+</a><a href="#h0-3-77" id="h0-3-77" class="i">+                    s.scan_prefix(b&quot;\xff&quot;),
+</a><a href="#h0-3-78" id="h0-3-78" class="i">+                    vec![
+</a><a href="#h0-3-79" id="h0-3-79" class="i">+                        (b&quot;\xff&quot;, vec![0xff]),
+</a><a href="#h0-3-80" id="h0-3-80" class="i">+                        (b&quot;\xff\xff&quot;, vec![0xff, 0xff]),
+</a><a href="#h0-3-81" id="h0-3-81" class="i">+                        (b&quot;\xff\xff\xff&quot;, vec![0xff, 0xff, 0xff]),
+</a><a href="#h0-3-82" id="h0-3-82" class="i">+                        (b&quot;\xff\xff\xff\xff&quot;, vec![0xff, 0xff, 0xff, 0xff]),
+</a><a href="#h0-3-83" id="h0-3-83" class="i">+                    ],
+</a><a href="#h0-3-84" id="h0-3-84" class="i">+                )?;
+</a><a href="#h0-3-85" id="h0-3-85" class="i">+
+</a><a href="#h0-3-86" id="h0-3-86" class="i">+                assert_scan(
+</a><a href="#h0-3-87" id="h0-3-87" class="i">+                    s.scan_prefix(b&quot;\xff\xff&quot;),
+</a><a href="#h0-3-88" id="h0-3-88" class="i">+                    vec![
+</a><a href="#h0-3-89" id="h0-3-89" class="i">+                        (b&quot;\xff\xff&quot;, vec![0xff, 0xff]),
+</a><a href="#h0-3-90" id="h0-3-90" class="i">+                        (b&quot;\xff\xff\xff&quot;, vec![0xff, 0xff, 0xff]),
+</a><a href="#h0-3-91" id="h0-3-91" class="i">+                        (b&quot;\xff\xff\xff\xff&quot;, vec![0xff, 0xff, 0xff, 0xff]),
+</a><a href="#h0-3-92" id="h0-3-92" class="i">+                    ],
+</a><a href="#h0-3-93" id="h0-3-93" class="i">+                )?;
+</a><a href="#h0-3-94" id="h0-3-94" class="i">+
+</a><a href="#h0-3-95" id="h0-3-95" class="i">+                assert_scan(
+</a><a href="#h0-3-96" id="h0-3-96" class="i">+                    s.scan_prefix(b&quot;\xff\xff\xff&quot;),
+</a><a href="#h0-3-97" id="h0-3-97" class="i">+                    vec![
+</a><a href="#h0-3-98" id="h0-3-98" class="i">+                        (b&quot;\xff\xff\xff&quot;, vec![0xff, 0xff, 0xff]),
+</a><a href="#h0-3-99" id="h0-3-99" class="i">+                        (b&quot;\xff\xff\xff\xff&quot;, vec![0xff, 0xff, 0xff, 0xff]),
+</a><a href="#h0-3-100" id="h0-3-100" class="i">+                    ],
+</a><a href="#h0-3-101" id="h0-3-101" class="i">+                )?;
+</a><a href="#h0-3-102" id="h0-3-102" class="i">+
+</a><a href="#h0-3-103" id="h0-3-103" class="i">+                assert_scan(
+</a><a href="#h0-3-104" id="h0-3-104" class="i">+                    s.scan_prefix(b&quot;\xff\xff\xff\xff&quot;),
+</a><a href="#h0-3-105" id="h0-3-105" class="i">+                    vec![(b&quot;\xff\xff\xff\xff&quot;, vec![0xff, 0xff, 0xff, 0xff])],
+</a><a href="#h0-3-106" id="h0-3-106" class="i">+                )?;
+</a><a href="#h0-3-107" id="h0-3-107" class="i">+
+</a><a href="#h0-3-108" id="h0-3-108" class="i">+                assert_scan(s.scan_prefix(b&quot;\xff\xff\xff\xff\xff&quot;), vec![])?;
+</a><a href="#h0-3-109" id="h0-3-109" class="i">+
+</a><a href="#h0-3-110" id="h0-3-110" class="i">+                Ok(())
+</a><a href="#h0-3-111" id="h0-3-111" class="i">+            }
+</a><a href="#h0-3-112" id="h0-3-112" class="i">+
+</a><a href="#h0-3-113" id="h0-3-113" class="i">+            #[test]
+</a>             /// Runs random operations both on a Engine and a known-good
+             /// BTreeMap, comparing the results of each operation as well as the
+             /// final state.
+</pre>
+</div>
+</body>
+</html>

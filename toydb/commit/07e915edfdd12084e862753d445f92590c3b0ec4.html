@@ -1,0 +1,518 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Only forward Raft client requests as follower. - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/07e915edfdd12084e862753d445f92590c3b0ec4.html">07e915edfdd12084e862753d445f92590c3b0ec4</a>
+<b>parent</b> <a href="../commit/491ff9e26787c7c784e325e605d7ffea1241fd4f.html">491ff9e26787c7c784e325e605d7ffea1241fd4f</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Sun, 19 Nov 2023 14:05:29 +0100
+
+Only forward Raft client requests as follower.
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/raft/message.rs</a></td><td> | </td><td class="num">26</td><td><span class="i">++++++++++++++++++</span><span class="d">--------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/raft/mod.rs</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/raft/node/candidate.rs</a></td><td> | </td><td class="num">32</td><td><span class="i">+++++++++</span><span class="d">-----------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">src/raft/node/follower.rs</a></td><td> | </td><td class="num">85</td><td><span class="i">+++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d">----------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h4">src/raft/node/leader.rs</a></td><td> | </td><td class="num">1</td><td><span class="i"></span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h5">src/raft/node/mod.rs</a></td><td> | </td><td class="num">26</td><td><span class="i">+++++++</span><span class="d">-------------------</span></td></tr>
+</table></pre><pre>6 files changed, 90 insertions(+), 82 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/raft/message.rs.html">src/raft/message.rs</a> b/<a href="../file/src/raft/message.rs.html">src/raft/message.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -29,13 +29,14 @@ impl Address {
+</a> /// A message passed between Raft nodes.
+ #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+ pub struct Message {
+<a href="#h0-0-3" id="h0-0-3" class="d">-    /// The current term of the sender.
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+    /// The current term of the sender. Must be set, unless the sender is
+</a><a href="#h0-0-5" id="h0-0-5" class="i">+    /// Address::Client, in which case it must be 0.
+</a>     pub term: Term,
+     /// The sender address.
+     pub from: Address,
+     /// The recipient address.
+     pub to: Address,
+<a href="#h0-0-11" id="h0-0-11" class="d">-    /// The message event.
+</a><a href="#h0-0-12" id="h0-0-12" class="i">+    /// The message payload.
+</a>     pub event: Event,
+ }
+ 
+<a href="#h0-1" id="h0-1" class="h">@@ -83,22 +84,31 @@ pub enum Event {
+</a>     },
+     /// Followers may also reject a set of log entries from a leader.
+     RejectEntries,
+<a href="#h0-1-3" id="h0-1-3" class="d">-    /// A client request.
+</a><a href="#h0-1-4" id="h0-1-4" class="i">+
+</a><a href="#h0-1-5" id="h0-1-5" class="i">+    /// A client request. This can be submitted to the leader, or to a follower
+</a><a href="#h0-1-6" id="h0-1-6" class="i">+    /// which will forward it to its leader. If there is no leader, or the
+</a><a href="#h0-1-7" id="h0-1-7" class="i">+    /// leader or term changes, the request is aborted with an Error::Abort
+</a><a href="#h0-1-8" id="h0-1-8" class="i">+    /// ClientResponse and the client must retry.
+</a>     ClientRequest {
+<a href="#h0-1-10" id="h0-1-10" class="d">-        /// The request ID.
+</a><a href="#h0-1-11" id="h0-1-11" class="d">-        id: Vec&lt;u8&gt;,
+</a><a href="#h0-1-12" id="h0-1-12" class="i">+        /// The request ID. This is arbitrary, but must be globally unique for
+</a><a href="#h0-1-13" id="h0-1-13" class="i">+        /// the duration of the request.
+</a><a href="#h0-1-14" id="h0-1-14" class="i">+        id: RequestID,
+</a>         /// The request.
+         request: Request,
+     },
+<a href="#h0-1-18" id="h0-1-18" class="i">+
+</a>     /// A client response.
+     ClientResponse {
+<a href="#h0-1-21" id="h0-1-21" class="d">-        /// The response ID.
+</a><a href="#h0-1-22" id="h0-1-22" class="d">-        id: Vec&lt;u8&gt;,
+</a><a href="#h0-1-23" id="h0-1-23" class="d">-        /// The response.
+</a><a href="#h0-1-24" id="h0-1-24" class="i">+        /// The response ID. This matches the ID of the ClientRequest.
+</a><a href="#h0-1-25" id="h0-1-25" class="i">+        id: RequestID,
+</a><a href="#h0-1-26" id="h0-1-26" class="i">+        /// The response, or an error.
+</a>         response: Result&lt;Response&gt;,
+     },
+ }
+ 
+<a href="#h0-1-31" id="h0-1-31" class="i">+/// A client request ID.
+</a><a href="#h0-1-32" id="h0-1-32" class="i">+pub type RequestID = Vec&lt;u8&gt;;
+</a><a href="#h0-1-33" id="h0-1-33" class="i">+
+</a> /// A client request.
+ #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+ pub enum Request {
+<b>diff --git a/<a id="h1" href="../file/src/raft/mod.rs.html">src/raft/mod.rs</a> b/<a href="../file/src/raft/mod.rs.html">src/raft/mod.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -5,7 +5,7 @@ mod server;
+</a> mod state;
+ 
+ pub use self::log::{Engine, Entry, Index, Log};
+<a href="#h1-0-3" id="h1-0-3" class="d">-pub use message::{Address, Event, Message, Request, Response};
+</a><a href="#h1-0-4" id="h1-0-4" class="i">+pub use message::{Address, Event, Message, Request, RequestID, Response};
+</a> pub use node::{Node, NodeID, Status, Term};
+ pub use server::Server;
+ pub use state::{Driver, Instruction, State};
+<b>diff --git a/<a id="h2" href="../file/src/raft/node/candidate.rs.html">src/raft/node/candidate.rs</a> b/<a href="../file/src/raft/node/candidate.rs.html">src/raft/node/candidate.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -1,4 +1,4 @@
+</a><a href="#h2-0-0" id="h2-0-0" class="d">-use super::super::{Address, Event, Message, Response};
+</a><a href="#h2-0-1" id="h2-0-1" class="i">+use super::super::{Address, Event, Message};
+</a> use super::{
+     Follower, Leader, Node, NodeID, RoleNode, Term, ELECTION_TIMEOUT_MAX, ELECTION_TIMEOUT_MIN,
+ };
+<a href="#h2-1" id="h2-1" class="h">@@ -37,12 +37,12 @@ impl RoleNode&lt;Candidate&gt; {
+</a>     fn become_follower(mut self, term: Term, leader: Option&lt;NodeID&gt;) -&gt; Result&lt;RoleNode&lt;Follower&gt;&gt; {
+         assert!(term &gt;= self.term, &quot;Term regression {} -&gt; {}&quot;, self.term, term);
+ 
+<a href="#h2-1-3" id="h2-1-3" class="d">-        let mut node = if let Some(leader) = leader {
+</a><a href="#h2-1-4" id="h2-1-4" class="i">+        if let Some(leader) = leader {
+</a>             // We lost the election, follow the winner.
+             assert_eq!(term, self.term, &quot;Can&#39;t follow leader in different term&quot;);
+             info!(&quot;Lost election, following leader {} in term {}&quot;, leader, term);
+             let voted_for = Some(self.id); // by definition
+<a href="#h2-1-9" id="h2-1-9" class="d">-            self.become_role(Follower::new(Some(leader), voted_for))
+</a><a href="#h2-1-10" id="h2-1-10" class="i">+            Ok(self.become_role(Follower::new(Some(leader), voted_for)))
+</a>         } else {
+             // We found a new term, but we don&#39;t necessarily know who the leader
+             // is yet. We&#39;ll find out when we step a message from it.
+<a href="#h2-2" id="h2-2" class="h">@@ -50,13 +50,8 @@ impl RoleNode&lt;Candidate&gt; {
+</a>             info!(&quot;Discovered new term {}&quot;, term);
+             self.term = term;
+             self.log.set_term(term, None)?;
+<a href="#h2-2-3" id="h2-2-3" class="d">-            self.become_role(Follower::new(None, None))
+</a><a href="#h2-2-4" id="h2-2-4" class="d">-        };
+</a><a href="#h2-2-5" id="h2-2-5" class="d">-        // Abort any proxied requests.
+</a><a href="#h2-2-6" id="h2-2-6" class="d">-        //
+</a><a href="#h2-2-7" id="h2-2-7" class="d">-        // TODO: Candidates shouldn&#39;t proxy requests.
+</a><a href="#h2-2-8" id="h2-2-8" class="d">-        node.abort_proxied()?;
+</a><a href="#h2-2-9" id="h2-2-9" class="d">-        Ok(node)
+</a><a href="#h2-2-10" id="h2-2-10" class="i">+            Ok(self.become_role(Follower::new(None, None)))
+</a><a href="#h2-2-11" id="h2-2-11" class="i">+        }
+</a>     }
+ 
+     /// Transition to leader role.
+<a href="#h2-3" id="h2-3" class="h">@@ -68,7 +63,6 @@ impl RoleNode&lt;Candidate&gt; {
+</a>         let mut node = self.become_role(Leader::new(peers, last_index));
+         node.send(Address::Broadcast, Event::Heartbeat { commit_index, commit_term })?;
+         node.append(None)?;
+<a href="#h2-3-3" id="h2-3-3" class="d">-        node.abort_proxied()?;
+</a>         Ok(node)
+     }
+ 
+<a href="#h2-4" id="h2-4" class="h">@@ -112,21 +106,15 @@ impl RoleNode&lt;Candidate&gt; {
+</a>                 self.send(msg.from, Event::ClientResponse { id, response: Err(Error::Abort) })?;
+             }
+ 
+<a href="#h2-4-3" id="h2-4-3" class="d">-            Event::ClientResponse { id, mut response } =&gt; {
+</a><a href="#h2-4-4" id="h2-4-4" class="d">-                if let Ok(Response::Status(ref mut status)) = response {
+</a><a href="#h2-4-5" id="h2-4-5" class="d">-                    status.server = self.id;
+</a><a href="#h2-4-6" id="h2-4-6" class="d">-                }
+</a><a href="#h2-4-7" id="h2-4-7" class="d">-                self.proxied_reqs.remove(&amp;id);
+</a><a href="#h2-4-8" id="h2-4-8" class="d">-                self.send(Address::Client, Event::ClientResponse { id, response })?;
+</a><a href="#h2-4-9" id="h2-4-9" class="d">-            }
+</a><a href="#h2-4-10" id="h2-4-10" class="d">-
+</a>             // Ignore other candidates when we&#39;re also campaigning
+             Event::SolicitVote { .. } =&gt; {}
+ 
+<a href="#h2-4-14" id="h2-4-14" class="d">-            // We&#39;re not a leader in this term, so we shoudn&#39;t see these.
+</a><a href="#h2-4-15" id="h2-4-15" class="i">+            // We&#39;re not a leader in this term, nor are we forwarding requests,
+</a><a href="#h2-4-16" id="h2-4-16" class="i">+            // so we shouldn&#39;t see these.
+</a>             Event::ConfirmLeader { .. }
+             | Event::AcceptEntries { .. }
+<a href="#h2-4-19" id="h2-4-19" class="d">-            | Event::RejectEntries { .. } =&gt; warn!(&quot;Received unexpected message {:?}&quot;, msg),
+</a><a href="#h2-4-20" id="h2-4-20" class="i">+            | Event::RejectEntries { .. }
+</a><a href="#h2-4-21" id="h2-4-21" class="i">+            | Event::ClientResponse { .. } =&gt; warn!(&quot;Received unexpected message {:?}&quot;, msg),
+</a>         }
+         Ok(self.into())
+     }
+<a href="#h2-5" id="h2-5" class="h">@@ -153,7 +141,6 @@ mod tests {
+</a>     use super::super::tests::{assert_messages, assert_node};
+     use super::*;
+     use crate::storage;
+<a href="#h2-5-3" id="h2-5-3" class="d">-    use std::collections::HashMap;
+</a>     use tokio::sync::mpsc;
+ 
+     #[allow(clippy::type_complexity)]
+<a href="#h2-6" id="h2-6" class="h">@@ -178,7 +165,6 @@ mod tests {
+</a>             log,
+             node_tx,
+             state_tx,
+<a href="#h2-6-3" id="h2-6-3" class="d">-            proxied_reqs: HashMap::new(),
+</a>             role: Candidate::new(),
+         };
+         Ok((node, node_rx, state_rx))
+<b>diff --git a/<a id="h3" href="../file/src/raft/node/follower.rs.html">src/raft/node/follower.rs</a> b/<a href="../file/src/raft/node/follower.rs.html">src/raft/node/follower.rs</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -1,9 +1,10 @@
+</a><a href="#h3-0-0" id="h3-0-0" class="d">-use super::super::{Address, Event, Instruction, Message, Response};
+</a><a href="#h3-0-1" id="h3-0-1" class="i">+use super::super::{Address, Event, Instruction, Message, RequestID, Response};
+</a> use super::{Candidate, Node, NodeID, RoleNode, Term, ELECTION_TIMEOUT_MAX, ELECTION_TIMEOUT_MIN};
+ use crate::error::{Error, Result};
+ 
+ use ::log::{debug, error, info, warn};
+ use rand::Rng as _;
+<a href="#h3-0-7" id="h3-0-7" class="i">+use std::collections::HashSet;
+</a> 
+ // A follower replicates state from a leader.
+ #[derive(Debug)]
+<a href="#h3-1" id="h3-1" class="h">@@ -16,6 +17,9 @@ pub struct Follower {
+</a>     leader_seen_timeout: u64,
+     /// The node we voted for in the current term, if any.
+     voted_for: Option&lt;NodeID&gt;,
+<a href="#h3-1-3" id="h3-1-3" class="i">+    // Local client requests that have been forwarded to the leader. These are
+</a><a href="#h3-1-4" id="h3-1-4" class="i">+    // aborted on leader/term changes.
+</a><a href="#h3-1-5" id="h3-1-5" class="i">+    pub(super) forwarded: HashSet&lt;RequestID&gt;,
+</a> }
+ 
+ impl Follower {
+<a href="#h3-2" id="h3-2" class="h">@@ -27,13 +31,17 @@ impl Follower {
+</a>             leader_seen_ticks: 0,
+             leader_seen_timeout: rand::thread_rng()
+                 .gen_range(ELECTION_TIMEOUT_MIN..=ELECTION_TIMEOUT_MAX),
+<a href="#h3-2-3" id="h3-2-3" class="i">+            forwarded: HashSet::new(),
+</a>         }
+     }
+ }
+ 
+ impl RoleNode&lt;Follower&gt; {
+     /// Transforms the node into a candidate.
+<a href="#h3-2-10" id="h3-2-10" class="d">-    fn become_candidate(self) -&gt; Result&lt;RoleNode&lt;Candidate&gt;&gt; {
+</a><a href="#h3-2-11" id="h3-2-11" class="i">+    fn become_candidate(mut self) -&gt; Result&lt;RoleNode&lt;Candidate&gt;&gt; {
+</a><a href="#h3-2-12" id="h3-2-12" class="i">+        // Abort any forwarded requests. These must be retried with new leader.
+</a><a href="#h3-2-13" id="h3-2-13" class="i">+        self.abort_forwarded()?;
+</a><a href="#h3-2-14" id="h3-2-14" class="i">+
+</a>         info!(&quot;Starting election for term {}&quot;, self.term + 1);
+         let (last_index, last_term) = self.log.get_last_index();
+         let mut node = self.become_role(Candidate::new());
+<a href="#h3-3" id="h3-3" class="h">@@ -48,6 +56,9 @@ impl RoleNode&lt;Follower&gt; {
+</a>     fn become_follower(mut self, leader: Option&lt;NodeID&gt;, term: Term) -&gt; Result&lt;RoleNode&lt;Follower&gt;&gt; {
+         assert!(term &gt;= self.term, &quot;Term regression {} -&gt; {}&quot;, self.term, term);
+ 
+<a href="#h3-3-3" id="h3-3-3" class="i">+        // Abort any forwarded requests. These must be retried with new leader.
+</a><a href="#h3-3-4" id="h3-3-4" class="i">+        self.abort_forwarded()?;
+</a><a href="#h3-3-5" id="h3-3-5" class="i">+
+</a>         if let Some(leader) = leader {
+             // We found a leader in the current term.
+             assert_eq!(self.role.leader, None, &quot;Already have leader in term&quot;);
+<a href="#h3-4" id="h3-4" class="h">@@ -63,11 +74,6 @@ impl RoleNode&lt;Follower&gt; {
+</a>             self.log.set_term(term, None)?;
+             self.role = Follower::new(None, None);
+         }
+<a href="#h3-4-3" id="h3-4-3" class="d">-        // Abort any proxied requests.
+</a><a href="#h3-4-4" id="h3-4-4" class="d">-        //
+</a><a href="#h3-4-5" id="h3-4-5" class="d">-        // TODO: Move this into the new term branch, and assert that there are
+</a><a href="#h3-4-6" id="h3-4-6" class="d">-        // no proxied requests in the new leader branch.
+</a><a href="#h3-4-7" id="h3-4-7" class="d">-        self.abort_proxied()?;
+</a>         Ok(self)
+     }
+ 
+<a href="#h3-5" id="h3-5" class="h">@@ -83,6 +89,11 @@ impl RoleNode&lt;Follower&gt; {
+</a> 
+     /// Processes a message.
+     pub fn step(mut self, msg: Message) -&gt; Result&lt;Node&gt; {
+<a href="#h3-5-3" id="h3-5-3" class="i">+        // Assert invariants.
+</a><a href="#h3-5-4" id="h3-5-4" class="i">+        if self.role.leader.is_none() {
+</a><a href="#h3-5-5" id="h3-5-5" class="i">+            assert!(self.role.forwarded.is_empty(), &quot;Leaderless follower has forwarded requests&quot;);
+</a><a href="#h3-5-6" id="h3-5-6" class="i">+        }
+</a><a href="#h3-5-7" id="h3-5-7" class="i">+
+</a>         // Drop invalid messages and messages from past terms.
+         if let Err(err) = self.validate(&amp;msg) {
+             error!(&quot;Invalid message: {} ({:?})&quot;, err, msg);
+<a href="#h3-6" id="h3-6" class="h">@@ -171,23 +182,39 @@ impl RoleNode&lt;Follower&gt; {
+</a>                 }
+             }
+ 
+<a href="#h3-6-3" id="h3-6-3" class="d">-            // Forward requests to the leader, or abort them if there is none.
+</a><a href="#h3-6-4" id="h3-6-4" class="i">+            // Forward client requests to the leader, or abort them if there is
+</a><a href="#h3-6-5" id="h3-6-5" class="i">+            // none (the client must retry).
+</a>             Event::ClientRequest { ref id, .. } =&gt; {
+<a href="#h3-6-7" id="h3-6-7" class="i">+                if msg.from != Address::Client {
+</a><a href="#h3-6-8" id="h3-6-8" class="i">+                    error!(&quot;Received client request from non-client {:?}&quot;, msg.from);
+</a><a href="#h3-6-9" id="h3-6-9" class="i">+                    return Ok(self.into());
+</a><a href="#h3-6-10" id="h3-6-10" class="i">+                }
+</a><a href="#h3-6-11" id="h3-6-11" class="i">+
+</a>                 let id = id.clone();
+                 if let Some(leader) = self.role.leader {
+<a href="#h3-6-14" id="h3-6-14" class="d">-                    self.proxied_reqs.insert(id, msg.from);
+</a><a href="#h3-6-15" id="h3-6-15" class="i">+                    debug!(&quot;Forwarding request to leader {}: {:?}&quot;, leader, msg);
+</a><a href="#h3-6-16" id="h3-6-16" class="i">+                    self.role.forwarded.insert(id);
+</a>                     self.send(Address::Node(leader), msg.event)?
+                 } else {
+                     self.send(msg.from, Event::ClientResponse { id, response: Err(Error::Abort) })?
+                 }
+             }
+ 
+<a href="#h3-6-23" id="h3-6-23" class="i">+            // Returns client responses for forwarded requests.
+</a>             Event::ClientResponse { id, mut response } =&gt; {
+<a href="#h3-6-25" id="h3-6-25" class="i">+                if !self.is_leader(&amp;msg.from) {
+</a><a href="#h3-6-26" id="h3-6-26" class="i">+                    error!(&quot;Received client response from non-leader {:?}&quot;, msg.from);
+</a><a href="#h3-6-27" id="h3-6-27" class="i">+                    return Ok(self.into());
+</a><a href="#h3-6-28" id="h3-6-28" class="i">+                }
+</a><a href="#h3-6-29" id="h3-6-29" class="i">+
+</a><a href="#h3-6-30" id="h3-6-30" class="i">+                // TODO: Get rid of this field, it should be returned at the RPC
+</a><a href="#h3-6-31" id="h3-6-31" class="i">+                // server level instead.
+</a>                 if let Ok(Response::Status(ref mut status)) = response {
+                     status.server = self.id;
+                 }
+<a href="#h3-6-35" id="h3-6-35" class="d">-                self.proxied_reqs.remove(&amp;id);
+</a><a href="#h3-6-36" id="h3-6-36" class="d">-                self.send(Address::Client, Event::ClientResponse { id, response })?;
+</a><a href="#h3-6-37" id="h3-6-37" class="i">+                if self.role.forwarded.remove(&amp;id) {
+</a><a href="#h3-6-38" id="h3-6-38" class="i">+                    self.send(Address::Client, Event::ClientResponse { id, response })?;
+</a><a href="#h3-6-39" id="h3-6-39" class="i">+                }
+</a>             }
+ 
+             // Ignore votes which are usually strays from the previous election that we lost.
+<a href="#h3-7" id="h3-7" class="h">@@ -210,6 +237,15 @@ impl RoleNode&lt;Follower&gt; {
+</a>             Ok(self.into())
+         }
+     }
+<a href="#h3-7-3" id="h3-7-3" class="i">+
+</a><a href="#h3-7-4" id="h3-7-4" class="i">+    /// Aborts all forwarded requests.
+</a><a href="#h3-7-5" id="h3-7-5" class="i">+    fn abort_forwarded(&amp;mut self) -&gt; Result&lt;()&gt; {
+</a><a href="#h3-7-6" id="h3-7-6" class="i">+        for id in std::mem::take(&amp;mut self.role.forwarded) {
+</a><a href="#h3-7-7" id="h3-7-7" class="i">+            debug!(&quot;Aborting forwarded request {:x?}&quot;, id);
+</a><a href="#h3-7-8" id="h3-7-8" class="i">+            self.send(Address::Client, Event::ClientResponse { id, response: Err(Error::Abort) })?;
+</a><a href="#h3-7-9" id="h3-7-9" class="i">+        }
+</a><a href="#h3-7-10" id="h3-7-10" class="i">+        Ok(())
+</a><a href="#h3-7-11" id="h3-7-11" class="i">+    }
+</a> }
+ 
+ #[cfg(test)]
+<a href="#h3-8" id="h3-8" class="h">@@ -219,7 +255,6 @@ pub mod tests {
+</a>     use super::*;
+     use crate::error::Error;
+     use crate::storage;
+<a href="#h3-8-3" id="h3-8-3" class="d">-    use std::collections::HashMap;
+</a>     use tokio::sync::mpsc;
+ 
+     pub fn follower_leader(node: &amp;RoleNode&lt;Follower&gt;) -&gt; Option&lt;NodeID&gt; {
+<a href="#h3-9" id="h3-9" class="h">@@ -252,7 +287,6 @@ pub mod tests {
+</a>             log,
+             node_tx,
+             state_tx,
+<a href="#h3-9-3" id="h3-9-3" class="d">-            proxied_reqs: HashMap::new(),
+</a>             role: Follower::new(Some(2), None),
+         };
+         Ok((node, node_rx, state_rx))
+<a href="#h3-10" id="h3-10" class="h">@@ -571,7 +605,6 @@ pub mod tests {
+</a>             log,
+             node_tx,
+             state_tx,
+<a href="#h3-10-3" id="h3-10-3" class="d">-            proxied_reqs: HashMap::new(),
+</a>             role: Follower::new(Some(2), None),
+         };
+ 
+<a href="#h3-11" id="h3-11" class="h">@@ -815,7 +848,7 @@ pub mod tests {
+</a>     }
+ 
+     #[test]
+<a href="#h3-11-3" id="h3-11-3" class="d">-    // ClientRequest is proxied, as is the response.
+</a><a href="#h3-11-4" id="h3-11-4" class="i">+    // ClientRequest is forwarded, as is the response.
+</a>     fn step_clientrequest_clientresponse() -&gt; Result&lt;()&gt; {
+         let (follower, mut node_rx, mut state_rx) = setup()?;
+         let mut node = Node::Follower(follower);
+<a href="#h3-12" id="h3-12" class="h">@@ -826,11 +859,7 @@ pub mod tests {
+</a>             term: 0,
+             event: Event::ClientRequest { id: vec![0x01], request: Request::Mutate(vec![0xaf]) },
+         })?;
+<a href="#h3-12-3" id="h3-12-3" class="d">-        assert_node(&amp;mut node)
+</a><a href="#h3-12-4" id="h3-12-4" class="d">-            .is_follower()
+</a><a href="#h3-12-5" id="h3-12-5" class="d">-            .term(3)
+</a><a href="#h3-12-6" id="h3-12-6" class="d">-            .leader(Some(2))
+</a><a href="#h3-12-7" id="h3-12-7" class="d">-            .proxied(vec![(vec![0x01], Address::Client)]);
+</a><a href="#h3-12-8" id="h3-12-8" class="i">+        assert_node(&amp;mut node).is_follower().term(3).leader(Some(2)).forwarded(vec![vec![0x01]]);
+</a>         assert_messages(
+             &amp;mut node_rx,
+             vec![Message {
+<a href="#h3-13" id="h3-13" class="h">@@ -854,7 +883,7 @@ pub mod tests {
+</a>                 response: Ok(Response::Mutate(vec![0xaf])),
+             },
+         })?;
+<a href="#h3-13-3" id="h3-13-3" class="d">-        assert_node(&amp;mut node).is_follower().term(3).leader(Some(2)).proxied(vec![]);
+</a><a href="#h3-13-4" id="h3-13-4" class="i">+        assert_node(&amp;mut node).is_follower().term(3).leader(Some(2)).forwarded(vec![]);
+</a>         assert_messages(
+             &amp;mut node_rx,
+             vec![Message {
+<a href="#h3-14" id="h3-14" class="h">@@ -884,7 +913,7 @@ pub mod tests {
+</a>             term: 0,
+             event: Event::ClientRequest { id: vec![0x01], request: Request::Mutate(vec![0xaf]) },
+         })?;
+<a href="#h3-14-3" id="h3-14-3" class="d">-        assert_node(&amp;mut node).is_follower().term(3).leader(None).proxied(vec![]);
+</a><a href="#h3-14-4" id="h3-14-4" class="i">+        assert_node(&amp;mut node).is_follower().term(3).leader(None).forwarded(vec![]);
+</a>         assert_messages(
+             &amp;mut node_rx,
+             vec![Message {
+<a href="#h3-15" id="h3-15" class="h">@@ -898,7 +927,7 @@ pub mod tests {
+</a>         Ok(())
+     }
+ 
+<a href="#h3-15-3" id="h3-15-3" class="d">-    // ClientRequest is proxied, but aborted when a new leader appears.
+</a><a href="#h3-15-4" id="h3-15-4" class="i">+    // ClientRequest is forwarded, but aborted when a new leader appears.
+</a>     #[test]
+     fn step_clientrequest_aborted() -&gt; Result&lt;()&gt; {
+         let (follower, mut node_rx, mut state_rx) = setup()?;
+<a href="#h3-16" id="h3-16" class="h">@@ -910,11 +939,7 @@ pub mod tests {
+</a>             term: 0,
+             event: Event::ClientRequest { id: vec![0x01], request: Request::Mutate(vec![0xaf]) },
+         })?;
+<a href="#h3-16-3" id="h3-16-3" class="d">-        assert_node(&amp;mut node)
+</a><a href="#h3-16-4" id="h3-16-4" class="d">-            .is_follower()
+</a><a href="#h3-16-5" id="h3-16-5" class="d">-            .term(3)
+</a><a href="#h3-16-6" id="h3-16-6" class="d">-            .leader(Some(2))
+</a><a href="#h3-16-7" id="h3-16-7" class="d">-            .proxied(vec![(vec![0x01], Address::Client)]);
+</a><a href="#h3-16-8" id="h3-16-8" class="i">+        assert_node(&amp;mut node).is_follower().term(3).leader(Some(2)).forwarded(vec![vec![0x01]]);
+</a>         assert_messages(
+             &amp;mut node_rx,
+             vec![Message {
+<a href="#h3-17" id="h3-17" class="h">@@ -936,14 +961,14 @@ pub mod tests {
+</a>             term: 4,
+             event: Event::Heartbeat { commit_index: 3, commit_term: 2 },
+         })?;
+<a href="#h3-17-3" id="h3-17-3" class="d">-        assert_node(&amp;mut node).is_follower().term(4).leader(Some(3)).proxied(vec![]);
+</a><a href="#h3-17-4" id="h3-17-4" class="i">+        assert_node(&amp;mut node).is_follower().term(4).leader(Some(3)).forwarded(vec![]);
+</a>         assert_messages(
+             &amp;mut node_rx,
+             vec![
+                 Message {
+                     from: Address::Node(1),
+                     to: Address::Client,
+<a href="#h3-17-11" id="h3-17-11" class="d">-                    term: 4,
+</a><a href="#h3-17-12" id="h3-17-12" class="i">+                    term: 3,
+</a>                     event: Event::ClientResponse { id: vec![0x01], response: Err(Error::Abort) },
+                 },
+                 Message {
+<b>diff --git a/<a id="h4" href="../file/src/raft/node/leader.rs.html">src/raft/node/leader.rs</a> b/<a href="../file/src/raft/node/leader.rs.html">src/raft/node/leader.rs</a></b>
+<a href="#h4-0" id="h4-0" class="h">@@ -263,7 +263,6 @@ mod tests {
+</a>             log,
+             node_tx,
+             state_tx,
+<a href="#h4-0-3" id="h4-0-3" class="d">-            proxied_reqs: HashMap::new(),
+</a>         };
+         Ok((node, node_rx, state_rx))
+     }
+<b>diff --git a/<a id="h5" href="../file/src/raft/node/mod.rs.html">src/raft/node/mod.rs</a> b/<a href="../file/src/raft/node/mod.rs.html">src/raft/node/mod.rs</a></b>
+<a href="#h5-0" id="h5-0" class="h">@@ -70,7 +70,6 @@ impl Node {
+</a>             log,
+             node_tx,
+             state_tx,
+<a href="#h5-0-3" id="h5-0-3" class="d">-            proxied_reqs: HashMap::new(),
+</a>             role: Follower::new(None, voted_for),
+         };
+         if node.peers.is_empty() {
+<a href="#h5-1" id="h5-1" class="h">@@ -137,8 +136,6 @@ pub struct RoleNode&lt;R&gt; {
+</a>     log: Log,
+     node_tx: mpsc::UnboundedSender&lt;Message&gt;,
+     state_tx: mpsc::UnboundedSender&lt;Instruction&gt;,
+<a href="#h5-1-3" id="h5-1-3" class="d">-    /// Keeps track of proxied client requests, to abort on new leader election.
+</a><a href="#h5-1-4" id="h5-1-4" class="d">-    proxied_reqs: HashMap&lt;Vec&lt;u8&gt;, Address&gt;,
+</a>     role: R,
+ }
+ 
+<a href="#h5-2" id="h5-2" class="h">@@ -152,19 +149,10 @@ impl&lt;R&gt; RoleNode&lt;R&gt; {
+</a>             log: self.log,
+             node_tx: self.node_tx,
+             state_tx: self.state_tx,
+<a href="#h5-2-3" id="h5-2-3" class="d">-            proxied_reqs: self.proxied_reqs,
+</a>             role,
+         }
+     }
+ 
+<a href="#h5-2-8" id="h5-2-8" class="d">-    /// Aborts any proxied requests.
+</a><a href="#h5-2-9" id="h5-2-9" class="d">-    fn abort_proxied(&amp;mut self) -&gt; Result&lt;()&gt; {
+</a><a href="#h5-2-10" id="h5-2-10" class="d">-        for (id, address) in std::mem::take(&amp;mut self.proxied_reqs) {
+</a><a href="#h5-2-11" id="h5-2-11" class="d">-            self.send(address, Event::ClientResponse { id, response: Err(Error::Abort) })?;
+</a><a href="#h5-2-12" id="h5-2-12" class="d">-        }
+</a><a href="#h5-2-13" id="h5-2-13" class="d">-        Ok(())
+</a><a href="#h5-2-14" id="h5-2-14" class="d">-    }
+</a><a href="#h5-2-15" id="h5-2-15" class="d">-
+</a>     /// Returns the quorum size of the cluster.
+     fn quorum(&amp;self) -&gt; u64 {
+         (self.peers.len() as u64 + 1) / 2 + 1
+<a href="#h5-3" id="h5-3" class="h">@@ -219,11 +207,12 @@ impl&lt;R&gt; RoleNode&lt;R&gt; {
+</a> #[cfg(test)]
+ mod tests {
+     pub use super::super::state::tests::TestState;
+<a href="#h5-3-3" id="h5-3-3" class="d">-    use super::super::Entry;
+</a><a href="#h5-3-4" id="h5-3-4" class="i">+    use super::super::{Entry, RequestID};
+</a>     use super::follower::tests::{follower_leader, follower_voted_for};
+     use super::*;
+     use crate::storage;
+     use pretty_assertions::assert_eq;
+<a href="#h5-3-9" id="h5-3-9" class="i">+    use std::collections::HashSet;
+</a>     use tokio::sync::mpsc;
+ 
+     pub fn assert_messages&lt;T: std::fmt::Debug + PartialEq&gt;(
+<a href="#h5-4" id="h5-4" class="h">@@ -315,13 +304,13 @@ mod tests {
+</a>             self
+         }
+ 
+<a href="#h5-4-3" id="h5-4-3" class="d">-        pub fn proxied(self, proxied: Vec&lt;(Vec&lt;u8&gt;, Address)&gt;) -&gt; Self {
+</a><a href="#h5-4-4" id="h5-4-4" class="i">+        pub fn forwarded(self, forwarded: Vec&lt;RequestID&gt;) -&gt; Self {
+</a>             assert_eq!(
+<a href="#h5-4-6" id="h5-4-6" class="d">-                &amp;proxied.into_iter().collect::&lt;HashMap&lt;Vec&lt;u8&gt;, Address&gt;&gt;(),
+</a><a href="#h5-4-7" id="h5-4-7" class="i">+                forwarded.into_iter().collect::&lt;HashSet&lt;RequestID&gt;&gt;(),
+</a>                 match self.node {
+<a href="#h5-4-9" id="h5-4-9" class="d">-                    Node::Candidate(n) =&gt; &amp;n.proxied_reqs,
+</a><a href="#h5-4-10" id="h5-4-10" class="d">-                    Node::Follower(n) =&gt; &amp;n.proxied_reqs,
+</a><a href="#h5-4-11" id="h5-4-11" class="d">-                    Node::Leader(n) =&gt; &amp;n.proxied_reqs,
+</a><a href="#h5-4-12" id="h5-4-12" class="i">+                    Node::Candidate(_) =&gt; HashSet::new(),
+</a><a href="#h5-4-13" id="h5-4-13" class="i">+                    Node::Follower(n) =&gt; n.role.forwarded.clone(),
+</a><a href="#h5-4-14" id="h5-4-14" class="i">+                    Node::Leader(_) =&gt; HashSet::new(),
+</a>                 }
+             );
+             self
+<a href="#h5-5" id="h5-5" class="h">@@ -388,7 +377,6 @@ mod tests {
+</a>             log: Log::new(Box::new(storage::engine::Memory::new()), false)?,
+             node_tx,
+             state_tx,
+<a href="#h5-5-3" id="h5-5-3" class="d">-            proxied_reqs: HashMap::new(),
+</a>         };
+         Ok((node, node_rx))
+     }
+</pre>
+</div>
+</body>
+</html>

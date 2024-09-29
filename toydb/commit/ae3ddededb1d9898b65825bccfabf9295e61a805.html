@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>storage: remove reverse MVCC scans - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/ae3ddededb1d9898b65825bccfabf9295e61a805.html">ae3ddededb1d9898b65825bccfabf9295e61a805</a>
+<b>parent</b> <a href="../commit/983455cdefd497b37dccab6bbb48ae2d21b75446.html">983455cdefd497b37dccab6bbb48ae2d21b75446</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Tue, 25 Jun 2024 20:52:40 +0200
+
+storage: remove reverse MVCC scans
+
+These aren&#39;t used by the SQL layer.
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/storage/mvcc.rs</a></td><td> | </td><td class="num">68</td><td><span class="i">+++++++</span><span class="d">-------------------------------------------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/storage/testscripts/mvcc/scan</a></td><td> | </td><td class="num">15</td><td><span class="i"></span><span class="d">---------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/storage/testscripts/mvcc/scan_prefix</a></td><td> | </td><td class="num">16</td><td><span class="i"></span><span class="d">----------------</span></td></tr>
+</table></pre><pre>3 files changed, 7 insertions(+), 92 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/storage/mvcc.rs.html">src/storage/mvcc.rs</a> b/<a href="../file/src/storage/mvcc.rs.html">src/storage/mvcc.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -657,20 +657,17 @@ impl&lt;&#39;a, E: Engine + &#39;a&gt; Scan&lt;&#39;a, E&gt; {
+</a> }
+ 
+ /// An iterator over the latest live and visible key/value pairs at the txn
+<a href="#h0-0-3" id="h0-0-3" class="d">-/// version.
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+/// version. Does not implement DoubleEndedIterator (reverse scans), since the
+</a><a href="#h0-0-5" id="h0-0-5" class="i">+/// SQL layer doesn&#39;t use it.
+</a> pub struct ScanIterator&lt;&#39;a, E: Engine + &#39;a&gt; {
+     /// Decodes and filters visible MVCC versions from the inner engine iterator.
+     inner: std::iter::Peekable&lt;VersionIterator&lt;&#39;a, E&gt;&gt;,
+<a href="#h0-0-9" id="h0-0-9" class="d">-    /// The previous key emitted by try_next_back(). Note that try_next() does
+</a><a href="#h0-0-10" id="h0-0-10" class="d">-    /// not affect reverse positioning: double-ended iterators consume from each
+</a><a href="#h0-0-11" id="h0-0-11" class="d">-    /// end independently.
+</a><a href="#h0-0-12" id="h0-0-12" class="d">-    last_back: Option&lt;Vec&lt;u8&gt;&gt;,
+</a> }
+ 
+ impl&lt;&#39;a, E: Engine + &#39;a&gt; ScanIterator&lt;&#39;a, E&gt; {
+     /// Creates a new scan iterator.
+     fn new(txn: &amp;&#39;a TransactionState, inner: E::ScanIterator&lt;&#39;a&gt;) -&gt; Self {
+<a href="#h0-0-18" id="h0-0-18" class="d">-        Self { inner: VersionIterator::new(txn, inner).peekable(), last_back: None }
+</a><a href="#h0-0-19" id="h0-0-19" class="i">+        Self { inner: VersionIterator::new(txn, inner).peekable() }
+</a>     }
+ 
+     /// Fallible next(), emitting the next item, or None if exhausted.
+<a href="#h0-1" id="h0-1" class="h">@@ -689,27 +686,6 @@ impl&lt;&#39;a, E: Engine + &#39;a&gt; ScanIterator&lt;&#39;a, E&gt; {
+</a>         }
+         Ok(None)
+     }
+<a href="#h0-1-3" id="h0-1-3" class="d">-
+</a><a href="#h0-1-4" id="h0-1-4" class="d">-    /// Fallible next_back(), emitting the next item from the back, or None if
+</a><a href="#h0-1-5" id="h0-1-5" class="d">-    /// exhausted.
+</a><a href="#h0-1-6" id="h0-1-6" class="d">-    fn try_next_back(&amp;mut self) -&gt; Result&lt;Option&lt;(Vec&lt;u8&gt;, Vec&lt;u8&gt;)&gt;&gt; {
+</a><a href="#h0-1-7" id="h0-1-7" class="d">-        while let Some((key, _version, value)) = self.inner.next_back().transpose()? {
+</a><a href="#h0-1-8" id="h0-1-8" class="d">-            // If this key is the same as the last emitted key from the back,
+</a><a href="#h0-1-9" id="h0-1-9" class="d">-            // this must be an older version, so skip it.
+</a><a href="#h0-1-10" id="h0-1-10" class="d">-            if let Some(last) = &amp;self.last_back {
+</a><a href="#h0-1-11" id="h0-1-11" class="d">-                if last == &amp;key {
+</a><a href="#h0-1-12" id="h0-1-12" class="d">-                    continue;
+</a><a href="#h0-1-13" id="h0-1-13" class="d">-                }
+</a><a href="#h0-1-14" id="h0-1-14" class="d">-            }
+</a><a href="#h0-1-15" id="h0-1-15" class="d">-            self.last_back = Some(key.clone());
+</a><a href="#h0-1-16" id="h0-1-16" class="d">-
+</a><a href="#h0-1-17" id="h0-1-17" class="d">-            // If the key is live (not a tombstone), emit it.
+</a><a href="#h0-1-18" id="h0-1-18" class="d">-            if let Some(value) = bincode::deserialize(&amp;value)? {
+</a><a href="#h0-1-19" id="h0-1-19" class="d">-                return Ok(Some((key, value)));
+</a><a href="#h0-1-20" id="h0-1-20" class="d">-            }
+</a><a href="#h0-1-21" id="h0-1-21" class="d">-        }
+</a><a href="#h0-1-22" id="h0-1-22" class="d">-        Ok(None)
+</a><a href="#h0-1-23" id="h0-1-23" class="d">-    }
+</a> }
+ 
+ impl&lt;&#39;a, E: Engine&gt; Iterator for ScanIterator&lt;&#39;a, E&gt; {
+<a href="#h0-2" id="h0-2" class="h">@@ -719,12 +695,6 @@ impl&lt;&#39;a, E: Engine&gt; Iterator for ScanIterator&lt;&#39;a, E&gt; {
+</a>     }
+ }
+ 
+<a href="#h0-2-3" id="h0-2-3" class="d">-impl&lt;&#39;a, E: Engine&gt; DoubleEndedIterator for ScanIterator&lt;&#39;a, E&gt; {
+</a><a href="#h0-2-4" id="h0-2-4" class="d">-    fn next_back(&amp;mut self) -&gt; Option&lt;Self::Item&gt; {
+</a><a href="#h0-2-5" id="h0-2-5" class="d">-        self.try_next_back().transpose()
+</a><a href="#h0-2-6" id="h0-2-6" class="d">-    }
+</a><a href="#h0-2-7" id="h0-2-7" class="d">-}
+</a><a href="#h0-2-8" id="h0-2-8" class="d">-
+</a> /// An iterator that decodes raw engine key/value pairs into MVCC key/value
+ /// versions, and skips invisible versions. Helper for ScanIterator.
+ struct VersionIterator&lt;&#39;a, E: Engine + &#39;a&gt; {
+<a href="#h0-3" id="h0-3" class="h">@@ -764,16 +734,6 @@ impl&lt;&#39;a, E: Engine + &#39;a&gt; VersionIterator&lt;&#39;a, E&gt; {
+</a>         }
+         Ok(None)
+     }
+<a href="#h0-3-3" id="h0-3-3" class="d">-
+</a><a href="#h0-3-4" id="h0-3-4" class="d">-    // Fallible next_back(), emitting the previous item, or None if exhausted.
+</a><a href="#h0-3-5" id="h0-3-5" class="d">-    fn try_next_back(&amp;mut self) -&gt; Result&lt;Option&lt;(Vec&lt;u8&gt;, Version, Vec&lt;u8&gt;)&gt;&gt; {
+</a><a href="#h0-3-6" id="h0-3-6" class="d">-        while let Some((key, value)) = self.inner.next_back().transpose()? {
+</a><a href="#h0-3-7" id="h0-3-7" class="d">-            if let Some((key, version)) = self.decode_visible(&amp;key)? {
+</a><a href="#h0-3-8" id="h0-3-8" class="d">-                return Ok(Some((key, version, value)));
+</a><a href="#h0-3-9" id="h0-3-9" class="d">-            }
+</a><a href="#h0-3-10" id="h0-3-10" class="d">-        }
+</a><a href="#h0-3-11" id="h0-3-11" class="d">-        Ok(None)
+</a><a href="#h0-3-12" id="h0-3-12" class="d">-    }
+</a> }
+ 
+ impl&lt;&#39;a, E: Engine&gt; Iterator for VersionIterator&lt;&#39;a, E&gt; {
+<a href="#h0-4" id="h0-4" class="h">@@ -783,12 +743,6 @@ impl&lt;&#39;a, E: Engine&gt; Iterator for VersionIterator&lt;&#39;a, E&gt; {
+</a>     }
+ }
+ 
+<a href="#h0-4-3" id="h0-4-3" class="d">-impl&lt;&#39;a, E: Engine&gt; DoubleEndedIterator for VersionIterator&lt;&#39;a, E&gt; {
+</a><a href="#h0-4-4" id="h0-4-4" class="d">-    fn next_back(&amp;mut self) -&gt; Option&lt;Self::Item&gt; {
+</a><a href="#h0-4-5" id="h0-4-5" class="d">-        self.try_next_back().transpose()
+</a><a href="#h0-4-6" id="h0-4-6" class="d">-    }
+</a><a href="#h0-4-7" id="h0-4-7" class="d">-}
+</a><a href="#h0-4-8" id="h0-4-8" class="d">-
+</a> #[cfg(test)]
+ pub mod tests {
+     use super::super::engine::test::{Emit, Mirror, Operation};
+<a href="#h0-5" id="h0-5" class="h">@@ -964,40 +918,32 @@ pub mod tests {
+</a>                     txn.rollback()?;
+                 }
+ 
+<a href="#h0-5-3" id="h0-5-3" class="d">-                // txn: scan [reverse=BOOL] [RANGE]
+</a><a href="#h0-5-4" id="h0-5-4" class="i">+                // txn: scan [RANGE]
+</a>                 &quot;scan&quot; =&gt; {
+                     let txn = self.get_txn(&amp;command.prefix)?;
+                     let mut args = command.consume_args();
+<a href="#h0-5-8" id="h0-5-8" class="d">-                    let reverse = args.lookup_parse(&quot;reverse&quot;)?.unwrap_or(false);
+</a>                     let range = Self::parse_key_range(
+                         args.next_pos().map(|a| a.value.as_str()).unwrap_or(&quot;..&quot;),
+                     )?;
+                     args.reject_rest()?;
+ 
+                     let mut scan = txn.scan(range);
+<a href="#h0-5-15" id="h0-5-15" class="d">-                    let kvs: Vec&lt;_&gt; = match reverse {
+</a><a href="#h0-5-16" id="h0-5-16" class="d">-                        false =&gt; scan.iter().collect::&lt;crate::error::Result&lt;_&gt;&gt;()?,
+</a><a href="#h0-5-17" id="h0-5-17" class="d">-                        true =&gt; scan.iter().rev().collect::&lt;crate::error::Result&lt;_&gt;&gt;()?,
+</a><a href="#h0-5-18" id="h0-5-18" class="d">-                    };
+</a><a href="#h0-5-19" id="h0-5-19" class="i">+                    let kvs: Vec&lt;_&gt; = scan.iter().collect::&lt;crate::error::Result&lt;_&gt;&gt;()?;
+</a>                     for (key, value) in kvs {
+                         writeln!(output, &quot;{}&quot;, Self::format_key_value(&amp;key, Some(&amp;value)))?;
+                     }
+                 }
+ 
+<a href="#h0-5-25" id="h0-5-25" class="d">-                // txn: scan_prefix [reverse=BOOL] PREFIX
+</a><a href="#h0-5-26" id="h0-5-26" class="i">+                // txn: scan_prefix PREFIX
+</a>                 &quot;scan_prefix&quot; =&gt; {
+                     let txn = self.get_txn(&amp;command.prefix)?;
+                     let mut args = command.consume_args();
+                     let prefix =
+                         Self::decode_binary(&amp;args.next_pos().ok_or(&quot;prefix not given&quot;)?.value);
+<a href="#h0-5-32" id="h0-5-32" class="d">-                    let reverse = args.lookup_parse(&quot;reverse&quot;)?.unwrap_or(false);
+</a>                     args.reject_rest()?;
+ 
+                     let mut scan = txn.scan_prefix(&amp;prefix);
+<a href="#h0-5-36" id="h0-5-36" class="d">-                    let kvs: Vec&lt;_&gt; = match reverse {
+</a><a href="#h0-5-37" id="h0-5-37" class="d">-                        false =&gt; scan.iter().collect::&lt;crate::error::Result&lt;_&gt;&gt;()?,
+</a><a href="#h0-5-38" id="h0-5-38" class="d">-                        true =&gt; scan.iter().rev().collect::&lt;crate::error::Result&lt;_&gt;&gt;()?,
+</a><a href="#h0-5-39" id="h0-5-39" class="d">-                    };
+</a><a href="#h0-5-40" id="h0-5-40" class="i">+                    let kvs: Vec&lt;_&gt; = scan.iter().collect::&lt;crate::error::Result&lt;_&gt;&gt;()?;
+</a>                     for (key, value) in kvs {
+                         writeln!(output, &quot;{}&quot;, Self::format_key_value(&amp;key, Some(&amp;value)))?;
+                     }
+<b>diff --git a/<a id="h1" href="../file/src/storage/testscripts/mvcc/scan.html">src/storage/testscripts/mvcc/scan</a> b/<a href="../file/src/storage/testscripts/mvcc/scan.html">src/storage/testscripts/mvcc/scan</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -53,15 +53,6 @@ t5: ba → ba4
+</a> t5: bc → bc2
+ t5: c → c1
+ 
+<a href="#h1-0-3" id="h1-0-3" class="d">-# Full reverse scan at version 3.
+</a><a href="#h1-0-4" id="h1-0-4" class="d">-t3: scan reverse=true
+</a><a href="#h1-0-5" id="h1-0-5" class="d">----
+</a><a href="#h1-0-6" id="h1-0-6" class="d">-t3: c → c1
+</a><a href="#h1-0-7" id="h1-0-7" class="d">-t3: bc → bc2
+</a><a href="#h1-0-8" id="h1-0-8" class="d">-t3: bb → bb2
+</a><a href="#h1-0-9" id="h1-0-9" class="d">-t3: ba → ba2
+</a><a href="#h1-0-10" id="h1-0-10" class="d">-t3: B → B1
+</a><a href="#h1-0-11" id="h1-0-11" class="d">-
+</a> # Various bounded scans around ba-bc at version 3.
+ t3: scan ba..bc
+ ---
+<a href="#h1-1" id="h1-1" class="h">@@ -74,12 +65,6 @@ t3: ba → ba2
+</a> t3: bb → bb2
+ t3: bc → bc2
+ 
+<a href="#h1-1-3" id="h1-1-3" class="d">-t3: scan &quot;ba..=bc&quot; reverse=true
+</a><a href="#h1-1-4" id="h1-1-4" class="d">----
+</a><a href="#h1-1-5" id="h1-1-5" class="d">-t3: bc → bc2
+</a><a href="#h1-1-6" id="h1-1-6" class="d">-t3: bb → bb2
+</a><a href="#h1-1-7" id="h1-1-7" class="d">-t3: ba → ba2
+</a><a href="#h1-1-8" id="h1-1-8" class="d">-
+</a> t3: scan ba..
+ ---
+ t3: ba → ba2
+<b>diff --git a/<a id="h2" href="../file/src/storage/testscripts/mvcc/scan_prefix.html">src/storage/testscripts/mvcc/scan_prefix</a> b/<a href="../file/src/storage/testscripts/mvcc/scan_prefix.html">src/storage/testscripts/mvcc/scan_prefix</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -53,15 +53,6 @@ t5: ba → ba4
+</a> t5: bc → bc2
+ t5: c → c1
+ 
+<a href="#h2-0-3" id="h2-0-3" class="d">-# Full reverse scan at version 3.
+</a><a href="#h2-0-4" id="h2-0-4" class="d">-t3: scan_prefix reverse=true &quot;&quot;
+</a><a href="#h2-0-5" id="h2-0-5" class="d">----
+</a><a href="#h2-0-6" id="h2-0-6" class="d">-t3: c → c1
+</a><a href="#h2-0-7" id="h2-0-7" class="d">-t3: bc → bc2
+</a><a href="#h2-0-8" id="h2-0-8" class="d">-t3: bb → bb2
+</a><a href="#h2-0-9" id="h2-0-9" class="d">-t3: ba → ba2
+</a><a href="#h2-0-10" id="h2-0-10" class="d">-t3: B → B1
+</a><a href="#h2-0-11" id="h2-0-11" class="d">-
+</a> # Various prefixes at version 3.
+ t3: scan_prefix B
+ ---
+<a href="#h2-1" id="h2-1" class="h">@@ -95,10 +86,3 @@ t4: bc → bc2
+</a> t4: scan_prefix bb
+ ---
+ ok
+<a href="#h2-1-3" id="h2-1-3" class="d">-
+</a><a href="#h2-1-4" id="h2-1-4" class="d">-# Reverse prefix scan at version 4.
+</a><a href="#h2-1-5" id="h2-1-5" class="d">-t4: scan_prefix reverse=true b
+</a><a href="#h2-1-6" id="h2-1-6" class="d">----
+</a><a href="#h2-1-7" id="h2-1-7" class="d">-t4: bc → bc2
+</a><a href="#h2-1-8" id="h2-1-8" class="d">-t4: ba → ba2
+</a><a href="#h2-1-9" id="h2-1-9" class="d">-t4: b → b3
+</a></pre>
+</div>
+</body>
+</html>

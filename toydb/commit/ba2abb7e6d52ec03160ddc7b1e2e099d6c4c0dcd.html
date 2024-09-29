@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>sql: take shared borrows in SQL transactions - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/ba2abb7e6d52ec03160ddc7b1e2e099d6c4c0dcd.html">ba2abb7e6d52ec03160ddc7b1e2e099d6c4c0dcd</a>
+<b>parent</b> <a href="../commit/74e157f301931aaba8ab534cd552f37533abd376.html">74e157f301931aaba8ab534cd552f37533abd376</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Mon, 17 Jun 2024 19:20:22 +0200
+
+sql: take shared borrows in SQL transactions
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/sql/engine/engine.rs</a></td><td> | </td><td class="num">14</td><td><span class="i">++++++++</span><span class="d">------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/sql/engine/local.rs</a></td><td> | </td><td class="num">12</td><td><span class="i">++++++</span><span class="d">------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/sql/engine/raft.rs</a></td><td> | </td><td class="num">10</td><td><span class="i">+++++</span><span class="d">-----</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">src/sql/types/schema.rs</a></td><td> | </td><td class="num">8</td><td><span class="i">++++</span><span class="d">----</span></td></tr>
+</table></pre><pre>4 files changed, 23 insertions(+), 21 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/sql/engine/engine.rs.html">src/sql/engine/engine.rs</a> b/<a href="../file/src/sql/engine/engine.rs.html">src/sql/engine/engine.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -48,12 +48,14 @@ pub trait Transaction: Catalog {
+</a>     /// Rolls back the transaction.
+     fn rollback(self) -&gt; Result&lt;()&gt;;
+ 
+<a href="#h0-0-3" id="h0-0-3" class="d">-    /// Deletes a table row by primary key.
+</a><a href="#h0-0-4" id="h0-0-4" class="d">-    fn delete(&amp;mut self, table: &amp;str, id: &amp;Value) -&gt; Result&lt;()&gt;;
+</a><a href="#h0-0-5" id="h0-0-5" class="i">+    /// TOOD: consider operating on batches of IDs/rows.
+</a><a href="#h0-0-6" id="h0-0-6" class="i">+
+</a><a href="#h0-0-7" id="h0-0-7" class="i">+    /// Deletes a set of table row by primary key.
+</a><a href="#h0-0-8" id="h0-0-8" class="i">+    fn delete(&amp;self, table: &amp;str, id: &amp;Value) -&gt; Result&lt;()&gt;;
+</a>     /// Fetches a table row by primary key.
+     fn get(&amp;self, table: &amp;str, id: &amp;Value) -&gt; Result&lt;Option&lt;Row&gt;&gt;;
+     /// Inserts a new table row.
+<a href="#h0-0-12" id="h0-0-12" class="d">-    fn insert(&amp;mut self, table: &amp;str, row: Row) -&gt; Result&lt;()&gt;;
+</a><a href="#h0-0-13" id="h0-0-13" class="i">+    fn insert(&amp;self, table: &amp;str, row: Row) -&gt; Result&lt;()&gt;;
+</a>     /// Looks up a set of table primary keys by an index value.
+     /// TODO: should this just return a Vec instead?
+     fn lookup_index(&amp;self, table: &amp;str, column: &amp;str, value: &amp;Value) -&gt; Result&lt;HashSet&lt;Value&gt;&gt;;
+<a href="#h0-1" id="h0-1" class="h">@@ -63,7 +65,7 @@ pub trait Transaction: Catalog {
+</a>     /// TODO: this is only used for tests. Remove it?
+     fn scan_index(&amp;self, table: &amp;str, column: &amp;str) -&gt; Result&lt;IndexScan&gt;;
+     /// Updates a table row by primary key.
+<a href="#h0-1-3" id="h0-1-3" class="d">-    fn update(&amp;mut self, table: &amp;str, id: &amp;Value, row: Row) -&gt; Result&lt;()&gt;;
+</a><a href="#h0-1-4" id="h0-1-4" class="i">+    fn update(&amp;self, table: &amp;str, id: &amp;Value, row: Row) -&gt; Result&lt;()&gt;;
+</a> }
+ 
+ /// An index scan iterator.
+<a href="#h0-2" id="h0-2" class="h">@@ -72,12 +74,12 @@ pub type IndexScan = Box&lt;dyn Iterator&lt;Item = Result&lt;(Value, HashSet&lt;Value&gt;)&gt;&gt;&gt;;
+</a> /// The catalog stores schema information
+ pub trait Catalog {
+     /// Creates a new table.
+<a href="#h0-2-3" id="h0-2-3" class="d">-    fn create_table(&amp;mut self, table: Table) -&gt; Result&lt;()&gt;;
+</a><a href="#h0-2-4" id="h0-2-4" class="i">+    fn create_table(&amp;self, table: Table) -&gt; Result&lt;()&gt;;
+</a>     /// Drops a table. Errors if it does not exist.
+     ///
+     /// TODO: consider taking an if_exists parameter, but that will incur a Raft
+     /// roundtrip.
+<a href="#h0-2-9" id="h0-2-9" class="d">-    fn drop_table(&amp;mut self, table: &amp;str) -&gt; Result&lt;()&gt;;
+</a><a href="#h0-2-10" id="h0-2-10" class="i">+    fn drop_table(&amp;self, table: &amp;str) -&gt; Result&lt;()&gt;;
+</a>     /// Fetches a table schema.
+     fn get_table(&amp;self, table: &amp;str) -&gt; Result&lt;Option&lt;Table&gt;&gt;;
+     /// Lists tables.
+<b>diff --git a/<a id="h1" href="../file/src/sql/engine/local.rs.html">src/sql/engine/local.rs</a> b/<a href="../file/src/sql/engine/local.rs.html">src/sql/engine/local.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -93,7 +93,7 @@ impl&lt;E: storage::Engine&gt; Transaction&lt;E&gt; {
+</a> 
+     /// Saves an index entry.
+     fn index_save(
+<a href="#h1-0-3" id="h1-0-3" class="d">-        &amp;mut self,
+</a><a href="#h1-0-4" id="h1-0-4" class="i">+        &amp;self,
+</a>         table: &amp;str,
+         column: &amp;str,
+         value: &amp;Value,
+<a href="#h1-1" id="h1-1" class="h">@@ -125,7 +125,7 @@ impl&lt;E: storage::Engine&gt; super::Transaction for Transaction&lt;E&gt; {
+</a>         self.txn.rollback()
+     }
+ 
+<a href="#h1-1-3" id="h1-1-3" class="d">-    fn insert(&amp;mut self, table: &amp;str, row: Row) -&gt; Result&lt;()&gt; {
+</a><a href="#h1-1-4" id="h1-1-4" class="i">+    fn insert(&amp;self, table: &amp;str, row: Row) -&gt; Result&lt;()&gt; {
+</a>         let table = self.must_get_table(table)?;
+         table.validate_row(&amp;row, self)?;
+         let id = table.get_row_key(&amp;row)?;
+<a href="#h1-2" id="h1-2" class="h">@@ -143,7 +143,7 @@ impl&lt;E: storage::Engine&gt; super::Transaction for Transaction&lt;E&gt; {
+</a>         Ok(())
+     }
+ 
+<a href="#h1-2-3" id="h1-2-3" class="d">-    fn delete(&amp;mut self, table: &amp;str, id: &amp;Value) -&gt; Result&lt;()&gt; {
+</a><a href="#h1-2-4" id="h1-2-4" class="i">+    fn delete(&amp;self, table: &amp;str, id: &amp;Value) -&gt; Result&lt;()&gt; {
+</a>         let table = self.must_get_table(table)?;
+         for (t, cs) in self.references(&amp;table.name, true)? {
+             let t = self.must_get_table(&amp;t)?;
+<a href="#h1-3" id="h1-3" class="h">@@ -240,7 +240,7 @@ impl&lt;E: storage::Engine&gt; super::Transaction for Transaction&lt;E&gt; {
+</a>         ))
+     }
+ 
+<a href="#h1-3-3" id="h1-3-3" class="d">-    fn update(&amp;mut self, table: &amp;str, id: &amp;Value, row: Row) -&gt; Result&lt;()&gt; {
+</a><a href="#h1-3-4" id="h1-3-4" class="i">+    fn update(&amp;self, table: &amp;str, id: &amp;Value, row: Row) -&gt; Result&lt;()&gt; {
+</a>         let table = self.must_get_table(table)?;
+         // If the primary key changes we do a delete and create, otherwise we replace the row
+         if id != &amp;table.get_row_key(&amp;row)? {
+<a href="#h1-4" id="h1-4" class="h">@@ -273,7 +273,7 @@ impl&lt;E: storage::Engine&gt; super::Transaction for Transaction&lt;E&gt; {
+</a> }
+ 
+ impl&lt;E: storage::Engine&gt; Catalog for Transaction&lt;E&gt; {
+<a href="#h1-4-3" id="h1-4-3" class="d">-    fn create_table(&amp;mut self, table: Table) -&gt; Result&lt;()&gt; {
+</a><a href="#h1-4-4" id="h1-4-4" class="i">+    fn create_table(&amp;self, table: Table) -&gt; Result&lt;()&gt; {
+</a>         if self.get_table(&amp;table.name)?.is_some() {
+             return errinput!(&quot;table {} already exists&quot;, table.name);
+         }
+<a href="#h1-5" id="h1-5" class="h">@@ -281,7 +281,7 @@ impl&lt;E: storage::Engine&gt; Catalog for Transaction&lt;E&gt; {
+</a>         self.txn.set(&amp;Key::Table((&amp;table.name).into()).encode(), table.encode())
+     }
+ 
+<a href="#h1-5-3" id="h1-5-3" class="d">-    fn drop_table(&amp;mut self, table: &amp;str) -&gt; Result&lt;()&gt; {
+</a><a href="#h1-5-4" id="h1-5-4" class="i">+    fn drop_table(&amp;self, table: &amp;str) -&gt; Result&lt;()&gt; {
+</a>         let table = self.must_get_table(table)?;
+         if let Some((t, cs)) = self.references(&amp;table.name, false)?.first() {
+             return errinput!(&quot;table {} is referenced by table {} column {}&quot;, table.name, t, cs[0]);
+<b>diff --git a/<a id="h2" href="../file/src/sql/engine/raft.rs.html">src/sql/engine/raft.rs</a> b/<a href="../file/src/sql/engine/raft.rs.html">src/sql/engine/raft.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -199,7 +199,7 @@ impl super::Transaction for Transaction {
+</a>         Ok(())
+     }
+ 
+<a href="#h2-0-3" id="h2-0-3" class="d">-    fn insert(&amp;mut self, table: &amp;str, row: Row) -&gt; Result&lt;()&gt; {
+</a><a href="#h2-0-4" id="h2-0-4" class="i">+    fn insert(&amp;self, table: &amp;str, row: Row) -&gt; Result&lt;()&gt; {
+</a>         self.client.mutate(Mutation::Create {
+             txn: self.state.clone(),
+             table: table.to_string(),
+<a href="#h2-1" id="h2-1" class="h">@@ -207,7 +207,7 @@ impl super::Transaction for Transaction {
+</a>         })
+     }
+ 
+<a href="#h2-1-3" id="h2-1-3" class="d">-    fn delete(&amp;mut self, table: &amp;str, id: &amp;Value) -&gt; Result&lt;()&gt; {
+</a><a href="#h2-1-4" id="h2-1-4" class="i">+    fn delete(&amp;self, table: &amp;str, id: &amp;Value) -&gt; Result&lt;()&gt; {
+</a>         self.client.mutate(Mutation::Delete {
+             txn: self.state.clone(),
+             table: table.to_string(),
+<a href="#h2-2" id="h2-2" class="h">@@ -258,7 +258,7 @@ impl super::Transaction for Transaction {
+</a>         ))
+     }
+ 
+<a href="#h2-2-3" id="h2-2-3" class="d">-    fn update(&amp;mut self, table: &amp;str, id: &amp;Value, row: Row) -&gt; Result&lt;()&gt; {
+</a><a href="#h2-2-4" id="h2-2-4" class="i">+    fn update(&amp;self, table: &amp;str, id: &amp;Value, row: Row) -&gt; Result&lt;()&gt; {
+</a>         self.client.mutate(Mutation::Update {
+             txn: self.state.clone(),
+             table: table.to_string(),
+<a href="#h2-3" id="h2-3" class="h">@@ -269,11 +269,11 @@ impl super::Transaction for Transaction {
+</a> }
+ 
+ impl Catalog for Transaction {
+<a href="#h2-3-3" id="h2-3-3" class="d">-    fn create_table(&amp;mut self, table: Table) -&gt; Result&lt;()&gt; {
+</a><a href="#h2-3-4" id="h2-3-4" class="i">+    fn create_table(&amp;self, table: Table) -&gt; Result&lt;()&gt; {
+</a>         self.client.mutate(Mutation::CreateTable { txn: self.state.clone(), schema: table })
+     }
+ 
+<a href="#h2-3-8" id="h2-3-8" class="d">-    fn drop_table(&amp;mut self, table: &amp;str) -&gt; Result&lt;()&gt; {
+</a><a href="#h2-3-9" id="h2-3-9" class="i">+    fn drop_table(&amp;self, table: &amp;str) -&gt; Result&lt;()&gt; {
+</a>         self.client
+             .mutate(Mutation::DeleteTable { txn: self.state.clone(), table: table.to_string() })
+     }
+<b>diff --git a/<a id="h3" href="../file/src/sql/types/schema.rs.html">src/sql/types/schema.rs</a> b/<a href="../file/src/sql/types/schema.rs.html">src/sql/types/schema.rs</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -61,7 +61,7 @@ impl Table {
+</a>     }
+ 
+     /// Validates the table schema
+<a href="#h3-0-3" id="h3-0-3" class="d">-    pub fn validate(&amp;self, txn: &amp;mut dyn Transaction) -&gt; Result&lt;()&gt; {
+</a><a href="#h3-0-4" id="h3-0-4" class="i">+    pub fn validate(&amp;self, txn: &amp;dyn Transaction) -&gt; Result&lt;()&gt; {
+</a>         if self.columns.is_empty() {
+             return errinput!(&quot;table {} has no columns&quot;, self.name);
+         }
+<a href="#h3-1" id="h3-1" class="h">@@ -77,7 +77,7 @@ impl Table {
+</a>     }
+ 
+     /// Validates a row
+<a href="#h3-1-3" id="h3-1-3" class="d">-    pub fn validate_row(&amp;self, row: &amp;[Value], txn: &amp;mut dyn Transaction) -&gt; Result&lt;()&gt; {
+</a><a href="#h3-1-4" id="h3-1-4" class="i">+    pub fn validate_row(&amp;self, row: &amp;[Value], txn: &amp;dyn Transaction) -&gt; Result&lt;()&gt; {
+</a>         if row.len() != self.columns.len() {
+             return errinput!(&quot;invalid row size for table {}&quot;, self.name);
+         }
+<a href="#h3-2" id="h3-2" class="h">@@ -123,7 +123,7 @@ pub struct Column {
+</a> 
+ impl Column {
+     /// Validates the column schema
+<a href="#h3-2-3" id="h3-2-3" class="d">-    pub fn validate(&amp;self, table: &amp;Table, txn: &amp;mut dyn Transaction) -&gt; Result&lt;()&gt; {
+</a><a href="#h3-2-4" id="h3-2-4" class="i">+    pub fn validate(&amp;self, table: &amp;Table, txn: &amp;dyn Transaction) -&gt; Result&lt;()&gt; {
+</a>         // Validate primary key
+         if self.primary_key &amp;&amp; self.nullable {
+             return errinput!(&quot;primary key {} cannot be nullable&quot;, self.name);
+<a href="#h3-3" id="h3-3" class="h">@@ -184,7 +184,7 @@ impl Column {
+</a>         table: &amp;Table,
+         pk: &amp;Value,
+         value: &amp;Value,
+<a href="#h3-3-3" id="h3-3-3" class="d">-        txn: &amp;mut dyn Transaction,
+</a><a href="#h3-3-4" id="h3-3-4" class="i">+        txn: &amp;dyn Transaction,
+</a>     ) -&gt; Result&lt;()&gt; {
+         // Validate datatype
+         match value.datatype() {
+</pre>
+</div>
+</body>
+</html>

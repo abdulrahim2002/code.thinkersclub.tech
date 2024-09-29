@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Update architecture doc with new storage structure. - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/b74ff17f011e6ddd935f9298805db98177d79b29.html">b74ff17f011e6ddd935f9298805db98177d79b29</a>
+<b>parent</b> <a href="../commit/46b000d7468976d08f0b9becb7c52842418f9693.html">46b000d7468976d08f0b9becb7c52842418f9693</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Sun,  3 Sep 2023 08:59:00 +0200
+
+Update architecture doc with new storage structure.
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">docs/architecture.md</a></td><td> | </td><td class="num">40</td><td><span class="i">+++++++++++++++++++++++++++</span><span class="d">-------------</span></td></tr>
+</table></pre><pre>1 file changed, 27 insertions(+), 13 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/docs/architecture.md.html">docs/architecture.md</a> b/<a href="../file/docs/architecture.md.html">docs/architecture.md</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -83,11 +83,24 @@ The SQL storage engine will be discussed separately in the [SQL section](#sql-en
+</a> 
+ A key/value storage engine stores arbitrary key/value pairs as binary byte slices, and implements
+ the
+<a href="#h0-0-3" id="h0-0-3" class="d">-[`storage::kv::Store`](https://github.com/erikgrinaker/toydb/blob/master/src/storage/kv/mod.rs) 
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+[`storage::Engine`](https://github.com/erikgrinaker/toydb/blob/master/src/storage/engine/mod.rs) 
+</a> trait:
+ 
+ ```rust
+<a href="#h0-0-8" id="h0-0-8" class="d">-pub trait Store: Display + Send + Sync {
+</a><a href="#h0-0-9" id="h0-0-9" class="i">+/// A key/value storage engine, where both keys and values are arbitrary byte
+</a><a href="#h0-0-10" id="h0-0-10" class="i">+/// strings between 0 B and 2 GB, stored in lexicographical key order. Writes
+</a><a href="#h0-0-11" id="h0-0-11" class="i">+/// are only guaranteed durable after calling flush().
+</a><a href="#h0-0-12" id="h0-0-12" class="i">+///
+</a><a href="#h0-0-13" id="h0-0-13" class="i">+/// Only supports single-threaded use since all methods (including reads) take a
+</a><a href="#h0-0-14" id="h0-0-14" class="i">+/// mutable reference -- serialized access can&#39;t be avoided anyway, since both
+</a><a href="#h0-0-15" id="h0-0-15" class="i">+/// Raft execution and file access is serial.
+</a><a href="#h0-0-16" id="h0-0-16" class="i">+pub trait Engine: std::fmt::Display + Send + Sync {
+</a><a href="#h0-0-17" id="h0-0-17" class="i">+    /// The iterator returned by scan(). Traits can&#39;t return &quot;impl Trait&quot;, and
+</a><a href="#h0-0-18" id="h0-0-18" class="i">+    /// we don&#39;t want to use trait objects, so the type must be specified.
+</a><a href="#h0-0-19" id="h0-0-19" class="i">+    type ScanIterator&lt;&#39;a&gt;: DoubleEndedIterator&lt;Item = Result&lt;(Vec&lt;u8&gt;, Vec&lt;u8&gt;)&gt;&gt; + &#39;a
+</a><a href="#h0-0-20" id="h0-0-20" class="i">+    where
+</a><a href="#h0-0-21" id="h0-0-21" class="i">+        Self: &#39;a;
+</a><a href="#h0-0-22" id="h0-0-22" class="i">+
+</a>     /// Deletes a key, or does nothing if it does not exist.
+     fn delete(&amp;mut self, key: &amp;[u8]) -&gt; Result&lt;()&gt;;
+ 
+<a href="#h0-1" id="h0-1" class="h">@@ -95,10 +108,10 @@ pub trait Store: Display + Send + Sync {
+</a>     fn flush(&amp;mut self) -&gt; Result&lt;()&gt;;
+ 
+     /// Gets a value for a key, if it exists.
+<a href="#h0-1-3" id="h0-1-3" class="d">-    fn get(&amp;self, key: &amp;[u8]) -&gt; Result&lt;Option&lt;Vec&lt;u8&gt;&gt;&gt;;
+</a><a href="#h0-1-4" id="h0-1-4" class="i">+    fn get(&amp;mut self, key: &amp;[u8]) -&gt; Result&lt;Option&lt;Vec&lt;u8&gt;&gt;&gt;;
+</a> 
+     /// Iterates over an ordered range of key/value pairs.
+<a href="#h0-1-7" id="h0-1-7" class="d">-    fn scan(&amp;self, range: Range) -&gt; Scan;
+</a><a href="#h0-1-8" id="h0-1-8" class="i">+    fn scan&lt;R: std::ops::RangeBounds&lt;Vec&lt;u8&gt;&gt;&gt;(&amp;mut self, range: R) -&gt; Self::ScanIterator&lt;&#39;_&gt;;
+</a> 
+     /// Sets a value for a key, replacing the existing value if any.
+     fn set(&amp;mut self, key: &amp;[u8], value: Vec&lt;u8&gt;) -&gt; Result&lt;()&gt;;
+<a href="#h0-2" id="h0-2" class="h">@@ -129,12 +142,13 @@ encoding:
+</a> * `sql::Value`: As above, with type prefix `0x00`=`Null`, `0x01`=`Boolean`, `0x02`=`Float`,
+   `0x03`=`Integer`, `0x04`=`String`
+ 
+<a href="#h0-2-3" id="h0-2-3" class="d">-The default key/value store is a simple variant of
+</a><a href="#h0-2-4" id="h0-2-4" class="d">-[`storage::kv::BitCask`](https://github.com/erikgrinaker/toydb/blob/master/src/storage/kv/bitcask.rs),
+</a><a href="#h0-2-5" id="h0-2-5" class="d">-an append-only log-structured storage engine. All writes are appended to a log
+</a><a href="#h0-2-6" id="h0-2-6" class="d">-file, with an index mapping live keys to file positions maintained in memory.
+</a><a href="#h0-2-7" id="h0-2-7" class="d">-When the amount of garbage (replaced or deleted keys) in the file exceeds 20%, a
+</a><a href="#h0-2-8" id="h0-2-8" class="d">-new log file is written containing only live keys, replacing the old log file.
+</a><a href="#h0-2-9" id="h0-2-9" class="i">+The default key/value engine is
+</a><a href="#h0-2-10" id="h0-2-10" class="i">+[`storage::engine::BitCask`](https://github.com/erikgrinaker/toydb/blob/master/src/storage/kv/bitcask.rs),
+</a><a href="#h0-2-11" id="h0-2-11" class="i">+a very simple variant of Bitcask, an append-only log-structured storage engine.
+</a><a href="#h0-2-12" id="h0-2-12" class="i">+All writes are appended to a log file, with an index mapping live keys to file
+</a><a href="#h0-2-13" id="h0-2-13" class="i">+positions maintained in memory.  When the amount of garbage (replaced or deleted
+</a><a href="#h0-2-14" id="h0-2-14" class="i">+keys) in the file exceeds 20%, a new log file is written containing only live
+</a><a href="#h0-2-15" id="h0-2-15" class="i">+keys, replacing the old log file.
+</a> 
+ #### Key/Value Tradeoffs
+ 
+<a href="#h0-3" id="h0-3" class="h">@@ -156,9 +170,9 @@ is a relatively simple concurrency control mechanism that provides
+</a> [snapshot isolation](https://en.wikipedia.org/wiki/Snapshot_isolation) without taking out locks or 
+ having writes block reads. It also versions all data, allowing querying of historical data.
+ 
+<a href="#h0-3-3" id="h0-3-3" class="d">-toyDB implements MVCC at the key/value layer as
+</a><a href="#h0-3-4" id="h0-3-4" class="d">-[`storage::kv::MVCC`](https://github.com/erikgrinaker/toydb/blob/master/src/storage/kv/mvcc.rs),
+</a><a href="#h0-3-5" id="h0-3-5" class="d">-using any `storage::kv::Store` implementation for underlying storage. `begin` returns a new
+</a><a href="#h0-3-6" id="h0-3-6" class="i">+toyDB implements MVCC at the storage layer as
+</a><a href="#h0-3-7" id="h0-3-7" class="i">+[`storage::mvcc::MVCC`](https://github.com/erikgrinaker/toydb/blob/master/src/storage/mvcc.rs),
+</a><a href="#h0-3-8" id="h0-3-8" class="i">+using any `storage::Engine` implementation for underlying storage. `begin` returns a new
+</a> transaction, which provides the usual key/value operations such as `get`, `set`, and `scan`.
+ Additionally, it has a `commit` method which persists the changes and makes them visible to
+ other transactions, and a `rollback` method which discards them.
+</pre>
+</div>
+</body>
+</html>

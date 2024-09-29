@@ -1,0 +1,893 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>sql: add conjunctive normal form tests - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/62fac4fe4b14063f7d9d6433850247023c3751a2.html">62fac4fe4b14063f7d9d6433850247023c3751a2</a>
+<b>parent</b> <a href="../commit/6c2f416e6d2a0d7a1f4f324412685c38cd94bf6e.html">6c2f416e6d2a0d7a1f4f324412685c38cd94bf6e</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Fri, 19 Jul 2024 16:30:52 +0200
+
+sql: add conjunctive normal form tests
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/sql/mod.rs</a></td><td> | </td><td class="num">37</td><td><span class="i">+++++++++++++++++++</span><span class="d">------------------</span></td></tr>
+<tr><td class="A">A</td><td><a href="#h1">src/sql/testscripts/expressions/cnf</a></td><td> | </td><td class="num">185</td><td><span class="i">+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/sql/testscripts/expressions/op_compare_greater_equal</a></td><td> | </td><td class="num">235</td><td><span class="i">++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d">---</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">src/sql/testscripts/expressions/op_compare_lesser_equal</a></td><td> | </td><td class="num">235</td><td><span class="i">++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d">---</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h4">src/sql/testscripts/expressions/op_math_add</a></td><td> | </td><td class="num">22</td><td><span class="i">+++++++++++++++++++++</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h5">src/sql/testscripts/expressions/op_math_factorial</a></td><td> | </td><td class="num">18</td><td><span class="i">+++++++++++++++++</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h6">src/sql/testscripts/expressions/op_math_subtract</a></td><td> | </td><td class="num">22</td><td><span class="i">+++++++++++++++++++++</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h7">src/sql/testscripts/optimizer/index_lookup</a></td><td> | </td><td class="num">1</td><td><span class="i"></span><span class="d">-</span></td></tr>
+</table></pre><pre>8 files changed, 715 insertions(+), 40 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/sql/mod.rs.html">src/sql/mod.rs</a> b/<a href="../file/src/sql/mod.rs.html">src/sql/mod.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -9,7 +9,6 @@ mod tests {
+</a>     use crate::encoding::format::{self, Formatter as _};
+     use crate::sql::engine::{Engine, Local, StatementResult};
+     use crate::sql::planner::{Planner, Scope};
+<a href="#h0-0-3" id="h0-0-3" class="d">-    use crate::sql::types::Value;
+</a>     use crate::storage::engine::test::{Emit, Mirror, Operation};
+     use crate::storage::{self, Engine as _};
+     use crossbeam::channel::Receiver;
+<a href="#h0-1" id="h0-1" class="h">@@ -47,7 +46,7 @@ mod tests {
+</a>     }
+ 
+     fn test_goldenscript_expr(path: &amp;std::path::Path) {
+<a href="#h0-1-3" id="h0-1-3" class="d">-        goldenscript::run(&amp;mut ExpressionRunner::new(), path).expect(&quot;goldenscript failed&quot;)
+</a><a href="#h0-1-4" id="h0-1-4" class="i">+        goldenscript::run(&amp;mut ExpressionRunner, path).expect(&quot;goldenscript failed&quot;)
+</a>     }
+ 
+     /// A SQL test runner.
+<a href="#h0-2" id="h0-2" class="h">@@ -201,19 +200,10 @@ mod tests {
+</a> 
+     /// A test runner for expressions specifically. Evaluates expressions to
+     /// values, and can optionally emit the expression tree.
+<a href="#h0-2-3" id="h0-2-3" class="d">-    struct ExpressionRunner {
+</a><a href="#h0-2-4" id="h0-2-4" class="d">-        engine: Local&lt;storage::Memory&gt;,
+</a><a href="#h0-2-5" id="h0-2-5" class="d">-    }
+</a><a href="#h0-2-6" id="h0-2-6" class="i">+    struct ExpressionRunner;
+</a> 
+     type Catalog&lt;&#39;a&gt; = &lt;Local&lt;storage::Memory&gt; as Engine&lt;&#39;a&gt;&gt;::Transaction;
+ 
+<a href="#h0-2-10" id="h0-2-10" class="d">-    impl ExpressionRunner {
+</a><a href="#h0-2-11" id="h0-2-11" class="d">-        fn new() -&gt; Self {
+</a><a href="#h0-2-12" id="h0-2-12" class="d">-            let engine = Local::new(storage::Memory::new());
+</a><a href="#h0-2-13" id="h0-2-13" class="d">-            Self { engine }
+</a><a href="#h0-2-14" id="h0-2-14" class="d">-        }
+</a><a href="#h0-2-15" id="h0-2-15" class="d">-    }
+</a><a href="#h0-2-16" id="h0-2-16" class="d">-
+</a>     impl goldenscript::Runner for ExpressionRunner {
+         fn run(&amp;mut self, command: &amp;goldenscript::Command) -&gt; Result&lt;String, Box&lt;dyn Error&gt;&gt; {
+             // The entire command is the expression to evaluate. There are no args.
+<a href="#h0-3" id="h0-3" class="h">@@ -223,17 +213,28 @@ mod tests {
+</a>             let input = &amp;command.name;
+             let mut tags = command.tags.clone();
+ 
+<a href="#h0-3-3" id="h0-3-3" class="i">+            // Parse and build the expression.
+</a><a href="#h0-3-4" id="h0-3-4" class="i">+            let ast = Parser::new(input).parse_expression()?;
+</a><a href="#h0-3-5" id="h0-3-5" class="i">+            let mut expr = Planner::&lt;Catalog&gt;::build_expression(ast, &amp;Scope::new())?;
+</a><a href="#h0-3-6" id="h0-3-6" class="i">+
+</a><a href="#h0-3-7" id="h0-3-7" class="i">+            // If requested, convert the expression to conjunctive normal form.
+</a><a href="#h0-3-8" id="h0-3-8" class="i">+            if tags.remove(&quot;cnf&quot;) {
+</a><a href="#h0-3-9" id="h0-3-9" class="i">+                expr = expr.into_cnf();
+</a><a href="#h0-3-10" id="h0-3-10" class="i">+                tags.insert(&quot;expr&quot;.to_string()); // imply expr
+</a><a href="#h0-3-11" id="h0-3-11" class="i">+            }
+</a><a href="#h0-3-12" id="h0-3-12" class="i">+
+</a>             // Evaluate the expression.
+             let mut output = String::new();
+<a href="#h0-3-15" id="h0-3-15" class="d">-            let mut session = self.engine.session();
+</a><a href="#h0-3-16" id="h0-3-16" class="d">-            let value: Value = session.execute(&amp;format!(&quot;SELECT {input}&quot;))?.try_into()?;
+</a><a href="#h0-3-17" id="h0-3-17" class="i">+            let value = expr.evaluate(None)?;
+</a>             write!(output, &quot;{value:?}&quot;)?;
+ 
+<a href="#h0-3-20" id="h0-3-20" class="d">-            // If requested, parse and dump the expression.
+</a><a href="#h0-3-21" id="h0-3-21" class="i">+            // If requested, dump the parsed expression.
+</a>             if tags.remove(&quot;expr&quot;) {
+<a href="#h0-3-23" id="h0-3-23" class="d">-                let ast = Parser::new(input).parse_expression()?;
+</a><a href="#h0-3-24" id="h0-3-24" class="d">-                let expr = Planner::&lt;Catalog&gt;::build_expression(ast, &amp;Scope::new())?;
+</a><a href="#h0-3-25" id="h0-3-25" class="d">-                write!(output, &quot; ← {expr:?}&quot;)?;
+</a><a href="#h0-3-26" id="h0-3-26" class="i">+                let mut s = format!(&quot;{expr:?}&quot;);
+</a><a href="#h0-3-27" id="h0-3-27" class="i">+                if s.len() &gt; 80 {
+</a><a href="#h0-3-28" id="h0-3-28" class="i">+                    s = format!(&quot;{expr:#?}&quot;);
+</a><a href="#h0-3-29" id="h0-3-29" class="i">+                }
+</a><a href="#h0-3-30" id="h0-3-30" class="i">+                write!(output, &quot; ← {s}&quot;)?;
+</a>             }
+ 
+             // Reject unknown tags.
+<b>diff --git a/<a id="h1" href="../file/src/sql/testscripts/expressions/cnf.html">src/sql/testscripts/expressions/cnf</a> b/<a href="../file/src/sql/testscripts/expressions/cnf.html">src/sql/testscripts/expressions/cnf</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -0,0 +1,185 @@
+</a><a href="#h1-0-0" id="h1-0-0" class="i">+# Tests conversion of logical expressions into canonical normal form.
+</a><a href="#h1-0-1" id="h1-0-1" class="i">+
+</a><a href="#h1-0-2" id="h1-0-2" class="i">+# Noop for non-boolean expressions.
+</a><a href="#h1-0-3" id="h1-0-3" class="i">+[cnf]&gt; 1 + 2
+</a><a href="#h1-0-4" id="h1-0-4" class="i">+---
+</a><a href="#h1-0-5" id="h1-0-5" class="i">+Integer(3) ← Add(Constant(Integer(1)), Constant(Integer(2)))
+</a><a href="#h1-0-6" id="h1-0-6" class="i">+
+</a><a href="#h1-0-7" id="h1-0-7" class="i">+# Applies De Morgan&#39;s laws.
+</a><a href="#h1-0-8" id="h1-0-8" class="i">+[cnf]&gt; NOT (TRUE AND FALSE)
+</a><a href="#h1-0-9" id="h1-0-9" class="i">+---
+</a><a href="#h1-0-10" id="h1-0-10" class="i">+Boolean(true) ← Or(Not(Constant(Boolean(true))), Not(Constant(Boolean(false))))
+</a><a href="#h1-0-11" id="h1-0-11" class="i">+
+</a><a href="#h1-0-12" id="h1-0-12" class="i">+[cnf]&gt; NOT (TRUE OR FALSE)
+</a><a href="#h1-0-13" id="h1-0-13" class="i">+---
+</a><a href="#h1-0-14" id="h1-0-14" class="i">+Boolean(false) ← And(Not(Constant(Boolean(true))), Not(Constant(Boolean(false))))
+</a><a href="#h1-0-15" id="h1-0-15" class="i">+
+</a><a href="#h1-0-16" id="h1-0-16" class="i">+# NOTs are pushed into the expression.
+</a><a href="#h1-0-17" id="h1-0-17" class="i">+[cnf]&gt; NOT (TRUE AND TRUE AND TRUE OR TRUE)
+</a><a href="#h1-0-18" id="h1-0-18" class="i">+---
+</a><a href="#h1-0-19" id="h1-0-19" class="i">+Boolean(false) ← And(
+</a><a href="#h1-0-20" id="h1-0-20" class="i">+    Or(
+</a><a href="#h1-0-21" id="h1-0-21" class="i">+        Or(
+</a><a href="#h1-0-22" id="h1-0-22" class="i">+            Not(
+</a><a href="#h1-0-23" id="h1-0-23" class="i">+                Constant(
+</a><a href="#h1-0-24" id="h1-0-24" class="i">+                    Boolean(
+</a><a href="#h1-0-25" id="h1-0-25" class="i">+                        true,
+</a><a href="#h1-0-26" id="h1-0-26" class="i">+                    ),
+</a><a href="#h1-0-27" id="h1-0-27" class="i">+                ),
+</a><a href="#h1-0-28" id="h1-0-28" class="i">+            ),
+</a><a href="#h1-0-29" id="h1-0-29" class="i">+            Not(
+</a><a href="#h1-0-30" id="h1-0-30" class="i">+                Constant(
+</a><a href="#h1-0-31" id="h1-0-31" class="i">+                    Boolean(
+</a><a href="#h1-0-32" id="h1-0-32" class="i">+                        true,
+</a><a href="#h1-0-33" id="h1-0-33" class="i">+                    ),
+</a><a href="#h1-0-34" id="h1-0-34" class="i">+                ),
+</a><a href="#h1-0-35" id="h1-0-35" class="i">+            ),
+</a><a href="#h1-0-36" id="h1-0-36" class="i">+        ),
+</a><a href="#h1-0-37" id="h1-0-37" class="i">+        Not(
+</a><a href="#h1-0-38" id="h1-0-38" class="i">+            Constant(
+</a><a href="#h1-0-39" id="h1-0-39" class="i">+                Boolean(
+</a><a href="#h1-0-40" id="h1-0-40" class="i">+                    true,
+</a><a href="#h1-0-41" id="h1-0-41" class="i">+                ),
+</a><a href="#h1-0-42" id="h1-0-42" class="i">+            ),
+</a><a href="#h1-0-43" id="h1-0-43" class="i">+        ),
+</a><a href="#h1-0-44" id="h1-0-44" class="i">+    ),
+</a><a href="#h1-0-45" id="h1-0-45" class="i">+    Not(
+</a><a href="#h1-0-46" id="h1-0-46" class="i">+        Constant(
+</a><a href="#h1-0-47" id="h1-0-47" class="i">+            Boolean(
+</a><a href="#h1-0-48" id="h1-0-48" class="i">+                true,
+</a><a href="#h1-0-49" id="h1-0-49" class="i">+            ),
+</a><a href="#h1-0-50" id="h1-0-50" class="i">+        ),
+</a><a href="#h1-0-51" id="h1-0-51" class="i">+    ),
+</a><a href="#h1-0-52" id="h1-0-52" class="i">+)
+</a><a href="#h1-0-53" id="h1-0-53" class="i">+
+</a><a href="#h1-0-54" id="h1-0-54" class="i">+# ORs are converted to ANDs by the distributive law.
+</a><a href="#h1-0-55" id="h1-0-55" class="i">+[cnf]&gt; (TRUE AND FALSE) OR (FALSE AND TRUE)
+</a><a href="#h1-0-56" id="h1-0-56" class="i">+---
+</a><a href="#h1-0-57" id="h1-0-57" class="i">+Boolean(false) ← And(
+</a><a href="#h1-0-58" id="h1-0-58" class="i">+    And(
+</a><a href="#h1-0-59" id="h1-0-59" class="i">+        Or(
+</a><a href="#h1-0-60" id="h1-0-60" class="i">+            Constant(
+</a><a href="#h1-0-61" id="h1-0-61" class="i">+                Boolean(
+</a><a href="#h1-0-62" id="h1-0-62" class="i">+                    true,
+</a><a href="#h1-0-63" id="h1-0-63" class="i">+                ),
+</a><a href="#h1-0-64" id="h1-0-64" class="i">+            ),
+</a><a href="#h1-0-65" id="h1-0-65" class="i">+            Constant(
+</a><a href="#h1-0-66" id="h1-0-66" class="i">+                Boolean(
+</a><a href="#h1-0-67" id="h1-0-67" class="i">+                    false,
+</a><a href="#h1-0-68" id="h1-0-68" class="i">+                ),
+</a><a href="#h1-0-69" id="h1-0-69" class="i">+            ),
+</a><a href="#h1-0-70" id="h1-0-70" class="i">+        ),
+</a><a href="#h1-0-71" id="h1-0-71" class="i">+        Or(
+</a><a href="#h1-0-72" id="h1-0-72" class="i">+            Constant(
+</a><a href="#h1-0-73" id="h1-0-73" class="i">+                Boolean(
+</a><a href="#h1-0-74" id="h1-0-74" class="i">+                    true,
+</a><a href="#h1-0-75" id="h1-0-75" class="i">+                ),
+</a><a href="#h1-0-76" id="h1-0-76" class="i">+            ),
+</a><a href="#h1-0-77" id="h1-0-77" class="i">+            Constant(
+</a><a href="#h1-0-78" id="h1-0-78" class="i">+                Boolean(
+</a><a href="#h1-0-79" id="h1-0-79" class="i">+                    true,
+</a><a href="#h1-0-80" id="h1-0-80" class="i">+                ),
+</a><a href="#h1-0-81" id="h1-0-81" class="i">+            ),
+</a><a href="#h1-0-82" id="h1-0-82" class="i">+        ),
+</a><a href="#h1-0-83" id="h1-0-83" class="i">+    ),
+</a><a href="#h1-0-84" id="h1-0-84" class="i">+    And(
+</a><a href="#h1-0-85" id="h1-0-85" class="i">+        Or(
+</a><a href="#h1-0-86" id="h1-0-86" class="i">+            Constant(
+</a><a href="#h1-0-87" id="h1-0-87" class="i">+                Boolean(
+</a><a href="#h1-0-88" id="h1-0-88" class="i">+                    false,
+</a><a href="#h1-0-89" id="h1-0-89" class="i">+                ),
+</a><a href="#h1-0-90" id="h1-0-90" class="i">+            ),
+</a><a href="#h1-0-91" id="h1-0-91" class="i">+            Constant(
+</a><a href="#h1-0-92" id="h1-0-92" class="i">+                Boolean(
+</a><a href="#h1-0-93" id="h1-0-93" class="i">+                    false,
+</a><a href="#h1-0-94" id="h1-0-94" class="i">+                ),
+</a><a href="#h1-0-95" id="h1-0-95" class="i">+            ),
+</a><a href="#h1-0-96" id="h1-0-96" class="i">+        ),
+</a><a href="#h1-0-97" id="h1-0-97" class="i">+        Or(
+</a><a href="#h1-0-98" id="h1-0-98" class="i">+            Constant(
+</a><a href="#h1-0-99" id="h1-0-99" class="i">+                Boolean(
+</a><a href="#h1-0-100" id="h1-0-100" class="i">+                    false,
+</a><a href="#h1-0-101" id="h1-0-101" class="i">+                ),
+</a><a href="#h1-0-102" id="h1-0-102" class="i">+            ),
+</a><a href="#h1-0-103" id="h1-0-103" class="i">+            Constant(
+</a><a href="#h1-0-104" id="h1-0-104" class="i">+                Boolean(
+</a><a href="#h1-0-105" id="h1-0-105" class="i">+                    true,
+</a><a href="#h1-0-106" id="h1-0-106" class="i">+                ),
+</a><a href="#h1-0-107" id="h1-0-107" class="i">+            ),
+</a><a href="#h1-0-108" id="h1-0-108" class="i">+        ),
+</a><a href="#h1-0-109" id="h1-0-109" class="i">+    ),
+</a><a href="#h1-0-110" id="h1-0-110" class="i">+)
+</a><a href="#h1-0-111" id="h1-0-111" class="i">+
+</a><a href="#h1-0-112" id="h1-0-112" class="i">+# This is also true when combined with De Morgan&#39;s laws.
+</a><a href="#h1-0-113" id="h1-0-113" class="i">+[cnf]&gt; NOT ((TRUE OR FALSE) AND (TRUE OR FALSE))
+</a><a href="#h1-0-114" id="h1-0-114" class="i">+---
+</a><a href="#h1-0-115" id="h1-0-115" class="i">+Boolean(false) ← And(
+</a><a href="#h1-0-116" id="h1-0-116" class="i">+    And(
+</a><a href="#h1-0-117" id="h1-0-117" class="i">+        Or(
+</a><a href="#h1-0-118" id="h1-0-118" class="i">+            Not(
+</a><a href="#h1-0-119" id="h1-0-119" class="i">+                Constant(
+</a><a href="#h1-0-120" id="h1-0-120" class="i">+                    Boolean(
+</a><a href="#h1-0-121" id="h1-0-121" class="i">+                        true,
+</a><a href="#h1-0-122" id="h1-0-122" class="i">+                    ),
+</a><a href="#h1-0-123" id="h1-0-123" class="i">+                ),
+</a><a href="#h1-0-124" id="h1-0-124" class="i">+            ),
+</a><a href="#h1-0-125" id="h1-0-125" class="i">+            Not(
+</a><a href="#h1-0-126" id="h1-0-126" class="i">+                Constant(
+</a><a href="#h1-0-127" id="h1-0-127" class="i">+                    Boolean(
+</a><a href="#h1-0-128" id="h1-0-128" class="i">+                        true,
+</a><a href="#h1-0-129" id="h1-0-129" class="i">+                    ),
+</a><a href="#h1-0-130" id="h1-0-130" class="i">+                ),
+</a><a href="#h1-0-131" id="h1-0-131" class="i">+            ),
+</a><a href="#h1-0-132" id="h1-0-132" class="i">+        ),
+</a><a href="#h1-0-133" id="h1-0-133" class="i">+        Or(
+</a><a href="#h1-0-134" id="h1-0-134" class="i">+            Not(
+</a><a href="#h1-0-135" id="h1-0-135" class="i">+                Constant(
+</a><a href="#h1-0-136" id="h1-0-136" class="i">+                    Boolean(
+</a><a href="#h1-0-137" id="h1-0-137" class="i">+                        true,
+</a><a href="#h1-0-138" id="h1-0-138" class="i">+                    ),
+</a><a href="#h1-0-139" id="h1-0-139" class="i">+                ),
+</a><a href="#h1-0-140" id="h1-0-140" class="i">+            ),
+</a><a href="#h1-0-141" id="h1-0-141" class="i">+            Not(
+</a><a href="#h1-0-142" id="h1-0-142" class="i">+                Constant(
+</a><a href="#h1-0-143" id="h1-0-143" class="i">+                    Boolean(
+</a><a href="#h1-0-144" id="h1-0-144" class="i">+                        false,
+</a><a href="#h1-0-145" id="h1-0-145" class="i">+                    ),
+</a><a href="#h1-0-146" id="h1-0-146" class="i">+                ),
+</a><a href="#h1-0-147" id="h1-0-147" class="i">+            ),
+</a><a href="#h1-0-148" id="h1-0-148" class="i">+        ),
+</a><a href="#h1-0-149" id="h1-0-149" class="i">+    ),
+</a><a href="#h1-0-150" id="h1-0-150" class="i">+    And(
+</a><a href="#h1-0-151" id="h1-0-151" class="i">+        Or(
+</a><a href="#h1-0-152" id="h1-0-152" class="i">+            Not(
+</a><a href="#h1-0-153" id="h1-0-153" class="i">+                Constant(
+</a><a href="#h1-0-154" id="h1-0-154" class="i">+                    Boolean(
+</a><a href="#h1-0-155" id="h1-0-155" class="i">+                        false,
+</a><a href="#h1-0-156" id="h1-0-156" class="i">+                    ),
+</a><a href="#h1-0-157" id="h1-0-157" class="i">+                ),
+</a><a href="#h1-0-158" id="h1-0-158" class="i">+            ),
+</a><a href="#h1-0-159" id="h1-0-159" class="i">+            Not(
+</a><a href="#h1-0-160" id="h1-0-160" class="i">+                Constant(
+</a><a href="#h1-0-161" id="h1-0-161" class="i">+                    Boolean(
+</a><a href="#h1-0-162" id="h1-0-162" class="i">+                        true,
+</a><a href="#h1-0-163" id="h1-0-163" class="i">+                    ),
+</a><a href="#h1-0-164" id="h1-0-164" class="i">+                ),
+</a><a href="#h1-0-165" id="h1-0-165" class="i">+            ),
+</a><a href="#h1-0-166" id="h1-0-166" class="i">+        ),
+</a><a href="#h1-0-167" id="h1-0-167" class="i">+        Or(
+</a><a href="#h1-0-168" id="h1-0-168" class="i">+            Not(
+</a><a href="#h1-0-169" id="h1-0-169" class="i">+                Constant(
+</a><a href="#h1-0-170" id="h1-0-170" class="i">+                    Boolean(
+</a><a href="#h1-0-171" id="h1-0-171" class="i">+                        false,
+</a><a href="#h1-0-172" id="h1-0-172" class="i">+                    ),
+</a><a href="#h1-0-173" id="h1-0-173" class="i">+                ),
+</a><a href="#h1-0-174" id="h1-0-174" class="i">+            ),
+</a><a href="#h1-0-175" id="h1-0-175" class="i">+            Not(
+</a><a href="#h1-0-176" id="h1-0-176" class="i">+                Constant(
+</a><a href="#h1-0-177" id="h1-0-177" class="i">+                    Boolean(
+</a><a href="#h1-0-178" id="h1-0-178" class="i">+                        false,
+</a><a href="#h1-0-179" id="h1-0-179" class="i">+                    ),
+</a><a href="#h1-0-180" id="h1-0-180" class="i">+                ),
+</a><a href="#h1-0-181" id="h1-0-181" class="i">+            ),
+</a><a href="#h1-0-182" id="h1-0-182" class="i">+        ),
+</a><a href="#h1-0-183" id="h1-0-183" class="i">+    ),
+</a><a href="#h1-0-184" id="h1-0-184" class="i">+)
+</a><b>diff --git a/<a id="h2" href="../file/src/sql/testscripts/expressions/op_compare_greater_equal.html">src/sql/testscripts/expressions/op_compare_greater_equal</a> b/<a href="../file/src/sql/testscripts/expressions/op_compare_greater_equal.html">src/sql/testscripts/expressions/op_compare_greater_equal</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -6,22 +6,239 @@
+</a> [expr]&gt; 0 &gt;= 0
+ [expr]&gt; 0 &gt;= -1
+ ---
+<a href="#h2-0-3" id="h2-0-3" class="d">-Boolean(false) ← Or(GreaterThan(Constant(Integer(0)), Constant(Integer(1))), Equal(Constant(Integer(0)), Constant(Integer(1))))
+</a><a href="#h2-0-4" id="h2-0-4" class="d">-Boolean(true) ← Or(GreaterThan(Constant(Integer(0)), Constant(Integer(0))), Equal(Constant(Integer(0)), Constant(Integer(0))))
+</a><a href="#h2-0-5" id="h2-0-5" class="d">-Boolean(true) ← Or(GreaterThan(Constant(Integer(0)), Negate(Constant(Integer(1)))), Equal(Constant(Integer(0)), Negate(Constant(Integer(1)))))
+</a><a href="#h2-0-6" id="h2-0-6" class="i">+Boolean(false) ← Or(
+</a><a href="#h2-0-7" id="h2-0-7" class="i">+    GreaterThan(
+</a><a href="#h2-0-8" id="h2-0-8" class="i">+        Constant(
+</a><a href="#h2-0-9" id="h2-0-9" class="i">+            Integer(
+</a><a href="#h2-0-10" id="h2-0-10" class="i">+                0,
+</a><a href="#h2-0-11" id="h2-0-11" class="i">+            ),
+</a><a href="#h2-0-12" id="h2-0-12" class="i">+        ),
+</a><a href="#h2-0-13" id="h2-0-13" class="i">+        Constant(
+</a><a href="#h2-0-14" id="h2-0-14" class="i">+            Integer(
+</a><a href="#h2-0-15" id="h2-0-15" class="i">+                1,
+</a><a href="#h2-0-16" id="h2-0-16" class="i">+            ),
+</a><a href="#h2-0-17" id="h2-0-17" class="i">+        ),
+</a><a href="#h2-0-18" id="h2-0-18" class="i">+    ),
+</a><a href="#h2-0-19" id="h2-0-19" class="i">+    Equal(
+</a><a href="#h2-0-20" id="h2-0-20" class="i">+        Constant(
+</a><a href="#h2-0-21" id="h2-0-21" class="i">+            Integer(
+</a><a href="#h2-0-22" id="h2-0-22" class="i">+                0,
+</a><a href="#h2-0-23" id="h2-0-23" class="i">+            ),
+</a><a href="#h2-0-24" id="h2-0-24" class="i">+        ),
+</a><a href="#h2-0-25" id="h2-0-25" class="i">+        Constant(
+</a><a href="#h2-0-26" id="h2-0-26" class="i">+            Integer(
+</a><a href="#h2-0-27" id="h2-0-27" class="i">+                1,
+</a><a href="#h2-0-28" id="h2-0-28" class="i">+            ),
+</a><a href="#h2-0-29" id="h2-0-29" class="i">+        ),
+</a><a href="#h2-0-30" id="h2-0-30" class="i">+    ),
+</a><a href="#h2-0-31" id="h2-0-31" class="i">+)
+</a><a href="#h2-0-32" id="h2-0-32" class="i">+Boolean(true) ← Or(
+</a><a href="#h2-0-33" id="h2-0-33" class="i">+    GreaterThan(
+</a><a href="#h2-0-34" id="h2-0-34" class="i">+        Constant(
+</a><a href="#h2-0-35" id="h2-0-35" class="i">+            Integer(
+</a><a href="#h2-0-36" id="h2-0-36" class="i">+                0,
+</a><a href="#h2-0-37" id="h2-0-37" class="i">+            ),
+</a><a href="#h2-0-38" id="h2-0-38" class="i">+        ),
+</a><a href="#h2-0-39" id="h2-0-39" class="i">+        Constant(
+</a><a href="#h2-0-40" id="h2-0-40" class="i">+            Integer(
+</a><a href="#h2-0-41" id="h2-0-41" class="i">+                0,
+</a><a href="#h2-0-42" id="h2-0-42" class="i">+            ),
+</a><a href="#h2-0-43" id="h2-0-43" class="i">+        ),
+</a><a href="#h2-0-44" id="h2-0-44" class="i">+    ),
+</a><a href="#h2-0-45" id="h2-0-45" class="i">+    Equal(
+</a><a href="#h2-0-46" id="h2-0-46" class="i">+        Constant(
+</a><a href="#h2-0-47" id="h2-0-47" class="i">+            Integer(
+</a><a href="#h2-0-48" id="h2-0-48" class="i">+                0,
+</a><a href="#h2-0-49" id="h2-0-49" class="i">+            ),
+</a><a href="#h2-0-50" id="h2-0-50" class="i">+        ),
+</a><a href="#h2-0-51" id="h2-0-51" class="i">+        Constant(
+</a><a href="#h2-0-52" id="h2-0-52" class="i">+            Integer(
+</a><a href="#h2-0-53" id="h2-0-53" class="i">+                0,
+</a><a href="#h2-0-54" id="h2-0-54" class="i">+            ),
+</a><a href="#h2-0-55" id="h2-0-55" class="i">+        ),
+</a><a href="#h2-0-56" id="h2-0-56" class="i">+    ),
+</a><a href="#h2-0-57" id="h2-0-57" class="i">+)
+</a><a href="#h2-0-58" id="h2-0-58" class="i">+Boolean(true) ← Or(
+</a><a href="#h2-0-59" id="h2-0-59" class="i">+    GreaterThan(
+</a><a href="#h2-0-60" id="h2-0-60" class="i">+        Constant(
+</a><a href="#h2-0-61" id="h2-0-61" class="i">+            Integer(
+</a><a href="#h2-0-62" id="h2-0-62" class="i">+                0,
+</a><a href="#h2-0-63" id="h2-0-63" class="i">+            ),
+</a><a href="#h2-0-64" id="h2-0-64" class="i">+        ),
+</a><a href="#h2-0-65" id="h2-0-65" class="i">+        Negate(
+</a><a href="#h2-0-66" id="h2-0-66" class="i">+            Constant(
+</a><a href="#h2-0-67" id="h2-0-67" class="i">+                Integer(
+</a><a href="#h2-0-68" id="h2-0-68" class="i">+                    1,
+</a><a href="#h2-0-69" id="h2-0-69" class="i">+                ),
+</a><a href="#h2-0-70" id="h2-0-70" class="i">+            ),
+</a><a href="#h2-0-71" id="h2-0-71" class="i">+        ),
+</a><a href="#h2-0-72" id="h2-0-72" class="i">+    ),
+</a><a href="#h2-0-73" id="h2-0-73" class="i">+    Equal(
+</a><a href="#h2-0-74" id="h2-0-74" class="i">+        Constant(
+</a><a href="#h2-0-75" id="h2-0-75" class="i">+            Integer(
+</a><a href="#h2-0-76" id="h2-0-76" class="i">+                0,
+</a><a href="#h2-0-77" id="h2-0-77" class="i">+            ),
+</a><a href="#h2-0-78" id="h2-0-78" class="i">+        ),
+</a><a href="#h2-0-79" id="h2-0-79" class="i">+        Negate(
+</a><a href="#h2-0-80" id="h2-0-80" class="i">+            Constant(
+</a><a href="#h2-0-81" id="h2-0-81" class="i">+                Integer(
+</a><a href="#h2-0-82" id="h2-0-82" class="i">+                    1,
+</a><a href="#h2-0-83" id="h2-0-83" class="i">+                ),
+</a><a href="#h2-0-84" id="h2-0-84" class="i">+            ),
+</a><a href="#h2-0-85" id="h2-0-85" class="i">+        ),
+</a><a href="#h2-0-86" id="h2-0-86" class="i">+    ),
+</a><a href="#h2-0-87" id="h2-0-87" class="i">+)
+</a> 
+ [expr]&gt; -0.0 &gt;= 0.0
+ [expr]&gt; INFINITY &gt;= INFINITY
+ [expr]&gt; NAN &gt;= NAN
+ ---
+<a href="#h2-0-93" id="h2-0-93" class="d">-Boolean(true) ← Or(GreaterThan(Negate(Constant(Float(0.0))), Constant(Float(0.0))), Equal(Negate(Constant(Float(0.0))), Constant(Float(0.0))))
+</a><a href="#h2-0-94" id="h2-0-94" class="d">-Boolean(true) ← Or(GreaterThan(Constant(Float(inf)), Constant(Float(inf))), Equal(Constant(Float(inf)), Constant(Float(inf))))
+</a><a href="#h2-0-95" id="h2-0-95" class="d">-Boolean(false) ← Or(GreaterThan(Constant(Float(NaN)), Constant(Float(NaN))), Equal(Constant(Float(NaN)), Constant(Float(NaN))))
+</a><a href="#h2-0-96" id="h2-0-96" class="i">+Boolean(true) ← Or(
+</a><a href="#h2-0-97" id="h2-0-97" class="i">+    GreaterThan(
+</a><a href="#h2-0-98" id="h2-0-98" class="i">+        Negate(
+</a><a href="#h2-0-99" id="h2-0-99" class="i">+            Constant(
+</a><a href="#h2-0-100" id="h2-0-100" class="i">+                Float(
+</a><a href="#h2-0-101" id="h2-0-101" class="i">+                    0.0,
+</a><a href="#h2-0-102" id="h2-0-102" class="i">+                ),
+</a><a href="#h2-0-103" id="h2-0-103" class="i">+            ),
+</a><a href="#h2-0-104" id="h2-0-104" class="i">+        ),
+</a><a href="#h2-0-105" id="h2-0-105" class="i">+        Constant(
+</a><a href="#h2-0-106" id="h2-0-106" class="i">+            Float(
+</a><a href="#h2-0-107" id="h2-0-107" class="i">+                0.0,
+</a><a href="#h2-0-108" id="h2-0-108" class="i">+            ),
+</a><a href="#h2-0-109" id="h2-0-109" class="i">+        ),
+</a><a href="#h2-0-110" id="h2-0-110" class="i">+    ),
+</a><a href="#h2-0-111" id="h2-0-111" class="i">+    Equal(
+</a><a href="#h2-0-112" id="h2-0-112" class="i">+        Negate(
+</a><a href="#h2-0-113" id="h2-0-113" class="i">+            Constant(
+</a><a href="#h2-0-114" id="h2-0-114" class="i">+                Float(
+</a><a href="#h2-0-115" id="h2-0-115" class="i">+                    0.0,
+</a><a href="#h2-0-116" id="h2-0-116" class="i">+                ),
+</a><a href="#h2-0-117" id="h2-0-117" class="i">+            ),
+</a><a href="#h2-0-118" id="h2-0-118" class="i">+        ),
+</a><a href="#h2-0-119" id="h2-0-119" class="i">+        Constant(
+</a><a href="#h2-0-120" id="h2-0-120" class="i">+            Float(
+</a><a href="#h2-0-121" id="h2-0-121" class="i">+                0.0,
+</a><a href="#h2-0-122" id="h2-0-122" class="i">+            ),
+</a><a href="#h2-0-123" id="h2-0-123" class="i">+        ),
+</a><a href="#h2-0-124" id="h2-0-124" class="i">+    ),
+</a><a href="#h2-0-125" id="h2-0-125" class="i">+)
+</a><a href="#h2-0-126" id="h2-0-126" class="i">+Boolean(true) ← Or(
+</a><a href="#h2-0-127" id="h2-0-127" class="i">+    GreaterThan(
+</a><a href="#h2-0-128" id="h2-0-128" class="i">+        Constant(
+</a><a href="#h2-0-129" id="h2-0-129" class="i">+            Float(
+</a><a href="#h2-0-130" id="h2-0-130" class="i">+                inf,
+</a><a href="#h2-0-131" id="h2-0-131" class="i">+            ),
+</a><a href="#h2-0-132" id="h2-0-132" class="i">+        ),
+</a><a href="#h2-0-133" id="h2-0-133" class="i">+        Constant(
+</a><a href="#h2-0-134" id="h2-0-134" class="i">+            Float(
+</a><a href="#h2-0-135" id="h2-0-135" class="i">+                inf,
+</a><a href="#h2-0-136" id="h2-0-136" class="i">+            ),
+</a><a href="#h2-0-137" id="h2-0-137" class="i">+        ),
+</a><a href="#h2-0-138" id="h2-0-138" class="i">+    ),
+</a><a href="#h2-0-139" id="h2-0-139" class="i">+    Equal(
+</a><a href="#h2-0-140" id="h2-0-140" class="i">+        Constant(
+</a><a href="#h2-0-141" id="h2-0-141" class="i">+            Float(
+</a><a href="#h2-0-142" id="h2-0-142" class="i">+                inf,
+</a><a href="#h2-0-143" id="h2-0-143" class="i">+            ),
+</a><a href="#h2-0-144" id="h2-0-144" class="i">+        ),
+</a><a href="#h2-0-145" id="h2-0-145" class="i">+        Constant(
+</a><a href="#h2-0-146" id="h2-0-146" class="i">+            Float(
+</a><a href="#h2-0-147" id="h2-0-147" class="i">+                inf,
+</a><a href="#h2-0-148" id="h2-0-148" class="i">+            ),
+</a><a href="#h2-0-149" id="h2-0-149" class="i">+        ),
+</a><a href="#h2-0-150" id="h2-0-150" class="i">+    ),
+</a><a href="#h2-0-151" id="h2-0-151" class="i">+)
+</a><a href="#h2-0-152" id="h2-0-152" class="i">+Boolean(false) ← Or(
+</a><a href="#h2-0-153" id="h2-0-153" class="i">+    GreaterThan(
+</a><a href="#h2-0-154" id="h2-0-154" class="i">+        Constant(
+</a><a href="#h2-0-155" id="h2-0-155" class="i">+            Float(
+</a><a href="#h2-0-156" id="h2-0-156" class="i">+                NaN,
+</a><a href="#h2-0-157" id="h2-0-157" class="i">+            ),
+</a><a href="#h2-0-158" id="h2-0-158" class="i">+        ),
+</a><a href="#h2-0-159" id="h2-0-159" class="i">+        Constant(
+</a><a href="#h2-0-160" id="h2-0-160" class="i">+            Float(
+</a><a href="#h2-0-161" id="h2-0-161" class="i">+                NaN,
+</a><a href="#h2-0-162" id="h2-0-162" class="i">+            ),
+</a><a href="#h2-0-163" id="h2-0-163" class="i">+        ),
+</a><a href="#h2-0-164" id="h2-0-164" class="i">+    ),
+</a><a href="#h2-0-165" id="h2-0-165" class="i">+    Equal(
+</a><a href="#h2-0-166" id="h2-0-166" class="i">+        Constant(
+</a><a href="#h2-0-167" id="h2-0-167" class="i">+            Float(
+</a><a href="#h2-0-168" id="h2-0-168" class="i">+                NaN,
+</a><a href="#h2-0-169" id="h2-0-169" class="i">+            ),
+</a><a href="#h2-0-170" id="h2-0-170" class="i">+        ),
+</a><a href="#h2-0-171" id="h2-0-171" class="i">+        Constant(
+</a><a href="#h2-0-172" id="h2-0-172" class="i">+            Float(
+</a><a href="#h2-0-173" id="h2-0-173" class="i">+                NaN,
+</a><a href="#h2-0-174" id="h2-0-174" class="i">+            ),
+</a><a href="#h2-0-175" id="h2-0-175" class="i">+        ),
+</a><a href="#h2-0-176" id="h2-0-176" class="i">+    ),
+</a><a href="#h2-0-177" id="h2-0-177" class="i">+)
+</a> 
+ [expr]&gt; NULL &gt;= 1
+ [expr]&gt; NULL &gt;= NAN
+ [expr]&gt; NULL &gt;= NULL
+ ---
+<a href="#h2-0-183" id="h2-0-183" class="d">-Null ← Or(GreaterThan(Constant(Null), Constant(Integer(1))), Equal(Constant(Null), Constant(Integer(1))))
+</a><a href="#h2-0-184" id="h2-0-184" class="d">-Null ← Or(GreaterThan(Constant(Null), Constant(Float(NaN))), Equal(Constant(Null), Constant(Float(NaN))))
+</a><a href="#h2-0-185" id="h2-0-185" class="d">-Null ← Or(GreaterThan(Constant(Null), Constant(Null)), Equal(Constant(Null), Constant(Null)))
+</a><a href="#h2-0-186" id="h2-0-186" class="i">+Null ← Or(
+</a><a href="#h2-0-187" id="h2-0-187" class="i">+    GreaterThan(
+</a><a href="#h2-0-188" id="h2-0-188" class="i">+        Constant(
+</a><a href="#h2-0-189" id="h2-0-189" class="i">+            Null,
+</a><a href="#h2-0-190" id="h2-0-190" class="i">+        ),
+</a><a href="#h2-0-191" id="h2-0-191" class="i">+        Constant(
+</a><a href="#h2-0-192" id="h2-0-192" class="i">+            Integer(
+</a><a href="#h2-0-193" id="h2-0-193" class="i">+                1,
+</a><a href="#h2-0-194" id="h2-0-194" class="i">+            ),
+</a><a href="#h2-0-195" id="h2-0-195" class="i">+        ),
+</a><a href="#h2-0-196" id="h2-0-196" class="i">+    ),
+</a><a href="#h2-0-197" id="h2-0-197" class="i">+    Equal(
+</a><a href="#h2-0-198" id="h2-0-198" class="i">+        Constant(
+</a><a href="#h2-0-199" id="h2-0-199" class="i">+            Null,
+</a><a href="#h2-0-200" id="h2-0-200" class="i">+        ),
+</a><a href="#h2-0-201" id="h2-0-201" class="i">+        Constant(
+</a><a href="#h2-0-202" id="h2-0-202" class="i">+            Integer(
+</a><a href="#h2-0-203" id="h2-0-203" class="i">+                1,
+</a><a href="#h2-0-204" id="h2-0-204" class="i">+            ),
+</a><a href="#h2-0-205" id="h2-0-205" class="i">+        ),
+</a><a href="#h2-0-206" id="h2-0-206" class="i">+    ),
+</a><a href="#h2-0-207" id="h2-0-207" class="i">+)
+</a><a href="#h2-0-208" id="h2-0-208" class="i">+Null ← Or(
+</a><a href="#h2-0-209" id="h2-0-209" class="i">+    GreaterThan(
+</a><a href="#h2-0-210" id="h2-0-210" class="i">+        Constant(
+</a><a href="#h2-0-211" id="h2-0-211" class="i">+            Null,
+</a><a href="#h2-0-212" id="h2-0-212" class="i">+        ),
+</a><a href="#h2-0-213" id="h2-0-213" class="i">+        Constant(
+</a><a href="#h2-0-214" id="h2-0-214" class="i">+            Float(
+</a><a href="#h2-0-215" id="h2-0-215" class="i">+                NaN,
+</a><a href="#h2-0-216" id="h2-0-216" class="i">+            ),
+</a><a href="#h2-0-217" id="h2-0-217" class="i">+        ),
+</a><a href="#h2-0-218" id="h2-0-218" class="i">+    ),
+</a><a href="#h2-0-219" id="h2-0-219" class="i">+    Equal(
+</a><a href="#h2-0-220" id="h2-0-220" class="i">+        Constant(
+</a><a href="#h2-0-221" id="h2-0-221" class="i">+            Null,
+</a><a href="#h2-0-222" id="h2-0-222" class="i">+        ),
+</a><a href="#h2-0-223" id="h2-0-223" class="i">+        Constant(
+</a><a href="#h2-0-224" id="h2-0-224" class="i">+            Float(
+</a><a href="#h2-0-225" id="h2-0-225" class="i">+                NaN,
+</a><a href="#h2-0-226" id="h2-0-226" class="i">+            ),
+</a><a href="#h2-0-227" id="h2-0-227" class="i">+        ),
+</a><a href="#h2-0-228" id="h2-0-228" class="i">+    ),
+</a><a href="#h2-0-229" id="h2-0-229" class="i">+)
+</a><a href="#h2-0-230" id="h2-0-230" class="i">+Null ← Or(
+</a><a href="#h2-0-231" id="h2-0-231" class="i">+    GreaterThan(
+</a><a href="#h2-0-232" id="h2-0-232" class="i">+        Constant(
+</a><a href="#h2-0-233" id="h2-0-233" class="i">+            Null,
+</a><a href="#h2-0-234" id="h2-0-234" class="i">+        ),
+</a><a href="#h2-0-235" id="h2-0-235" class="i">+        Constant(
+</a><a href="#h2-0-236" id="h2-0-236" class="i">+            Null,
+</a><a href="#h2-0-237" id="h2-0-237" class="i">+        ),
+</a><a href="#h2-0-238" id="h2-0-238" class="i">+    ),
+</a><a href="#h2-0-239" id="h2-0-239" class="i">+    Equal(
+</a><a href="#h2-0-240" id="h2-0-240" class="i">+        Constant(
+</a><a href="#h2-0-241" id="h2-0-241" class="i">+            Null,
+</a><a href="#h2-0-242" id="h2-0-242" class="i">+        ),
+</a><a href="#h2-0-243" id="h2-0-243" class="i">+        Constant(
+</a><a href="#h2-0-244" id="h2-0-244" class="i">+            Null,
+</a><a href="#h2-0-245" id="h2-0-245" class="i">+        ),
+</a><a href="#h2-0-246" id="h2-0-246" class="i">+    ),
+</a><a href="#h2-0-247" id="h2-0-247" class="i">+)
+</a><b>diff --git a/<a id="h3" href="../file/src/sql/testscripts/expressions/op_compare_lesser_equal.html">src/sql/testscripts/expressions/op_compare_lesser_equal</a> b/<a href="../file/src/sql/testscripts/expressions/op_compare_lesser_equal.html">src/sql/testscripts/expressions/op_compare_lesser_equal</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -6,22 +6,239 @@
+</a> [expr]&gt; 0 &lt;= 0
+ [expr]&gt; -1 &lt;= 0
+ ---
+<a href="#h3-0-3" id="h3-0-3" class="d">-Boolean(false) ← Or(LessThan(Constant(Integer(1)), Constant(Integer(0))), Equal(Constant(Integer(1)), Constant(Integer(0))))
+</a><a href="#h3-0-4" id="h3-0-4" class="d">-Boolean(true) ← Or(LessThan(Constant(Integer(0)), Constant(Integer(0))), Equal(Constant(Integer(0)), Constant(Integer(0))))
+</a><a href="#h3-0-5" id="h3-0-5" class="d">-Boolean(true) ← Or(LessThan(Negate(Constant(Integer(1))), Constant(Integer(0))), Equal(Negate(Constant(Integer(1))), Constant(Integer(0))))
+</a><a href="#h3-0-6" id="h3-0-6" class="i">+Boolean(false) ← Or(
+</a><a href="#h3-0-7" id="h3-0-7" class="i">+    LessThan(
+</a><a href="#h3-0-8" id="h3-0-8" class="i">+        Constant(
+</a><a href="#h3-0-9" id="h3-0-9" class="i">+            Integer(
+</a><a href="#h3-0-10" id="h3-0-10" class="i">+                1,
+</a><a href="#h3-0-11" id="h3-0-11" class="i">+            ),
+</a><a href="#h3-0-12" id="h3-0-12" class="i">+        ),
+</a><a href="#h3-0-13" id="h3-0-13" class="i">+        Constant(
+</a><a href="#h3-0-14" id="h3-0-14" class="i">+            Integer(
+</a><a href="#h3-0-15" id="h3-0-15" class="i">+                0,
+</a><a href="#h3-0-16" id="h3-0-16" class="i">+            ),
+</a><a href="#h3-0-17" id="h3-0-17" class="i">+        ),
+</a><a href="#h3-0-18" id="h3-0-18" class="i">+    ),
+</a><a href="#h3-0-19" id="h3-0-19" class="i">+    Equal(
+</a><a href="#h3-0-20" id="h3-0-20" class="i">+        Constant(
+</a><a href="#h3-0-21" id="h3-0-21" class="i">+            Integer(
+</a><a href="#h3-0-22" id="h3-0-22" class="i">+                1,
+</a><a href="#h3-0-23" id="h3-0-23" class="i">+            ),
+</a><a href="#h3-0-24" id="h3-0-24" class="i">+        ),
+</a><a href="#h3-0-25" id="h3-0-25" class="i">+        Constant(
+</a><a href="#h3-0-26" id="h3-0-26" class="i">+            Integer(
+</a><a href="#h3-0-27" id="h3-0-27" class="i">+                0,
+</a><a href="#h3-0-28" id="h3-0-28" class="i">+            ),
+</a><a href="#h3-0-29" id="h3-0-29" class="i">+        ),
+</a><a href="#h3-0-30" id="h3-0-30" class="i">+    ),
+</a><a href="#h3-0-31" id="h3-0-31" class="i">+)
+</a><a href="#h3-0-32" id="h3-0-32" class="i">+Boolean(true) ← Or(
+</a><a href="#h3-0-33" id="h3-0-33" class="i">+    LessThan(
+</a><a href="#h3-0-34" id="h3-0-34" class="i">+        Constant(
+</a><a href="#h3-0-35" id="h3-0-35" class="i">+            Integer(
+</a><a href="#h3-0-36" id="h3-0-36" class="i">+                0,
+</a><a href="#h3-0-37" id="h3-0-37" class="i">+            ),
+</a><a href="#h3-0-38" id="h3-0-38" class="i">+        ),
+</a><a href="#h3-0-39" id="h3-0-39" class="i">+        Constant(
+</a><a href="#h3-0-40" id="h3-0-40" class="i">+            Integer(
+</a><a href="#h3-0-41" id="h3-0-41" class="i">+                0,
+</a><a href="#h3-0-42" id="h3-0-42" class="i">+            ),
+</a><a href="#h3-0-43" id="h3-0-43" class="i">+        ),
+</a><a href="#h3-0-44" id="h3-0-44" class="i">+    ),
+</a><a href="#h3-0-45" id="h3-0-45" class="i">+    Equal(
+</a><a href="#h3-0-46" id="h3-0-46" class="i">+        Constant(
+</a><a href="#h3-0-47" id="h3-0-47" class="i">+            Integer(
+</a><a href="#h3-0-48" id="h3-0-48" class="i">+                0,
+</a><a href="#h3-0-49" id="h3-0-49" class="i">+            ),
+</a><a href="#h3-0-50" id="h3-0-50" class="i">+        ),
+</a><a href="#h3-0-51" id="h3-0-51" class="i">+        Constant(
+</a><a href="#h3-0-52" id="h3-0-52" class="i">+            Integer(
+</a><a href="#h3-0-53" id="h3-0-53" class="i">+                0,
+</a><a href="#h3-0-54" id="h3-0-54" class="i">+            ),
+</a><a href="#h3-0-55" id="h3-0-55" class="i">+        ),
+</a><a href="#h3-0-56" id="h3-0-56" class="i">+    ),
+</a><a href="#h3-0-57" id="h3-0-57" class="i">+)
+</a><a href="#h3-0-58" id="h3-0-58" class="i">+Boolean(true) ← Or(
+</a><a href="#h3-0-59" id="h3-0-59" class="i">+    LessThan(
+</a><a href="#h3-0-60" id="h3-0-60" class="i">+        Negate(
+</a><a href="#h3-0-61" id="h3-0-61" class="i">+            Constant(
+</a><a href="#h3-0-62" id="h3-0-62" class="i">+                Integer(
+</a><a href="#h3-0-63" id="h3-0-63" class="i">+                    1,
+</a><a href="#h3-0-64" id="h3-0-64" class="i">+                ),
+</a><a href="#h3-0-65" id="h3-0-65" class="i">+            ),
+</a><a href="#h3-0-66" id="h3-0-66" class="i">+        ),
+</a><a href="#h3-0-67" id="h3-0-67" class="i">+        Constant(
+</a><a href="#h3-0-68" id="h3-0-68" class="i">+            Integer(
+</a><a href="#h3-0-69" id="h3-0-69" class="i">+                0,
+</a><a href="#h3-0-70" id="h3-0-70" class="i">+            ),
+</a><a href="#h3-0-71" id="h3-0-71" class="i">+        ),
+</a><a href="#h3-0-72" id="h3-0-72" class="i">+    ),
+</a><a href="#h3-0-73" id="h3-0-73" class="i">+    Equal(
+</a><a href="#h3-0-74" id="h3-0-74" class="i">+        Negate(
+</a><a href="#h3-0-75" id="h3-0-75" class="i">+            Constant(
+</a><a href="#h3-0-76" id="h3-0-76" class="i">+                Integer(
+</a><a href="#h3-0-77" id="h3-0-77" class="i">+                    1,
+</a><a href="#h3-0-78" id="h3-0-78" class="i">+                ),
+</a><a href="#h3-0-79" id="h3-0-79" class="i">+            ),
+</a><a href="#h3-0-80" id="h3-0-80" class="i">+        ),
+</a><a href="#h3-0-81" id="h3-0-81" class="i">+        Constant(
+</a><a href="#h3-0-82" id="h3-0-82" class="i">+            Integer(
+</a><a href="#h3-0-83" id="h3-0-83" class="i">+                0,
+</a><a href="#h3-0-84" id="h3-0-84" class="i">+            ),
+</a><a href="#h3-0-85" id="h3-0-85" class="i">+        ),
+</a><a href="#h3-0-86" id="h3-0-86" class="i">+    ),
+</a><a href="#h3-0-87" id="h3-0-87" class="i">+)
+</a> 
+ [expr]&gt; 0.0 &lt;= -0.0
+ [expr]&gt; INFINITY &lt;= INFINITY
+ [expr]&gt; NAN &lt;= NAN
+ ---
+<a href="#h3-0-93" id="h3-0-93" class="d">-Boolean(true) ← Or(LessThan(Constant(Float(0.0)), Negate(Constant(Float(0.0)))), Equal(Constant(Float(0.0)), Negate(Constant(Float(0.0)))))
+</a><a href="#h3-0-94" id="h3-0-94" class="d">-Boolean(true) ← Or(LessThan(Constant(Float(inf)), Constant(Float(inf))), Equal(Constant(Float(inf)), Constant(Float(inf))))
+</a><a href="#h3-0-95" id="h3-0-95" class="d">-Boolean(false) ← Or(LessThan(Constant(Float(NaN)), Constant(Float(NaN))), Equal(Constant(Float(NaN)), Constant(Float(NaN))))
+</a><a href="#h3-0-96" id="h3-0-96" class="i">+Boolean(true) ← Or(
+</a><a href="#h3-0-97" id="h3-0-97" class="i">+    LessThan(
+</a><a href="#h3-0-98" id="h3-0-98" class="i">+        Constant(
+</a><a href="#h3-0-99" id="h3-0-99" class="i">+            Float(
+</a><a href="#h3-0-100" id="h3-0-100" class="i">+                0.0,
+</a><a href="#h3-0-101" id="h3-0-101" class="i">+            ),
+</a><a href="#h3-0-102" id="h3-0-102" class="i">+        ),
+</a><a href="#h3-0-103" id="h3-0-103" class="i">+        Negate(
+</a><a href="#h3-0-104" id="h3-0-104" class="i">+            Constant(
+</a><a href="#h3-0-105" id="h3-0-105" class="i">+                Float(
+</a><a href="#h3-0-106" id="h3-0-106" class="i">+                    0.0,
+</a><a href="#h3-0-107" id="h3-0-107" class="i">+                ),
+</a><a href="#h3-0-108" id="h3-0-108" class="i">+            ),
+</a><a href="#h3-0-109" id="h3-0-109" class="i">+        ),
+</a><a href="#h3-0-110" id="h3-0-110" class="i">+    ),
+</a><a href="#h3-0-111" id="h3-0-111" class="i">+    Equal(
+</a><a href="#h3-0-112" id="h3-0-112" class="i">+        Constant(
+</a><a href="#h3-0-113" id="h3-0-113" class="i">+            Float(
+</a><a href="#h3-0-114" id="h3-0-114" class="i">+                0.0,
+</a><a href="#h3-0-115" id="h3-0-115" class="i">+            ),
+</a><a href="#h3-0-116" id="h3-0-116" class="i">+        ),
+</a><a href="#h3-0-117" id="h3-0-117" class="i">+        Negate(
+</a><a href="#h3-0-118" id="h3-0-118" class="i">+            Constant(
+</a><a href="#h3-0-119" id="h3-0-119" class="i">+                Float(
+</a><a href="#h3-0-120" id="h3-0-120" class="i">+                    0.0,
+</a><a href="#h3-0-121" id="h3-0-121" class="i">+                ),
+</a><a href="#h3-0-122" id="h3-0-122" class="i">+            ),
+</a><a href="#h3-0-123" id="h3-0-123" class="i">+        ),
+</a><a href="#h3-0-124" id="h3-0-124" class="i">+    ),
+</a><a href="#h3-0-125" id="h3-0-125" class="i">+)
+</a><a href="#h3-0-126" id="h3-0-126" class="i">+Boolean(true) ← Or(
+</a><a href="#h3-0-127" id="h3-0-127" class="i">+    LessThan(
+</a><a href="#h3-0-128" id="h3-0-128" class="i">+        Constant(
+</a><a href="#h3-0-129" id="h3-0-129" class="i">+            Float(
+</a><a href="#h3-0-130" id="h3-0-130" class="i">+                inf,
+</a><a href="#h3-0-131" id="h3-0-131" class="i">+            ),
+</a><a href="#h3-0-132" id="h3-0-132" class="i">+        ),
+</a><a href="#h3-0-133" id="h3-0-133" class="i">+        Constant(
+</a><a href="#h3-0-134" id="h3-0-134" class="i">+            Float(
+</a><a href="#h3-0-135" id="h3-0-135" class="i">+                inf,
+</a><a href="#h3-0-136" id="h3-0-136" class="i">+            ),
+</a><a href="#h3-0-137" id="h3-0-137" class="i">+        ),
+</a><a href="#h3-0-138" id="h3-0-138" class="i">+    ),
+</a><a href="#h3-0-139" id="h3-0-139" class="i">+    Equal(
+</a><a href="#h3-0-140" id="h3-0-140" class="i">+        Constant(
+</a><a href="#h3-0-141" id="h3-0-141" class="i">+            Float(
+</a><a href="#h3-0-142" id="h3-0-142" class="i">+                inf,
+</a><a href="#h3-0-143" id="h3-0-143" class="i">+            ),
+</a><a href="#h3-0-144" id="h3-0-144" class="i">+        ),
+</a><a href="#h3-0-145" id="h3-0-145" class="i">+        Constant(
+</a><a href="#h3-0-146" id="h3-0-146" class="i">+            Float(
+</a><a href="#h3-0-147" id="h3-0-147" class="i">+                inf,
+</a><a href="#h3-0-148" id="h3-0-148" class="i">+            ),
+</a><a href="#h3-0-149" id="h3-0-149" class="i">+        ),
+</a><a href="#h3-0-150" id="h3-0-150" class="i">+    ),
+</a><a href="#h3-0-151" id="h3-0-151" class="i">+)
+</a><a href="#h3-0-152" id="h3-0-152" class="i">+Boolean(false) ← Or(
+</a><a href="#h3-0-153" id="h3-0-153" class="i">+    LessThan(
+</a><a href="#h3-0-154" id="h3-0-154" class="i">+        Constant(
+</a><a href="#h3-0-155" id="h3-0-155" class="i">+            Float(
+</a><a href="#h3-0-156" id="h3-0-156" class="i">+                NaN,
+</a><a href="#h3-0-157" id="h3-0-157" class="i">+            ),
+</a><a href="#h3-0-158" id="h3-0-158" class="i">+        ),
+</a><a href="#h3-0-159" id="h3-0-159" class="i">+        Constant(
+</a><a href="#h3-0-160" id="h3-0-160" class="i">+            Float(
+</a><a href="#h3-0-161" id="h3-0-161" class="i">+                NaN,
+</a><a href="#h3-0-162" id="h3-0-162" class="i">+            ),
+</a><a href="#h3-0-163" id="h3-0-163" class="i">+        ),
+</a><a href="#h3-0-164" id="h3-0-164" class="i">+    ),
+</a><a href="#h3-0-165" id="h3-0-165" class="i">+    Equal(
+</a><a href="#h3-0-166" id="h3-0-166" class="i">+        Constant(
+</a><a href="#h3-0-167" id="h3-0-167" class="i">+            Float(
+</a><a href="#h3-0-168" id="h3-0-168" class="i">+                NaN,
+</a><a href="#h3-0-169" id="h3-0-169" class="i">+            ),
+</a><a href="#h3-0-170" id="h3-0-170" class="i">+        ),
+</a><a href="#h3-0-171" id="h3-0-171" class="i">+        Constant(
+</a><a href="#h3-0-172" id="h3-0-172" class="i">+            Float(
+</a><a href="#h3-0-173" id="h3-0-173" class="i">+                NaN,
+</a><a href="#h3-0-174" id="h3-0-174" class="i">+            ),
+</a><a href="#h3-0-175" id="h3-0-175" class="i">+        ),
+</a><a href="#h3-0-176" id="h3-0-176" class="i">+    ),
+</a><a href="#h3-0-177" id="h3-0-177" class="i">+)
+</a> 
+ [expr]&gt; NULL &lt;= 1
+ [expr]&gt; NULL &lt;= NAN
+ [expr]&gt; NULL &lt;= NULL
+ ---
+<a href="#h3-0-183" id="h3-0-183" class="d">-Null ← Or(LessThan(Constant(Null), Constant(Integer(1))), Equal(Constant(Null), Constant(Integer(1))))
+</a><a href="#h3-0-184" id="h3-0-184" class="d">-Null ← Or(LessThan(Constant(Null), Constant(Float(NaN))), Equal(Constant(Null), Constant(Float(NaN))))
+</a><a href="#h3-0-185" id="h3-0-185" class="d">-Null ← Or(LessThan(Constant(Null), Constant(Null)), Equal(Constant(Null), Constant(Null)))
+</a><a href="#h3-0-186" id="h3-0-186" class="i">+Null ← Or(
+</a><a href="#h3-0-187" id="h3-0-187" class="i">+    LessThan(
+</a><a href="#h3-0-188" id="h3-0-188" class="i">+        Constant(
+</a><a href="#h3-0-189" id="h3-0-189" class="i">+            Null,
+</a><a href="#h3-0-190" id="h3-0-190" class="i">+        ),
+</a><a href="#h3-0-191" id="h3-0-191" class="i">+        Constant(
+</a><a href="#h3-0-192" id="h3-0-192" class="i">+            Integer(
+</a><a href="#h3-0-193" id="h3-0-193" class="i">+                1,
+</a><a href="#h3-0-194" id="h3-0-194" class="i">+            ),
+</a><a href="#h3-0-195" id="h3-0-195" class="i">+        ),
+</a><a href="#h3-0-196" id="h3-0-196" class="i">+    ),
+</a><a href="#h3-0-197" id="h3-0-197" class="i">+    Equal(
+</a><a href="#h3-0-198" id="h3-0-198" class="i">+        Constant(
+</a><a href="#h3-0-199" id="h3-0-199" class="i">+            Null,
+</a><a href="#h3-0-200" id="h3-0-200" class="i">+        ),
+</a><a href="#h3-0-201" id="h3-0-201" class="i">+        Constant(
+</a><a href="#h3-0-202" id="h3-0-202" class="i">+            Integer(
+</a><a href="#h3-0-203" id="h3-0-203" class="i">+                1,
+</a><a href="#h3-0-204" id="h3-0-204" class="i">+            ),
+</a><a href="#h3-0-205" id="h3-0-205" class="i">+        ),
+</a><a href="#h3-0-206" id="h3-0-206" class="i">+    ),
+</a><a href="#h3-0-207" id="h3-0-207" class="i">+)
+</a><a href="#h3-0-208" id="h3-0-208" class="i">+Null ← Or(
+</a><a href="#h3-0-209" id="h3-0-209" class="i">+    LessThan(
+</a><a href="#h3-0-210" id="h3-0-210" class="i">+        Constant(
+</a><a href="#h3-0-211" id="h3-0-211" class="i">+            Null,
+</a><a href="#h3-0-212" id="h3-0-212" class="i">+        ),
+</a><a href="#h3-0-213" id="h3-0-213" class="i">+        Constant(
+</a><a href="#h3-0-214" id="h3-0-214" class="i">+            Float(
+</a><a href="#h3-0-215" id="h3-0-215" class="i">+                NaN,
+</a><a href="#h3-0-216" id="h3-0-216" class="i">+            ),
+</a><a href="#h3-0-217" id="h3-0-217" class="i">+        ),
+</a><a href="#h3-0-218" id="h3-0-218" class="i">+    ),
+</a><a href="#h3-0-219" id="h3-0-219" class="i">+    Equal(
+</a><a href="#h3-0-220" id="h3-0-220" class="i">+        Constant(
+</a><a href="#h3-0-221" id="h3-0-221" class="i">+            Null,
+</a><a href="#h3-0-222" id="h3-0-222" class="i">+        ),
+</a><a href="#h3-0-223" id="h3-0-223" class="i">+        Constant(
+</a><a href="#h3-0-224" id="h3-0-224" class="i">+            Float(
+</a><a href="#h3-0-225" id="h3-0-225" class="i">+                NaN,
+</a><a href="#h3-0-226" id="h3-0-226" class="i">+            ),
+</a><a href="#h3-0-227" id="h3-0-227" class="i">+        ),
+</a><a href="#h3-0-228" id="h3-0-228" class="i">+    ),
+</a><a href="#h3-0-229" id="h3-0-229" class="i">+)
+</a><a href="#h3-0-230" id="h3-0-230" class="i">+Null ← Or(
+</a><a href="#h3-0-231" id="h3-0-231" class="i">+    LessThan(
+</a><a href="#h3-0-232" id="h3-0-232" class="i">+        Constant(
+</a><a href="#h3-0-233" id="h3-0-233" class="i">+            Null,
+</a><a href="#h3-0-234" id="h3-0-234" class="i">+        ),
+</a><a href="#h3-0-235" id="h3-0-235" class="i">+        Constant(
+</a><a href="#h3-0-236" id="h3-0-236" class="i">+            Null,
+</a><a href="#h3-0-237" id="h3-0-237" class="i">+        ),
+</a><a href="#h3-0-238" id="h3-0-238" class="i">+    ),
+</a><a href="#h3-0-239" id="h3-0-239" class="i">+    Equal(
+</a><a href="#h3-0-240" id="h3-0-240" class="i">+        Constant(
+</a><a href="#h3-0-241" id="h3-0-241" class="i">+            Null,
+</a><a href="#h3-0-242" id="h3-0-242" class="i">+        ),
+</a><a href="#h3-0-243" id="h3-0-243" class="i">+        Constant(
+</a><a href="#h3-0-244" id="h3-0-244" class="i">+            Null,
+</a><a href="#h3-0-245" id="h3-0-245" class="i">+        ),
+</a><a href="#h3-0-246" id="h3-0-246" class="i">+    ),
+</a><a href="#h3-0-247" id="h3-0-247" class="i">+)
+</a><b>diff --git a/<a id="h4" href="../file/src/sql/testscripts/expressions/op_math_add.html">src/sql/testscripts/expressions/op_math_add</a> b/<a href="../file/src/sql/testscripts/expressions/op_math_add.html">src/sql/testscripts/expressions/op_math_add</a></b>
+<a href="#h4-0" id="h4-0" class="h">@@ -7,7 +7,27 @@
+</a> ---
+ Integer(3) ← Add(Constant(Integer(1)), Constant(Integer(2)))
+ Integer(-2) ← Add(Constant(Integer(1)), Negate(Constant(Integer(3))))
+<a href="#h4-0-3" id="h4-0-3" class="d">-Integer(2) ← Add(Add(Constant(Integer(1)), Negate(Constant(Integer(2)))), Constant(Integer(3)))
+</a><a href="#h4-0-4" id="h4-0-4" class="i">+Integer(2) ← Add(
+</a><a href="#h4-0-5" id="h4-0-5" class="i">+    Add(
+</a><a href="#h4-0-6" id="h4-0-6" class="i">+        Constant(
+</a><a href="#h4-0-7" id="h4-0-7" class="i">+            Integer(
+</a><a href="#h4-0-8" id="h4-0-8" class="i">+                1,
+</a><a href="#h4-0-9" id="h4-0-9" class="i">+            ),
+</a><a href="#h4-0-10" id="h4-0-10" class="i">+        ),
+</a><a href="#h4-0-11" id="h4-0-11" class="i">+        Negate(
+</a><a href="#h4-0-12" id="h4-0-12" class="i">+            Constant(
+</a><a href="#h4-0-13" id="h4-0-13" class="i">+                Integer(
+</a><a href="#h4-0-14" id="h4-0-14" class="i">+                    2,
+</a><a href="#h4-0-15" id="h4-0-15" class="i">+                ),
+</a><a href="#h4-0-16" id="h4-0-16" class="i">+            ),
+</a><a href="#h4-0-17" id="h4-0-17" class="i">+        ),
+</a><a href="#h4-0-18" id="h4-0-18" class="i">+    ),
+</a><a href="#h4-0-19" id="h4-0-19" class="i">+    Constant(
+</a><a href="#h4-0-20" id="h4-0-20" class="i">+        Integer(
+</a><a href="#h4-0-21" id="h4-0-21" class="i">+            3,
+</a><a href="#h4-0-22" id="h4-0-22" class="i">+        ),
+</a><a href="#h4-0-23" id="h4-0-23" class="i">+    ),
+</a><a href="#h4-0-24" id="h4-0-24" class="i">+)
+</a> 
+ # Simple float addition.
+ [expr]&gt; 3.1 + 2.71
+<b>diff --git a/<a id="h5" href="../file/src/sql/testscripts/expressions/op_math_factorial.html">src/sql/testscripts/expressions/op_math_factorial</a> b/<a href="../file/src/sql/testscripts/expressions/op_math_factorial.html">src/sql/testscripts/expressions/op_math_factorial</a></b>
+<a href="#h5-0" id="h5-0" class="h">@@ -30,7 +30,23 @@ Error: invalid input: can&#39;t take factorial of NaN
+</a> [expr]&gt; 2!!!!!!
+ ---
+ Integer(720) ← Factorial(Factorial(Constant(Integer(3))))
+<a href="#h5-0-3" id="h5-0-3" class="d">-Integer(2) ← Factorial(Factorial(Factorial(Factorial(Factorial(Factorial(Constant(Integer(2))))))))
+</a><a href="#h5-0-4" id="h5-0-4" class="i">+Integer(2) ← Factorial(
+</a><a href="#h5-0-5" id="h5-0-5" class="i">+    Factorial(
+</a><a href="#h5-0-6" id="h5-0-6" class="i">+        Factorial(
+</a><a href="#h5-0-7" id="h5-0-7" class="i">+            Factorial(
+</a><a href="#h5-0-8" id="h5-0-8" class="i">+                Factorial(
+</a><a href="#h5-0-9" id="h5-0-9" class="i">+                    Factorial(
+</a><a href="#h5-0-10" id="h5-0-10" class="i">+                        Constant(
+</a><a href="#h5-0-11" id="h5-0-11" class="i">+                            Integer(
+</a><a href="#h5-0-12" id="h5-0-12" class="i">+                                2,
+</a><a href="#h5-0-13" id="h5-0-13" class="i">+                            ),
+</a><a href="#h5-0-14" id="h5-0-14" class="i">+                        ),
+</a><a href="#h5-0-15" id="h5-0-15" class="i">+                    ),
+</a><a href="#h5-0-16" id="h5-0-16" class="i">+                ),
+</a><a href="#h5-0-17" id="h5-0-17" class="i">+            ),
+</a><a href="#h5-0-18" id="h5-0-18" class="i">+        ),
+</a><a href="#h5-0-19" id="h5-0-19" class="i">+    ),
+</a><a href="#h5-0-20" id="h5-0-20" class="i">+)
+</a> 
+ # Overflow.
+ [expr]!&gt; 3!!!
+<b>diff --git a/<a id="h6" href="../file/src/sql/testscripts/expressions/op_math_subtract.html">src/sql/testscripts/expressions/op_math_subtract</a> b/<a href="../file/src/sql/testscripts/expressions/op_math_subtract.html">src/sql/testscripts/expressions/op_math_subtract</a></b>
+<a href="#h6-0" id="h6-0" class="h">@@ -7,7 +7,27 @@
+</a> ---
+ Integer(1) ← Subtract(Constant(Integer(2)), Constant(Integer(1)))
+ Integer(-1) ← Subtract(Constant(Integer(2)), Constant(Integer(3)))
+<a href="#h6-0-3" id="h6-0-3" class="d">-Integer(2) ← Subtract(Subtract(Constant(Integer(1)), Negate(Constant(Integer(3)))), Constant(Integer(2)))
+</a><a href="#h6-0-4" id="h6-0-4" class="i">+Integer(2) ← Subtract(
+</a><a href="#h6-0-5" id="h6-0-5" class="i">+    Subtract(
+</a><a href="#h6-0-6" id="h6-0-6" class="i">+        Constant(
+</a><a href="#h6-0-7" id="h6-0-7" class="i">+            Integer(
+</a><a href="#h6-0-8" id="h6-0-8" class="i">+                1,
+</a><a href="#h6-0-9" id="h6-0-9" class="i">+            ),
+</a><a href="#h6-0-10" id="h6-0-10" class="i">+        ),
+</a><a href="#h6-0-11" id="h6-0-11" class="i">+        Negate(
+</a><a href="#h6-0-12" id="h6-0-12" class="i">+            Constant(
+</a><a href="#h6-0-13" id="h6-0-13" class="i">+                Integer(
+</a><a href="#h6-0-14" id="h6-0-14" class="i">+                    3,
+</a><a href="#h6-0-15" id="h6-0-15" class="i">+                ),
+</a><a href="#h6-0-16" id="h6-0-16" class="i">+            ),
+</a><a href="#h6-0-17" id="h6-0-17" class="i">+        ),
+</a><a href="#h6-0-18" id="h6-0-18" class="i">+    ),
+</a><a href="#h6-0-19" id="h6-0-19" class="i">+    Constant(
+</a><a href="#h6-0-20" id="h6-0-20" class="i">+        Integer(
+</a><a href="#h6-0-21" id="h6-0-21" class="i">+            2,
+</a><a href="#h6-0-22" id="h6-0-22" class="i">+        ),
+</a><a href="#h6-0-23" id="h6-0-23" class="i">+    ),
+</a><a href="#h6-0-24" id="h6-0-24" class="i">+)
+</a> 
+ # Simple float subtraction.
+ [expr]&gt; 3.1 - 2.71
+<b>diff --git a/<a id="h7" href="../file/src/sql/testscripts/optimizer/index_lookup.html">src/sql/testscripts/optimizer/index_lookup</a> b/<a href="../file/src/sql/testscripts/optimizer/index_lookup.html">src/sql/testscripts/optimizer/index_lookup</a></b>
+<a href="#h7-0" id="h7-0" class="h">@@ -1,5 +1,4 @@
+</a> # Tests the index_lookup optimizer.
+<a href="#h7-0-1" id="h7-0-1" class="d">-# TODO: test the expression handling better, e.g. CNF.
+</a> 
+ &gt; CREATE TABLE test (id INT PRIMARY KEY, value STRING INDEX, &quot;float&quot; FLOAT INDEX)
+ &gt; INSERT INTO test VALUES (0, NULL), (1, &#39;a&#39;, 3.14), (2, &#39;b&#39;, NAN), (3, &#39;c&#39;, 0.0)
+</pre>
+</div>
+</body>
+</html>

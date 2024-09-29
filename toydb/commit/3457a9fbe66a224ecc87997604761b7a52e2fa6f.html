@@ -1,0 +1,968 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>sql: move `ResultSet` to `engine::StatementResult` and simplify - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/3457a9fbe66a224ecc87997604761b7a52e2fa6f.html">3457a9fbe66a224ecc87997604761b7a52e2fa6f</a>
+<b>parent</b> <a href="../commit/80d7fe518b3a24066a98651ed3598aa6b8937758.html">80d7fe518b3a24066a98651ed3598aa6b8937758</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Sun, 16 Jun 2024 17:01:30 +0200
+
+sql: move `ResultSet` to `engine::StatementResult` and simplify
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/bin/toysql.rs</a></td><td> | </td><td class="num">30</td><td><span class="i">++++++++++++++</span><span class="d">----------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/bin/workload.rs</a></td><td> | </td><td class="num">4</td><td><span class="i">++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/client.rs</a></td><td> | </td><td class="num">26</td><td><span class="i">++++++++</span><span class="d">------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">src/lib.rs</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h4">src/server.rs</a></td><td> | </td><td class="num">32</td><td><span class="i">+++</span><span class="d">-----------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h5">src/sql/engine/mod.rs</a></td><td> | </td><td class="num">104</td><td><span class="i">+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d">----------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h6">src/sql/execution/mod.rs</a></td><td> | </td><td class="num">114</td><td><span class="i">+</span><span class="d">------------------------------------------------------------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h7">tests/e2e/client.rs</a></td><td> | </td><td class="num">72</td><td><span class="i">++++++++++++++++++++++++++++++++++++++</span><span class="d">----------------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h8">tests/e2e/mod.rs</a></td><td> | </td><td class="num">10</td><td><span class="i">++++++</span><span class="d">----</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h9">tests/sql/query.rs</a></td><td> | </td><td class="num">15</td><td><span class="i">+++</span><span class="d">------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h10">tests/sql/query/where_float</a></td><td> | </td><td class="num">55</td><td><span class="i">+++++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h11">tests/sql/query/where_integer</a></td><td> | </td><td class="num">55</td><td><span class="i">+++++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h12">tests/sql/query/where_string</a></td><td> | </td><td class="num">55</td><td><span class="i">+++++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d">--</span></td></tr>
+</table></pre><pre>13 files changed, 326 insertions(+), 248 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/bin/toysql.rs.html">src/bin/toysql.rs</a> b/<a href="../file/src/bin/toysql.rs.html">src/bin/toysql.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -5,13 +5,14 @@
+</a> 
+ #![warn(clippy::all)]
+ 
+<a href="#h0-0-3" id="h0-0-3" class="i">+use itertools::Itertools as _;
+</a> use rustyline::history::DefaultHistory;
+ use rustyline::validate::{ValidationContext, ValidationResult, Validator};
+ use rustyline::{error::ReadlineError, Editor, Modifiers};
+ use rustyline_derive::{Completer, Helper, Highlighter, Hinter};
+ use toydb::errinput;
+ use toydb::error::{Error, Result};
+<a href="#h0-0-10" id="h0-0-10" class="d">-use toydb::sql::execution::ResultSet;
+</a><a href="#h0-0-11" id="h0-0-11" class="i">+use toydb::sql::engine::StatementResult;
+</a> use toydb::sql::parser::{Lexer, Token};
+ use toydb::Client;
+ 
+<a href="#h0-1" id="h0-1" class="h">@@ -181,22 +182,22 @@ Storage:   {keys} keys, {logical_size} MB logical, {nodes}x {disk_size} MB disk,
+</a>     /// Runs a query and displays the results
+     fn execute_query(&amp;mut self, query: &amp;str) -&gt; Result&lt;()&gt; {
+         match self.client.execute(query)? {
+<a href="#h0-1-3" id="h0-1-3" class="d">-            ResultSet::Begin { version, read_only } =&gt; match read_only {
+</a><a href="#h0-1-4" id="h0-1-4" class="i">+            StatementResult::Begin { version, read_only } =&gt; match read_only {
+</a>                 false =&gt; println!(&quot;Began transaction at new version {}&quot;, version),
+                 true =&gt; println!(&quot;Began read-only transaction at version {}&quot;, version),
+             },
+<a href="#h0-1-8" id="h0-1-8" class="d">-            ResultSet::Commit { version: id } =&gt; println!(&quot;Committed transaction {}&quot;, id),
+</a><a href="#h0-1-9" id="h0-1-9" class="d">-            ResultSet::Rollback { version: id } =&gt; println!(&quot;Rolled back transaction {}&quot;, id),
+</a><a href="#h0-1-10" id="h0-1-10" class="d">-            ResultSet::Create { count } =&gt; println!(&quot;Created {} rows&quot;, count),
+</a><a href="#h0-1-11" id="h0-1-11" class="d">-            ResultSet::Delete { count } =&gt; println!(&quot;Deleted {} rows&quot;, count),
+</a><a href="#h0-1-12" id="h0-1-12" class="d">-            ResultSet::Update { count } =&gt; println!(&quot;Updated {} rows&quot;, count),
+</a><a href="#h0-1-13" id="h0-1-13" class="d">-            ResultSet::CreateTable { name } =&gt; println!(&quot;Created table {}&quot;, name),
+</a><a href="#h0-1-14" id="h0-1-14" class="d">-            ResultSet::DropTable { name, existed } =&gt; match existed {
+</a><a href="#h0-1-15" id="h0-1-15" class="i">+            StatementResult::Commit { version: id } =&gt; println!(&quot;Committed transaction {}&quot;, id),
+</a><a href="#h0-1-16" id="h0-1-16" class="i">+            StatementResult::Rollback { version: id } =&gt; println!(&quot;Rolled back transaction {}&quot;, id),
+</a><a href="#h0-1-17" id="h0-1-17" class="i">+            StatementResult::Create { count } =&gt; println!(&quot;Created {} rows&quot;, count),
+</a><a href="#h0-1-18" id="h0-1-18" class="i">+            StatementResult::Delete { count } =&gt; println!(&quot;Deleted {} rows&quot;, count),
+</a><a href="#h0-1-19" id="h0-1-19" class="i">+            StatementResult::Update { count } =&gt; println!(&quot;Updated {} rows&quot;, count),
+</a><a href="#h0-1-20" id="h0-1-20" class="i">+            StatementResult::CreateTable { name } =&gt; println!(&quot;Created table {}&quot;, name),
+</a><a href="#h0-1-21" id="h0-1-21" class="i">+            StatementResult::DropTable { name, existed } =&gt; match existed {
+</a>                 true =&gt; println!(&quot;Dropped table {}&quot;, name),
+                 false =&gt; println!(&quot;Table {} did not exit&quot;, name),
+             },
+<a href="#h0-1-25" id="h0-1-25" class="d">-            ResultSet::Explain(plan) =&gt; println!(&quot;{}&quot;, plan),
+</a><a href="#h0-1-26" id="h0-1-26" class="d">-            ResultSet::Query { columns, mut rows } =&gt; {
+</a><a href="#h0-1-27" id="h0-1-27" class="i">+            StatementResult::Explain(plan) =&gt; println!(&quot;{}&quot;, plan),
+</a><a href="#h0-1-28" id="h0-1-28" class="i">+            StatementResult::Query { columns, rows } =&gt; {
+</a>                 if self.show_headers {
+                     println!(
+                         &quot;{}&quot;,
+<a href="#h0-2" id="h0-2" class="h">@@ -207,11 +208,8 @@ Storage:   {keys} keys, {logical_size} MB logical, {nodes}x {disk_size} MB disk,
+</a>                             .join(&quot;|&quot;)
+                     );
+                 }
+<a href="#h0-2-3" id="h0-2-3" class="d">-                while let Some(row) = rows.next().transpose()? {
+</a><a href="#h0-2-4" id="h0-2-4" class="d">-                    println!(
+</a><a href="#h0-2-5" id="h0-2-5" class="d">-                        &quot;{}&quot;,
+</a><a href="#h0-2-6" id="h0-2-6" class="d">-                        row.into_iter().map(|v| format!(&quot;{}&quot;, v)).collect::&lt;Vec&lt;_&gt;&gt;().join(&quot;|&quot;)
+</a><a href="#h0-2-7" id="h0-2-7" class="d">-                    );
+</a><a href="#h0-2-8" id="h0-2-8" class="i">+                for row in rows {
+</a><a href="#h0-2-9" id="h0-2-9" class="i">+                    println!(&quot;{}&quot;, row.into_iter().map(|v| format!(&quot;{}&quot;, v)).join(&quot;|&quot;));
+</a>                 }
+             }
+         }
+<b>diff --git a/<a id="h1" href="../file/src/bin/workload.rs.html">src/bin/workload.rs</a> b/<a href="../file/src/bin/workload.rs.html">src/bin/workload.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -20,7 +20,7 @@ use std::collections::HashSet;
+</a> use std::io::Write as _;
+ use std::time::Duration;
+ use toydb::error::Result;
+<a href="#h1-0-3" id="h1-0-3" class="d">-use toydb::{Client, ResultSet};
+</a><a href="#h1-0-4" id="h1-0-4" class="i">+use toydb::{Client, StatementResult};
+</a> 
+ fn main() -&gt; Result&lt;()&gt; {
+     let Command { runner, subcommand } = Command::parse();
+<a href="#h1-1" id="h1-1" class="h">@@ -337,7 +337,7 @@ impl Workload for Write {
+</a>             r#&quot;INSERT INTO &quot;write&quot; (id, value) VALUES {}&quot;#,
+             item.iter().map(|(id, value)| format!(&quot;({}, &#39;{}&#39;)&quot;, id, value)).join(&quot;, &quot;)
+         );
+<a href="#h1-1-3" id="h1-1-3" class="d">-        if let ResultSet::Create { count } = client.execute(&amp;query)? {
+</a><a href="#h1-1-4" id="h1-1-4" class="i">+        if let StatementResult::Create { count } = client.execute(&amp;query)? {
+</a>             assert_eq!(count as usize, batch_size, &quot;Unexpected row count&quot;);
+         } else {
+             panic!(&quot;Unexpected result&quot;)
+<b>diff --git a/<a id="h2" href="../file/src/client.rs.html">src/client.rs</a> b/<a href="../file/src/client.rs.html">src/client.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -4,7 +4,7 @@ use crate::encoding::Value as _;
+</a> use crate::errdata;
+ use crate::error::{Error, Result};
+ use crate::server::{Request, Response, Status};
+<a href="#h2-0-3" id="h2-0-3" class="d">-use crate::sql::execution::ResultSet;
+</a><a href="#h2-0-4" id="h2-0-4" class="i">+use crate::sql::engine::StatementResult;
+</a> use crate::sql::types::schema::Table;
+ 
+ use rand::Rng;
+<a href="#h2-1" id="h2-1" class="h">@@ -33,27 +33,17 @@ impl Client {
+</a>     }
+ 
+     /// Executes a query
+<a href="#h2-1-3" id="h2-1-3" class="d">-    pub fn execute(&amp;mut self, query: &amp;str) -&gt; Result&lt;ResultSet&gt; {
+</a><a href="#h2-1-4" id="h2-1-4" class="d">-        let mut resultset = match self.call(Request::Execute(query.into()))? {
+</a><a href="#h2-1-5" id="h2-1-5" class="i">+    pub fn execute(&amp;mut self, query: &amp;str) -&gt; Result&lt;StatementResult&gt; {
+</a><a href="#h2-1-6" id="h2-1-6" class="i">+        let resultset = match self.call(Request::Execute(query.into()))? {
+</a>             Response::Execute(rs) =&gt; rs,
+             response =&gt; return errdata!(&quot;unexpected response {response:?}&quot;),
+         };
+<a href="#h2-1-10" id="h2-1-10" class="d">-        if let ResultSet::Query { columns, .. } = resultset {
+</a><a href="#h2-1-11" id="h2-1-11" class="d">-            // FIXME We buffer rows for now to avoid lifetime hassles
+</a><a href="#h2-1-12" id="h2-1-12" class="d">-            let mut rows = Vec::new();
+</a><a href="#h2-1-13" id="h2-1-13" class="d">-            loop {
+</a><a href="#h2-1-14" id="h2-1-14" class="d">-                match Result::&lt;Response&gt;::decode_from(&amp;mut self.reader)?? {
+</a><a href="#h2-1-15" id="h2-1-15" class="d">-                    Response::Row(Some(row)) =&gt; rows.push(row),
+</a><a href="#h2-1-16" id="h2-1-16" class="d">-                    Response::Row(None) =&gt; break,
+</a><a href="#h2-1-17" id="h2-1-17" class="d">-                    response =&gt; return errdata!(&quot;unexpected response {response:?}&quot;),
+</a><a href="#h2-1-18" id="h2-1-18" class="d">-                }
+</a><a href="#h2-1-19" id="h2-1-19" class="d">-            }
+</a><a href="#h2-1-20" id="h2-1-20" class="d">-            resultset = ResultSet::Query { columns, rows: Box::new(rows.into_iter().map(Ok)) }
+</a><a href="#h2-1-21" id="h2-1-21" class="d">-        };
+</a>         match &amp;resultset {
+<a href="#h2-1-23" id="h2-1-23" class="d">-            ResultSet::Begin { version, read_only } =&gt; self.txn = Some((*version, *read_only)),
+</a><a href="#h2-1-24" id="h2-1-24" class="d">-            ResultSet::Commit { .. } =&gt; self.txn = None,
+</a><a href="#h2-1-25" id="h2-1-25" class="d">-            ResultSet::Rollback { .. } =&gt; self.txn = None,
+</a><a href="#h2-1-26" id="h2-1-26" class="i">+            StatementResult::Begin { version, read_only } =&gt; {
+</a><a href="#h2-1-27" id="h2-1-27" class="i">+                self.txn = Some((*version, *read_only))
+</a><a href="#h2-1-28" id="h2-1-28" class="i">+            }
+</a><a href="#h2-1-29" id="h2-1-29" class="i">+            StatementResult::Commit { .. } =&gt; self.txn = None,
+</a><a href="#h2-1-30" id="h2-1-30" class="i">+            StatementResult::Rollback { .. } =&gt; self.txn = None,
+</a>             _ =&gt; {}
+         }
+         Ok(resultset)
+<b>diff --git a/<a id="h3" href="../file/src/lib.rs.html">src/lib.rs</a> b/<a href="../file/src/lib.rs.html">src/lib.rs</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -12,4 +12,4 @@ pub mod storage;
+</a> 
+ pub use client::Client;
+ pub use server::Server;
+<a href="#h3-0-3" id="h3-0-3" class="d">-pub use sql::execution::ResultSet;
+</a><a href="#h3-0-4" id="h3-0-4" class="i">+pub use sql::engine::StatementResult;
+</a><b>diff --git a/<a id="h4" href="../file/src/server.rs.html">src/server.rs</a> b/<a href="../file/src/server.rs.html">src/server.rs</a></b>
+<a href="#h4-0" id="h4-0" class="h">@@ -2,8 +2,7 @@ use crate::encoding::{self, Value as _};
+</a> use crate::error::{Error, Result};
+ use crate::raft;
+ use crate::sql;
+<a href="#h4-0-3" id="h4-0-3" class="d">-use crate::sql::engine::Engine as _;
+</a><a href="#h4-0-4" id="h4-0-4" class="d">-use crate::sql::execution::ResultSet;
+</a><a href="#h4-0-5" id="h4-0-5" class="i">+use crate::sql::engine::{Engine as _, StatementResult};
+</a> use crate::sql::types::schema::{Catalog as _, Table};
+ use crate::sql::types::Row;
+ use crate::storage;
+<a href="#h4-1" id="h4-1" class="h">@@ -288,7 +287,7 @@ impl Server {
+</a>         while let Some(request) = Request::maybe_decode_from(&amp;mut reader)? {
+             // Execute request.
+             debug!(&quot;Received request {request:?}&quot;);
+<a href="#h4-1-3" id="h4-1-3" class="d">-            let mut response = match request {
+</a><a href="#h4-1-4" id="h4-1-4" class="i">+            let response = match request {
+</a>                 Request::Execute(query) =&gt; session.execute(&amp;query).map(Response::Execute),
+                 Request::GetTable(table) =&gt; session
+                     .with_txn_read_only(|txn| txn.must_read_table(&amp;table))
+<a href="#h4-2" id="h4-2" class="h">@@ -304,32 +303,7 @@ impl Server {
+</a> 
+             // Process response.
+             debug!(&quot;Returning response {response:?}&quot;);
+<a href="#h4-2-3" id="h4-2-3" class="d">-            let mut rows: Box&lt;dyn Iterator&lt;Item = Result&lt;Response&gt;&gt; + Send&gt; =
+</a><a href="#h4-2-4" id="h4-2-4" class="d">-                Box::new(std::iter::empty());
+</a><a href="#h4-2-5" id="h4-2-5" class="d">-            if let Ok(Response::Execute(ResultSet::Query { rows: ref mut resultrows, .. })) =
+</a><a href="#h4-2-6" id="h4-2-6" class="d">-                &amp;mut response
+</a><a href="#h4-2-7" id="h4-2-7" class="d">-            {
+</a><a href="#h4-2-8" id="h4-2-8" class="d">-                // TODO: don&#39;t stream results, for simplicity.
+</a><a href="#h4-2-9" id="h4-2-9" class="d">-                rows = Box::new(
+</a><a href="#h4-2-10" id="h4-2-10" class="d">-                    std::mem::replace(resultrows, Box::new(std::iter::empty()))
+</a><a href="#h4-2-11" id="h4-2-11" class="d">-                        .map(|result| result.map(|row| Response::Row(Some(row))))
+</a><a href="#h4-2-12" id="h4-2-12" class="d">-                        .chain(std::iter::once(Ok(Response::Row(None))))
+</a><a href="#h4-2-13" id="h4-2-13" class="d">-                        .scan(false, |err_sent, response| match (&amp;err_sent, &amp;response) {
+</a><a href="#h4-2-14" id="h4-2-14" class="d">-                            (true, _) =&gt; None,
+</a><a href="#h4-2-15" id="h4-2-15" class="d">-                            (_, Err(error)) =&gt; {
+</a><a href="#h4-2-16" id="h4-2-16" class="d">-                                *err_sent = true;
+</a><a href="#h4-2-17" id="h4-2-17" class="d">-                                Some(Err(error.clone()))
+</a><a href="#h4-2-18" id="h4-2-18" class="d">-                            }
+</a><a href="#h4-2-19" id="h4-2-19" class="d">-                            _ =&gt; Some(response),
+</a><a href="#h4-2-20" id="h4-2-20" class="d">-                        })
+</a><a href="#h4-2-21" id="h4-2-21" class="d">-                        .fuse(),
+</a><a href="#h4-2-22" id="h4-2-22" class="d">-                );
+</a><a href="#h4-2-23" id="h4-2-23" class="d">-            }
+</a><a href="#h4-2-24" id="h4-2-24" class="d">-
+</a>             response.encode_into(&amp;mut writer)?;
+<a href="#h4-2-26" id="h4-2-26" class="d">-            for row in rows {
+</a><a href="#h4-2-27" id="h4-2-27" class="d">-                row.encode_into(&amp;mut writer)?;
+</a><a href="#h4-2-28" id="h4-2-28" class="d">-            }
+</a>             writer.flush()?;
+         }
+         Ok(())
+<a href="#h4-3" id="h4-3" class="h">@@ -354,7 +328,7 @@ impl encoding::Value for Request {}
+</a> /// A SQL server response.
+ #[derive(Debug, Serialize, Deserialize)]
+ pub enum Response {
+<a href="#h4-3-3" id="h4-3-3" class="d">-    Execute(ResultSet),
+</a><a href="#h4-3-4" id="h4-3-4" class="i">+    Execute(StatementResult),
+</a>     Row(Option&lt;Row&gt;),
+     GetTable(Table),
+     ListTables(Vec&lt;String&gt;),
+<b>diff --git a/<a id="h5" href="../file/src/sql/engine/mod.rs.html">src/sql/engine/mod.rs</a> b/<a href="../file/src/sql/engine/mod.rs.html">src/sql/engine/mod.rs</a></b>
+<a href="#h5-0" id="h5-0" class="h">@@ -3,14 +3,15 @@ mod kv;
+</a> pub mod raft;
+ pub use kv::KV;
+ pub use raft::{Raft, Status};
+<a href="#h5-0-3" id="h5-0-3" class="i">+use serde::{Deserialize, Serialize};
+</a> 
+<a href="#h5-0-5" id="h5-0-5" class="d">-use super::execution::ResultSet;
+</a><a href="#h5-0-6" id="h5-0-6" class="i">+use super::execution::ExecutionResult;
+</a> use super::parser::{ast, Parser};
+ use super::plan::Plan;
+ use super::types::schema::Catalog;
+<a href="#h5-0-10" id="h5-0-10" class="d">-use super::types::{Expression, Row, Value};
+</a><a href="#h5-0-11" id="h5-0-11" class="d">-use crate::errinput;
+</a><a href="#h5-0-12" id="h5-0-12" class="d">-use crate::error::Result;
+</a><a href="#h5-0-13" id="h5-0-13" class="i">+use super::types::{Columns, Expression, Row, Rows, Value};
+</a><a href="#h5-0-14" id="h5-0-14" class="i">+use crate::error::{Error, Result};
+</a><a href="#h5-0-15" id="h5-0-15" class="i">+use crate::{errdata, errinput};
+</a> 
+ use std::collections::HashSet;
+ 
+<a href="#h5-1" id="h5-1" class="h">@@ -72,7 +73,7 @@ pub struct Session&lt;E: Engine + &#39;static&gt; {
+</a> 
+ impl&lt;E: Engine + &#39;static&gt; Session&lt;E&gt; {
+     /// Executes a query, managing transaction status for the session
+<a href="#h5-1-3" id="h5-1-3" class="d">-    pub fn execute(&amp;mut self, query: &amp;str) -&gt; Result&lt;ResultSet&gt; {
+</a><a href="#h5-1-4" id="h5-1-4" class="i">+    pub fn execute(&amp;mut self, query: &amp;str) -&gt; Result&lt;StatementResult&gt; {
+</a>         // FIXME We should match on self.txn as well, but get this error:
+         // error[E0009]: cannot bind by-move and by-ref in the same pattern
+         // ...which seems like an arbitrary compiler limitation
+<a href="#h5-2" id="h5-2" class="h">@@ -82,13 +83,13 @@ impl&lt;E: Engine + &#39;static&gt; Session&lt;E&gt; {
+</a>             }
+             ast::Statement::Begin { read_only: true, as_of: None } =&gt; {
+                 let txn = self.engine.begin_read_only()?;
+<a href="#h5-2-3" id="h5-2-3" class="d">-                let result = ResultSet::Begin { version: txn.version(), read_only: true };
+</a><a href="#h5-2-4" id="h5-2-4" class="i">+                let result = StatementResult::Begin { version: txn.version(), read_only: true };
+</a>                 self.txn = Some(txn);
+                 Ok(result)
+             }
+             ast::Statement::Begin { read_only: true, as_of: Some(version) } =&gt; {
+                 let txn = self.engine.begin_as_of(version)?;
+<a href="#h5-2-10" id="h5-2-10" class="d">-                let result = ResultSet::Begin { version, read_only: true };
+</a><a href="#h5-2-11" id="h5-2-11" class="i">+                let result = StatementResult::Begin { version, read_only: true };
+</a>                 self.txn = Some(txn);
+                 Ok(result)
+             }
+<a href="#h5-3" id="h5-3" class="h">@@ -97,7 +98,7 @@ impl&lt;E: Engine + &#39;static&gt; Session&lt;E&gt; {
+</a>             }
+             ast::Statement::Begin { read_only: false, as_of: None } =&gt; {
+                 let txn = self.engine.begin()?;
+<a href="#h5-3-3" id="h5-3-3" class="d">-                let result = ResultSet::Begin { version: txn.version(), read_only: false };
+</a><a href="#h5-3-4" id="h5-3-4" class="i">+                let result = StatementResult::Begin { version: txn.version(), read_only: false };
+</a>                 self.txn = Some(txn);
+                 Ok(result)
+             }
+<a href="#h5-4" id="h5-4" class="h">@@ -108,17 +109,17 @@ impl&lt;E: Engine + &#39;static&gt; Session&lt;E&gt; {
+</a>                 let txn = self.txn.take().unwrap();
+                 let version = txn.version();
+                 txn.commit()?;
+<a href="#h5-4-3" id="h5-4-3" class="d">-                Ok(ResultSet::Commit { version })
+</a><a href="#h5-4-4" id="h5-4-4" class="i">+                Ok(StatementResult::Commit { version })
+</a>             }
+             ast::Statement::Rollback =&gt; {
+                 let txn = self.txn.take().unwrap();
+                 let version = txn.version();
+                 txn.rollback()?;
+<a href="#h5-4-10" id="h5-4-10" class="d">-                Ok(ResultSet::Rollback { version })
+</a><a href="#h5-4-11" id="h5-4-11" class="i">+                Ok(StatementResult::Rollback { version })
+</a>             }
+             // TODO: this needs testing.
+             ast::Statement::Explain(statement) =&gt; self.with_txn_read_only(|txn| {
+<a href="#h5-4-15" id="h5-4-15" class="d">-                Ok(ResultSet::Explain(Plan::build(*statement, txn)?.optimize(txn)?))
+</a><a href="#h5-4-16" id="h5-4-16" class="i">+                Ok(StatementResult::Explain(Plan::build(*statement, txn)?.optimize(txn)?))
+</a>             }),
+             statement if self.txn.is_some() =&gt; {
+                 Self::execute_with(statement, self.txn.as_mut().unwrap())
+<a href="#h5-5" id="h5-5" class="h">@@ -146,8 +147,11 @@ impl&lt;E: Engine + &#39;static&gt; Session&lt;E&gt; {
+</a>     /// or a temporary read-only or read/write transaction.
+     ///
+     /// TODO: reconsider this.
+<a href="#h5-5-3" id="h5-5-3" class="d">-    fn execute_with(statement: ast::Statement, txn: &amp;mut E::Transaction) -&gt; Result&lt;ResultSet&gt; {
+</a><a href="#h5-5-4" id="h5-5-4" class="d">-        Ok(Plan::build(statement, txn)?.optimize(txn)?.execute(txn)?.into())
+</a><a href="#h5-5-5" id="h5-5-5" class="i">+    fn execute_with(
+</a><a href="#h5-5-6" id="h5-5-6" class="i">+        statement: ast::Statement,
+</a><a href="#h5-5-7" id="h5-5-7" class="i">+        txn: &amp;mut E::Transaction,
+</a><a href="#h5-5-8" id="h5-5-8" class="i">+    ) -&gt; Result&lt;StatementResult&gt; {
+</a><a href="#h5-5-9" id="h5-5-9" class="i">+        Plan::build(statement, txn)?.optimize(txn)?.execute(txn)?.try_into()
+</a>     }
+ 
+     /// Runs a read-only closure in the session&#39;s transaction, or a new
+<a href="#h5-6" id="h5-6" class="h">@@ -185,3 +189,77 @@ pub type Scan = Box&lt;dyn DoubleEndedIterator&lt;Item = Result&lt;Row&gt;&gt; + Send&gt;;
+</a> 
+ /// An index scan iterator
+ pub type IndexScan = Box&lt;dyn DoubleEndedIterator&lt;Item = Result&lt;(Value, HashSet&lt;Value&gt;)&gt;&gt; + Send&gt;;
+<a href="#h5-6-3" id="h5-6-3" class="i">+
+</a><a href="#h5-6-4" id="h5-6-4" class="i">+/// A session statement result. This is also sent across the wire to SQL
+</a><a href="#h5-6-5" id="h5-6-5" class="i">+/// clients.
+</a><a href="#h5-6-6" id="h5-6-6" class="i">+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+</a><a href="#h5-6-7" id="h5-6-7" class="i">+pub enum StatementResult {
+</a><a href="#h5-6-8" id="h5-6-8" class="i">+    // Transaction started
+</a><a href="#h5-6-9" id="h5-6-9" class="i">+    Begin { version: u64, read_only: bool },
+</a><a href="#h5-6-10" id="h5-6-10" class="i">+    // Transaction committed
+</a><a href="#h5-6-11" id="h5-6-11" class="i">+    Commit { version: u64 },
+</a><a href="#h5-6-12" id="h5-6-12" class="i">+    // Transaction rolled back
+</a><a href="#h5-6-13" id="h5-6-13" class="i">+    Rollback { version: u64 },
+</a><a href="#h5-6-14" id="h5-6-14" class="i">+    // Rows created
+</a><a href="#h5-6-15" id="h5-6-15" class="i">+    Create { count: u64 },
+</a><a href="#h5-6-16" id="h5-6-16" class="i">+    // Rows deleted
+</a><a href="#h5-6-17" id="h5-6-17" class="i">+    Delete { count: u64 },
+</a><a href="#h5-6-18" id="h5-6-18" class="i">+    // Rows updated
+</a><a href="#h5-6-19" id="h5-6-19" class="i">+    Update { count: u64 },
+</a><a href="#h5-6-20" id="h5-6-20" class="i">+    // Table created
+</a><a href="#h5-6-21" id="h5-6-21" class="i">+    CreateTable { name: String },
+</a><a href="#h5-6-22" id="h5-6-22" class="i">+    // Table dropped
+</a><a href="#h5-6-23" id="h5-6-23" class="i">+    DropTable { name: String, existed: bool },
+</a><a href="#h5-6-24" id="h5-6-24" class="i">+    // Query result.
+</a><a href="#h5-6-25" id="h5-6-25" class="i">+    //
+</a><a href="#h5-6-26" id="h5-6-26" class="i">+    // For simplicity, buffer and send the entire result as a vector instead of
+</a><a href="#h5-6-27" id="h5-6-27" class="i">+    // streaming it to the client. Streaming reads haven&#39;t been implemented from
+</a><a href="#h5-6-28" id="h5-6-28" class="i">+    // Raft either.
+</a><a href="#h5-6-29" id="h5-6-29" class="i">+    Query { columns: Columns, rows: Vec&lt;Row&gt; },
+</a><a href="#h5-6-30" id="h5-6-30" class="i">+    // Explain result
+</a><a href="#h5-6-31" id="h5-6-31" class="i">+    Explain(Plan),
+</a><a href="#h5-6-32" id="h5-6-32" class="i">+}
+</a><a href="#h5-6-33" id="h5-6-33" class="i">+
+</a><a href="#h5-6-34" id="h5-6-34" class="i">+impl StatementResult {
+</a><a href="#h5-6-35" id="h5-6-35" class="i">+    /// Converts the ResultSet into a row, or errors if not a query result with rows.
+</a><a href="#h5-6-36" id="h5-6-36" class="i">+    pub fn into_row(self) -&gt; Result&lt;Row&gt; {
+</a><a href="#h5-6-37" id="h5-6-37" class="i">+        self.into_rows()?.next().transpose()?.ok_or(errdata!(&quot;no rows returned&quot;))
+</a><a href="#h5-6-38" id="h5-6-38" class="i">+    }
+</a><a href="#h5-6-39" id="h5-6-39" class="i">+
+</a><a href="#h5-6-40" id="h5-6-40" class="i">+    /// Converts the ResultSet into a row iterator, or errors if not a query
+</a><a href="#h5-6-41" id="h5-6-41" class="i">+    /// result with rows.
+</a><a href="#h5-6-42" id="h5-6-42" class="i">+    pub fn into_rows(self) -&gt; Result&lt;Rows&gt; {
+</a><a href="#h5-6-43" id="h5-6-43" class="i">+        if let StatementResult::Query { rows, .. } = self {
+</a><a href="#h5-6-44" id="h5-6-44" class="i">+            Ok(Box::new(rows.into_iter().map(Ok)))
+</a><a href="#h5-6-45" id="h5-6-45" class="i">+        } else {
+</a><a href="#h5-6-46" id="h5-6-46" class="i">+            errdata!(&quot;not a query result: {self:?}&quot;)
+</a><a href="#h5-6-47" id="h5-6-47" class="i">+        }
+</a><a href="#h5-6-48" id="h5-6-48" class="i">+    }
+</a><a href="#h5-6-49" id="h5-6-49" class="i">+
+</a><a href="#h5-6-50" id="h5-6-50" class="i">+    /// Converts the ResultSet into a value, if possible.
+</a><a href="#h5-6-51" id="h5-6-51" class="i">+    /// TODO: use TryFrom for this, also to primitive types via Value as TryFrom.
+</a><a href="#h5-6-52" id="h5-6-52" class="i">+    pub fn into_value(self) -&gt; Result&lt;Value&gt; {
+</a><a href="#h5-6-53" id="h5-6-53" class="i">+        self.into_row()?.into_iter().next().ok_or(errdata!(&quot;no value returned&quot;))
+</a><a href="#h5-6-54" id="h5-6-54" class="i">+    }
+</a><a href="#h5-6-55" id="h5-6-55" class="i">+}
+</a><a href="#h5-6-56" id="h5-6-56" class="i">+
+</a><a href="#h5-6-57" id="h5-6-57" class="i">+// TODO: remove or revisit this.
+</a><a href="#h5-6-58" id="h5-6-58" class="i">+impl TryFrom&lt;ExecutionResult&gt; for StatementResult {
+</a><a href="#h5-6-59" id="h5-6-59" class="i">+    type Error = Error;
+</a><a href="#h5-6-60" id="h5-6-60" class="i">+
+</a><a href="#h5-6-61" id="h5-6-61" class="i">+    fn try_from(result: ExecutionResult) -&gt; Result&lt;Self&gt; {
+</a><a href="#h5-6-62" id="h5-6-62" class="i">+        Ok(match result {
+</a><a href="#h5-6-63" id="h5-6-63" class="i">+            ExecutionResult::CreateTable { name } =&gt; StatementResult::CreateTable { name },
+</a><a href="#h5-6-64" id="h5-6-64" class="i">+            ExecutionResult::DropTable { name, existed } =&gt; {
+</a><a href="#h5-6-65" id="h5-6-65" class="i">+                StatementResult::DropTable { name, existed }
+</a><a href="#h5-6-66" id="h5-6-66" class="i">+            }
+</a><a href="#h5-6-67" id="h5-6-67" class="i">+            ExecutionResult::Delete { count } =&gt; StatementResult::Delete { count },
+</a><a href="#h5-6-68" id="h5-6-68" class="i">+            ExecutionResult::Insert { count } =&gt; StatementResult::Create { count },
+</a><a href="#h5-6-69" id="h5-6-69" class="i">+            ExecutionResult::Select { iter } =&gt; StatementResult::Query {
+</a><a href="#h5-6-70" id="h5-6-70" class="i">+                columns: iter.columns,
+</a><a href="#h5-6-71" id="h5-6-71" class="i">+                rows: iter.rows.collect::&lt;Result&lt;_&gt;&gt;()?,
+</a><a href="#h5-6-72" id="h5-6-72" class="i">+            },
+</a><a href="#h5-6-73" id="h5-6-73" class="i">+            ExecutionResult::Update { count } =&gt; StatementResult::Update { count },
+</a><a href="#h5-6-74" id="h5-6-74" class="i">+        })
+</a><a href="#h5-6-75" id="h5-6-75" class="i">+    }
+</a><a href="#h5-6-76" id="h5-6-76" class="i">+}
+</a><b>diff --git a/<a id="h6" href="../file/src/sql/execution/mod.rs.html">src/sql/execution/mod.rs</a> b/<a href="../file/src/sql/execution/mod.rs.html">src/sql/execution/mod.rs</a></b>
+<a href="#h6-0" id="h6-0" class="h">@@ -14,13 +14,9 @@ use source::{IndexLookup, KeyLookup, Nothing, Scan};
+</a> 
+ use super::engine::Transaction;
+ use super::plan::{Node, Plan};
+<a href="#h6-0-3" id="h6-0-3" class="d">-use super::types::{Columns, Row, Rows, Value};
+</a><a href="#h6-0-4" id="h6-0-4" class="d">-use crate::errdata;
+</a><a href="#h6-0-5" id="h6-0-5" class="i">+use super::types::{Columns, Row, Value};
+</a> use crate::error::Result;
+ 
+<a href="#h6-0-8" id="h6-0-8" class="d">-use derivative::Derivative;
+</a><a href="#h6-0-9" id="h6-0-9" class="d">-use serde::{Deserialize, Serialize};
+</a><a href="#h6-0-10" id="h6-0-10" class="d">-
+</a> /// A plan execution result.
+ pub enum ExecutionResult {
+     CreateTable { name: String },
+<a href="#h6-1" id="h6-1" class="h">@@ -146,111 +142,3 @@ pub fn execute(node: Node, txn: &amp;mut impl Transaction) -&gt; Result&lt;QueryIterator&gt; 
+</a>         Node::Scan { table, alias: _, filter } =&gt; Scan::new(table, filter).execute(txn),
+     }
+ }
+<a href="#h6-1-3" id="h6-1-3" class="d">-
+</a><a href="#h6-1-4" id="h6-1-4" class="d">-/// An executor result set
+</a><a href="#h6-1-5" id="h6-1-5" class="d">-///
+</a><a href="#h6-1-6" id="h6-1-6" class="d">-/// TODO: rename to StatementResult and move to Session.
+</a><a href="#h6-1-7" id="h6-1-7" class="d">-#[derive(Derivative, Serialize, Deserialize)]
+</a><a href="#h6-1-8" id="h6-1-8" class="d">-#[derivative(Debug, PartialEq)]
+</a><a href="#h6-1-9" id="h6-1-9" class="d">-pub enum ResultSet {
+</a><a href="#h6-1-10" id="h6-1-10" class="d">-    // Transaction started
+</a><a href="#h6-1-11" id="h6-1-11" class="d">-    Begin {
+</a><a href="#h6-1-12" id="h6-1-12" class="d">-        version: u64,
+</a><a href="#h6-1-13" id="h6-1-13" class="d">-        read_only: bool,
+</a><a href="#h6-1-14" id="h6-1-14" class="d">-    },
+</a><a href="#h6-1-15" id="h6-1-15" class="d">-    // Transaction committed
+</a><a href="#h6-1-16" id="h6-1-16" class="d">-    Commit {
+</a><a href="#h6-1-17" id="h6-1-17" class="d">-        version: u64,
+</a><a href="#h6-1-18" id="h6-1-18" class="d">-    },
+</a><a href="#h6-1-19" id="h6-1-19" class="d">-    // Transaction rolled back
+</a><a href="#h6-1-20" id="h6-1-20" class="d">-    Rollback {
+</a><a href="#h6-1-21" id="h6-1-21" class="d">-        version: u64,
+</a><a href="#h6-1-22" id="h6-1-22" class="d">-    },
+</a><a href="#h6-1-23" id="h6-1-23" class="d">-    // Rows created
+</a><a href="#h6-1-24" id="h6-1-24" class="d">-    Create {
+</a><a href="#h6-1-25" id="h6-1-25" class="d">-        count: u64,
+</a><a href="#h6-1-26" id="h6-1-26" class="d">-    },
+</a><a href="#h6-1-27" id="h6-1-27" class="d">-    // Rows deleted
+</a><a href="#h6-1-28" id="h6-1-28" class="d">-    Delete {
+</a><a href="#h6-1-29" id="h6-1-29" class="d">-        count: u64,
+</a><a href="#h6-1-30" id="h6-1-30" class="d">-    },
+</a><a href="#h6-1-31" id="h6-1-31" class="d">-    // Rows updated
+</a><a href="#h6-1-32" id="h6-1-32" class="d">-    Update {
+</a><a href="#h6-1-33" id="h6-1-33" class="d">-        count: u64,
+</a><a href="#h6-1-34" id="h6-1-34" class="d">-    },
+</a><a href="#h6-1-35" id="h6-1-35" class="d">-    // Table created
+</a><a href="#h6-1-36" id="h6-1-36" class="d">-    CreateTable {
+</a><a href="#h6-1-37" id="h6-1-37" class="d">-        name: String,
+</a><a href="#h6-1-38" id="h6-1-38" class="d">-    },
+</a><a href="#h6-1-39" id="h6-1-39" class="d">-    // Table dropped
+</a><a href="#h6-1-40" id="h6-1-40" class="d">-    DropTable {
+</a><a href="#h6-1-41" id="h6-1-41" class="d">-        name: String,
+</a><a href="#h6-1-42" id="h6-1-42" class="d">-        existed: bool,
+</a><a href="#h6-1-43" id="h6-1-43" class="d">-    },
+</a><a href="#h6-1-44" id="h6-1-44" class="d">-    // Query result
+</a><a href="#h6-1-45" id="h6-1-45" class="d">-    Query {
+</a><a href="#h6-1-46" id="h6-1-46" class="d">-        columns: Columns,
+</a><a href="#h6-1-47" id="h6-1-47" class="d">-        #[derivative(Debug = &quot;ignore&quot;)]
+</a><a href="#h6-1-48" id="h6-1-48" class="d">-        #[derivative(PartialEq = &quot;ignore&quot;)]
+</a><a href="#h6-1-49" id="h6-1-49" class="d">-        #[serde(skip, default = &quot;ResultSet::empty_rows&quot;)]
+</a><a href="#h6-1-50" id="h6-1-50" class="d">-        rows: Rows,
+</a><a href="#h6-1-51" id="h6-1-51" class="d">-    },
+</a><a href="#h6-1-52" id="h6-1-52" class="d">-    // Explain result
+</a><a href="#h6-1-53" id="h6-1-53" class="d">-    Explain(Plan),
+</a><a href="#h6-1-54" id="h6-1-54" class="d">-}
+</a><a href="#h6-1-55" id="h6-1-55" class="d">-
+</a><a href="#h6-1-56" id="h6-1-56" class="d">-impl ResultSet {
+</a><a href="#h6-1-57" id="h6-1-57" class="d">-    /// Creates an empty row iterator, for use by serde(default).
+</a><a href="#h6-1-58" id="h6-1-58" class="d">-    fn empty_rows() -&gt; Rows {
+</a><a href="#h6-1-59" id="h6-1-59" class="d">-        Box::new(std::iter::empty())
+</a><a href="#h6-1-60" id="h6-1-60" class="d">-    }
+</a><a href="#h6-1-61" id="h6-1-61" class="d">-
+</a><a href="#h6-1-62" id="h6-1-62" class="d">-    /// Converts the ResultSet into a row, or errors if not a query result with rows.
+</a><a href="#h6-1-63" id="h6-1-63" class="d">-    pub fn into_row(self) -&gt; Result&lt;Row&gt; {
+</a><a href="#h6-1-64" id="h6-1-64" class="d">-        self.into_rows()?.next().transpose()?.ok_or(errdata!(&quot;no rows returned&quot;))
+</a><a href="#h6-1-65" id="h6-1-65" class="d">-    }
+</a><a href="#h6-1-66" id="h6-1-66" class="d">-
+</a><a href="#h6-1-67" id="h6-1-67" class="d">-    /// Converts the ResultSet into a row iterator, or errors if not a query
+</a><a href="#h6-1-68" id="h6-1-68" class="d">-    /// result with rows.
+</a><a href="#h6-1-69" id="h6-1-69" class="d">-    pub fn into_rows(self) -&gt; Result&lt;Rows&gt; {
+</a><a href="#h6-1-70" id="h6-1-70" class="d">-        if let ResultSet::Query { rows, .. } = self {
+</a><a href="#h6-1-71" id="h6-1-71" class="d">-            Ok(rows)
+</a><a href="#h6-1-72" id="h6-1-72" class="d">-        } else {
+</a><a href="#h6-1-73" id="h6-1-73" class="d">-            errdata!(&quot;not a query result: {self:?}&quot;)
+</a><a href="#h6-1-74" id="h6-1-74" class="d">-        }
+</a><a href="#h6-1-75" id="h6-1-75" class="d">-    }
+</a><a href="#h6-1-76" id="h6-1-76" class="d">-
+</a><a href="#h6-1-77" id="h6-1-77" class="d">-    /// Converts the ResultSet into a value, if possible.
+</a><a href="#h6-1-78" id="h6-1-78" class="d">-    /// TODO: use TryFrom for this, also to primitive types via Value as TryFrom.
+</a><a href="#h6-1-79" id="h6-1-79" class="d">-    pub fn into_value(self) -&gt; Result&lt;Value&gt; {
+</a><a href="#h6-1-80" id="h6-1-80" class="d">-        self.into_row()?.into_iter().next().ok_or(errdata!(&quot;no value returned&quot;))
+</a><a href="#h6-1-81" id="h6-1-81" class="d">-    }
+</a><a href="#h6-1-82" id="h6-1-82" class="d">-}
+</a><a href="#h6-1-83" id="h6-1-83" class="d">-
+</a><a href="#h6-1-84" id="h6-1-84" class="d">-// TODO: remove or revisit this.
+</a><a href="#h6-1-85" id="h6-1-85" class="d">-impl From&lt;ExecutionResult&gt; for ResultSet {
+</a><a href="#h6-1-86" id="h6-1-86" class="d">-    fn from(result: ExecutionResult) -&gt; Self {
+</a><a href="#h6-1-87" id="h6-1-87" class="d">-        match result {
+</a><a href="#h6-1-88" id="h6-1-88" class="d">-            ExecutionResult::CreateTable { name } =&gt; ResultSet::CreateTable { name },
+</a><a href="#h6-1-89" id="h6-1-89" class="d">-            ExecutionResult::DropTable { name, existed } =&gt; ResultSet::DropTable { name, existed },
+</a><a href="#h6-1-90" id="h6-1-90" class="d">-            ExecutionResult::Delete { count } =&gt; ResultSet::Delete { count },
+</a><a href="#h6-1-91" id="h6-1-91" class="d">-            ExecutionResult::Insert { count } =&gt; ResultSet::Create { count },
+</a><a href="#h6-1-92" id="h6-1-92" class="d">-            ExecutionResult::Select { iter } =&gt; {
+</a><a href="#h6-1-93" id="h6-1-93" class="d">-                ResultSet::Query { columns: iter.columns, rows: iter.rows }
+</a><a href="#h6-1-94" id="h6-1-94" class="d">-            }
+</a><a href="#h6-1-95" id="h6-1-95" class="d">-            ExecutionResult::Update { count } =&gt; ResultSet::Update { count },
+</a><a href="#h6-1-96" id="h6-1-96" class="d">-        }
+</a><a href="#h6-1-97" id="h6-1-97" class="d">-    }
+</a><a href="#h6-1-98" id="h6-1-98" class="d">-}
+</a><a href="#h6-1-99" id="h6-1-99" class="d">-
+</a><a href="#h6-1-100" id="h6-1-100" class="d">-impl From&lt;QueryIterator&gt; for ResultSet {
+</a><a href="#h6-1-101" id="h6-1-101" class="d">-    fn from(iter: QueryIterator) -&gt; Self {
+</a><a href="#h6-1-102" id="h6-1-102" class="d">-        Self::Query { columns: iter.columns, rows: iter.rows }
+</a><a href="#h6-1-103" id="h6-1-103" class="d">-    }
+</a><a href="#h6-1-104" id="h6-1-104" class="d">-}
+</a><a href="#h6-1-105" id="h6-1-105" class="d">-
+</a><a href="#h6-1-106" id="h6-1-106" class="d">-impl From&lt;QueryIterator&gt; for Result&lt;ResultSet&gt; {
+</a><a href="#h6-1-107" id="h6-1-107" class="d">-    fn from(value: QueryIterator) -&gt; Self {
+</a><a href="#h6-1-108" id="h6-1-108" class="d">-        Ok(value.into())
+</a><a href="#h6-1-109" id="h6-1-109" class="d">-    }
+</a><a href="#h6-1-110" id="h6-1-110" class="d">-}
+</a><b>diff --git a/<a id="h7" href="../file/tests/e2e/client.rs.html">tests/e2e/client.rs</a> b/<a href="../file/tests/e2e/client.rs.html">tests/e2e/client.rs</a></b>
+<a href="#h7-0" id="h7-0" class="h">@@ -3,7 +3,7 @@ use super::{assert_row, assert_rows, dataset, TestCluster};
+</a> use toydb::error::{Error, Result};
+ use toydb::raft;
+ use toydb::server::Status;
+<a href="#h7-0-3" id="h7-0-3" class="d">-use toydb::sql::execution::ResultSet;
+</a><a href="#h7-0-4" id="h7-0-4" class="i">+use toydb::sql::engine::StatementResult;
+</a> use toydb::sql::types::schema;
+ use toydb::sql::types::{Column, DataType, Value};
+ use toydb::storage;
+<a href="#h7-1" id="h7-1" class="h">@@ -165,29 +165,24 @@ fn execute() -&gt; Result&lt;()&gt; {
+</a>     let result = c.execute(&quot;SELECT * FROM genres&quot;)?;
+     assert_eq!(
+         result,
+<a href="#h7-1-3" id="h7-1-3" class="d">-        ResultSet::Query {
+</a><a href="#h7-1-4" id="h7-1-4" class="i">+        StatementResult::Query {
+</a>             columns: vec![Column { name: Some(&quot;id&quot;.into()) }, Column { name: Some(&quot;name&quot;.into()) }],
+<a href="#h7-1-6" id="h7-1-6" class="d">-            rows: Box::new(std::iter::empty()),
+</a><a href="#h7-1-7" id="h7-1-7" class="i">+            rows: vec![
+</a><a href="#h7-1-8" id="h7-1-8" class="i">+                vec![Value::Integer(1), Value::String(&quot;Science Fiction&quot;.into())],
+</a><a href="#h7-1-9" id="h7-1-9" class="i">+                vec![Value::Integer(2), Value::String(&quot;Action&quot;.into())],
+</a><a href="#h7-1-10" id="h7-1-10" class="i">+                vec![Value::Integer(3), Value::String(&quot;Comedy&quot;.into())],
+</a><a href="#h7-1-11" id="h7-1-11" class="i">+            ],
+</a>         }
+     );
+<a href="#h7-1-14" id="h7-1-14" class="d">-    assert_rows(
+</a><a href="#h7-1-15" id="h7-1-15" class="d">-        result,
+</a><a href="#h7-1-16" id="h7-1-16" class="d">-        vec![
+</a><a href="#h7-1-17" id="h7-1-17" class="d">-            vec![Value::Integer(1), Value::String(&quot;Science Fiction&quot;.into())],
+</a><a href="#h7-1-18" id="h7-1-18" class="d">-            vec![Value::Integer(2), Value::String(&quot;Action&quot;.into())],
+</a><a href="#h7-1-19" id="h7-1-19" class="d">-            vec![Value::Integer(3), Value::String(&quot;Comedy&quot;.into())],
+</a><a href="#h7-1-20" id="h7-1-20" class="d">-        ],
+</a><a href="#h7-1-21" id="h7-1-21" class="d">-    );
+</a> 
+     let result = c.execute(&quot;SELECT * FROM genres WHERE FALSE&quot;)?;
+     assert_eq!(
+         result,
+<a href="#h7-1-26" id="h7-1-26" class="d">-        ResultSet::Query {
+</a><a href="#h7-1-27" id="h7-1-27" class="i">+        StatementResult::Query {
+</a>             columns: vec![Column { name: Some(&quot;id&quot;.into()) }, Column { name: Some(&quot;name&quot;.into()) }],
+<a href="#h7-1-29" id="h7-1-29" class="d">-            rows: Box::new(std::iter::empty()),
+</a><a href="#h7-1-30" id="h7-1-30" class="i">+            rows: vec![],
+</a>         }
+     );
+<a href="#h7-1-33" id="h7-1-33" class="d">-    assert_rows(result, Vec::new());
+</a> 
+     assert_eq!(
+         c.execute(&quot;SELECT * FROM x&quot;),
+<a href="#h7-2" id="h7-2" class="h">@@ -201,7 +196,7 @@ fn execute() -&gt; Result&lt;()&gt; {
+</a>     );
+     assert_eq!(
+         c.execute(&quot;INSERT INTO genres VALUES (9, &#39;Western&#39;)&quot;),
+<a href="#h7-2-3" id="h7-2-3" class="d">-        Ok(ResultSet::Create { count: 1 }),
+</a><a href="#h7-2-4" id="h7-2-4" class="i">+        Ok(StatementResult::Create { count: 1 }),
+</a>     );
+     assert_eq!(
+         c.execute(&quot;INSERT INTO x VALUES (9, &#39;Western&#39;)&quot;),
+<a href="#h7-3" id="h7-3" class="h">@@ -211,11 +206,11 @@ fn execute() -&gt; Result&lt;()&gt; {
+</a>     // UPDATE
+     assert_eq!(
+         c.execute(&quot;UPDATE genres SET name = &#39;Horror&#39; WHERE FALSE&quot;),
+<a href="#h7-3-3" id="h7-3-3" class="d">-        Ok(ResultSet::Update { count: 0 }),
+</a><a href="#h7-3-4" id="h7-3-4" class="i">+        Ok(StatementResult::Update { count: 0 }),
+</a>     );
+     assert_eq!(
+         c.execute(&quot;UPDATE genres SET name = &#39;Horror&#39; WHERE id = 9&quot;),
+<a href="#h7-3-8" id="h7-3-8" class="d">-        Ok(ResultSet::Update { count: 1 }),
+</a><a href="#h7-3-9" id="h7-3-9" class="i">+        Ok(StatementResult::Update { count: 1 }),
+</a>     );
+     assert_eq!(
+         c.execute(&quot;UPDATE genres SET id = 1 WHERE id = 9&quot;),
+<a href="#h7-4" id="h7-4" class="h">@@ -223,8 +218,14 @@ fn execute() -&gt; Result&lt;()&gt; {
+</a>     );
+ 
+     // DELETE
+<a href="#h7-4-3" id="h7-4-3" class="d">-    assert_eq!(c.execute(&quot;DELETE FROM genres WHERE FALSE&quot;), Ok(ResultSet::Delete { count: 0 }),);
+</a><a href="#h7-4-4" id="h7-4-4" class="d">-    assert_eq!(c.execute(&quot;DELETE FROM genres WHERE id = 9&quot;), Ok(ResultSet::Delete { count: 1 }),);
+</a><a href="#h7-4-5" id="h7-4-5" class="i">+    assert_eq!(
+</a><a href="#h7-4-6" id="h7-4-6" class="i">+        c.execute(&quot;DELETE FROM genres WHERE FALSE&quot;),
+</a><a href="#h7-4-7" id="h7-4-7" class="i">+        Ok(StatementResult::Delete { count: 0 }),
+</a><a href="#h7-4-8" id="h7-4-8" class="i">+    );
+</a><a href="#h7-4-9" id="h7-4-9" class="i">+    assert_eq!(
+</a><a href="#h7-4-10" id="h7-4-10" class="i">+        c.execute(&quot;DELETE FROM genres WHERE id = 9&quot;),
+</a><a href="#h7-4-11" id="h7-4-11" class="i">+        Ok(StatementResult::Delete { count: 1 }),
+</a><a href="#h7-4-12" id="h7-4-12" class="i">+    );
+</a>     assert_eq!(
+         c.execute(&quot;DELETE FROM genres WHERE x = 1&quot;),
+         Err(Error::InvalidInput(&quot;unknown field x&quot;.into()))
+<a href="#h7-5" id="h7-5" class="h">@@ -242,10 +243,10 @@ fn execute_txn() -&gt; Result&lt;()&gt; {
+</a>     assert_eq!(c.txn(), None);
+ 
+     // Committing a change in a txn should work
+<a href="#h7-5-3" id="h7-5-3" class="d">-    assert_eq!(c.execute(&quot;BEGIN&quot;)?, ResultSet::Begin { version: 2, read_only: false });
+</a><a href="#h7-5-4" id="h7-5-4" class="i">+    assert_eq!(c.execute(&quot;BEGIN&quot;)?, StatementResult::Begin { version: 2, read_only: false });
+</a>     assert_eq!(c.txn(), Some((2, false)));
+     c.execute(&quot;INSERT INTO genres VALUES (4, &#39;Drama&#39;)&quot;)?;
+<a href="#h7-5-7" id="h7-5-7" class="d">-    assert_eq!(c.execute(&quot;COMMIT&quot;)?, ResultSet::Commit { version: 2 });
+</a><a href="#h7-5-8" id="h7-5-8" class="i">+    assert_eq!(c.execute(&quot;COMMIT&quot;)?, StatementResult::Commit { version: 2 });
+</a>     assert_eq!(c.txn(), None);
+     assert_row(
+         c.execute(&quot;SELECT * FROM genres WHERE id = 4&quot;)?,
+<a href="#h7-6" id="h7-6" class="h">@@ -254,19 +255,22 @@ fn execute_txn() -&gt; Result&lt;()&gt; {
+</a>     assert_eq!(c.txn(), None);
+ 
+     // Rolling back a change in a txn should also work
+<a href="#h7-6-3" id="h7-6-3" class="d">-    assert_eq!(c.execute(&quot;BEGIN&quot;)?, ResultSet::Begin { version: 3, read_only: false });
+</a><a href="#h7-6-4" id="h7-6-4" class="i">+    assert_eq!(c.execute(&quot;BEGIN&quot;)?, StatementResult::Begin { version: 3, read_only: false });
+</a>     assert_eq!(c.txn(), Some((3, false)));
+     c.execute(&quot;INSERT INTO genres VALUES (5, &#39;Musical&#39;)&quot;)?;
+     assert_row(
+         c.execute(&quot;SELECT * FROM genres WHERE id = 5&quot;)?,
+         vec![Value::Integer(5), Value::String(&quot;Musical&quot;.into())],
+     );
+<a href="#h7-6-11" id="h7-6-11" class="d">-    assert_eq!(c.execute(&quot;ROLLBACK&quot;)?, ResultSet::Rollback { version: 3 });
+</a><a href="#h7-6-12" id="h7-6-12" class="i">+    assert_eq!(c.execute(&quot;ROLLBACK&quot;)?, StatementResult::Rollback { version: 3 });
+</a>     assert_rows(c.execute(&quot;SELECT * FROM genres WHERE id = 5&quot;)?, Vec::new());
+     assert_eq!(c.txn(), None);
+ 
+     // Starting a read-only txn should block writes
+<a href="#h7-6-17" id="h7-6-17" class="d">-    assert_eq!(c.execute(&quot;BEGIN READ ONLY&quot;)?, ResultSet::Begin { version: 4, read_only: true });
+</a><a href="#h7-6-18" id="h7-6-18" class="i">+    assert_eq!(
+</a><a href="#h7-6-19" id="h7-6-19" class="i">+        c.execute(&quot;BEGIN READ ONLY&quot;)?,
+</a><a href="#h7-6-20" id="h7-6-20" class="i">+        StatementResult::Begin { version: 4, read_only: true }
+</a><a href="#h7-6-21" id="h7-6-21" class="i">+    );
+</a>     assert_eq!(c.txn(), Some((4, true)));
+     assert_row(
+         c.execute(&quot;SELECT * FROM genres WHERE id = 4&quot;)?,
+<a href="#h7-7" id="h7-7" class="h">@@ -277,13 +281,13 @@ fn execute_txn() -&gt; Result&lt;()&gt; {
+</a>         c.execute(&quot;SELECT * FROM genres WHERE id = 4&quot;)?,
+         vec![Value::Integer(4), Value::String(&quot;Drama&quot;.into())],
+     );
+<a href="#h7-7-3" id="h7-7-3" class="d">-    assert_eq!(c.execute(&quot;COMMIT&quot;)?, ResultSet::Commit { version: 4 });
+</a><a href="#h7-7-4" id="h7-7-4" class="i">+    assert_eq!(c.execute(&quot;COMMIT&quot;)?, StatementResult::Commit { version: 4 });
+</a> 
+     // Starting a time-travel txn should work, it shouldn&#39;t see recent changes, and it should
+     // block writes
+     assert_eq!(
+         c.execute(&quot;BEGIN READ ONLY AS OF SYSTEM TIME 2&quot;)?,
+<a href="#h7-7-10" id="h7-7-10" class="d">-        ResultSet::Begin { version: 2, read_only: true },
+</a><a href="#h7-7-11" id="h7-7-11" class="i">+        StatementResult::Begin { version: 2, read_only: true },
+</a>     );
+     assert_eq!(c.txn(), Some((2, true)));
+     assert_rows(
+<a href="#h7-8" id="h7-8" class="h">@@ -295,10 +299,10 @@ fn execute_txn() -&gt; Result&lt;()&gt; {
+</a>         ],
+     );
+     assert_eq!(c.execute(&quot;INSERT INTO genres VALUES (5, &#39;Musical&#39;)&quot;), Err(Error::ReadOnly));
+<a href="#h7-8-3" id="h7-8-3" class="d">-    assert_eq!(c.execute(&quot;COMMIT&quot;)?, ResultSet::Commit { version: 2 });
+</a><a href="#h7-8-4" id="h7-8-4" class="i">+    assert_eq!(c.execute(&quot;COMMIT&quot;)?, StatementResult::Commit { version: 2 });
+</a> 
+     // A txn should still be usable after an error occurs
+<a href="#h7-8-7" id="h7-8-7" class="d">-    assert_eq!(c.execute(&quot;BEGIN&quot;)?, ResultSet::Begin { version: 4, read_only: false });
+</a><a href="#h7-8-8" id="h7-8-8" class="i">+    assert_eq!(c.execute(&quot;BEGIN&quot;)?, StatementResult::Begin { version: 4, read_only: false });
+</a>     c.execute(&quot;INSERT INTO genres VALUES (5, &#39;Horror&#39;)&quot;)?;
+     assert_eq!(
+         c.execute(&quot;INSERT INTO genres VALUES (5, &#39;Musical&#39;)&quot;),
+<a href="#h7-9" id="h7-9" class="h">@@ -306,7 +310,7 @@ fn execute_txn() -&gt; Result&lt;()&gt; {
+</a>     );
+     assert_eq!(c.txn(), Some((4, false)));
+     c.execute(&quot;INSERT INTO genres VALUES (6, &#39;Western&#39;)&quot;)?;
+<a href="#h7-9-3" id="h7-9-3" class="d">-    assert_eq!(c.execute(&quot;COMMIT&quot;)?, ResultSet::Commit { version: 4 });
+</a><a href="#h7-9-4" id="h7-9-4" class="i">+    assert_eq!(c.execute(&quot;COMMIT&quot;)?, StatementResult::Commit { version: 4 });
+</a>     assert_rows(
+         c.execute(&quot;SELECT * FROM genres&quot;)?,
+         vec![
+<a href="#h7-10" id="h7-10" class="h">@@ -330,8 +334,8 @@ fn execute_txn_concurrent() -&gt; Result&lt;()&gt; {
+</a>     let mut b = tc.connect_any()?;
+ 
+     // Concurrent updates should throw a serialization failure on conflict.
+<a href="#h7-10-3" id="h7-10-3" class="d">-    assert_eq!(a.execute(&quot;BEGIN&quot;)?, ResultSet::Begin { version: 2, read_only: false });
+</a><a href="#h7-10-4" id="h7-10-4" class="d">-    assert_eq!(b.execute(&quot;BEGIN&quot;)?, ResultSet::Begin { version: 3, read_only: false });
+</a><a href="#h7-10-5" id="h7-10-5" class="i">+    assert_eq!(a.execute(&quot;BEGIN&quot;)?, StatementResult::Begin { version: 2, read_only: false });
+</a><a href="#h7-10-6" id="h7-10-6" class="i">+    assert_eq!(b.execute(&quot;BEGIN&quot;)?, StatementResult::Begin { version: 3, read_only: false });
+</a> 
+     assert_row(
+         a.execute(&quot;SELECT * FROM genres WHERE id = 1&quot;)?,
+<a href="#h7-11" id="h7-11" class="h">@@ -344,12 +348,12 @@ fn execute_txn_concurrent() -&gt; Result&lt;()&gt; {
+</a> 
+     assert_eq!(
+         a.execute(&quot;UPDATE genres SET name = &#39;x&#39; WHERE id = 1&quot;),
+<a href="#h7-11-3" id="h7-11-3" class="d">-        Ok(ResultSet::Update { count: 1 })
+</a><a href="#h7-11-4" id="h7-11-4" class="i">+        Ok(StatementResult::Update { count: 1 })
+</a>     );
+     assert_eq!(b.execute(&quot;UPDATE genres SET name = &#39;y&#39; WHERE id = 1&quot;), Err(Error::Serialization));
+ 
+<a href="#h7-11-8" id="h7-11-8" class="d">-    assert_eq!(a.execute(&quot;COMMIT&quot;), Ok(ResultSet::Commit { version: 2 }));
+</a><a href="#h7-11-9" id="h7-11-9" class="d">-    assert_eq!(b.execute(&quot;ROLLBACK&quot;), Ok(ResultSet::Rollback { version: 3 }));
+</a><a href="#h7-11-10" id="h7-11-10" class="i">+    assert_eq!(a.execute(&quot;COMMIT&quot;), Ok(StatementResult::Commit { version: 2 }));
+</a><a href="#h7-11-11" id="h7-11-11" class="i">+    assert_eq!(b.execute(&quot;ROLLBACK&quot;), Ok(StatementResult::Rollback { version: 3 }));
+</a> 
+     assert_row(
+         a.execute(&quot;SELECT * FROM genres WHERE id = 1&quot;)?,
+<b>diff --git a/<a id="h8" href="../file/tests/e2e/mod.rs.html">tests/e2e/mod.rs</a> b/<a href="../file/tests/e2e/mod.rs.html">tests/e2e/mod.rs</a></b>
+<a href="#h8-0" id="h8-0" class="h">@@ -12,16 +12,18 @@ mod testcluster;
+</a> use testcluster::TestCluster;
+ 
+ /// Asserts that a resultset contains the expected rows.
+<a href="#h8-0-3" id="h8-0-3" class="d">-fn assert_rows(result: toydb::ResultSet, expect: Vec&lt;toydb::sql::types::Row&gt;) {
+</a><a href="#h8-0-4" id="h8-0-4" class="i">+///
+</a><a href="#h8-0-5" id="h8-0-5" class="i">+/// TODO: get rid of these.
+</a><a href="#h8-0-6" id="h8-0-6" class="i">+fn assert_rows(result: toydb::StatementResult, expect: Vec&lt;toydb::sql::types::Row&gt;) {
+</a>     match result {
+<a href="#h8-0-8" id="h8-0-8" class="d">-        toydb::ResultSet::Query { rows, .. } =&gt; {
+</a><a href="#h8-0-9" id="h8-0-9" class="d">-            pretty_assertions::assert_eq!(rows.collect::&lt;Result&lt;Vec&lt;_&gt;, _&gt;&gt;().unwrap(), expect)
+</a><a href="#h8-0-10" id="h8-0-10" class="i">+        toydb::StatementResult::Query { rows, .. } =&gt; {
+</a><a href="#h8-0-11" id="h8-0-11" class="i">+            pretty_assertions::assert_eq!(rows, expect)
+</a>         }
+         r =&gt; panic!(&quot;Unexpected result {:?}&quot;, r),
+     }
+ }
+ 
+ /// Asserts that a resultset contains the single expected row.
+<a href="#h8-0-18" id="h8-0-18" class="d">-fn assert_row(result: toydb::ResultSet, expect: toydb::sql::types::Row) {
+</a><a href="#h8-0-19" id="h8-0-19" class="i">+fn assert_row(result: toydb::StatementResult, expect: toydb::sql::types::Row) {
+</a>     assert_rows(result, vec![expect])
+ }
+<b>diff --git a/<a id="h9" href="../file/tests/sql/query.rs.html">tests/sql/query.rs</a> b/<a href="../file/tests/sql/query.rs.html">tests/sql/query.rs</a></b>
+<a href="#h9-0" id="h9-0" class="h">@@ -2,11 +2,9 @@
+</a> //! and compares the results with golden files stored under tests/sql/query/
+ use toydb::errdata;
+ use toydb::error::Result;
+<a href="#h9-0-3" id="h9-0-3" class="d">-use toydb::sql::engine::{Engine, Transaction};
+</a><a href="#h9-0-4" id="h9-0-4" class="d">-use toydb::sql::execution::ResultSet;
+</a><a href="#h9-0-5" id="h9-0-5" class="i">+use toydb::sql::engine::{Engine, StatementResult, Transaction};
+</a> use toydb::sql::parser::Parser;
+ use toydb::sql::plan::Plan;
+<a href="#h9-0-8" id="h9-0-8" class="d">-use toydb::sql::types::Row;
+</a> 
+ use goldenfile::Mint;
+ use std::io::Write;
+<a href="#h9-1" id="h9-1" class="h">@@ -85,18 +83,11 @@ macro_rules! test_query {
+</a>                 .and_then(|plan| plan.optimize(&amp;mut txn))
+                 .and_then(|plan| {
+                     write!(f, &quot;Explain:\n{}\n\n&quot;, plan)?;
+<a href="#h9-1-3" id="h9-1-3" class="d">-                    plan.execute(&amp;mut txn).map(|r| r.into())
+</a><a href="#h9-1-4" id="h9-1-4" class="i">+                    plan.execute(&amp;mut txn).and_then(|r| r.try_into())
+</a>                 });
+ 
+             match result {
+<a href="#h9-1-8" id="h9-1-8" class="d">-                Ok(ResultSet::Query{columns, rows}) =&gt; {
+</a><a href="#h9-1-9" id="h9-1-9" class="d">-                    let rows: Vec&lt;Row&gt; = match rows.collect() {
+</a><a href="#h9-1-10" id="h9-1-10" class="d">-                        Ok(rows) =&gt; rows,
+</a><a href="#h9-1-11" id="h9-1-11" class="d">-                        Err(err) =&gt; {
+</a><a href="#h9-1-12" id="h9-1-12" class="d">-                            write!(f, &quot; {:?}&quot;, err)?;
+</a><a href="#h9-1-13" id="h9-1-13" class="d">-                            return Ok(())
+</a><a href="#h9-1-14" id="h9-1-14" class="d">-                        }
+</a><a href="#h9-1-15" id="h9-1-15" class="d">-                    };
+</a><a href="#h9-1-16" id="h9-1-16" class="i">+                Ok(StatementResult::Query{columns, rows}) =&gt; {
+</a>                     write!(f, &quot;Result:&quot;)?;
+                     if !columns.is_empty() || !rows.is_empty() {
+                         write!(f, &quot; {:?}\n&quot;, columns
+<b>diff --git a/<a id="h10" href="../file/tests/sql/query/where_float.html">tests/sql/query/where_float</a> b/<a href="../file/tests/sql/query/where_float.html">tests/sql/query/where_float</a></b>
+<a href="#h10-0" id="h10-0" class="h">@@ -3,4 +3,56 @@ Query: SELECT * FROM movies WHERE 3.14
+</a> Explain:
+ Scan: movies (3.14)
+ 
+<a href="#h10-0-3" id="h10-0-3" class="d">- InvalidData(&quot;filter returned 3.14, expected boolean&quot;)
+</a><a href="#h10-0-4" id="h10-0-4" class="d">-\ No newline at end of file
+</a><a href="#h10-0-5" id="h10-0-5" class="i">+Error: invalid data: filter returned 3.14, expected boolean
+</a><a href="#h10-0-6" id="h10-0-6" class="i">+
+</a><a href="#h10-0-7" id="h10-0-7" class="i">+AST: Select {
+</a><a href="#h10-0-8" id="h10-0-8" class="i">+    select: [],
+</a><a href="#h10-0-9" id="h10-0-9" class="i">+    from: [
+</a><a href="#h10-0-10" id="h10-0-10" class="i">+        Table {
+</a><a href="#h10-0-11" id="h10-0-11" class="i">+            name: &quot;movies&quot;,
+</a><a href="#h10-0-12" id="h10-0-12" class="i">+            alias: None,
+</a><a href="#h10-0-13" id="h10-0-13" class="i">+        },
+</a><a href="#h10-0-14" id="h10-0-14" class="i">+    ],
+</a><a href="#h10-0-15" id="h10-0-15" class="i">+    where: Some(
+</a><a href="#h10-0-16" id="h10-0-16" class="i">+        Literal(
+</a><a href="#h10-0-17" id="h10-0-17" class="i">+            Float(
+</a><a href="#h10-0-18" id="h10-0-18" class="i">+                3.14,
+</a><a href="#h10-0-19" id="h10-0-19" class="i">+            ),
+</a><a href="#h10-0-20" id="h10-0-20" class="i">+        ),
+</a><a href="#h10-0-21" id="h10-0-21" class="i">+    ),
+</a><a href="#h10-0-22" id="h10-0-22" class="i">+    group_by: [],
+</a><a href="#h10-0-23" id="h10-0-23" class="i">+    having: None,
+</a><a href="#h10-0-24" id="h10-0-24" class="i">+    order: [],
+</a><a href="#h10-0-25" id="h10-0-25" class="i">+    offset: None,
+</a><a href="#h10-0-26" id="h10-0-26" class="i">+    limit: None,
+</a><a href="#h10-0-27" id="h10-0-27" class="i">+}
+</a><a href="#h10-0-28" id="h10-0-28" class="i">+
+</a><a href="#h10-0-29" id="h10-0-29" class="i">+Plan: Select(
+</a><a href="#h10-0-30" id="h10-0-30" class="i">+    Filter {
+</a><a href="#h10-0-31" id="h10-0-31" class="i">+        source: Scan {
+</a><a href="#h10-0-32" id="h10-0-32" class="i">+            table: &quot;movies&quot;,
+</a><a href="#h10-0-33" id="h10-0-33" class="i">+            alias: None,
+</a><a href="#h10-0-34" id="h10-0-34" class="i">+            filter: None,
+</a><a href="#h10-0-35" id="h10-0-35" class="i">+        },
+</a><a href="#h10-0-36" id="h10-0-36" class="i">+        predicate: Constant(
+</a><a href="#h10-0-37" id="h10-0-37" class="i">+            Float(
+</a><a href="#h10-0-38" id="h10-0-38" class="i">+                3.14,
+</a><a href="#h10-0-39" id="h10-0-39" class="i">+            ),
+</a><a href="#h10-0-40" id="h10-0-40" class="i">+        ),
+</a><a href="#h10-0-41" id="h10-0-41" class="i">+    },
+</a><a href="#h10-0-42" id="h10-0-42" class="i">+)
+</a><a href="#h10-0-43" id="h10-0-43" class="i">+
+</a><a href="#h10-0-44" id="h10-0-44" class="i">+Optimized plan: Select(
+</a><a href="#h10-0-45" id="h10-0-45" class="i">+    Scan {
+</a><a href="#h10-0-46" id="h10-0-46" class="i">+        table: &quot;movies&quot;,
+</a><a href="#h10-0-47" id="h10-0-47" class="i">+        alias: None,
+</a><a href="#h10-0-48" id="h10-0-48" class="i">+        filter: Some(
+</a><a href="#h10-0-49" id="h10-0-49" class="i">+            Constant(
+</a><a href="#h10-0-50" id="h10-0-50" class="i">+                Float(
+</a><a href="#h10-0-51" id="h10-0-51" class="i">+                    3.14,
+</a><a href="#h10-0-52" id="h10-0-52" class="i">+                ),
+</a><a href="#h10-0-53" id="h10-0-53" class="i">+            ),
+</a><a href="#h10-0-54" id="h10-0-54" class="i">+        ),
+</a><a href="#h10-0-55" id="h10-0-55" class="i">+    },
+</a><a href="#h10-0-56" id="h10-0-56" class="i">+)
+</a><a href="#h10-0-57" id="h10-0-57" class="i">+
+</a><b>diff --git a/<a id="h11" href="../file/tests/sql/query/where_integer.html">tests/sql/query/where_integer</a> b/<a href="../file/tests/sql/query/where_integer.html">tests/sql/query/where_integer</a></b>
+<a href="#h11-0" id="h11-0" class="h">@@ -3,4 +3,56 @@ Query: SELECT * FROM movies WHERE 7
+</a> Explain:
+ Scan: movies (7)
+ 
+<a href="#h11-0-3" id="h11-0-3" class="d">- InvalidData(&quot;filter returned 7, expected boolean&quot;)
+</a><a href="#h11-0-4" id="h11-0-4" class="d">-\ No newline at end of file
+</a><a href="#h11-0-5" id="h11-0-5" class="i">+Error: invalid data: filter returned 7, expected boolean
+</a><a href="#h11-0-6" id="h11-0-6" class="i">+
+</a><a href="#h11-0-7" id="h11-0-7" class="i">+AST: Select {
+</a><a href="#h11-0-8" id="h11-0-8" class="i">+    select: [],
+</a><a href="#h11-0-9" id="h11-0-9" class="i">+    from: [
+</a><a href="#h11-0-10" id="h11-0-10" class="i">+        Table {
+</a><a href="#h11-0-11" id="h11-0-11" class="i">+            name: &quot;movies&quot;,
+</a><a href="#h11-0-12" id="h11-0-12" class="i">+            alias: None,
+</a><a href="#h11-0-13" id="h11-0-13" class="i">+        },
+</a><a href="#h11-0-14" id="h11-0-14" class="i">+    ],
+</a><a href="#h11-0-15" id="h11-0-15" class="i">+    where: Some(
+</a><a href="#h11-0-16" id="h11-0-16" class="i">+        Literal(
+</a><a href="#h11-0-17" id="h11-0-17" class="i">+            Integer(
+</a><a href="#h11-0-18" id="h11-0-18" class="i">+                7,
+</a><a href="#h11-0-19" id="h11-0-19" class="i">+            ),
+</a><a href="#h11-0-20" id="h11-0-20" class="i">+        ),
+</a><a href="#h11-0-21" id="h11-0-21" class="i">+    ),
+</a><a href="#h11-0-22" id="h11-0-22" class="i">+    group_by: [],
+</a><a href="#h11-0-23" id="h11-0-23" class="i">+    having: None,
+</a><a href="#h11-0-24" id="h11-0-24" class="i">+    order: [],
+</a><a href="#h11-0-25" id="h11-0-25" class="i">+    offset: None,
+</a><a href="#h11-0-26" id="h11-0-26" class="i">+    limit: None,
+</a><a href="#h11-0-27" id="h11-0-27" class="i">+}
+</a><a href="#h11-0-28" id="h11-0-28" class="i">+
+</a><a href="#h11-0-29" id="h11-0-29" class="i">+Plan: Select(
+</a><a href="#h11-0-30" id="h11-0-30" class="i">+    Filter {
+</a><a href="#h11-0-31" id="h11-0-31" class="i">+        source: Scan {
+</a><a href="#h11-0-32" id="h11-0-32" class="i">+            table: &quot;movies&quot;,
+</a><a href="#h11-0-33" id="h11-0-33" class="i">+            alias: None,
+</a><a href="#h11-0-34" id="h11-0-34" class="i">+            filter: None,
+</a><a href="#h11-0-35" id="h11-0-35" class="i">+        },
+</a><a href="#h11-0-36" id="h11-0-36" class="i">+        predicate: Constant(
+</a><a href="#h11-0-37" id="h11-0-37" class="i">+            Integer(
+</a><a href="#h11-0-38" id="h11-0-38" class="i">+                7,
+</a><a href="#h11-0-39" id="h11-0-39" class="i">+            ),
+</a><a href="#h11-0-40" id="h11-0-40" class="i">+        ),
+</a><a href="#h11-0-41" id="h11-0-41" class="i">+    },
+</a><a href="#h11-0-42" id="h11-0-42" class="i">+)
+</a><a href="#h11-0-43" id="h11-0-43" class="i">+
+</a><a href="#h11-0-44" id="h11-0-44" class="i">+Optimized plan: Select(
+</a><a href="#h11-0-45" id="h11-0-45" class="i">+    Scan {
+</a><a href="#h11-0-46" id="h11-0-46" class="i">+        table: &quot;movies&quot;,
+</a><a href="#h11-0-47" id="h11-0-47" class="i">+        alias: None,
+</a><a href="#h11-0-48" id="h11-0-48" class="i">+        filter: Some(
+</a><a href="#h11-0-49" id="h11-0-49" class="i">+            Constant(
+</a><a href="#h11-0-50" id="h11-0-50" class="i">+                Integer(
+</a><a href="#h11-0-51" id="h11-0-51" class="i">+                    7,
+</a><a href="#h11-0-52" id="h11-0-52" class="i">+                ),
+</a><a href="#h11-0-53" id="h11-0-53" class="i">+            ),
+</a><a href="#h11-0-54" id="h11-0-54" class="i">+        ),
+</a><a href="#h11-0-55" id="h11-0-55" class="i">+    },
+</a><a href="#h11-0-56" id="h11-0-56" class="i">+)
+</a><a href="#h11-0-57" id="h11-0-57" class="i">+
+</a><b>diff --git a/<a id="h12" href="../file/tests/sql/query/where_string.html">tests/sql/query/where_string</a> b/<a href="../file/tests/sql/query/where_string.html">tests/sql/query/where_string</a></b>
+<a href="#h12-0" id="h12-0" class="h">@@ -3,4 +3,56 @@ Query: SELECT * FROM movies WHERE &#39;abc&#39;
+</a> Explain:
+ Scan: movies (abc)
+ 
+<a href="#h12-0-3" id="h12-0-3" class="d">- InvalidData(&quot;filter returned abc, expected boolean&quot;)
+</a><a href="#h12-0-4" id="h12-0-4" class="d">-\ No newline at end of file
+</a><a href="#h12-0-5" id="h12-0-5" class="i">+Error: invalid data: filter returned abc, expected boolean
+</a><a href="#h12-0-6" id="h12-0-6" class="i">+
+</a><a href="#h12-0-7" id="h12-0-7" class="i">+AST: Select {
+</a><a href="#h12-0-8" id="h12-0-8" class="i">+    select: [],
+</a><a href="#h12-0-9" id="h12-0-9" class="i">+    from: [
+</a><a href="#h12-0-10" id="h12-0-10" class="i">+        Table {
+</a><a href="#h12-0-11" id="h12-0-11" class="i">+            name: &quot;movies&quot;,
+</a><a href="#h12-0-12" id="h12-0-12" class="i">+            alias: None,
+</a><a href="#h12-0-13" id="h12-0-13" class="i">+        },
+</a><a href="#h12-0-14" id="h12-0-14" class="i">+    ],
+</a><a href="#h12-0-15" id="h12-0-15" class="i">+    where: Some(
+</a><a href="#h12-0-16" id="h12-0-16" class="i">+        Literal(
+</a><a href="#h12-0-17" id="h12-0-17" class="i">+            String(
+</a><a href="#h12-0-18" id="h12-0-18" class="i">+                &quot;abc&quot;,
+</a><a href="#h12-0-19" id="h12-0-19" class="i">+            ),
+</a><a href="#h12-0-20" id="h12-0-20" class="i">+        ),
+</a><a href="#h12-0-21" id="h12-0-21" class="i">+    ),
+</a><a href="#h12-0-22" id="h12-0-22" class="i">+    group_by: [],
+</a><a href="#h12-0-23" id="h12-0-23" class="i">+    having: None,
+</a><a href="#h12-0-24" id="h12-0-24" class="i">+    order: [],
+</a><a href="#h12-0-25" id="h12-0-25" class="i">+    offset: None,
+</a><a href="#h12-0-26" id="h12-0-26" class="i">+    limit: None,
+</a><a href="#h12-0-27" id="h12-0-27" class="i">+}
+</a><a href="#h12-0-28" id="h12-0-28" class="i">+
+</a><a href="#h12-0-29" id="h12-0-29" class="i">+Plan: Select(
+</a><a href="#h12-0-30" id="h12-0-30" class="i">+    Filter {
+</a><a href="#h12-0-31" id="h12-0-31" class="i">+        source: Scan {
+</a><a href="#h12-0-32" id="h12-0-32" class="i">+            table: &quot;movies&quot;,
+</a><a href="#h12-0-33" id="h12-0-33" class="i">+            alias: None,
+</a><a href="#h12-0-34" id="h12-0-34" class="i">+            filter: None,
+</a><a href="#h12-0-35" id="h12-0-35" class="i">+        },
+</a><a href="#h12-0-36" id="h12-0-36" class="i">+        predicate: Constant(
+</a><a href="#h12-0-37" id="h12-0-37" class="i">+            String(
+</a><a href="#h12-0-38" id="h12-0-38" class="i">+                &quot;abc&quot;,
+</a><a href="#h12-0-39" id="h12-0-39" class="i">+            ),
+</a><a href="#h12-0-40" id="h12-0-40" class="i">+        ),
+</a><a href="#h12-0-41" id="h12-0-41" class="i">+    },
+</a><a href="#h12-0-42" id="h12-0-42" class="i">+)
+</a><a href="#h12-0-43" id="h12-0-43" class="i">+
+</a><a href="#h12-0-44" id="h12-0-44" class="i">+Optimized plan: Select(
+</a><a href="#h12-0-45" id="h12-0-45" class="i">+    Scan {
+</a><a href="#h12-0-46" id="h12-0-46" class="i">+        table: &quot;movies&quot;,
+</a><a href="#h12-0-47" id="h12-0-47" class="i">+        alias: None,
+</a><a href="#h12-0-48" id="h12-0-48" class="i">+        filter: Some(
+</a><a href="#h12-0-49" id="h12-0-49" class="i">+            Constant(
+</a><a href="#h12-0-50" id="h12-0-50" class="i">+                String(
+</a><a href="#h12-0-51" id="h12-0-51" class="i">+                    &quot;abc&quot;,
+</a><a href="#h12-0-52" id="h12-0-52" class="i">+                ),
+</a><a href="#h12-0-53" id="h12-0-53" class="i">+            ),
+</a><a href="#h12-0-54" id="h12-0-54" class="i">+        ),
+</a><a href="#h12-0-55" id="h12-0-55" class="i">+    },
+</a><a href="#h12-0-56" id="h12-0-56" class="i">+)
+</a><a href="#h12-0-57" id="h12-0-57" class="i">+
+</a></pre>
+</div>
+</body>
+</html>

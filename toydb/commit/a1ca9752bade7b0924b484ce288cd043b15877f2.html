@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>server: move SQL engine setup into `serve_sql()` - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/a1ca9752bade7b0924b484ce288cd043b15877f2.html">a1ca9752bade7b0924b484ce288cd043b15877f2</a>
+<b>parent</b> <a href="../commit/e30f80e36aad98ed78de5c5d3d5d93eda5ee147d.html">e30f80e36aad98ed78de5c5d3d5d93eda5ee147d</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Sun,  7 Apr 2024 20:01:53 +0200
+
+server: move SQL engine setup into `serve_sql()`
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/raft/mod.rs</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/raft/server.rs</a></td><td> | </td><td class="num">12</td><td><span class="i">++++++</span><span class="d">------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/server.rs</a></td><td> | </td><td class="num">7</td><td><span class="i">+++</span><span class="d">----</span></td></tr>
+</table></pre><pre>3 files changed, 10 insertions(+), 11 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/raft/mod.rs.html">src/raft/mod.rs</a> b/<a href="../file/src/raft/mod.rs.html">src/raft/mod.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -7,5 +7,5 @@ mod state;
+</a> pub use self::log::{Entry, Index, Log};
+ pub use message::{Address, Event, Message, ReadSequence, Request, RequestID, Response, Status};
+ pub use node::{Node, NodeID, Term};
+<a href="#h0-0-3" id="h0-0-3" class="d">-pub use server::Server;
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+pub use server::{ClientSender, Server};
+</a> pub use state::State;
+<b>diff --git a/<a id="h1" href="../file/src/raft/server.rs.html">src/raft/server.rs</a> b/<a href="../file/src/raft/server.rs.html">src/raft/server.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -12,6 +12,10 @@ use tokio_stream::StreamExt as _;
+</a> use tokio_util::codec::{Framed, LengthDelimitedCodec};
+ use uuid::Uuid;
+ 
+<a href="#h1-0-3" id="h1-0-3" class="i">+// TODO: simplify these types.
+</a><a href="#h1-0-4" id="h1-0-4" class="i">+pub type ClientSender = mpsc::UnboundedSender&lt;(Request, oneshot::Sender&lt;Result&lt;Response&gt;&gt;)&gt;;
+</a><a href="#h1-0-5" id="h1-0-5" class="i">+pub type ClientReceiver = mpsc::UnboundedReceiver&lt;(Request, oneshot::Sender&lt;Result&lt;Response&gt;&gt;)&gt;;
+</a><a href="#h1-0-6" id="h1-0-6" class="i">+
+</a> /// The interval between Raft ticks, the unit of time for e.g. heartbeats and
+ /// elections.
+ const TICK_INTERVAL: Duration = Duration::from_millis(100);
+<a href="#h1-1" id="h1-1" class="h">@@ -40,11 +44,7 @@ impl Server {
+</a>     }
+ 
+     /// Connects to peers and serves requests.
+<a href="#h1-1-3" id="h1-1-3" class="d">-    pub async fn serve(
+</a><a href="#h1-1-4" id="h1-1-4" class="d">-        self,
+</a><a href="#h1-1-5" id="h1-1-5" class="d">-        listener: TcpListener,
+</a><a href="#h1-1-6" id="h1-1-6" class="d">-        client_rx: mpsc::UnboundedReceiver&lt;(Request, oneshot::Sender&lt;Result&lt;Response&gt;&gt;)&gt;,
+</a><a href="#h1-1-7" id="h1-1-7" class="d">-    ) -&gt; Result&lt;()&gt; {
+</a><a href="#h1-1-8" id="h1-1-8" class="i">+    pub async fn serve(self, listener: TcpListener, client_rx: ClientReceiver) -&gt; Result&lt;()&gt; {
+</a>         let (tcp_in_tx, tcp_in_rx) = mpsc::unbounded_channel::&lt;Message&gt;();
+         let (tcp_out_tx, tcp_out_rx) = mpsc::unbounded_channel::&lt;Message&gt;();
+         let (task, tcp_receiver) = Self::tcp_receive(listener, tcp_in_tx).remote_handle();
+<a href="#h1-2" id="h1-2" class="h">@@ -64,7 +64,7 @@ impl Server {
+</a>     async fn eventloop(
+         mut node: Node,
+         node_rx: mpsc::UnboundedReceiver&lt;Message&gt;,
+<a href="#h1-2-3" id="h1-2-3" class="d">-        client_rx: mpsc::UnboundedReceiver&lt;(Request, oneshot::Sender&lt;Result&lt;Response&gt;&gt;)&gt;,
+</a><a href="#h1-2-4" id="h1-2-4" class="i">+        client_rx: ClientReceiver,
+</a>         tcp_rx: mpsc::UnboundedReceiver&lt;Message&gt;,
+         tcp_tx: mpsc::UnboundedSender&lt;Message&gt;,
+     ) -&gt; Result&lt;()&gt; {
+<b>diff --git a/<a id="h2" href="../file/src/server.rs.html">src/server.rs</a> b/<a href="../file/src/server.rs.html">src/server.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -41,21 +41,20 @@ impl Server {
+</a>         );
+ 
+         let (raft_tx, raft_rx) = mpsc::unbounded_channel();
+<a href="#h2-0-3" id="h2-0-3" class="d">-        let sql_engine = sql::engine::Raft::new(raft_tx);
+</a> 
+         tokio::try_join!(
+             self.raft.serve(raft_listener, raft_rx),
+<a href="#h2-0-7" id="h2-0-7" class="d">-            Self::serve_sql(sql_listener, sql_engine),
+</a><a href="#h2-0-8" id="h2-0-8" class="i">+            Self::serve_sql(sql_listener, raft_tx),
+</a>         )?;
+         Ok(())
+     }
+ 
+     /// Serves SQL clients.
+<a href="#h2-0-14" id="h2-0-14" class="d">-    async fn serve_sql(listener: TcpListener, engine: sql::engine::Raft) -&gt; Result&lt;()&gt; {
+</a><a href="#h2-0-15" id="h2-0-15" class="i">+    async fn serve_sql(listener: TcpListener, raft_tx: raft::ClientSender) -&gt; Result&lt;()&gt; {
+</a>         let mut listener = TcpListenerStream::new(listener);
+         while let Some(socket) = listener.try_next().await? {
+             let peer = socket.peer_addr()?;
+<a href="#h2-0-19" id="h2-0-19" class="d">-            let session = Session::new(engine.clone());
+</a><a href="#h2-0-20" id="h2-0-20" class="i">+            let session = Session::new(sql::engine::Raft::new(raft_tx.clone()));
+</a>             tokio::spawn(async move {
+                 info!(&quot;Client {} connected&quot;, peer);
+                 match session.handle(socket).await {
+</pre>
+</div>
+</body>
+</html>

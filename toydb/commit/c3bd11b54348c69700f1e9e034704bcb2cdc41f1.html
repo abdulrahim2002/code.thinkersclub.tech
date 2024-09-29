@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>raft: improve `State` documentation - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/c3bd11b54348c69700f1e9e034704bcb2cdc41f1.html">c3bd11b54348c69700f1e9e034704bcb2cdc41f1</a>
+<b>parent</b> <a href="../commit/2a285cafceccb234a297aea271fcba8dd00a4697.html">2a285cafceccb234a297aea271fcba8dd00a4697</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Sun,  2 Jun 2024 15:51:17 +0200
+
+raft: improve `State` documentation
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/raft/state.rs</a></td><td> | </td><td class="num">46</td><td><span class="i">+++++++++++++++++++++++++++++++++++++</span><span class="d">---------</span></td></tr>
+</table></pre><pre>1 file changed, 37 insertions(+), 9 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/raft/state.rs.html">src/raft/state.rs</a> b/<a href="../file/src/raft/state.rs.html">src/raft/state.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -1,23 +1,51 @@
+</a> use super::{Entry, Index};
+ use crate::error::Result;
+ 
+<a href="#h0-0-3" id="h0-0-3" class="d">-/// A Raft-managed state machine.
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+/// A Raft-managed state machine. Raft itself does not care what the state
+</a><a href="#h0-0-5" id="h0-0-5" class="i">+/// machine is, nor what the commands and results do -- it will simply apply
+</a><a href="#h0-0-6" id="h0-0-6" class="i">+/// arbitrary binary commands sequentially from the Raft log, returning an
+</a><a href="#h0-0-7" id="h0-0-7" class="i">+/// arbitrary binary result to the client.
+</a><a href="#h0-0-8" id="h0-0-8" class="i">+///
+</a><a href="#h0-0-9" id="h0-0-9" class="i">+/// Since commands are applied identically across all replicas, they must be
+</a><a href="#h0-0-10" id="h0-0-10" class="i">+/// deterministic and yield the same state and result across all replicas too.
+</a><a href="#h0-0-11" id="h0-0-11" class="i">+/// Otherwise, the replicas will diverge, and different replicas will produce
+</a><a href="#h0-0-12" id="h0-0-12" class="i">+/// different results.
+</a><a href="#h0-0-13" id="h0-0-13" class="i">+///
+</a><a href="#h0-0-14" id="h0-0-14" class="i">+/// Write commands ([`Request::Write`]) are replicated and applied on all
+</a><a href="#h0-0-15" id="h0-0-15" class="i">+/// replicas via [`State::apply`]. The state machine must keep track of the last
+</a><a href="#h0-0-16" id="h0-0-16" class="i">+/// applied index and return it via [`State::get_applied_index`]. Read commands
+</a><a href="#h0-0-17" id="h0-0-17" class="i">+/// ([`Request::Read`]) are only executed on a single replica via
+</a><a href="#h0-0-18" id="h0-0-18" class="i">+/// [`State::read`] and must not make any state changes.
+</a> pub trait State: Send {
+     /// Returns the last applied index from the state machine.
+<a href="#h0-0-21" id="h0-0-21" class="i">+    ///
+</a><a href="#h0-0-22" id="h0-0-22" class="i">+    /// This must correspond to the current state of the state machine, since it
+</a><a href="#h0-0-23" id="h0-0-23" class="i">+    /// determines which command to apply next. In particular, a node crash may
+</a><a href="#h0-0-24" id="h0-0-24" class="i">+    /// result in partial command application or data loss, which must be
+</a><a href="#h0-0-25" id="h0-0-25" class="i">+    /// handled appropriately.
+</a>     fn get_applied_index(&amp;self) -&gt; Index;
+ 
+<a href="#h0-0-28" id="h0-0-28" class="d">-    /// Applies a log entry to the state machine. If it returns Error::Internal,
+</a><a href="#h0-0-29" id="h0-0-29" class="d">-    /// the Raft node halts. Any other error is considered applied and returned
+</a><a href="#h0-0-30" id="h0-0-30" class="d">-    /// to the caller.
+</a><a href="#h0-0-31" id="h0-0-31" class="i">+    /// Applies a log entry to the state machine, returning a client result.
+</a><a href="#h0-0-32" id="h0-0-32" class="i">+    /// Errors are considered applied and propagated back to the client.
+</a><a href="#h0-0-33" id="h0-0-33" class="i">+    ///
+</a><a href="#h0-0-34" id="h0-0-34" class="i">+    /// This is executed on all replicas, so the result must be deterministic:
+</a><a href="#h0-0-35" id="h0-0-35" class="i">+    /// it must yield the same state and result on all replicas, even if the
+</a><a href="#h0-0-36" id="h0-0-36" class="i">+    /// command is reapplied following a node crash.
+</a><a href="#h0-0-37" id="h0-0-37" class="i">+    ///
+</a><a href="#h0-0-38" id="h0-0-38" class="i">+    /// Any non-deterministic apply error (e.g. an IO error) must panic and
+</a><a href="#h0-0-39" id="h0-0-39" class="i">+    /// crash the node -- if it instead returns an error to the client, the
+</a><a href="#h0-0-40" id="h0-0-40" class="i">+    /// command is considered applied and replica states will diverge. The state
+</a><a href="#h0-0-41" id="h0-0-41" class="i">+    /// machine is responsible for panicing when appropriate.
+</a>     ///
+     /// The entry may contain a noop command, which is committed by Raft during
+     /// leader changes. This still needs to be applied to the state machine to
+<a href="#h0-0-45" id="h0-0-45" class="d">-    /// properly track the applied index, and returns an empty result.
+</a><a href="#h0-0-46" id="h0-0-46" class="d">-    ///
+</a><a href="#h0-0-47" id="h0-0-47" class="d">-    /// TODO: add an IO error kind instead to signify non-deterministic
+</a><a href="#h0-0-48" id="h0-0-48" class="d">-    /// application failure which should not consider the command applied.
+</a><a href="#h0-0-49" id="h0-0-49" class="i">+    /// properly update the applied index, and should return an empty result.
+</a>     fn apply(&amp;mut self, entry: Entry) -&gt; Result&lt;Vec&lt;u8&gt;&gt;;
+ 
+<a href="#h0-0-52" id="h0-0-52" class="d">-    /// Reads from the state machine. All errors are propagated to the caller.
+</a><a href="#h0-0-53" id="h0-0-53" class="i">+    /// Executes a read command in the state machine, returning a client result.
+</a><a href="#h0-0-54" id="h0-0-54" class="i">+    /// Errors are also propagated back to the client.
+</a><a href="#h0-0-55" id="h0-0-55" class="i">+    ///
+</a><a href="#h0-0-56" id="h0-0-56" class="i">+    /// This is only executed on a single replica/node, so it must not result in
+</a><a href="#h0-0-57" id="h0-0-57" class="i">+    /// any state changes (i.e. it must not write).
+</a>     fn read(&amp;self, command: Vec&lt;u8&gt;) -&gt; Result&lt;Vec&lt;u8&gt;&gt;;
+ }
+</pre>
+</div>
+</body>
+</html>

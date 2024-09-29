@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>utility: handle EOF in deserialize_read() - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/3ff36bd4754197e1bfdc720bf56c16d14ab2d565.html">3ff36bd4754197e1bfdc720bf56c16d14ab2d565</a>
+<b>parent</b> <a href="../commit/d6f6025f290364d987593dda2a2e7ebad384ec90.html">d6f6025f290364d987593dda2a2e7ebad384ec90</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Tue, 14 Apr 2020 22:03:05 +0200
+
+utility: handle EOF in deserialize_read()
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/kv/storage/blog.rs</a></td><td> | </td><td class="num">8</td><td><span class="i">+++</span><span class="d">-----</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/utility/serialize.rs</a></td><td> | </td><td class="num">19</td><td><span class="i">++++++++++++++</span><span class="d">-----</span></td></tr>
+</table></pre><pre>2 files changed, 17 insertions(+), 10 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/kv/storage/blog.rs.html">src/kv/storage/blog.rs</a> b/<a href="../file/src/kv/storage/blog.rs.html">src/kv/storage/blog.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -34,11 +34,9 @@ impl BLog {
+</a> 
+     /// Builds the index by scanning the file.
+     fn build_index(mut file: &amp;mut File) -&gt; Result&lt;BTreeMap&lt;Vec&lt;u8&gt;, u64&gt;, Error&gt; {
+<a href="#h0-0-3" id="h0-0-3" class="d">-        let size = file.metadata()?.len();
+</a><a href="#h0-0-4" id="h0-0-4" class="d">-        let mut pos = file.seek(SeekFrom::Start(0))?;
+</a>         let mut index = BTreeMap::new();
+<a href="#h0-0-6" id="h0-0-6" class="d">-        while pos &lt; size {
+</a><a href="#h0-0-7" id="h0-0-7" class="d">-            let entry: Entry = deserialize_read(&amp;mut file)?;
+</a><a href="#h0-0-8" id="h0-0-8" class="i">+        let mut pos = file.seek(SeekFrom::Start(0))?;
+</a><a href="#h0-0-9" id="h0-0-9" class="i">+        while let Some(entry) = deserialize_read::&lt;_, Entry&gt;(&amp;mut file)? {
+</a>             index.insert(entry.key, pos);
+             pos = file.seek(SeekFrom::Current(0))?;
+         }
+<a href="#h0-1" id="h0-1" class="h">@@ -49,7 +47,7 @@ impl BLog {
+</a>     fn load(&amp;self, pos: u64) -&gt; Result&lt;Entry, Error&gt; {
+         let mut cursor = self.file.write()?;
+         cursor.seek(SeekFrom::Start(pos))?;
+<a href="#h0-1-3" id="h0-1-3" class="d">-        Ok(deserialize_read(&amp;*cursor)?)
+</a><a href="#h0-1-4" id="h0-1-4" class="i">+        deserialize_read(&amp;*cursor)?.ok_or_else(|| Error::Value(&quot;No log entry found&quot;.into()))
+</a>     }
+ 
+     /// Saves an entry by appending it to the log, returning its position.
+<b>diff --git a/<a id="h1" href="../file/src/utility/serialize.rs.html">src/utility/serialize.rs</a> b/<a href="../file/src/utility/serialize.rs.html">src/utility/serialize.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -1,21 +1,30 @@
+</a> use crate::Error;
+ 
+<a href="#h1-0-2" id="h1-0-2" class="i">+use serde::{de::DeserializeOwned, Deserialize, Serialize};
+</a> use std::io::Read;
+ 
+ /// Deserializes a value from a byte buffer, using MessagePack.
+ /// Returns `Error::Internal` on error.
+<a href="#h1-0-7" id="h1-0-7" class="d">-pub fn deserialize&lt;&#39;de, V: serde::Deserialize&lt;&#39;de&gt;&gt;(bytes: &amp;[u8]) -&gt; Result&lt;V, Error&gt; {
+</a><a href="#h1-0-8" id="h1-0-8" class="d">-    Ok(serde::Deserialize::deserialize(&amp;mut rmps::Deserializer::new(bytes))?)
+</a><a href="#h1-0-9" id="h1-0-9" class="i">+pub fn deserialize&lt;&#39;de, V: Deserialize&lt;&#39;de&gt;&gt;(bytes: &amp;[u8]) -&gt; Result&lt;V, Error&gt; {
+</a><a href="#h1-0-10" id="h1-0-10" class="i">+    Ok(Deserialize::deserialize(&amp;mut rmps::Deserializer::new(bytes))?)
+</a> }
+ 
+ /// Deserializes the next value from a reader, using MessagePack.
+<a href="#h1-0-14" id="h1-0-14" class="d">-pub fn deserialize_read&lt;R: Read, V: serde::de::DeserializeOwned&gt;(reader: R) -&gt; Result&lt;V, Error&gt; {
+</a><a href="#h1-0-15" id="h1-0-15" class="d">-    Ok(rmps::decode::from_read(reader)?)
+</a><a href="#h1-0-16" id="h1-0-16" class="i">+pub fn deserialize_read&lt;R: Read, V: DeserializeOwned&gt;(reader: R) -&gt; Result&lt;Option&lt;V&gt;, Error&gt; {
+</a><a href="#h1-0-17" id="h1-0-17" class="i">+    match rmps::decode::from_read(reader) {
+</a><a href="#h1-0-18" id="h1-0-18" class="i">+        Ok(value) =&gt; Ok(Some(value)),
+</a><a href="#h1-0-19" id="h1-0-19" class="i">+        Err(rmps::decode::Error::InvalidMarkerRead(e))
+</a><a href="#h1-0-20" id="h1-0-20" class="i">+            if e.kind() == std::io::ErrorKind::UnexpectedEof =&gt;
+</a><a href="#h1-0-21" id="h1-0-21" class="i">+        {
+</a><a href="#h1-0-22" id="h1-0-22" class="i">+            Ok(None)
+</a><a href="#h1-0-23" id="h1-0-23" class="i">+        }
+</a><a href="#h1-0-24" id="h1-0-24" class="i">+        Err(err) =&gt; Err(err.into()),
+</a><a href="#h1-0-25" id="h1-0-25" class="i">+    }
+</a> }
+ 
+ /// Serializes a value into a byte buffer, using MessagePack.
+ /// Returns `Error::Internal` on error.
+<a href="#h1-0-30" id="h1-0-30" class="d">-pub fn serialize&lt;V: serde::Serialize&gt;(value: &amp;V) -&gt; Result&lt;Vec&lt;u8&gt;, Error&gt; {
+</a><a href="#h1-0-31" id="h1-0-31" class="i">+pub fn serialize&lt;V: Serialize&gt;(value: &amp;V) -&gt; Result&lt;Vec&lt;u8&gt;, Error&gt; {
+</a>     let mut bytes = Vec::new();
+     value.serialize(&amp;mut rmps::Serializer::new(&amp;mut bytes))?;
+     Ok(bytes)
+</pre>
+</div>
+</body>
+</html>

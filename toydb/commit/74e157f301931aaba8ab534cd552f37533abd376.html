@@ -1,0 +1,544 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>sql: rename engine methods - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/74e157f301931aaba8ab534cd552f37533abd376.html">74e157f301931aaba8ab534cd552f37533abd376</a>
+<b>parent</b> <a href="../commit/d7912fc64e275c9c666e0d7c5907fe70153a4047.html">d7912fc64e275c9c666e0d7c5907fe70153a4047</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Mon, 17 Jun 2024 19:17:00 +0200
+
+sql: rename engine methods
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/server.rs</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/sql/engine/engine.rs</a></td><td> | </td><td class="num">65</td><td><span class="i">+++++++++++++++++++++++++++++++++++++</span><span class="d">----------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/sql/engine/local.rs</a></td><td> | </td><td class="num">40</td><td><span class="i">++++++++++++++++++++</span><span class="d">--------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">src/sql/engine/raft.rs</a></td><td> | </td><td class="num">22</td><td><span class="i">++++++++++</span><span class="d">------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h4">src/sql/execution/mutation.rs</a></td><td> | </td><td class="num">8</td><td><span class="i">++++</span><span class="d">----</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h5">src/sql/execution/schema.rs</a></td><td> | </td><td class="num">4</td><td><span class="i">++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h6">src/sql/execution/source.rs</a></td><td> | </td><td class="num">12</td><td><span class="i">++++++</span><span class="d">------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h7">src/sql/plan/optimizer.rs</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h8">src/sql/plan/planner.rs</a></td><td> | </td><td class="num">6</td><td><span class="i">+++</span><span class="d">---</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h9">src/sql/types/schema.rs</a></td><td> | </td><td class="num">4</td><td><span class="i">++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h10">src/storage/mvcc.rs</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+</table></pre><pre>11 files changed, 87 insertions(+), 80 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/server.rs.html">src/server.rs</a> b/<a href="../file/src/server.rs.html">src/server.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -290,7 +290,7 @@ impl Server {
+</a>             let response = match request {
+                 Request::Execute(query) =&gt; session.execute(&amp;query).map(Response::Execute),
+                 Request::GetTable(table) =&gt; session
+<a href="#h0-0-3" id="h0-0-3" class="d">-                    .with_txn_read_only(|txn| txn.must_read_table(&amp;table))
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+                    .with_txn_read_only(|txn| txn.must_get_table(&amp;table))
+</a>                     .map(Response::GetTable),
+                 Request::ListTables =&gt; session
+                     .with_txn_read_only(|txn| {
+<b>diff --git a/<a id="h1" href="../file/src/sql/engine/engine.rs.html">src/sql/engine/engine.rs</a> b/<a href="../file/src/sql/engine/engine.rs.html">src/sql/engine/engine.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -5,24 +5,28 @@ use crate::errinput;
+</a> use crate::error::Result;
+ use crate::sql::types::schema::Table;
+ use crate::sql::types::{Expression, Row, Rows, Value};
+<a href="#h1-0-3" id="h1-0-3" class="i">+use crate::storage::mvcc;
+</a> 
+ use std::collections::HashSet;
+ 
+<a href="#h1-0-7" id="h1-0-7" class="d">-/// The SQL engine interface
+</a><a href="#h1-0-8" id="h1-0-8" class="i">+/// The SQL engine interface.
+</a> pub trait Engine: Clone {
+<a href="#h1-0-10" id="h1-0-10" class="d">-    /// The transaction type
+</a><a href="#h1-0-11" id="h1-0-11" class="i">+    /// The transaction type.
+</a><a href="#h1-0-12" id="h1-0-12" class="i">+    ///
+</a><a href="#h1-0-13" id="h1-0-13" class="i">+    /// TODO: consider letting transactions and sessions have a shared borrow to
+</a><a href="#h1-0-14" id="h1-0-14" class="i">+    /// the engine rather than cloning the arc/mutex.
+</a>     type Transaction: Transaction;
+ 
+     /// Begins a read-write transaction.
+     fn begin(&amp;self) -&gt; Result&lt;Self::Transaction&gt;;
+<a href="#h1-0-19" id="h1-0-19" class="d">-
+</a>     /// Begins a read-only transaction.
+     fn begin_read_only(&amp;self) -&gt; Result&lt;Self::Transaction&gt;;
+<a href="#h1-0-22" id="h1-0-22" class="d">-
+</a>     /// Begins a read-only transaction as of a historical version.
+     fn begin_as_of(&amp;self, version: u64) -&gt; Result&lt;Self::Transaction&gt;;
+ 
+<a href="#h1-0-26" id="h1-0-26" class="d">-    /// Begins a session for executing individual statements
+</a><a href="#h1-0-27" id="h1-0-27" class="i">+    /// Creates a client session for executing SQL statements.
+</a><a href="#h1-0-28" id="h1-0-28" class="i">+    ///
+</a><a href="#h1-0-29" id="h1-0-29" class="i">+    /// TODO: the session should have a borrow to the engine.
+</a>     fn session(&amp;self) -&gt; Session&lt;Self&gt; {
+         Session::new(self.clone())
+     }
+<a href="#h1-1" id="h1-1" class="h">@@ -34,30 +38,31 @@ pub trait Engine: Clone {
+</a> /// enforces cleaner separation of when catalog access is valid (i.e. during
+ /// planning but not execution).
+ pub trait Transaction: Catalog {
+<a href="#h1-1-3" id="h1-1-3" class="d">-    /// The transaction&#39;s version
+</a><a href="#h1-1-4" id="h1-1-4" class="d">-    fn version(&amp;self) -&gt; u64;
+</a><a href="#h1-1-5" id="h1-1-5" class="d">-    /// Whether the transaction is read-only
+</a><a href="#h1-1-6" id="h1-1-6" class="i">+    /// The transaction&#39;s MVCC version.
+</a><a href="#h1-1-7" id="h1-1-7" class="i">+    fn version(&amp;self) -&gt; mvcc::Version;
+</a><a href="#h1-1-8" id="h1-1-8" class="i">+    /// Whether the transaction is read-only.
+</a>     fn read_only(&amp;self) -&gt; bool;
+ 
+<a href="#h1-1-11" id="h1-1-11" class="d">-    /// Commits the transaction
+</a><a href="#h1-1-12" id="h1-1-12" class="i">+    /// Commits the transaction.
+</a>     fn commit(self) -&gt; Result&lt;()&gt;;
+<a href="#h1-1-14" id="h1-1-14" class="d">-    /// Rolls back the transaction
+</a><a href="#h1-1-15" id="h1-1-15" class="i">+    /// Rolls back the transaction.
+</a>     fn rollback(self) -&gt; Result&lt;()&gt;;
+ 
+<a href="#h1-1-18" id="h1-1-18" class="d">-    /// Creates a new table row
+</a><a href="#h1-1-19" id="h1-1-19" class="d">-    fn create(&amp;mut self, table: &amp;str, row: Row) -&gt; Result&lt;()&gt;;
+</a><a href="#h1-1-20" id="h1-1-20" class="d">-    /// Deletes a table row
+</a><a href="#h1-1-21" id="h1-1-21" class="i">+    /// Deletes a table row by primary key.
+</a>     fn delete(&amp;mut self, table: &amp;str, id: &amp;Value) -&gt; Result&lt;()&gt;;
+<a href="#h1-1-23" id="h1-1-23" class="d">-    /// Reads a table row, if it exists
+</a><a href="#h1-1-24" id="h1-1-24" class="d">-    fn read(&amp;self, table: &amp;str, id: &amp;Value) -&gt; Result&lt;Option&lt;Row&gt;&gt;;
+</a><a href="#h1-1-25" id="h1-1-25" class="d">-    /// Reads an index entry, if it exists
+</a><a href="#h1-1-26" id="h1-1-26" class="d">-    fn read_index(&amp;self, table: &amp;str, column: &amp;str, value: &amp;Value) -&gt; Result&lt;HashSet&lt;Value&gt;&gt;;
+</a><a href="#h1-1-27" id="h1-1-27" class="d">-    /// Scans a table&#39;s rows
+</a><a href="#h1-1-28" id="h1-1-28" class="i">+    /// Fetches a table row by primary key.
+</a><a href="#h1-1-29" id="h1-1-29" class="i">+    fn get(&amp;self, table: &amp;str, id: &amp;Value) -&gt; Result&lt;Option&lt;Row&gt;&gt;;
+</a><a href="#h1-1-30" id="h1-1-30" class="i">+    /// Inserts a new table row.
+</a><a href="#h1-1-31" id="h1-1-31" class="i">+    fn insert(&amp;mut self, table: &amp;str, row: Row) -&gt; Result&lt;()&gt;;
+</a><a href="#h1-1-32" id="h1-1-32" class="i">+    /// Looks up a set of table primary keys by an index value.
+</a><a href="#h1-1-33" id="h1-1-33" class="i">+    /// TODO: should this just return a Vec instead?
+</a><a href="#h1-1-34" id="h1-1-34" class="i">+    fn lookup_index(&amp;self, table: &amp;str, column: &amp;str, value: &amp;Value) -&gt; Result&lt;HashSet&lt;Value&gt;&gt;;
+</a><a href="#h1-1-35" id="h1-1-35" class="i">+    /// Scans a table&#39;s rows, optionally applying the given filter.
+</a>     fn scan(&amp;self, table: &amp;str, filter: Option&lt;Expression&gt;) -&gt; Result&lt;Rows&gt;;
+     /// Scans a column&#39;s index entries.
+     /// TODO: this is only used for tests. Remove it?
+     fn scan_index(&amp;self, table: &amp;str, column: &amp;str) -&gt; Result&lt;IndexScan&gt;;
+<a href="#h1-1-40" id="h1-1-40" class="d">-    /// Updates a table row
+</a><a href="#h1-1-41" id="h1-1-41" class="i">+    /// Updates a table row by primary key.
+</a>     fn update(&amp;mut self, table: &amp;str, id: &amp;Value, row: Row) -&gt; Result&lt;()&gt;;
+ }
+ 
+<a href="#h1-2" id="h1-2" class="h">@@ -66,22 +71,26 @@ pub type IndexScan = Box&lt;dyn Iterator&lt;Item = Result&lt;(Value, HashSet&lt;Value&gt;)&gt;&gt;&gt;;
+</a> 
+ /// The catalog stores schema information
+ pub trait Catalog {
+<a href="#h1-2-3" id="h1-2-3" class="d">-    /// Creates a new table
+</a><a href="#h1-2-4" id="h1-2-4" class="i">+    /// Creates a new table.
+</a>     fn create_table(&amp;mut self, table: Table) -&gt; Result&lt;()&gt;;
+<a href="#h1-2-6" id="h1-2-6" class="d">-    /// Deletes an existing table, or errors if it does not exist
+</a><a href="#h1-2-7" id="h1-2-7" class="d">-    fn delete_table(&amp;mut self, table: &amp;str) -&gt; Result&lt;()&gt;;
+</a><a href="#h1-2-8" id="h1-2-8" class="d">-    /// Reads a table, if it exists
+</a><a href="#h1-2-9" id="h1-2-9" class="d">-    fn read_table(&amp;self, table: &amp;str) -&gt; Result&lt;Option&lt;Table&gt;&gt;;
+</a><a href="#h1-2-10" id="h1-2-10" class="i">+    /// Drops a table. Errors if it does not exist.
+</a><a href="#h1-2-11" id="h1-2-11" class="i">+    ///
+</a><a href="#h1-2-12" id="h1-2-12" class="i">+    /// TODO: consider taking an if_exists parameter, but that will incur a Raft
+</a><a href="#h1-2-13" id="h1-2-13" class="i">+    /// roundtrip.
+</a><a href="#h1-2-14" id="h1-2-14" class="i">+    fn drop_table(&amp;mut self, table: &amp;str) -&gt; Result&lt;()&gt;;
+</a><a href="#h1-2-15" id="h1-2-15" class="i">+    /// Fetches a table schema.
+</a><a href="#h1-2-16" id="h1-2-16" class="i">+    fn get_table(&amp;self, table: &amp;str) -&gt; Result&lt;Option&lt;Table&gt;&gt;;
+</a>     /// Lists tables.
+     fn list_tables(&amp;self) -&gt; Result&lt;Vec&lt;Table&gt;&gt;;
+ 
+<a href="#h1-2-20" id="h1-2-20" class="d">-    /// Reads a table, and errors if it does not exist
+</a><a href="#h1-2-21" id="h1-2-21" class="d">-    fn must_read_table(&amp;self, table: &amp;str) -&gt; Result&lt;Table&gt; {
+</a><a href="#h1-2-22" id="h1-2-22" class="d">-        self.read_table(table)?.ok_or(errinput!(&quot;table {table} does not exist&quot;))
+</a><a href="#h1-2-23" id="h1-2-23" class="i">+    /// Reads a table, errors if it does not exist.
+</a><a href="#h1-2-24" id="h1-2-24" class="i">+    fn must_get_table(&amp;self, table: &amp;str) -&gt; Result&lt;Table&gt; {
+</a><a href="#h1-2-25" id="h1-2-25" class="i">+        self.get_table(table)?.ok_or(errinput!(&quot;table {table} does not exist&quot;))
+</a>     }
+ 
+     /// Returns all references to a table, as table,column pairs.
+<a href="#h1-2-29" id="h1-2-29" class="d">-    fn table_references(&amp;self, table: &amp;str, with_self: bool) -&gt; Result&lt;Vec&lt;(String, Vec&lt;String&gt;)&gt;&gt; {
+</a><a href="#h1-2-30" id="h1-2-30" class="i">+    /// TODO: make this actually be table,column, instead of a column vec.
+</a><a href="#h1-2-31" id="h1-2-31" class="i">+    fn references(&amp;self, table: &amp;str, with_self: bool) -&gt; Result&lt;Vec&lt;(String, Vec&lt;String&gt;)&gt;&gt; {
+</a>         Ok(self
+             .list_tables()?
+             .into_iter()
+<b>diff --git a/<a id="h2" href="../file/src/sql/engine/local.rs.html">src/sql/engine/local.rs</a> b/<a href="../file/src/sql/engine/local.rs.html">src/sql/engine/local.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -125,11 +125,11 @@ impl&lt;E: storage::Engine&gt; super::Transaction for Transaction&lt;E&gt; {
+</a>         self.txn.rollback()
+     }
+ 
+<a href="#h2-0-3" id="h2-0-3" class="d">-    fn create(&amp;mut self, table: &amp;str, row: Row) -&gt; Result&lt;()&gt; {
+</a><a href="#h2-0-4" id="h2-0-4" class="d">-        let table = self.must_read_table(table)?;
+</a><a href="#h2-0-5" id="h2-0-5" class="i">+    fn insert(&amp;mut self, table: &amp;str, row: Row) -&gt; Result&lt;()&gt; {
+</a><a href="#h2-0-6" id="h2-0-6" class="i">+        let table = self.must_get_table(table)?;
+</a>         table.validate_row(&amp;row, self)?;
+         let id = table.get_row_key(&amp;row)?;
+<a href="#h2-0-9" id="h2-0-9" class="d">-        if self.read(&amp;table.name, &amp;id)?.is_some() {
+</a><a href="#h2-0-10" id="h2-0-10" class="i">+        if self.get(&amp;table.name, &amp;id)?.is_some() {
+</a>             return errinput!(&quot;primary key {id} already exists for table {}&quot;, table.name);
+         }
+         self.txn.set(&amp;Key::Row((&amp;table.name).into(), (&amp;id).into()).encode(), row.encode())?;
+<a href="#h2-1" id="h2-1" class="h">@@ -144,9 +144,9 @@ impl&lt;E: storage::Engine&gt; super::Transaction for Transaction&lt;E&gt; {
+</a>     }
+ 
+     fn delete(&amp;mut self, table: &amp;str, id: &amp;Value) -&gt; Result&lt;()&gt; {
+<a href="#h2-1-3" id="h2-1-3" class="d">-        let table = self.must_read_table(table)?;
+</a><a href="#h2-1-4" id="h2-1-4" class="d">-        for (t, cs) in self.table_references(&amp;table.name, true)? {
+</a><a href="#h2-1-5" id="h2-1-5" class="d">-            let t = self.must_read_table(&amp;t)?;
+</a><a href="#h2-1-6" id="h2-1-6" class="i">+        let table = self.must_get_table(table)?;
+</a><a href="#h2-1-7" id="h2-1-7" class="i">+        for (t, cs) in self.references(&amp;table.name, true)? {
+</a><a href="#h2-1-8" id="h2-1-8" class="i">+            let t = self.must_get_table(&amp;t)?;
+</a>             let cs = cs
+                 .into_iter()
+                 .map(|c| Ok((t.get_column_index(&amp;c)?, c)))
+<a href="#h2-2" id="h2-2" class="h">@@ -166,7 +166,7 @@ impl&lt;E: storage::Engine&gt; super::Transaction for Transaction&lt;E&gt; {
+</a> 
+         let indexes: Vec&lt;_&gt; = table.columns.iter().enumerate().filter(|(_, c)| c.index).collect();
+         if !indexes.is_empty() {
+<a href="#h2-2-3" id="h2-2-3" class="d">-            if let Some(row) = self.read(&amp;table.name, id)? {
+</a><a href="#h2-2-4" id="h2-2-4" class="i">+            if let Some(row) = self.get(&amp;table.name, id)? {
+</a>                 for (i, column) in indexes {
+                     let mut index = self.index_load(&amp;table.name, &amp;column.name, &amp;row[i])?;
+                     index.remove(id);
+<a href="#h2-3" id="h2-3" class="h">@@ -177,22 +177,22 @@ impl&lt;E: storage::Engine&gt; super::Transaction for Transaction&lt;E&gt; {
+</a>         self.txn.delete(&amp;Key::Row(table.name.into(), id.into()).encode())
+     }
+ 
+<a href="#h2-3-3" id="h2-3-3" class="d">-    fn read(&amp;self, table: &amp;str, id: &amp;Value) -&gt; Result&lt;Option&lt;Row&gt;&gt; {
+</a><a href="#h2-3-4" id="h2-3-4" class="i">+    fn get(&amp;self, table: &amp;str, id: &amp;Value) -&gt; Result&lt;Option&lt;Row&gt;&gt; {
+</a>         self.txn
+             .get(&amp;Key::Row(table.into(), id.into()).encode())?
+             .map(|v| Row::decode(&amp;v))
+             .transpose()
+     }
+ 
+<a href="#h2-3-11" id="h2-3-11" class="d">-    fn read_index(&amp;self, table: &amp;str, column: &amp;str, value: &amp;Value) -&gt; Result&lt;HashSet&lt;Value&gt;&gt; {
+</a><a href="#h2-3-12" id="h2-3-12" class="d">-        if !self.must_read_table(table)?.get_column(column)?.index {
+</a><a href="#h2-3-13" id="h2-3-13" class="i">+    fn lookup_index(&amp;self, table: &amp;str, column: &amp;str, value: &amp;Value) -&gt; Result&lt;HashSet&lt;Value&gt;&gt; {
+</a><a href="#h2-3-14" id="h2-3-14" class="i">+        if !self.must_get_table(table)?.get_column(column)?.index {
+</a>             return errinput!(&quot;no index on {table}.{column}&quot;);
+         }
+         self.index_load(table, column, value)
+     }
+ 
+     fn scan(&amp;self, table: &amp;str, filter: Option&lt;Expression&gt;) -&gt; Result&lt;Rows&gt; {
+<a href="#h2-3-21" id="h2-3-21" class="d">-        let table = self.must_read_table(table)?;
+</a><a href="#h2-3-22" id="h2-3-22" class="i">+        let table = self.must_get_table(table)?;
+</a>         Ok(Box::new(
+             self.txn
+                 .scan_prefix(&amp;KeyPrefix::Row((&amp;table.name).into()).encode())?
+<a href="#h2-4" id="h2-4" class="h">@@ -216,7 +216,7 @@ impl&lt;E: storage::Engine&gt; super::Transaction for Transaction&lt;E&gt; {
+</a>     }
+ 
+     fn scan_index(&amp;self, table: &amp;str, column: &amp;str) -&gt; Result&lt;super::IndexScan&gt; {
+<a href="#h2-4-3" id="h2-4-3" class="d">-        let table = self.must_read_table(table)?;
+</a><a href="#h2-4-4" id="h2-4-4" class="i">+        let table = self.must_get_table(table)?;
+</a>         let column = table.get_column(column)?;
+         if !column.index {
+             return errinput!(&quot;no index for {}.{}&quot;, table.name, column.name);
+<a href="#h2-5" id="h2-5" class="h">@@ -241,18 +241,18 @@ impl&lt;E: storage::Engine&gt; super::Transaction for Transaction&lt;E&gt; {
+</a>     }
+ 
+     fn update(&amp;mut self, table: &amp;str, id: &amp;Value, row: Row) -&gt; Result&lt;()&gt; {
+<a href="#h2-5-3" id="h2-5-3" class="d">-        let table = self.must_read_table(table)?;
+</a><a href="#h2-5-4" id="h2-5-4" class="i">+        let table = self.must_get_table(table)?;
+</a>         // If the primary key changes we do a delete and create, otherwise we replace the row
+         if id != &amp;table.get_row_key(&amp;row)? {
+             self.delete(&amp;table.name, id)?;
+<a href="#h2-5-8" id="h2-5-8" class="d">-            self.create(&amp;table.name, row)?;
+</a><a href="#h2-5-9" id="h2-5-9" class="i">+            self.insert(&amp;table.name, row)?;
+</a>             return Ok(());
+         }
+ 
+         // Update indexes, knowing that the primary key has not changed
+         let indexes: Vec&lt;_&gt; = table.columns.iter().enumerate().filter(|(_, c)| c.index).collect();
+         if !indexes.is_empty() {
+<a href="#h2-5-16" id="h2-5-16" class="d">-            let old = self.read(&amp;table.name, id)?.unwrap();
+</a><a href="#h2-5-17" id="h2-5-17" class="i">+            let old = self.get(&amp;table.name, id)?.unwrap();
+</a>             for (i, column) in indexes {
+                 if old[i] == row[i] {
+                     continue;
+<a href="#h2-6" id="h2-6" class="h">@@ -274,16 +274,16 @@ impl&lt;E: storage::Engine&gt; super::Transaction for Transaction&lt;E&gt; {
+</a> 
+ impl&lt;E: storage::Engine&gt; Catalog for Transaction&lt;E&gt; {
+     fn create_table(&amp;mut self, table: Table) -&gt; Result&lt;()&gt; {
+<a href="#h2-6-3" id="h2-6-3" class="d">-        if self.read_table(&amp;table.name)?.is_some() {
+</a><a href="#h2-6-4" id="h2-6-4" class="i">+        if self.get_table(&amp;table.name)?.is_some() {
+</a>             return errinput!(&quot;table {} already exists&quot;, table.name);
+         }
+         table.validate(self)?;
+         self.txn.set(&amp;Key::Table((&amp;table.name).into()).encode(), table.encode())
+     }
+ 
+<a href="#h2-6-11" id="h2-6-11" class="d">-    fn delete_table(&amp;mut self, table: &amp;str) -&gt; Result&lt;()&gt; {
+</a><a href="#h2-6-12" id="h2-6-12" class="d">-        let table = self.must_read_table(table)?;
+</a><a href="#h2-6-13" id="h2-6-13" class="d">-        if let Some((t, cs)) = self.table_references(&amp;table.name, false)?.first() {
+</a><a href="#h2-6-14" id="h2-6-14" class="i">+    fn drop_table(&amp;mut self, table: &amp;str) -&gt; Result&lt;()&gt; {
+</a><a href="#h2-6-15" id="h2-6-15" class="i">+        let table = self.must_get_table(table)?;
+</a><a href="#h2-6-16" id="h2-6-16" class="i">+        if let Some((t, cs)) = self.references(&amp;table.name, false)?.first() {
+</a>             return errinput!(&quot;table {} is referenced by table {} column {}&quot;, table.name, t, cs[0]);
+         }
+         let mut scan = self.scan(&amp;table.name, None)?;
+<a href="#h2-7" id="h2-7" class="h">@@ -293,7 +293,7 @@ impl&lt;E: storage::Engine&gt; Catalog for Transaction&lt;E&gt; {
+</a>         self.txn.delete(&amp;Key::Table(table.name.into()).encode())
+     }
+ 
+<a href="#h2-7-3" id="h2-7-3" class="d">-    fn read_table(&amp;self, table: &amp;str) -&gt; Result&lt;Option&lt;Table&gt;&gt; {
+</a><a href="#h2-7-4" id="h2-7-4" class="i">+    fn get_table(&amp;self, table: &amp;str) -&gt; Result&lt;Option&lt;Table&gt;&gt; {
+</a>         self.txn.get(&amp;Key::Table(table.into()).encode())?.map(|v| Table::decode(&amp;v)).transpose()
+     }
+ 
+<b>diff --git a/<a id="h3" href="../file/src/sql/engine/raft.rs.html">src/sql/engine/raft.rs</a> b/<a href="../file/src/sql/engine/raft.rs.html">src/sql/engine/raft.rs</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -199,7 +199,7 @@ impl super::Transaction for Transaction {
+</a>         Ok(())
+     }
+ 
+<a href="#h3-0-3" id="h3-0-3" class="d">-    fn create(&amp;mut self, table: &amp;str, row: Row) -&gt; Result&lt;()&gt; {
+</a><a href="#h3-0-4" id="h3-0-4" class="i">+    fn insert(&amp;mut self, table: &amp;str, row: Row) -&gt; Result&lt;()&gt; {
+</a>         self.client.mutate(Mutation::Create {
+             txn: self.state.clone(),
+             table: table.to_string(),
+<a href="#h3-1" id="h3-1" class="h">@@ -215,7 +215,7 @@ impl super::Transaction for Transaction {
+</a>         })
+     }
+ 
+<a href="#h3-1-3" id="h3-1-3" class="d">-    fn read(&amp;self, table: &amp;str, id: &amp;Value) -&gt; Result&lt;Option&lt;Row&gt;&gt; {
+</a><a href="#h3-1-4" id="h3-1-4" class="i">+    fn get(&amp;self, table: &amp;str, id: &amp;Value) -&gt; Result&lt;Option&lt;Row&gt;&gt; {
+</a>         self.client.query(Query::Read {
+             txn: self.state.clone(),
+             table: table.to_string(),
+<a href="#h3-2" id="h3-2" class="h">@@ -223,7 +223,7 @@ impl super::Transaction for Transaction {
+</a>         })
+     }
+ 
+<a href="#h3-2-3" id="h3-2-3" class="d">-    fn read_index(&amp;self, table: &amp;str, column: &amp;str, value: &amp;Value) -&gt; Result&lt;HashSet&lt;Value&gt;&gt; {
+</a><a href="#h3-2-4" id="h3-2-4" class="i">+    fn lookup_index(&amp;self, table: &amp;str, column: &amp;str, value: &amp;Value) -&gt; Result&lt;HashSet&lt;Value&gt;&gt; {
+</a>         self.client.query(Query::ReadIndex {
+             txn: self.state.clone(),
+             table: table.to_string(),
+<a href="#h3-3" id="h3-3" class="h">@@ -273,12 +273,12 @@ impl Catalog for Transaction {
+</a>         self.client.mutate(Mutation::CreateTable { txn: self.state.clone(), schema: table })
+     }
+ 
+<a href="#h3-3-3" id="h3-3-3" class="d">-    fn delete_table(&amp;mut self, table: &amp;str) -&gt; Result&lt;()&gt; {
+</a><a href="#h3-3-4" id="h3-3-4" class="i">+    fn drop_table(&amp;mut self, table: &amp;str) -&gt; Result&lt;()&gt; {
+</a>         self.client
+             .mutate(Mutation::DeleteTable { txn: self.state.clone(), table: table.to_string() })
+     }
+ 
+<a href="#h3-3-9" id="h3-3-9" class="d">-    fn read_table(&amp;self, table: &amp;str) -&gt; Result&lt;Option&lt;Table&gt;&gt; {
+</a><a href="#h3-3-10" id="h3-3-10" class="i">+    fn get_table(&amp;self, table: &amp;str) -&gt; Result&lt;Option&lt;Table&gt;&gt; {
+</a>         self.client.query(Query::ReadTable { txn: self.state.clone(), table: table.to_string() })
+     }
+ 
+<a href="#h3-4" id="h3-4" class="h">@@ -314,7 +314,7 @@ impl&lt;E: storage::Engine&gt; State&lt;E&gt; {
+</a>             Mutation::Rollback(txn) =&gt; bincode::serialize(&amp;self.engine.resume(txn)?.rollback()?),
+ 
+             Mutation::Create { txn, table, row } =&gt; {
+<a href="#h3-4-3" id="h3-4-3" class="d">-                bincode::serialize(&amp;self.engine.resume(txn)?.create(&amp;table, row)?)
+</a><a href="#h3-4-4" id="h3-4-4" class="i">+                bincode::serialize(&amp;self.engine.resume(txn)?.insert(&amp;table, row)?)
+</a>             }
+             Mutation::Delete { txn, table, id } =&gt; {
+                 bincode::serialize(&amp;self.engine.resume(txn)?.delete(&amp;table, &amp;id)?)
+<a href="#h3-5" id="h3-5" class="h">@@ -327,7 +327,7 @@ impl&lt;E: storage::Engine&gt; State&lt;E&gt; {
+</a>                 bincode::serialize(&amp;self.engine.resume(txn)?.create_table(schema)?)
+             }
+             Mutation::DeleteTable { txn, table } =&gt; {
+<a href="#h3-5-3" id="h3-5-3" class="d">-                bincode::serialize(&amp;self.engine.resume(txn)?.delete_table(&amp;table)?)
+</a><a href="#h3-5-4" id="h3-5-4" class="i">+                bincode::serialize(&amp;self.engine.resume(txn)?.drop_table(&amp;table)?)
+</a>             }
+         };
+         Ok(response)
+<a href="#h3-6" id="h3-6" class="h">@@ -367,9 +367,9 @@ impl&lt;E: storage::Engine&gt; raft::State for State&lt;E&gt; {
+</a>                 };
+                 txn.state().encode()
+             }
+<a href="#h3-6-3" id="h3-6-3" class="d">-            Query::Read { txn, table, id } =&gt; self.engine.resume(txn)?.read(&amp;table, &amp;id)?.encode(),
+</a><a href="#h3-6-4" id="h3-6-4" class="i">+            Query::Read { txn, table, id } =&gt; self.engine.resume(txn)?.get(&amp;table, &amp;id)?.encode(),
+</a>             Query::ReadIndex { txn, table, column, value } =&gt; {
+<a href="#h3-6-6" id="h3-6-6" class="d">-                self.engine.resume(txn)?.read_index(&amp;table, &amp;column, &amp;value)?.encode()
+</a><a href="#h3-6-7" id="h3-6-7" class="i">+                self.engine.resume(txn)?.lookup_index(&amp;table, &amp;column, &amp;value)?.encode()
+</a>             }
+             // FIXME These need to stream rows somehow
+             Query::Scan { txn, table, filter } =&gt; {
+<a href="#h3-7" id="h3-7" class="h">@@ -383,9 +383,7 @@ impl&lt;E: storage::Engine&gt; raft::State for State&lt;E&gt; {
+</a>                 .encode(),
+             Query::Status =&gt; self.engine.kv.status()?.encode(),
+ 
+<a href="#h3-7-3" id="h3-7-3" class="d">-            Query::ReadTable { txn, table } =&gt; {
+</a><a href="#h3-7-4" id="h3-7-4" class="d">-                self.engine.resume(txn)?.read_table(&amp;table)?.encode()
+</a><a href="#h3-7-5" id="h3-7-5" class="d">-            }
+</a><a href="#h3-7-6" id="h3-7-6" class="i">+            Query::ReadTable { txn, table } =&gt; self.engine.resume(txn)?.get_table(&amp;table)?.encode(),
+</a>             Query::ScanTables { txn } =&gt; self.engine.resume(txn)?.list_tables()?.encode(),
+         };
+         Ok(response)
+<b>diff --git a/<a id="h4" href="../file/src/sql/execution/mutation.rs.html">src/sql/execution/mutation.rs</a> b/<a href="../file/src/sql/execution/mutation.rs.html">src/sql/execution/mutation.rs</a></b>
+<a href="#h4-0" id="h4-0" class="h">@@ -20,7 +20,7 @@ impl Insert {
+</a>     }
+ 
+     pub fn execute(self, txn: &amp;mut impl Transaction) -&gt; Result&lt;u64&gt; {
+<a href="#h4-0-3" id="h4-0-3" class="d">-        let table = txn.must_read_table(&amp;self.table)?;
+</a><a href="#h4-0-4" id="h4-0-4" class="i">+        let table = txn.must_get_table(&amp;self.table)?;
+</a>         let mut count = 0;
+         for expressions in self.rows {
+             let mut row =
+<a href="#h4-1" id="h4-1" class="h">@@ -30,7 +30,7 @@ impl Insert {
+</a>             } else {
+                 row = Self::make_row(&amp;table, &amp;self.columns, row)?;
+             }
+<a href="#h4-1-3" id="h4-1-3" class="d">-            txn.create(&amp;table.name, row)?;
+</a><a href="#h4-1-4" id="h4-1-4" class="i">+            txn.insert(&amp;table.name, row)?;
+</a>             count += 1;
+         }
+         Ok(count)
+<a href="#h4-2" id="h4-2" class="h">@@ -91,7 +91,7 @@ impl Update {
+</a>     }
+ 
+     pub fn execute(mut self, txn: &amp;mut impl Transaction) -&gt; Result&lt;u64&gt; {
+<a href="#h4-2-3" id="h4-2-3" class="d">-        let table = txn.must_read_table(&amp;self.table)?;
+</a><a href="#h4-2-4" id="h4-2-4" class="i">+        let table = txn.must_get_table(&amp;self.table)?;
+</a>         // The iterator will see our changes, such that the same item may be
+         // iterated over multiple times. We keep track of the primary keys here
+         // to avoid that, althought it may cause ballooning memory usage for
+<a href="#h4-3" id="h4-3" class="h">@@ -130,7 +130,7 @@ impl Delete {
+</a>     }
+ 
+     pub fn execute(mut self, txn: &amp;mut impl Transaction) -&gt; Result&lt;u64&gt; {
+<a href="#h4-3-3" id="h4-3-3" class="d">-        let table = txn.must_read_table(&amp;self.table)?;
+</a><a href="#h4-3-4" id="h4-3-4" class="i">+        let table = txn.must_get_table(&amp;self.table)?;
+</a>         let mut count = 0;
+         while let Some(row) = self.source.next().transpose()? {
+             txn.delete(&amp;table.name, &amp;table.get_row_key(&amp;row)?)?;
+<b>diff --git a/<a id="h5" href="../file/src/sql/execution/schema.rs.html">src/sql/execution/schema.rs</a> b/<a href="../file/src/sql/execution/schema.rs.html">src/sql/execution/schema.rs</a></b>
+<a href="#h5-0" id="h5-0" class="h">@@ -30,10 +30,10 @@ impl DropTable {
+</a> 
+     pub fn execute(self, txn: &amp;mut impl Transaction) -&gt; Result&lt;bool&gt; {
+         // TODO the planner should deal with this.
+<a href="#h5-0-3" id="h5-0-3" class="d">-        if self.if_exists &amp;&amp; txn.read_table(&amp;self.table)?.is_none() {
+</a><a href="#h5-0-4" id="h5-0-4" class="i">+        if self.if_exists &amp;&amp; txn.get_table(&amp;self.table)?.is_none() {
+</a>             return Ok(false);
+         }
+<a href="#h5-0-7" id="h5-0-7" class="d">-        txn.delete_table(&amp;self.table)?;
+</a><a href="#h5-0-8" id="h5-0-8" class="i">+        txn.drop_table(&amp;self.table)?;
+</a>         Ok(true)
+     }
+ }
+<b>diff --git a/<a id="h6" href="../file/src/sql/execution/source.rs.html">src/sql/execution/source.rs</a> b/<a href="../file/src/sql/execution/source.rs.html">src/sql/execution/source.rs</a></b>
+<a href="#h6-0" id="h6-0" class="h">@@ -17,7 +17,7 @@ impl Scan {
+</a>     }
+ 
+     pub fn execute(self, txn: &amp;mut impl Transaction) -&gt; Result&lt;QueryIterator&gt; {
+<a href="#h6-0-3" id="h6-0-3" class="d">-        let table = txn.must_read_table(&amp;self.table)?;
+</a><a href="#h6-0-4" id="h6-0-4" class="i">+        let table = txn.must_get_table(&amp;self.table)?;
+</a>         Ok(QueryIterator {
+             columns: table.columns.iter().map(|c| Column { name: Some(c.name.clone()) }).collect(),
+             rows: Box::new(txn.scan(&amp;table.name, self.filter)?),
+<a href="#h6-1" id="h6-1" class="h">@@ -37,13 +37,13 @@ impl KeyLookup {
+</a>     }
+ 
+     pub fn execute(self, txn: &amp;mut impl Transaction) -&gt; Result&lt;QueryIterator&gt; {
+<a href="#h6-1-3" id="h6-1-3" class="d">-        let table = txn.must_read_table(&amp;self.table)?;
+</a><a href="#h6-1-4" id="h6-1-4" class="i">+        let table = txn.must_get_table(&amp;self.table)?;
+</a> 
+         // FIXME Is there a way to pass the txn into an iterator closure instead?
+         let rows = self
+             .keys
+             .into_iter()
+<a href="#h6-1-10" id="h6-1-10" class="d">-            .filter_map(|key| txn.read(&amp;table.name, &amp;key).transpose())
+</a><a href="#h6-1-11" id="h6-1-11" class="i">+            .filter_map(|key| txn.get(&amp;table.name, &amp;key).transpose())
+</a>             .collect::&lt;Result&lt;Vec&lt;Row&gt;&gt;&gt;()?;
+ 
+         Ok(QueryIterator {
+<a href="#h6-2" id="h6-2" class="h">@@ -66,17 +66,17 @@ impl IndexLookup {
+</a>     }
+ 
+     pub fn execute(self, txn: &amp;mut impl Transaction) -&gt; Result&lt;QueryIterator&gt; {
+<a href="#h6-2-3" id="h6-2-3" class="d">-        let table = txn.must_read_table(&amp;self.table)?;
+</a><a href="#h6-2-4" id="h6-2-4" class="i">+        let table = txn.must_get_table(&amp;self.table)?;
+</a> 
+         let mut pks: HashSet&lt;Value&gt; = HashSet::new();
+         for value in self.values {
+<a href="#h6-2-8" id="h6-2-8" class="d">-            pks.extend(txn.read_index(&amp;self.table, &amp;self.column, &amp;value)?);
+</a><a href="#h6-2-9" id="h6-2-9" class="i">+            pks.extend(txn.lookup_index(&amp;self.table, &amp;self.column, &amp;value)?);
+</a>         }
+ 
+         // FIXME Is there a way to pass the txn into an iterator closure instead?
+         let rows = pks
+             .into_iter()
+<a href="#h6-2-15" id="h6-2-15" class="d">-            .filter_map(|pk| txn.read(&amp;table.name, &amp;pk).transpose())
+</a><a href="#h6-2-16" id="h6-2-16" class="i">+            .filter_map(|pk| txn.get(&amp;table.name, &amp;pk).transpose())
+</a>             .collect::&lt;Result&lt;Vec&lt;Row&gt;&gt;&gt;()?;
+ 
+         Ok(QueryIterator {
+<b>diff --git a/<a id="h7" href="../file/src/sql/plan/optimizer.rs.html">src/sql/plan/optimizer.rs</a> b/<a href="../file/src/sql/plan/optimizer.rs.html">src/sql/plan/optimizer.rs</a></b>
+<a href="#h7-0" id="h7-0" class="h">@@ -181,7 +181,7 @@ impl&lt;&#39;a, C: Catalog&gt; Optimizer for IndexLookup&lt;&#39;a, C&gt; {
+</a>     fn optimize(&amp;self, node: Node) -&gt; Result&lt;Node&gt; {
+         node.transform(&amp;Ok, &amp;|n| match n {
+             Node::Scan { table, alias, filter: Some(filter) } =&gt; {
+<a href="#h7-0-3" id="h7-0-3" class="d">-                let columns = self.catalog.must_read_table(&amp;table)?.columns;
+</a><a href="#h7-0-4" id="h7-0-4" class="i">+                let columns = self.catalog.must_get_table(&amp;table)?.columns;
+</a>                 let pk = columns.iter().position(|c| c.primary_key).unwrap();
+ 
+                 // Convert the filter into conjunctive normal form, and try to convert each
+<b>diff --git a/<a id="h8" href="../file/src/sql/plan/planner.rs.html">src/sql/plan/planner.rs</a> b/<a href="../file/src/sql/plan/planner.rs.html">src/sql/plan/planner.rs</a></b>
+<a href="#h8-0" id="h8-0" class="h">@@ -69,7 +69,7 @@ impl&lt;&#39;a, C: Catalog&gt; Planner&lt;&#39;a, C&gt; {
+</a> 
+             // DML statements (mutations).
+             ast::Statement::Delete { table, r#where } =&gt; {
+<a href="#h8-0-3" id="h8-0-3" class="d">-                let scope = &amp;mut Scope::from_table(self.catalog.must_read_table(&amp;table)?)?;
+</a><a href="#h8-0-4" id="h8-0-4" class="i">+                let scope = &amp;mut Scope::from_table(self.catalog.must_get_table(&amp;table)?)?;
+</a>                 Plan::Delete {
+                     table: table.clone(),
+                     source: Node::Scan {
+<a href="#h8-1" id="h8-1" class="h">@@ -95,7 +95,7 @@ impl&lt;&#39;a, C: Catalog&gt; Planner&lt;&#39;a, C&gt; {
+</a>             },
+ 
+             ast::Statement::Update { table, set, r#where } =&gt; {
+<a href="#h8-1-3" id="h8-1-3" class="d">-                let scope = &amp;mut Scope::from_table(self.catalog.must_read_table(&amp;table)?)?;
+</a><a href="#h8-1-4" id="h8-1-4" class="i">+                let scope = &amp;mut Scope::from_table(self.catalog.must_get_table(&amp;table)?)?;
+</a>                 Plan::Update {
+                     table: table.clone(),
+                     source: Node::Scan {
+<a href="#h8-2" id="h8-2" class="h">@@ -287,7 +287,7 @@ impl&lt;&#39;a, C: Catalog&gt; Planner&lt;&#39;a, C&gt; {
+</a>             ast::FromItem::Table { name, alias } =&gt; {
+                 scope.add_table(
+                     alias.clone().unwrap_or_else(|| name.clone()),
+<a href="#h8-2-3" id="h8-2-3" class="d">-                    self.catalog.must_read_table(&amp;name)?,
+</a><a href="#h8-2-4" id="h8-2-4" class="i">+                    self.catalog.must_get_table(&amp;name)?,
+</a>                 )?;
+                 Node::Scan { table: name, alias, filter: None }
+             }
+<b>diff --git a/<a id="h9" href="../file/src/sql/types/schema.rs.html">src/sql/types/schema.rs</a> b/<a href="../file/src/sql/types/schema.rs.html">src/sql/types/schema.rs</a></b>
+<a href="#h9-0" id="h9-0" class="h">@@ -156,7 +156,7 @@ impl Column {
+</a>         if let Some(reference) = &amp;self.references {
+             let target = if reference == &amp;table.name {
+                 table.clone()
+<a href="#h9-0-3" id="h9-0-3" class="d">-            } else if let Some(table) = txn.read_table(reference)? {
+</a><a href="#h9-0-4" id="h9-0-4" class="i">+            } else if let Some(table) = txn.get_table(reference)? {
+</a>                 table
+             } else {
+                 return errinput!(
+<a href="#h9-1" id="h9-1" class="h">@@ -213,7 +213,7 @@ impl Column {
+</a>                 Value::Null =&gt; Ok(()),
+                 Value::Float(f) if f.is_nan() =&gt; Ok(()),
+                 v if target == &amp;table.name &amp;&amp; v == pk =&gt; Ok(()),
+<a href="#h9-1-3" id="h9-1-3" class="d">-                v if txn.read(target, v)?.is_none() =&gt; {
+</a><a href="#h9-1-4" id="h9-1-4" class="i">+                v if txn.get(target, v)?.is_none() =&gt; {
+</a>                     errinput!(&quot;referenced primary key {v} in table {target} does not exist&quot;,)
+                 }
+                 _ =&gt; Ok(()),
+<b>diff --git a/<a id="h10" href="../file/src/storage/mvcc.rs.html">src/storage/mvcc.rs</a> b/<a href="../file/src/storage/mvcc.rs.html">src/storage/mvcc.rs</a></b>
+<a href="#h10-0" id="h10-0" class="h">@@ -152,7 +152,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
+</a> 
+ /// An MVCC version represents a logical timestamp. The latest version
+ /// is incremented when beginning each read-write transaction.
+<a href="#h10-0-3" id="h10-0-3" class="d">-type Version = u64;
+</a><a href="#h10-0-4" id="h10-0-4" class="i">+pub type Version = u64;
+</a> 
+ impl encoding::Value for Version {}
+ 
+</pre>
+</div>
+</body>
+</html>

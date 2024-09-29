@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>raft: improve `Log.set_term()` and `get_term()` - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/df82042ad43b7fbd499e4e9c34379c1a86fd1dc6.html">df82042ad43b7fbd499e4e9c34379c1a86fd1dc6</a>
+<b>parent</b> <a href="../commit/d130aee9e252f9910a9a0fb6b1782d2897bd9921.html">d130aee9e252f9910a9a0fb6b1782d2897bd9921</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Thu, 30 May 2024 00:35:02 +0200
+
+raft: improve `Log.set_term()` and `get_term()`
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/raft/log.rs</a></td><td> | </td><td class="num">31</td><td><span class="i">+++++++++++++++++++</span><span class="d">------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/raft/node.rs</a></td><td> | </td><td class="num">31</td><td><span class="i">+++++++++++++++</span><span class="d">----------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/raft/testscripts/log/term</a></td><td> | </td><td class="num">48</td><td><span class="i">++++++++++++++++++++++++++++++++++</span><span class="d">--------------</span></td></tr>
+</table></pre><pre>3 files changed, 68 insertions(+), 42 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/raft/log.rs.html">src/raft/log.rs</a> b/<a href="../file/src/raft/log.rs.html">src/raft/log.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -3,7 +3,6 @@ use crate::encoding::{bincode, keycode};
+</a> use crate::error::{Error, Result};
+ use crate::storage;
+ 
+<a href="#h0-0-3" id="h0-0-3" class="d">-use ::log::debug;
+</a> use serde::{Deserialize, Serialize};
+ 
+ /// A log index.
+<a href="#h0-1" id="h0-1" class="h">@@ -122,23 +121,28 @@ impl Log {
+</a>         (self.last_index, self.last_term)
+     }
+ 
+<a href="#h0-1-3" id="h0-1-3" class="d">-    /// Returns the last known term (0 if none), and cast vote (if any).
+</a><a href="#h0-1-4" id="h0-1-4" class="i">+    /// Returns the last known term (0 if none) and cast vote (if any).
+</a>     pub fn get_term(&amp;mut self) -&gt; Result&lt;(Term, Option&lt;NodeID&gt;)&gt; {
+<a href="#h0-1-6" id="h0-1-6" class="d">-        let (term, voted_for) = self
+</a><a href="#h0-1-7" id="h0-1-7" class="i">+        Ok(self
+</a>             .engine
+             .get(&amp;Key::TermVote.encode()?)?
+             .map(|v| bincode::deserialize(&amp;v))
+             .transpose()?
+<a href="#h0-1-12" id="h0-1-12" class="d">-            .unwrap_or((0, None));
+</a><a href="#h0-1-13" id="h0-1-13" class="d">-        debug!(&quot;Loaded term {} and voted_for {:?} from log&quot;, term, voted_for);
+</a><a href="#h0-1-14" id="h0-1-14" class="d">-        Ok((term, voted_for))
+</a><a href="#h0-1-15" id="h0-1-15" class="i">+            .unwrap_or((0, None)))
+</a>     }
+ 
+<a href="#h0-1-18" id="h0-1-18" class="d">-    /// Sets the most recent term, and cast vote (if any).
+</a><a href="#h0-1-19" id="h0-1-19" class="d">-    ///
+</a><a href="#h0-1-20" id="h0-1-20" class="d">-    /// TODO: rename voted_for to vote.
+</a><a href="#h0-1-21" id="h0-1-21" class="d">-    pub fn set_term(&amp;mut self, term: Term, voted_for: Option&lt;NodeID&gt;) -&gt; Result&lt;()&gt; {
+</a><a href="#h0-1-22" id="h0-1-22" class="d">-        self.engine.set(&amp;Key::TermVote.encode()?, bincode::serialize(&amp;(term, voted_for))?)?;
+</a><a href="#h0-1-23" id="h0-1-23" class="i">+    /// Stores the most recent term and cast vote (if any). Enforces that the
+</a><a href="#h0-1-24" id="h0-1-24" class="i">+    /// term does not regress, and that we only vote for one node in a term.
+</a><a href="#h0-1-25" id="h0-1-25" class="i">+    pub fn set_term(&amp;mut self, term: Term, vote: Option&lt;NodeID&gt;) -&gt; Result&lt;()&gt; {
+</a><a href="#h0-1-26" id="h0-1-26" class="i">+        match self.get_term()? {
+</a><a href="#h0-1-27" id="h0-1-27" class="i">+            (t, _) if term &lt; t =&gt; Err(Error::Value(format!(&quot;term regression {t} → {term}&quot;))),
+</a><a href="#h0-1-28" id="h0-1-28" class="i">+            (t, _) if term &gt; t =&gt; Ok(()), // below, term == t
+</a><a href="#h0-1-29" id="h0-1-29" class="i">+            (0, _) =&gt; Err(Error::Value(&quot;can&#39;t set term 0&quot;.to_string())),
+</a><a href="#h0-1-30" id="h0-1-30" class="i">+            (_, None) =&gt; Ok(()),
+</a><a href="#h0-1-31" id="h0-1-31" class="i">+            (_, v) if vote != v =&gt; Err(Error::Value(format!(&quot;can&#39;t change vote {v:?} → {vote:?}&quot;))),
+</a><a href="#h0-1-32" id="h0-1-32" class="i">+            (_, _) =&gt; Ok(()),
+</a><a href="#h0-1-33" id="h0-1-33" class="i">+        }?;
+</a><a href="#h0-1-34" id="h0-1-34" class="i">+        self.engine.set(&amp;Key::TermVote.encode()?, bincode::serialize(&amp;(term, vote))?)?;
+</a>         self.engine.flush()?;
+         Ok(())
+     }
+<a href="#h0-2" id="h0-2" class="h">@@ -331,7 +335,10 @@ mod tests {
+</a>                 &quot;get_term&quot; =&gt; {
+                     command.consume_args().reject_rest()?;
+                     let (term, vote) = self.log.get_term()?;
+<a href="#h0-2-3" id="h0-2-3" class="d">-                    output.push_str(&amp;format!(&quot;term={term} vote={vote:?}\n&quot;));
+</a><a href="#h0-2-4" id="h0-2-4" class="i">+                    output.push_str(&amp;format!(
+</a><a href="#h0-2-5" id="h0-2-5" class="i">+                        &quot;term={term} vote={}\n&quot;,
+</a><a href="#h0-2-6" id="h0-2-6" class="i">+                        vote.map(|v| v.to_string()).unwrap_or(&quot;None&quot;.to_string())
+</a><a href="#h0-2-7" id="h0-2-7" class="i">+                    ));
+</a>                 }
+ 
+                 // has INDEX@TERM...
+<b>diff --git a/<a id="h1" href="../file/src/raft/node.rs.html">src/raft/node.rs</a> b/<a href="../file/src/raft/node.rs.html">src/raft/node.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -287,8 +287,8 @@ impl RawNode&lt;Candidate&gt; {
+</a>             // We lost the election, follow the winner.
+             assert_eq!(term, self.term, &quot;Can&#39;t follow leader in different term&quot;);
+             info!(&quot;Lost election, following leader {} in term {}&quot;, leader, term);
+<a href="#h1-0-3" id="h1-0-3" class="d">-            let voted_for = Some(self.id); // by definition
+</a><a href="#h1-0-4" id="h1-0-4" class="d">-            Ok(self.into_role(Follower::new(Some(leader), voted_for, election_timeout)))
+</a><a href="#h1-0-5" id="h1-0-5" class="i">+            let vote = Some(self.id); // by definition
+</a><a href="#h1-0-6" id="h1-0-6" class="i">+            Ok(self.into_role(Follower::new(Some(leader), vote, election_timeout)))
+</a>         } else {
+             // We found a new term, but we don&#39;t necessarily know who the leader
+             // is yet. We&#39;ll find out when we step a message from it.
+<a href="#h1-1" id="h1-1" class="h">@@ -411,7 +411,7 @@ pub struct Follower {
+</a>     /// The leader_seen timeout before triggering an election.
+     election_timeout: Ticks,
+     /// The node we voted for in the current term, if any.
+<a href="#h1-1-3" id="h1-1-3" class="d">-    voted_for: Option&lt;NodeID&gt;,
+</a><a href="#h1-1-4" id="h1-1-4" class="i">+    vote: Option&lt;NodeID&gt;,
+</a>     // Local client requests that have been forwarded to the leader. These are
+     // aborted on leader/term changes.
+     forwarded: HashSet&lt;RequestID&gt;,
+<a href="#h1-2" id="h1-2" class="h">@@ -419,8 +419,8 @@ pub struct Follower {
+</a> 
+ impl Follower {
+     /// Creates a new follower role.
+<a href="#h1-2-3" id="h1-2-3" class="d">-    fn new(leader: Option&lt;NodeID&gt;, voted_for: Option&lt;NodeID&gt;, election_timeout: Ticks) -&gt; Self {
+</a><a href="#h1-2-4" id="h1-2-4" class="d">-        Self { leader, voted_for, leader_seen: 0, election_timeout, forwarded: HashSet::new() }
+</a><a href="#h1-2-5" id="h1-2-5" class="i">+    fn new(leader: Option&lt;NodeID&gt;, vote: Option&lt;NodeID&gt;, election_timeout: Ticks) -&gt; Self {
+</a><a href="#h1-2-6" id="h1-2-6" class="i">+        Self { leader, vote, leader_seen: 0, election_timeout, forwarded: HashSet::new() }
+</a>     }
+ }
+ 
+<a href="#h1-3" id="h1-3" class="h">@@ -437,8 +437,8 @@ impl RawNode&lt;Follower&gt; {
+</a>         heartbeat_interval: Ticks,
+         election_timeout_range: std::ops::Range&lt;Ticks&gt;,
+     ) -&gt; Result&lt;Self&gt; {
+<a href="#h1-3-3" id="h1-3-3" class="d">-        let (term, voted_for) = log.get_term()?;
+</a><a href="#h1-3-4" id="h1-3-4" class="d">-        let role = Follower::new(None, voted_for, 0);
+</a><a href="#h1-3-5" id="h1-3-5" class="i">+        let (term, vote) = log.get_term()?;
+</a><a href="#h1-3-6" id="h1-3-6" class="i">+        let role = Follower::new(None, vote, 0);
+</a>         let mut node = Self {
+             id,
+             peers,
+<a href="#h1-4" id="h1-4" class="h">@@ -466,11 +466,11 @@ impl RawNode&lt;Follower&gt; {
+</a>             assert!(self.role.forwarded.is_empty(), &quot;Leaderless follower has forwarded requests&quot;);
+         }
+ 
+<a href="#h1-4-3" id="h1-4-3" class="d">-        // NB: We allow voted_for not in peers, since this can happen when
+</a><a href="#h1-4-4" id="h1-4-4" class="d">-        // removing nodes from the cluster via a cold restart. We also allow
+</a><a href="#h1-4-5" id="h1-4-5" class="d">-        // voted_for self, which can happen if we lose an election.
+</a><a href="#h1-4-6" id="h1-4-6" class="i">+        // NB: We allow vote not in peers, since this can happen when removing
+</a><a href="#h1-4-7" id="h1-4-7" class="i">+        // nodes from the cluster via a cold restart. We also allow vote for
+</a><a href="#h1-4-8" id="h1-4-8" class="i">+        // self, which can happen if we lose an election.
+</a> 
+<a href="#h1-4-10" id="h1-4-10" class="d">-        debug_assert_eq!(self.role.voted_for, self.log.get_term()?.1, &quot;Vote does not match log&quot;);
+</a><a href="#h1-4-11" id="h1-4-11" class="i">+        debug_assert_eq!(self.role.vote, self.log.get_term()?.1, &quot;Vote does not match log&quot;);
+</a>         assert!(self.role.leader_seen &lt; self.role.election_timeout, &quot;Election timeout passed&quot;);
+ 
+         Ok(())
+<a href="#h1-5" id="h1-5" class="h">@@ -505,8 +505,7 @@ impl RawNode&lt;Follower&gt; {
+</a>             assert_eq!(self.role.leader, None, &quot;Already have leader in term&quot;);
+             assert_eq!(term, self.term, &quot;Can&#39;t follow leader in different term&quot;);
+             info!(&quot;Following leader {} in term {}&quot;, leader, term);
+<a href="#h1-5-3" id="h1-5-3" class="d">-            self.role =
+</a><a href="#h1-5-4" id="h1-5-4" class="d">-                Follower::new(Some(leader), self.role.voted_for, self.role.election_timeout);
+</a><a href="#h1-5-5" id="h1-5-5" class="i">+            self.role = Follower::new(Some(leader), self.role.vote, self.role.election_timeout);
+</a>         } else {
+             // We found a new term, but we don&#39;t necessarily know who the leader
+             // is yet. We&#39;ll find out when we step a message from it.
+<a href="#h1-6" id="h1-6" class="h">@@ -591,8 +590,8 @@ impl RawNode&lt;Follower&gt; {
+</a>             // A candidate in this term is requesting our vote.
+             Message::Campaign { last_index, last_term } =&gt; {
+                 // Don&#39;t vote if we already voted for someone else in this term.
+<a href="#h1-6-3" id="h1-6-3" class="d">-                if let Some(voted_for) = self.role.voted_for {
+</a><a href="#h1-6-4" id="h1-6-4" class="d">-                    if msg.from != voted_for {
+</a><a href="#h1-6-5" id="h1-6-5" class="i">+                if let Some(vote) = self.role.vote {
+</a><a href="#h1-6-6" id="h1-6-6" class="i">+                    if msg.from != vote {
+</a>                         self.send(msg.from, Message::CampaignResponse { vote: false })?;
+                         return Ok(self.into());
+                     }
+<a href="#h1-7" id="h1-7" class="h">@@ -609,7 +608,7 @@ impl RawNode&lt;Follower&gt; {
+</a>                 info!(&quot;Voting for {} in term {} election&quot;, msg.from, self.term);
+                 self.send(msg.from, Message::CampaignResponse { vote: true })?;
+                 self.log.set_term(self.term, Some(msg.from))?;
+<a href="#h1-7-3" id="h1-7-3" class="d">-                self.role.voted_for = Some(msg.from);
+</a><a href="#h1-7-4" id="h1-7-4" class="i">+                self.role.vote = Some(msg.from);
+</a>             }
+ 
+             // We may receive a vote after we lost an election and followed a
+<b>diff --git a/<a id="h2" href="../file/src/raft/testscripts/log/term.html">src/raft/testscripts/log/term</a> b/<a href="../file/src/raft/testscripts/log/term.html">src/raft/testscripts/log/term</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -3,6 +3,11 @@ get_term
+</a> ---
+ term=0 vote=None
+ 
+<a href="#h2-0-3" id="h2-0-3" class="i">+# Storing a 0 term errors.
+</a><a href="#h2-0-4" id="h2-0-4" class="i">+!set_term 0
+</a><a href="#h2-0-5" id="h2-0-5" class="i">+---
+</a><a href="#h2-0-6" id="h2-0-6" class="i">+Error: can&#39;t set term 0
+</a><a href="#h2-0-7" id="h2-0-7" class="i">+
+</a> # set_term stores a term and empty vote.
+ set_term 3
+ get_term
+<a href="#h2-1" id="h2-1" class="h">@@ -16,30 +21,45 @@ set_term 3 7
+</a> get_term
+ raw
+ ---
+<a href="#h2-1-3" id="h2-1-3" class="d">-term=3 vote=Some(7)
+</a><a href="#h2-1-4" id="h2-1-4" class="i">+term=3 vote=7
+</a> TermVote 0x01 = 0x030107
+ 
+<a href="#h2-1-7" id="h2-1-7" class="d">-# Removing the vote is allowed.
+</a><a href="#h2-1-8" id="h2-1-8" class="d">-#
+</a><a href="#h2-1-9" id="h2-1-9" class="d">-# TODO: it shouldn&#39;t be, nor should changing it. But it should be idempotent.
+</a><a href="#h2-1-10" id="h2-1-10" class="d">-set_term 3
+</a><a href="#h2-1-11" id="h2-1-11" class="i">+# set_term is idempotent.
+</a><a href="#h2-1-12" id="h2-1-12" class="i">+set_term 3 7
+</a> get_term
+ ---
+<a href="#h2-1-15" id="h2-1-15" class="d">-term=3 vote=None
+</a><a href="#h2-1-16" id="h2-1-16" class="i">+term=3 vote=7
+</a> 
+<a href="#h2-1-18" id="h2-1-18" class="d">-# Moving the term into the far future or past is allowed.
+</a><a href="#h2-1-19" id="h2-1-19" class="i">+# Moving the term into the far future is allowed.
+</a> set_term 7
+ get_term
+<a href="#h2-1-22" id="h2-1-22" class="d">-set_term 1 2
+</a><a href="#h2-1-23" id="h2-1-23" class="d">-get_term
+</a> ---
+ term=7 vote=None
+<a href="#h2-1-26" id="h2-1-26" class="d">-term=1 vote=Some(2)
+</a> 
+<a href="#h2-1-28" id="h2-1-28" class="d">-# Clearing the term is allowed.
+</a><a href="#h2-1-29" id="h2-1-29" class="d">-set_term 0
+</a><a href="#h2-1-30" id="h2-1-30" class="i">+# Starting a new term with a vote is allowed.
+</a><a href="#h2-1-31" id="h2-1-31" class="i">+set_term 9 1
+</a><a href="#h2-1-32" id="h2-1-32" class="i">+get_term
+</a><a href="#h2-1-33" id="h2-1-33" class="i">+---
+</a><a href="#h2-1-34" id="h2-1-34" class="i">+term=9 vote=1
+</a><a href="#h2-1-35" id="h2-1-35" class="i">+
+</a><a href="#h2-1-36" id="h2-1-36" class="i">+# Regressing the term errors.
+</a><a href="#h2-1-37" id="h2-1-37" class="i">+!set_term 8
+</a><a href="#h2-1-38" id="h2-1-38" class="i">+---
+</a><a href="#h2-1-39" id="h2-1-39" class="i">+Error: term regression 9 → 8
+</a><a href="#h2-1-40" id="h2-1-40" class="i">+
+</a><a href="#h2-1-41" id="h2-1-41" class="i">+# Clearing the vote errors.
+</a><a href="#h2-1-42" id="h2-1-42" class="i">+!set_term 9
+</a><a href="#h2-1-43" id="h2-1-43" class="i">+---
+</a><a href="#h2-1-44" id="h2-1-44" class="i">+Error: can&#39;t change vote Some(1) → None
+</a><a href="#h2-1-45" id="h2-1-45" class="i">+
+</a><a href="#h2-1-46" id="h2-1-46" class="i">+# Changing the vote errors.
+</a><a href="#h2-1-47" id="h2-1-47" class="i">+!set_term 9 2
+</a><a href="#h2-1-48" id="h2-1-48" class="i">+---
+</a><a href="#h2-1-49" id="h2-1-49" class="i">+Error: can&#39;t change vote Some(1) → Some(2)
+</a><a href="#h2-1-50" id="h2-1-50" class="i">+
+</a><a href="#h2-1-51" id="h2-1-51" class="i">+# The above errors should not have changed the term/vote.
+</a> get_term
+ raw
+ ---
+<a href="#h2-1-55" id="h2-1-55" class="d">-term=0 vote=None
+</a><a href="#h2-1-56" id="h2-1-56" class="d">-TermVote 0x01 = 0x0000
+</a><a href="#h2-1-57" id="h2-1-57" class="i">+term=9 vote=1
+</a><a href="#h2-1-58" id="h2-1-58" class="i">+TermVote 0x01 = 0x090101
+</a></pre>
+</div>
+</body>
+</html>

@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>raft: use read/write instead of query/mutate for requests - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/0b24345e19416b29d96bc910d91ca0d9e867f1c2.html">0b24345e19416b29d96bc910d91ca0d9e867f1c2</a>
+<b>parent</b> <a href="../commit/1b9d8f2ecbceba33168045e083487c7baad5fdf8.html">1b9d8f2ecbceba33168045e083487c7baad5fdf8</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Sat, 13 Apr 2024 12:17:00 +0200
+
+raft: use read/write instead of query/mutate for requests
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/raft/message.rs</a></td><td> | </td><td class="num">24</td><td><span class="i">++++++++++++++++++</span><span class="d">------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/raft/node/candidate.rs</a></td><td> | </td><td class="num">5</td><td><span class="i">+</span><span class="d">----</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/raft/node/follower.rs</a></td><td> | </td><td class="num">23</td><td><span class="i">+++++++</span><span class="d">----------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">src/raft/node/leader.rs</a></td><td> | </td><td class="num">15</td><td><span class="i">++++++</span><span class="d">---------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h4">src/sql/engine/raft.rs</a></td><td> | </td><td class="num">8</td><td><span class="i">++++</span><span class="d">----</span></td></tr>
+</table></pre><pre>5 files changed, 36 insertions(+), 39 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/raft/message.rs.html">src/raft/message.rs</a> b/<a href="../file/src/raft/message.rs.html">src/raft/message.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -104,19 +104,31 @@ pub type RequestID = Vec&lt;u8&gt;;
+</a> /// A read sequence number, used to confirm leadership for linearizable reads.
+ pub type ReadSequence = u64;
+ 
+<a href="#h0-0-3" id="h0-0-3" class="d">-/// A client request.
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+/// A client request, typically passed through to the state machine.
+</a> #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+ pub enum Request {
+<a href="#h0-0-7" id="h0-0-7" class="d">-    Query(Vec&lt;u8&gt;),
+</a><a href="#h0-0-8" id="h0-0-8" class="d">-    Mutate(Vec&lt;u8&gt;),
+</a><a href="#h0-0-9" id="h0-0-9" class="i">+    /// A state machine read command. This is not replicated, and only evaluted
+</a><a href="#h0-0-10" id="h0-0-10" class="i">+    /// on the leader.
+</a><a href="#h0-0-11" id="h0-0-11" class="i">+    Read(Vec&lt;u8&gt;),
+</a><a href="#h0-0-12" id="h0-0-12" class="i">+    /// A state machine write command. This is replicated across all nodes, and
+</a><a href="#h0-0-13" id="h0-0-13" class="i">+    /// must result in a deterministic response.
+</a><a href="#h0-0-14" id="h0-0-14" class="i">+    Write(Vec&lt;u8&gt;),
+</a><a href="#h0-0-15" id="h0-0-15" class="i">+    /// Requests Raft cluster status from the leader.
+</a>     Status,
+ }
+ 
+<a href="#h0-0-19" id="h0-0-19" class="d">-/// A client response.
+</a><a href="#h0-0-20" id="h0-0-20" class="i">+/// A client response. This will be wrapped in a Result to handle errors.
+</a><a href="#h0-0-21" id="h0-0-21" class="i">+///
+</a><a href="#h0-0-22" id="h0-0-22" class="i">+/// TODO: consider a separate error kind here, or a wrapped Result, to separate
+</a><a href="#h0-0-23" id="h0-0-23" class="i">+/// fallible state machine operations (returned to the caller) from apply errors
+</a><a href="#h0-0-24" id="h0-0-24" class="i">+/// (fatal).
+</a> #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+ pub enum Response {
+<a href="#h0-0-27" id="h0-0-27" class="d">-    Query(Vec&lt;u8&gt;),
+</a><a href="#h0-0-28" id="h0-0-28" class="d">-    Mutate(Vec&lt;u8&gt;),
+</a><a href="#h0-0-29" id="h0-0-29" class="i">+    /// A state machine read result.
+</a><a href="#h0-0-30" id="h0-0-30" class="i">+    Read(Vec&lt;u8&gt;),
+</a><a href="#h0-0-31" id="h0-0-31" class="i">+    /// A state machine write result.
+</a><a href="#h0-0-32" id="h0-0-32" class="i">+    Write(Vec&lt;u8&gt;),
+</a><a href="#h0-0-33" id="h0-0-33" class="i">+    /// The current Raft leader status.
+</a>     Status(Status),
+ }
+ 
+<b>diff --git a/<a id="h1" href="../file/src/raft/node/candidate.rs.html">src/raft/node/candidate.rs</a> b/<a href="../file/src/raft/node/candidate.rs.html">src/raft/node/candidate.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -330,10 +330,7 @@ mod tests {
+</a>             from: 1,
+             to: 1,
+             term: 3,
+<a href="#h1-0-3" id="h1-0-3" class="d">-            message: Message::ClientRequest {
+</a><a href="#h1-0-4" id="h1-0-4" class="d">-                id: vec![0x01],
+</a><a href="#h1-0-5" id="h1-0-5" class="d">-                request: Request::Mutate(vec![0xaf]),
+</a><a href="#h1-0-6" id="h1-0-6" class="d">-            },
+</a><a href="#h1-0-7" id="h1-0-7" class="i">+            message: Message::ClientRequest { id: vec![0x01], request: Request::Write(vec![0xaf]) },
+</a>         })?;
+         assert_node(&amp;mut node).is_candidate().term(3);
+         assert_messages(
+<b>diff --git a/<a id="h2" href="../file/src/raft/node/follower.rs.html">src/raft/node/follower.rs</a> b/<a href="../file/src/raft/node/follower.rs.html">src/raft/node/follower.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -868,10 +868,7 @@ pub mod tests {
+</a>             from: 1,
+             to: 1,
+             term: 3,
+<a href="#h2-0-3" id="h2-0-3" class="d">-            message: Message::ClientRequest {
+</a><a href="#h2-0-4" id="h2-0-4" class="d">-                id: vec![0x01],
+</a><a href="#h2-0-5" id="h2-0-5" class="d">-                request: Request::Mutate(vec![0xaf]),
+</a><a href="#h2-0-6" id="h2-0-6" class="d">-            },
+</a><a href="#h2-0-7" id="h2-0-7" class="i">+            message: Message::ClientRequest { id: vec![0x01], request: Request::Write(vec![0xaf]) },
+</a>         })?;
+         assert_node(&amp;mut node).is_follower().term(3).leader(Some(2)).forwarded(vec![vec![0x01]]);
+         assert_messages(
+<a href="#h2-1" id="h2-1" class="h">@@ -882,7 +879,7 @@ pub mod tests {
+</a>                 term: 3,
+                 message: Message::ClientRequest {
+                     id: vec![0x01],
+<a href="#h2-1-3" id="h2-1-3" class="d">-                    request: Request::Mutate(vec![0xaf]),
+</a><a href="#h2-1-4" id="h2-1-4" class="i">+                    request: Request::Write(vec![0xaf]),
+</a>                 },
+             }],
+         );
+<a href="#h2-2" id="h2-2" class="h">@@ -893,7 +890,7 @@ pub mod tests {
+</a>             term: 3,
+             message: Message::ClientResponse {
+                 id: vec![0x01],
+<a href="#h2-2-3" id="h2-2-3" class="d">-                response: Ok(Response::Mutate(vec![0xaf])),
+</a><a href="#h2-2-4" id="h2-2-4" class="i">+                response: Ok(Response::Write(vec![0xaf])),
+</a>             },
+         })?;
+         assert_node(&amp;mut node).is_follower().term(3).leader(Some(2)).forwarded(vec![]);
+<a href="#h2-3" id="h2-3" class="h">@@ -905,7 +902,7 @@ pub mod tests {
+</a>                 term: 3,
+                 message: Message::ClientResponse {
+                     id: vec![0x01],
+<a href="#h2-3-3" id="h2-3-3" class="d">-                    response: Ok(Response::Mutate(vec![0xaf])),
+</a><a href="#h2-3-4" id="h2-3-4" class="i">+                    response: Ok(Response::Write(vec![0xaf])),
+</a>                 },
+             }],
+         );
+<a href="#h2-4" id="h2-4" class="h">@@ -923,10 +920,7 @@ pub mod tests {
+</a>             from: 1,
+             to: 1,
+             term: 3,
+<a href="#h2-4-3" id="h2-4-3" class="d">-            message: Message::ClientRequest {
+</a><a href="#h2-4-4" id="h2-4-4" class="d">-                id: vec![0x01],
+</a><a href="#h2-4-5" id="h2-4-5" class="d">-                request: Request::Mutate(vec![0xaf]),
+</a><a href="#h2-4-6" id="h2-4-6" class="d">-            },
+</a><a href="#h2-4-7" id="h2-4-7" class="i">+            message: Message::ClientRequest { id: vec![0x01], request: Request::Write(vec![0xaf]) },
+</a>         })?;
+         assert_node(&amp;mut node).is_follower().term(3).leader(None).forwarded(vec![]);
+         assert_messages(
+<a href="#h2-5" id="h2-5" class="h">@@ -951,10 +945,7 @@ pub mod tests {
+</a>             from: 1,
+             to: 1,
+             term: 3,
+<a href="#h2-5-3" id="h2-5-3" class="d">-            message: Message::ClientRequest {
+</a><a href="#h2-5-4" id="h2-5-4" class="d">-                id: vec![0x01],
+</a><a href="#h2-5-5" id="h2-5-5" class="d">-                request: Request::Mutate(vec![0xaf]),
+</a><a href="#h2-5-6" id="h2-5-6" class="d">-            },
+</a><a href="#h2-5-7" id="h2-5-7" class="i">+            message: Message::ClientRequest { id: vec![0x01], request: Request::Write(vec![0xaf]) },
+</a>         })?;
+         assert_node(&amp;mut node).is_follower().term(3).leader(Some(2)).forwarded(vec![vec![0x01]]);
+         assert_messages(
+<a href="#h2-6" id="h2-6" class="h">@@ -965,7 +956,7 @@ pub mod tests {
+</a>                 term: 3,
+                 message: Message::ClientRequest {
+                     id: vec![0x01],
+<a href="#h2-6-3" id="h2-6-3" class="d">-                    request: Request::Mutate(vec![0xaf]),
+</a><a href="#h2-6-4" id="h2-6-4" class="i">+                    request: Request::Write(vec![0xaf]),
+</a>                 },
+             }],
+         );
+<b>diff --git a/<a id="h3" href="../file/src/raft/node/leader.rs.html">src/raft/node/leader.rs</a> b/<a href="../file/src/raft/node/leader.rs.html">src/raft/node/leader.rs</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -209,7 +209,7 @@ impl RawNode&lt;Leader&gt; {
+</a>             // must confirm that we are still the leader by sending a heartbeat
+             // with the read&#39;s sequence number and wait for confirmation from a
+             // quorum before executing the read.
+<a href="#h3-0-3" id="h3-0-3" class="d">-            Message::ClientRequest { id, request: Request::Query(command) } =&gt; {
+</a><a href="#h3-0-4" id="h3-0-4" class="i">+            Message::ClientRequest { id, request: Request::Read(command) } =&gt; {
+</a>                 self.role.read_seq += 1;
+                 self.role.reads.push_back(Read {
+                     seq: self.role.read_seq,
+<a href="#h3-1" id="h3-1" class="h">@@ -225,7 +225,7 @@ impl RawNode&lt;Leader&gt; {
+</a> 
+             // A client submitted a write command. Propose it, and track it
+             // until it&#39;s applied and the response is returned to the client.
+<a href="#h3-1-3" id="h3-1-3" class="d">-            Message::ClientRequest { id, request: Request::Mutate(command) } =&gt; {
+</a><a href="#h3-1-4" id="h3-1-4" class="i">+            Message::ClientRequest { id, request: Request::Write(command) } =&gt; {
+</a>                 let index = self.propose(Some(command))?;
+                 self.role.writes.insert(index, Write { from: msg.from, id: id.clone() });
+                 if self.peers.is_empty() {
+<a href="#h3-2" id="h3-2" class="h">@@ -340,7 +340,7 @@ impl RawNode&lt;Leader&gt; {
+</a>                     term: self.term,
+                     message: Message::ClientResponse {
+                         id: write.id,
+<a href="#h3-2-3" id="h3-2-3" class="d">-                        response: result.map(Response::Mutate),
+</a><a href="#h3-2-4" id="h3-2-4" class="i">+                        response: result.map(Response::Write),
+</a>                     },
+                 })?;
+             }
+<a href="#h3-3" id="h3-3" class="h">@@ -376,7 +376,7 @@ impl RawNode&lt;Leader&gt; {
+</a>             let result = self.state.query(read.command);
+             self.send(
+                 read.from,
+<a href="#h3-3-3" id="h3-3-3" class="d">-                Message::ClientResponse { id: read.id, response: result.map(Response::Query) },
+</a><a href="#h3-3-4" id="h3-3-4" class="i">+                Message::ClientResponse { id: read.id, response: result.map(Response::Read) },
+</a>             )?;
+         }
+ 
+<a href="#h3-4" id="h3-4" class="h">@@ -673,7 +673,7 @@ mod tests {
+</a>             from: 1,
+             to: 1,
+             term: 3,
+<a href="#h3-4-3" id="h3-4-3" class="d">-            message: Message::ClientRequest { id: vec![0x01], request: Request::Query(vec![0xaf]) },
+</a><a href="#h3-4-4" id="h3-4-4" class="i">+            message: Message::ClientRequest { id: vec![0x01], request: Request::Read(vec![0xaf]) },
+</a>         })?;
+         assert_node(&amp;mut node).is_leader().term(3).committed(2).last(5);
+         for to in peers.iter().copied().sorted() {
+<a href="#h3-5" id="h3-5" class="h">@@ -701,10 +701,7 @@ mod tests {
+</a>             from: 1,
+             to: 1,
+             term: 3,
+<a href="#h3-5-3" id="h3-5-3" class="d">-            message: Message::ClientRequest {
+</a><a href="#h3-5-4" id="h3-5-4" class="d">-                id: vec![0x01],
+</a><a href="#h3-5-5" id="h3-5-5" class="d">-                request: Request::Mutate(vec![0xaf]),
+</a><a href="#h3-5-6" id="h3-5-6" class="d">-            },
+</a><a href="#h3-5-7" id="h3-5-7" class="i">+            message: Message::ClientRequest { id: vec![0x01], request: Request::Write(vec![0xaf]) },
+</a>         })?;
+         assert_node(&amp;mut node).is_leader().term(3).committed(2).last(6).entry(Entry {
+             index: 6,
+<b>diff --git a/<a id="h4" href="../file/src/sql/engine/raft.rs.html">src/sql/engine/raft.rs</a> b/<a href="../file/src/sql/engine/raft.rs.html">src/sql/engine/raft.rs</a></b>
+<a href="#h4-0" id="h4-0" class="h">@@ -87,8 +87,8 @@ impl Client {
+</a>     /// Mutates the Raft state machine, deserializing the response into the
+     /// return type.
+     fn mutate&lt;V: DeserializeOwned&gt;(&amp;self, mutation: Mutation) -&gt; Result&lt;V&gt; {
+<a href="#h4-0-3" id="h4-0-3" class="d">-        match self.execute(raft::Request::Mutate(bincode::serialize(&amp;mutation)?))? {
+</a><a href="#h4-0-4" id="h4-0-4" class="d">-            raft::Response::Mutate(response) =&gt; Ok(bincode::deserialize(&amp;response)?),
+</a><a href="#h4-0-5" id="h4-0-5" class="i">+        match self.execute(raft::Request::Write(bincode::serialize(&amp;mutation)?))? {
+</a><a href="#h4-0-6" id="h4-0-6" class="i">+            raft::Response::Write(response) =&gt; Ok(bincode::deserialize(&amp;response)?),
+</a>             resp =&gt; Err(Error::Internal(format!(&quot;Unexpected Raft mutation response {:?}&quot;, resp))),
+         }
+     }
+<a href="#h4-1" id="h4-1" class="h">@@ -96,8 +96,8 @@ impl Client {
+</a>     /// Queries the Raft state machine, deserializing the response into the
+     /// return type.
+     fn query&lt;V: DeserializeOwned&gt;(&amp;self, query: Query) -&gt; Result&lt;V&gt; {
+<a href="#h4-1-3" id="h4-1-3" class="d">-        match self.execute(raft::Request::Query(bincode::serialize(&amp;query)?))? {
+</a><a href="#h4-1-4" id="h4-1-4" class="d">-            raft::Response::Query(response) =&gt; Ok(bincode::deserialize(&amp;response)?),
+</a><a href="#h4-1-5" id="h4-1-5" class="i">+        match self.execute(raft::Request::Read(bincode::serialize(&amp;query)?))? {
+</a><a href="#h4-1-6" id="h4-1-6" class="i">+            raft::Response::Read(response) =&gt; Ok(bincode::deserialize(&amp;response)?),
+</a>             resp =&gt; Err(Error::Internal(format!(&quot;Unexpected Raft query response {:?}&quot;, resp))),
+         }
+     }
+</pre>
+</div>
+</body>
+</html>

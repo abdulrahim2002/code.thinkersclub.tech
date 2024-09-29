@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Removed error::RaftBaseNotFound - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/5db43e844fe48153744813fa1ed784a888ea4f79.html">5db43e844fe48153744813fa1ed784a888ea4f79</a>
+<b>parent</b> <a href="../commit/53e73b92e344e3af722d4b9ce5e077272070e099.html">53e73b92e344e3af722d4b9ce5e077272070e099</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Fri, 10 Apr 2020 12:54:43 +0200
+
+Removed error::RaftBaseNotFound
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/error.rs</a></td><td> | </td><td class="num">4</td><td><span class="i"></span><span class="d">----</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/raft/log.rs</a></td><td> | </td><td class="num">14</td><td><span class="i">+++++++</span><span class="d">-------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/raft/node/follower.rs</a></td><td> | </td><td class="num">15</td><td><span class="i">++++++</span><span class="d">---------</span></td></tr>
+</table></pre><pre>3 files changed, 13 insertions(+), 20 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/error.rs.html">src/error.rs</a> b/<a href="../file/src/error.rs.html">src/error.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -1,6 +1,5 @@
+</a> #[derive(Clone, Debug, PartialEq)]
+ pub enum Error {
+<a href="#h0-0-2" id="h0-0-2" class="d">-    RaftBaseNotFound { index: u64, term: u64 },
+</a>     Serialization,
+     ReadOnly,
+     Config(String),
+<a href="#h0-1" id="h0-1" class="h">@@ -20,9 +19,6 @@ impl std::fmt::Display for Error {
+</a>             | Error::Network(s)
+             | Error::Parse(s)
+             | Error::Value(s) =&gt; write!(f, &quot;{}&quot;, s),
+<a href="#h0-1-3" id="h0-1-3" class="d">-            Error::RaftBaseNotFound { index, term } =&gt; {
+</a><a href="#h0-1-4" id="h0-1-4" class="d">-                write!(f, &quot;Base entry at index {} with term {} not found&quot;, index, term)
+</a><a href="#h0-1-5" id="h0-1-5" class="d">-            }
+</a>             Error::Serialization =&gt; write!(f, &quot;Serialization failure, retry transaction&quot;),
+             Error::ReadOnly =&gt; write!(f, &quot;Read-only transaction&quot;),
+         }
+<b>diff --git a/<a id="h1" href="../file/src/raft/log.rs.html">src/raft/log.rs</a> b/<a href="../file/src/raft/log.rs.html">src/raft/log.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -167,10 +167,9 @@ impl&lt;S: kv::storage::Storage&gt; Log&lt;S&gt; {
+</a>         Ok(entries)
+     }
+ 
+<a href="#h1-0-3" id="h1-0-3" class="d">-    /// Splices a set of entries onto an offset. The semantics are a bit unusual,
+</a><a href="#h1-0-4" id="h1-0-4" class="d">-    /// since this is primarily used when replicating Raft entries:
+</a><a href="#h1-0-5" id="h1-0-5" class="i">+    /// Splices a set of entries onto an offset, with Raft-specific semantics:
+</a>     ///
+<a href="#h1-0-7" id="h1-0-7" class="d">-    /// * If the base and base term does not match an existing entry, raise Error::RaftBaseNotFound
+</a><a href="#h1-0-8" id="h1-0-8" class="i">+    /// * If the base and base term does not match an existing entry, return error
+</a>     /// * If no existing entry exists at an index, append it
+     /// * If the existing entry has a different term, replace it and following entries
+     /// * If the existing entry has the same term, assume entry is equal and skip it
+<a href="#h1-1" id="h1-1" class="h">@@ -178,7 +177,8 @@ impl&lt;S: kv::storage::Storage&gt; Log&lt;S&gt; {
+</a>     // FIXME Needs to be transactional
+     pub fn splice(&amp;mut self, base: u64, base_term: u64, entries: Vec&lt;Entry&gt;) -&gt; Result&lt;u64, Error&gt; {
+         if base &gt; 0 &amp;&amp; !self.has(base, base_term)? {
+<a href="#h1-1-3" id="h1-1-3" class="d">-            return Err(Error::RaftBaseNotFound { index: base, term: base_term });
+</a><a href="#h1-1-4" id="h1-1-4" class="i">+            // The caller should have checked this already
+</a><a href="#h1-1-5" id="h1-1-5" class="i">+            return Err(Error::Internal(&quot;Base not found&quot;.into()));
+</a>         }
+ 
+         for (i, entry) in entries.into_iter().enumerate() {
+<a href="#h1-2" id="h1-2" class="h">@@ -545,7 +545,7 @@ mod tests {
+</a> 
+         assert_matches!(
+             l.splice(3, 3, vec![Entry { term: 4, command: Some(vec![0x04]) },]),
+<a href="#h1-2-3" id="h1-2-3" class="d">-            Err(Error::RaftBaseNotFound { index, term }) if index == 3 &amp;&amp; term == 3
+</a><a href="#h1-2-4" id="h1-2-4" class="i">+            Err(Error::Internal(_))
+</a>         );
+         assert_eq!(Ok(Some(Entry { term: 1, command: Some(vec![0x01]) })), l.get(1));
+         assert_eq!(Ok(Some(Entry { term: 2, command: Some(vec![0x02]) })), l.get(2));
+<a href="#h1-3" id="h1-3" class="h">@@ -560,11 +560,11 @@ mod tests {
+</a> 
+         assert_matches!(
+             l.splice(2, 3, vec![Entry { term: 4, command: Some(vec![0x04]) },]),
+<a href="#h1-3-3" id="h1-3-3" class="d">-            Err(Error::RaftBaseNotFound { index, term }) if index == 2 &amp;&amp; term == 3
+</a><a href="#h1-3-4" id="h1-3-4" class="i">+            Err(Error::Internal(_))
+</a>         );
+         assert_matches!(
+             l.splice(2, 0, vec![Entry { term: 4, command: Some(vec![0x04]) },]),
+<a href="#h1-3-8" id="h1-3-8" class="d">-            Err(Error::RaftBaseNotFound { index, term }) if index == 2 &amp;&amp; term == 0
+</a><a href="#h1-3-9" id="h1-3-9" class="i">+            Err(Error::Internal(_))
+</a>         );
+         assert_eq!(Ok(Some(Entry { term: 1, command: Some(vec![0x01]) })), l.get(1));
+         assert_eq!(Ok(Some(Entry { term: 2, command: Some(vec![0x02]) })), l.get(2));
+<b>diff --git a/<a id="h2" href="../file/src/raft/node/follower.rs.html">src/raft/node/follower.rs</a> b/<a href="../file/src/raft/node/follower.rs.html">src/raft/node/follower.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -109,15 +109,12 @@ impl&lt;L: kv::storage::Storage, S: State&gt; RoleNode&lt;Follower, L, S&gt; {
+</a>             }
+             Event::ReplicateEntries { base_index, base_term, entries } =&gt; {
+                 if self.is_leader(msg.from.as_deref()) {
+<a href="#h2-0-3" id="h2-0-3" class="d">-                    match self.log.splice(base_index, base_term, entries) {
+</a><a href="#h2-0-4" id="h2-0-4" class="d">-                        Ok(last_index) =&gt; {
+</a><a href="#h2-0-5" id="h2-0-5" class="d">-                            self.send(msg.from.as_deref(), Event::AcceptEntries { last_index })?
+</a><a href="#h2-0-6" id="h2-0-6" class="d">-                        }
+</a><a href="#h2-0-7" id="h2-0-7" class="d">-                        Err(Error::RaftBaseNotFound { .. }) =&gt; {
+</a><a href="#h2-0-8" id="h2-0-8" class="d">-                            debug!(&quot;Rejecting log entries at base {}&quot;, base_index);
+</a><a href="#h2-0-9" id="h2-0-9" class="d">-                            self.send(msg.from.as_deref(), Event::RejectEntries)?
+</a><a href="#h2-0-10" id="h2-0-10" class="d">-                        }
+</a><a href="#h2-0-11" id="h2-0-11" class="d">-                        Err(err) =&gt; return Err(err),
+</a><a href="#h2-0-12" id="h2-0-12" class="i">+                    if base_index &gt; 0 &amp;&amp; !self.log.has(base_index, base_term)? {
+</a><a href="#h2-0-13" id="h2-0-13" class="i">+                        debug!(&quot;Rejecting log entries at base {}&quot;, base_index);
+</a><a href="#h2-0-14" id="h2-0-14" class="i">+                        self.send(msg.from.as_deref(), Event::RejectEntries)?
+</a><a href="#h2-0-15" id="h2-0-15" class="i">+                    } else {
+</a><a href="#h2-0-16" id="h2-0-16" class="i">+                        let last_index = self.log.splice(base_index, base_term, entries)?;
+</a><a href="#h2-0-17" id="h2-0-17" class="i">+                        self.send(msg.from.as_deref(), Event::AcceptEntries { last_index })?
+</a>                     }
+                 }
+             }
+</pre>
+</div>
+</body>
+</html>

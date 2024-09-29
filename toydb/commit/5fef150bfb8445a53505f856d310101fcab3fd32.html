@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>sql: added IS [NOT] NULL operator - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/5fef150bfb8445a53505f856d310101fcab3fd32.html">5fef150bfb8445a53505f856d310101fcab3fd32</a>
+<b>parent</b> <a href="../commit/648cc55a2a94e09f80cd9e5263219a8e67438f36.html">648cc55a2a94e09f80cd9e5263219a8e67438f36</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Thu,  2 Jan 2020 16:20:42 +0100
+
+sql: added IS [NOT] NULL operator
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">docs/README.md</a></td><td> | </td><td class="num">9</td><td><span class="i">++++++++</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/sql/parser/ast.rs</a></td><td> | </td><td class="num">3</td><td><span class="i">++</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/sql/parser/lexer.rs</a></td><td> | </td><td class="num">3</td><td><span class="i">+++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">src/sql/parser/mod.rs</a></td><td> | </td><td class="num">61</td><td><span class="i">++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d">-----------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h4">src/sql/planner/mod.rs</a></td><td> | </td><td class="num">3</td><td><span class="i">++</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h5">src/sql/tests/expression.rs</a></td><td> | </td><td class="num">6</td><td><span class="i">++++++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h6">src/sql/types/expression.rs</a></td><td> | </td><td class="num">16</td><td><span class="i">++++++++++++</span><span class="d">----</span></td></tr>
+</table></pre><pre>7 files changed, 83 insertions(+), 18 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/docs/README.md.html">docs/README.md</a> b/<a href="../file/docs/README.md.html">docs/README.md</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -19,7 +19,7 @@ Numeric types are not interchangable when stored; a float value cannot be stored
+</a> 
+ Keywords are reserved words that have special meaning in SQL statements, such as `SELECT`. These cannot be used as identifiers, e.g. table names. Keywords are case-insensitive. The complete list of keywords is:
+ 
+<a href="#h0-0-3" id="h0-0-3" class="d">-`AS`, `ASC`, `AND`, `BEGIN`, `BOOL`, `BOOLEAN`, `BY`, `CHAR`, `COMMIT`, `CREATE`, `DELETE`, `DESC`, `DOUBLE`, `DROP`, `FALSE`, `FLOAT`, `FROM`, `INFINITY`, `INSERT`, `INT`, `INTEGER`, `INTO`, `KEY`, `LIMIT`, `NAN`, `NOT`, `NULL`, `OF`, `OFFSET`, `ONLY`, `OR`, `ORDER`, `PRIMARY`, `READ`, `ROLLBACK`, `SELECT`, `SET`, `STRING`, `SYSTEM`, `TABLE`, `TEXT`, `TIME`, `TRANSACTION`, `TRUE`, `UPDATE`, `VALUES`, `VARCHAR`, `WHERE`, `WRITE`
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+`AS`, `ASC`, `AND`, `BEGIN`, `BOOL`, `BOOLEAN`, `BY`, `CHAR`, `COMMIT`, `CREATE`, `DELETE`, `DESC`, `DOUBLE`, `DROP`, `FALSE`, `FLOAT`, `FROM`, `INFINITY`, `INSERT`, `INT`, `INTEGER`, `INTO`, `IS`, `KEY`, `LIMIT`, `NAN`, `NOT`, `NULL`, `OF`, `OFFSET`, `ONLY`, `OR`, `ORDER`, `PRIMARY`, `READ`, `ROLLBACK`, `SELECT`, `SET`, `STRING`, `SYSTEM`, `TABLE`, `TEXT`, `TIME`, `TRANSACTION`, `TRUE`, `UPDATE`, `VALUES`, `VARCHAR`, `WHERE`, `WRITE`
+</a> 
+ ### Identifiers
+ 
+<a href="#h0-1" id="h0-1" class="h">@@ -89,6 +89,8 @@ The complete truth tables are:
+</a> 
+ Comparison operators compare values of the same data type, and return `TRUE` if the comparison holds, otherwise `FALSE`. `INTEGER` and `FLOAT` values are interchangeable. `STRING` comparisons are byte-wise, i.e. case-sensitive with `B` considered lesser than `a` due to their UTF-8 code points. `FALSE` is considered lesser than `TRUE`. Comparison with `NULL` always yields `NULL` (even `NULL = NULL`).
+ 
+<a href="#h0-1-3" id="h0-1-3" class="i">+Binary operators:
+</a><a href="#h0-1-4" id="h0-1-4" class="i">+
+</a> * `=`: equality, e.g. `1 = 1` yields `TRUE`.
+ * `!=`: inequality, e.g. `1 != 2` yields `TRUE`.
+ * `&gt;`: greater than, e.g. `2 &gt; 1` yields `TRUE`.
+<a href="#h0-2" id="h0-2" class="h">@@ -96,6 +98,11 @@ Comparison operators compare values of the same data type, and return `TRUE` if 
+</a> * `&lt;`: lesser than, e.g. `1 &lt; 2` yields `TRUE`.
+ * `&lt;=`: lesser than or equal, e.g. `1 &lt;= 1` yields `TRUE`.
+ 
+<a href="#h0-2-3" id="h0-2-3" class="i">+Unary operators:
+</a><a href="#h0-2-4" id="h0-2-4" class="i">+
+</a><a href="#h0-2-5" id="h0-2-5" class="i">+* `IS NULL`: checks if the value is `NULL`, e.g. `NULL IS NULL` yields `TRUE`.
+</a><a href="#h0-2-6" id="h0-2-6" class="i">+* `IS NOT NULL`: checks if the value is not `NULL`, e.g. `TRUE IS NOT NULL` yields `TRUE`.
+</a><a href="#h0-2-7" id="h0-2-7" class="i">+
+</a> #### Mathematical operators
+ 
+ Mathematical operators apply standard math operations on numeric (`INTEGER` or `FLOAT`) operands. If either operand is a `FLOAT`, both operands are converted to `FLOAT` and the result is a `FLOAT`. The special values `INFINITY` and `NAN` are handled according to the IEEE 754 `binary64` spec.
+<b>diff --git a/<a id="h1" href="../file/src/sql/parser/ast.rs.html">src/sql/parser/ast.rs</a> b/<a href="../file/src/sql/parser/ast.rs.html">src/sql/parser/ast.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -111,11 +111,12 @@ pub enum Operation {
+</a> 
+     // Comparison operators
+     CompareEQ(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+<a href="#h1-0-3" id="h1-0-3" class="i">+    CompareNE(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+</a>     CompareGT(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+     CompareGTE(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+     CompareLT(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+     CompareLTE(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+<a href="#h1-0-8" id="h1-0-8" class="d">-    CompareNE(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+</a><a href="#h1-0-9" id="h1-0-9" class="i">+    CompareNull(Box&lt;Expression&gt;),
+</a> 
+     // Mathematical operators
+     Add(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+<b>diff --git a/<a id="h2" href="../file/src/sql/parser/lexer.rs.html">src/sql/parser/lexer.rs</a> b/<a href="../file/src/sql/parser/lexer.rs.html">src/sql/parser/lexer.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -91,6 +91,7 @@ pub enum Keyword {
+</a>     Int,
+     Integer,
+     Into,
+<a href="#h2-0-3" id="h2-0-3" class="i">+    Is,
+</a>     Key,
+     Limit,
+     NaN,
+<a href="#h2-1" id="h2-1" class="h">@@ -145,6 +146,7 @@ impl Keyword {
+</a>             &quot;INT&quot; =&gt; Self::Int,
+             &quot;INTEGER&quot; =&gt; Self::Integer,
+             &quot;INTO&quot; =&gt; Self::Into,
+<a href="#h2-1-3" id="h2-1-3" class="i">+            &quot;IS&quot; =&gt; Self::Is,
+</a>             &quot;KEY&quot; =&gt; Self::Key,
+             &quot;LIMIT&quot; =&gt; Self::Limit,
+             &quot;NAN&quot; =&gt; Self::NaN,
+<a href="#h2-2" id="h2-2" class="h">@@ -200,6 +202,7 @@ impl Keyword {
+</a>             Self::Int =&gt; &quot;INT&quot;,
+             Self::Integer =&gt; &quot;INTEGER&quot;,
+             Self::Into =&gt; &quot;INTO&quot;,
+<a href="#h2-2-3" id="h2-2-3" class="i">+            Self::Is =&gt; &quot;IS&quot;,
+</a>             Self::Key =&gt; &quot;KEY&quot;,
+             Self::Limit =&gt; &quot;LIMIT&quot;,
+             Self::NaN =&gt; &quot;NAN&quot;,
+<b>diff --git a/<a id="h3" href="../file/src/sql/parser/mod.rs.html">src/sql/parser/mod.rs</a> b/<a href="../file/src/sql/parser/mod.rs.html">src/sql/parser/mod.rs</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -61,14 +61,18 @@ impl&lt;&#39;a&gt; Parser&lt;&#39;a&gt; {
+</a>     }
+ 
+     /// Grabs the next operator if it satisfies the type and precedence
+<a href="#h3-0-3" id="h3-0-3" class="d">-    fn next_if_operator&lt;O: Operator&gt;(&amp;mut self, min_prec: u8) -&gt; Option&lt;O&gt; {
+</a><a href="#h3-0-4" id="h3-0-4" class="d">-        let operator = self
+</a><a href="#h3-0-5" id="h3-0-5" class="i">+    fn next_if_operator&lt;O: Operator&gt;(&amp;mut self, min_prec: u8) -&gt; Result&lt;Option&lt;O&gt;, Error&gt; {
+</a><a href="#h3-0-6" id="h3-0-6" class="i">+        if let Some(operator) = self
+</a>             .peek()
+             .unwrap_or(None)
+             .and_then(|token| O::from(&amp;token))
+<a href="#h3-0-10" id="h3-0-10" class="d">-            .filter(|op| op.prec() &gt;= min_prec)?;
+</a><a href="#h3-0-11" id="h3-0-11" class="d">-        self.next().ok();
+</a><a href="#h3-0-12" id="h3-0-12" class="d">-        Some(operator)
+</a><a href="#h3-0-13" id="h3-0-13" class="i">+            .filter(|op| op.prec() &gt;= min_prec)
+</a><a href="#h3-0-14" id="h3-0-14" class="i">+        {
+</a><a href="#h3-0-15" id="h3-0-15" class="i">+            self.next()?;
+</a><a href="#h3-0-16" id="h3-0-16" class="i">+            Ok(Some(operator.augment(self)?))
+</a><a href="#h3-0-17" id="h3-0-17" class="i">+        } else {
+</a><a href="#h3-0-18" id="h3-0-18" class="i">+            Ok(None)
+</a><a href="#h3-0-19" id="h3-0-19" class="i">+        }
+</a>     }
+ 
+     /// Grabs the next lexer token if it is a keyword
+<a href="#h3-1" id="h3-1" class="h">@@ -402,15 +406,15 @@ impl&lt;&#39;a&gt; Parser&lt;&#39;a&gt; {
+</a>     /// Parses an expression consisting of at least one atom operated on by any
+     /// number of operators, using the precedence climbing algorithm.
+     fn parse_expression(&amp;mut self, min_prec: u8) -&gt; Result&lt;ast::Expression, Error&gt; {
+<a href="#h3-1-3" id="h3-1-3" class="d">-        let mut lhs = if let Some(prefix) = self.next_if_operator::&lt;PrefixOperator&gt;(min_prec) {
+</a><a href="#h3-1-4" id="h3-1-4" class="i">+        let mut lhs = if let Some(prefix) = self.next_if_operator::&lt;PrefixOperator&gt;(min_prec)? {
+</a>             prefix.build(self.parse_expression(prefix.prec() + prefix.assoc())?)
+         } else {
+             self.parse_expression_atom()?
+         };
+<a href="#h3-1-9" id="h3-1-9" class="d">-        while let Some(postfix) = self.next_if_operator::&lt;PostfixOperator&gt;(min_prec) {
+</a><a href="#h3-1-10" id="h3-1-10" class="i">+        while let Some(postfix) = self.next_if_operator::&lt;PostfixOperator&gt;(min_prec)? {
+</a>             lhs = postfix.build(lhs)
+         }
+<a href="#h3-1-13" id="h3-1-13" class="d">-        while let Some(infix) = self.next_if_operator::&lt;InfixOperator&gt;(min_prec) {
+</a><a href="#h3-1-14" id="h3-1-14" class="i">+        while let Some(infix) = self.next_if_operator::&lt;InfixOperator&gt;(min_prec)? {
+</a>             lhs = infix.build(lhs, self.parse_expression(infix.prec() + infix.assoc())?)
+         }
+         Ok(lhs)
+<a href="#h3-2" id="h3-2" class="h">@@ -442,6 +446,8 @@ impl&lt;&#39;a&gt; Parser&lt;&#39;a&gt; {
+</a> trait Operator: Sized {
+     /// Looks up the corresponding operator for a token, if one exists
+     fn from(token: &amp;Token) -&gt; Option&lt;Self&gt;;
+<a href="#h3-2-3" id="h3-2-3" class="i">+    /// Augments an operator by allowing it to parse any modifiers.
+</a><a href="#h3-2-4" id="h3-2-4" class="i">+    fn augment(self, parser: &amp;mut Parser) -&gt; Result&lt;Self, Error&gt;;
+</a>     /// Returns the operator&#39;s associativity
+     fn assoc(&amp;self) -&gt; u8;
+     /// Returns the operator&#39;s precedence
+<a href="#h3-3" id="h3-3" class="h">@@ -479,6 +485,10 @@ impl Operator for PrefixOperator {
+</a>         }
+     }
+ 
+<a href="#h3-3-3" id="h3-3-3" class="i">+    fn augment(self, _parser: &amp;mut Parser) -&gt; Result&lt;Self, Error&gt; {
+</a><a href="#h3-3-4" id="h3-3-4" class="i">+        Ok(self)
+</a><a href="#h3-3-5" id="h3-3-5" class="i">+    }
+</a><a href="#h3-3-6" id="h3-3-6" class="i">+
+</a>     fn assoc(&amp;self) -&gt; u8 {
+         ASSOC_RIGHT
+     }
+<a href="#h3-4" id="h3-4" class="h">@@ -492,11 +502,11 @@ enum InfixOperator {
+</a>     Add,
+     And,
+     CompareEQ,
+<a href="#h3-4-3" id="h3-4-3" class="i">+    CompareNE,
+</a>     CompareGT,
+     CompareGTE,
+     CompareLT,
+     CompareLTE,
+<a href="#h3-4-8" id="h3-4-8" class="d">-    CompareNE,
+</a>     Divide,
+     Exponentiate,
+     Modulo,
+<a href="#h3-5" id="h3-5" class="h">@@ -512,11 +522,11 @@ impl InfixOperator {
+</a>             Self::Add =&gt; ast::Operation::Add(lhs, rhs),
+             Self::And =&gt; ast::Operation::And(lhs, rhs),
+             Self::CompareEQ =&gt; ast::Operation::CompareEQ(lhs, rhs),
+<a href="#h3-5-3" id="h3-5-3" class="i">+            Self::CompareNE =&gt; ast::Operation::CompareNE(lhs, rhs),
+</a>             Self::CompareGT =&gt; ast::Operation::CompareGT(lhs, rhs),
+             Self::CompareGTE =&gt; ast::Operation::CompareGTE(lhs, rhs),
+             Self::CompareLT =&gt; ast::Operation::CompareLT(lhs, rhs),
+             Self::CompareLTE =&gt; ast::Operation::CompareLTE(lhs, rhs),
+<a href="#h3-5-8" id="h3-5-8" class="d">-            Self::CompareNE =&gt; ast::Operation::CompareNE(lhs, rhs),
+</a>             Self::Divide =&gt; ast::Operation::Divide(lhs, rhs),
+             Self::Exponentiate =&gt; ast::Operation::Exponentiate(lhs, rhs),
+             Self::Modulo =&gt; ast::Operation::Modulo(lhs, rhs),
+<a href="#h3-6" id="h3-6" class="h">@@ -550,6 +560,10 @@ impl Operator for InfixOperator {
+</a>         })
+     }
+ 
+<a href="#h3-6-3" id="h3-6-3" class="i">+    fn augment(self, _parser: &amp;mut Parser) -&gt; Result&lt;Self, Error&gt; {
+</a><a href="#h3-6-4" id="h3-6-4" class="i">+        Ok(self)
+</a><a href="#h3-6-5" id="h3-6-5" class="i">+    }
+</a><a href="#h3-6-6" id="h3-6-6" class="i">+
+</a>     fn assoc(&amp;self) -&gt; u8 {
+         match self {
+             Self::Exponentiate =&gt; ASSOC_RIGHT,
+<a href="#h3-7" id="h3-7" class="h">@@ -572,12 +586,22 @@ impl Operator for InfixOperator {
+</a> 
+ enum PostfixOperator {
+     Factorial,
+<a href="#h3-7-3" id="h3-7-3" class="i">+    // FIXME Compiler bug? Why is this considered dead code?
+</a><a href="#h3-7-4" id="h3-7-4" class="i">+    #[allow(dead_code)]
+</a><a href="#h3-7-5" id="h3-7-5" class="i">+    CompareNull {
+</a><a href="#h3-7-6" id="h3-7-6" class="i">+        not: bool,
+</a><a href="#h3-7-7" id="h3-7-7" class="i">+    },
+</a> }
+ 
+ impl PostfixOperator {
+     fn build(&amp;self, lhs: ast::Expression) -&gt; ast::Expression {
+<a href="#h3-7-12" id="h3-7-12" class="i">+        let lhs = Box::new(lhs);
+</a>         match self {
+<a href="#h3-7-14" id="h3-7-14" class="d">-            Self::Factorial =&gt; ast::Operation::Factorial(Box::new(lhs)),
+</a><a href="#h3-7-15" id="h3-7-15" class="i">+            Self::CompareNull { not } =&gt; match not {
+</a><a href="#h3-7-16" id="h3-7-16" class="i">+                true =&gt; ast::Operation::Not(Box::new(ast::Operation::CompareNull(lhs).into())),
+</a><a href="#h3-7-17" id="h3-7-17" class="i">+                false =&gt; ast::Operation::CompareNull(lhs),
+</a><a href="#h3-7-18" id="h3-7-18" class="i">+            },
+</a><a href="#h3-7-19" id="h3-7-19" class="i">+            Self::Factorial =&gt; ast::Operation::Factorial(lhs),
+</a>         }
+         .into()
+     }
+<a href="#h3-8" id="h3-8" class="h">@@ -587,10 +611,25 @@ impl Operator for PostfixOperator {
+</a>     fn from(token: &amp;Token) -&gt; Option&lt;Self&gt; {
+         match token {
+             Token::Exclamation =&gt; Some(Self::Factorial),
+<a href="#h3-8-3" id="h3-8-3" class="i">+            Token::Keyword(Keyword::Is) =&gt; Some(Self::CompareNull { not: false }),
+</a>             _ =&gt; None,
+         }
+     }
+ 
+<a href="#h3-8-8" id="h3-8-8" class="i">+    fn augment(mut self, parser: &amp;mut Parser) -&gt; Result&lt;Self, Error&gt; {
+</a><a href="#h3-8-9" id="h3-8-9" class="i">+        #[allow(clippy::single_match)]
+</a><a href="#h3-8-10" id="h3-8-10" class="i">+        match &amp;mut self {
+</a><a href="#h3-8-11" id="h3-8-11" class="i">+            Self::CompareNull { ref mut not } =&gt; {
+</a><a href="#h3-8-12" id="h3-8-12" class="i">+                if parser.next_if_token(Keyword::Not.into()).is_some() {
+</a><a href="#h3-8-13" id="h3-8-13" class="i">+                    *not = true
+</a><a href="#h3-8-14" id="h3-8-14" class="i">+                };
+</a><a href="#h3-8-15" id="h3-8-15" class="i">+                parser.next_expect(Some(Keyword::Null.into()))?;
+</a><a href="#h3-8-16" id="h3-8-16" class="i">+            }
+</a><a href="#h3-8-17" id="h3-8-17" class="i">+            _ =&gt; {}
+</a><a href="#h3-8-18" id="h3-8-18" class="i">+        };
+</a><a href="#h3-8-19" id="h3-8-19" class="i">+        Ok(self)
+</a><a href="#h3-8-20" id="h3-8-20" class="i">+    }
+</a><a href="#h3-8-21" id="h3-8-21" class="i">+
+</a>     fn assoc(&amp;self) -&gt; u8 {
+         ASSOC_LEFT
+     }
+<b>diff --git a/<a id="h4" href="../file/src/sql/planner/mod.rs.html">src/sql/planner/mod.rs</a> b/<a href="../file/src/sql/planner/mod.rs.html">src/sql/planner/mod.rs</a></b>
+<a href="#h4-0" id="h4-0" class="h">@@ -173,11 +173,12 @@ impl From&lt;ast::Expression&gt; for Expression {
+</a> 
+                 // Comparison operators
+                 ast::Operation::CompareEQ(lhs, rhs) =&gt; Self::CompareEQ(lhs.into(), rhs.into()),
+<a href="#h4-0-3" id="h4-0-3" class="i">+                ast::Operation::CompareNE(lhs, rhs) =&gt; Self::CompareNE(lhs.into(), rhs.into()),
+</a>                 ast::Operation::CompareGT(lhs, rhs) =&gt; Self::CompareGT(lhs.into(), rhs.into()),
+                 ast::Operation::CompareGTE(lhs, rhs) =&gt; Self::CompareGTE(lhs.into(), rhs.into()),
+                 ast::Operation::CompareLT(lhs, rhs) =&gt; Self::CompareLT(lhs.into(), rhs.into()),
+                 ast::Operation::CompareLTE(lhs, rhs) =&gt; Self::CompareLTE(lhs.into(), rhs.into()),
+<a href="#h4-0-8" id="h4-0-8" class="d">-                ast::Operation::CompareNE(lhs, rhs) =&gt; Self::CompareNE(lhs.into(), rhs.into()),
+</a><a href="#h4-0-9" id="h4-0-9" class="i">+                ast::Operation::CompareNull(expr) =&gt; Self::CompareNull(expr.into()),
+</a> 
+                 // Mathematical operators
+                 ast::Operation::Assert(expr) =&gt; Self::Assert(expr.into()),
+<b>diff --git a/<a id="h5" href="../file/src/sql/tests/expression.rs.html">src/sql/tests/expression.rs</a> b/<a href="../file/src/sql/tests/expression.rs.html">src/sql/tests/expression.rs</a></b>
+<a href="#h5-0" id="h5-0" class="h">@@ -283,6 +283,12 @@ test_expr! {
+</a>     op_lte_string_unicode_not: &quot;&#39;🙁&#39; &lt;= &#39;😀&#39;&quot; =&gt; Ok(Boolean(false)),
+     op_lte_conflict: &quot;1 &lt;= &#39;a&#39;&quot; =&gt; Err(Error::Value(&quot;Can&#39;t compare 1 and a&quot;.into())),
+ 
+<a href="#h5-0-3" id="h5-0-3" class="i">+    op_null: &quot;NULL IS NULL&quot; =&gt; Ok(Boolean(true)),
+</a><a href="#h5-0-4" id="h5-0-4" class="i">+    op_null_not: &quot;NULL IS NOT NULL&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h5-0-5" id="h5-0-5" class="i">+    op_null_bool: &quot;TRUE IS NULL&quot; =&gt; Ok(Boolean(false)),
+</a><a href="#h5-0-6" id="h5-0-6" class="i">+    op_null_bool_not: &quot;TRUE IS NOT NULL&quot; =&gt; Ok(Boolean(true)),
+</a><a href="#h5-0-7" id="h5-0-7" class="i">+    op_null_rhs_bool: &quot;NULL IS TRUE&quot; =&gt; Err(Error::Parse(&quot;Expected token NULL, found TRUE&quot;.into())),
+</a><a href="#h5-0-8" id="h5-0-8" class="i">+
+</a>     // Math operators
+     op_add_float_float: &quot;3.1 + 2.71&quot; =&gt; Ok(Float(3.1 + 2.71)),
+     op_add_float_int: &quot;3.72 + 1&quot; =&gt; Ok(Float(3.72 + 1.0)),
+<b>diff --git a/<a id="h6" href="../file/src/sql/types/expression.rs.html">src/sql/types/expression.rs</a> b/<a href="../file/src/sql/types/expression.rs.html">src/sql/types/expression.rs</a></b>
+<a href="#h6-0" id="h6-0" class="h">@@ -17,11 +17,12 @@ pub enum Expression {
+</a> 
+     // Comparisons operations
+     CompareEQ(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+<a href="#h6-0-3" id="h6-0-3" class="i">+    CompareNE(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+</a>     CompareGT(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+     CompareGTE(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+     CompareLT(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+     CompareLTE(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+<a href="#h6-0-8" id="h6-0-8" class="d">-    CompareNE(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+</a><a href="#h6-0-9" id="h6-0-9" class="i">+    CompareNull(Box&lt;Expression&gt;),
+</a> 
+     // Mathematical operations
+     Add(Box&lt;Expression&gt;, Box&lt;Expression&gt;),
+<a href="#h6-1" id="h6-1" class="h">@@ -149,6 +150,10 @@ impl Expression {
+</a>                     return Err(Error::Value(format!(&quot;Can&#39;t compare {} and {}&quot;, lhs, rhs)))
+                 }
+             },
+<a href="#h6-1-3" id="h6-1-3" class="i">+            Self::CompareNull(expr) =&gt; match expr.evaluate(e)? {
+</a><a href="#h6-1-4" id="h6-1-4" class="i">+                Null =&gt; Boolean(true),
+</a><a href="#h6-1-5" id="h6-1-5" class="i">+                _ =&gt; Boolean(false),
+</a><a href="#h6-1-6" id="h6-1-6" class="i">+            },
+</a> 
+             // Mathematical operations
+             Self::Add(lhs, rhs) =&gt; match (lhs.evaluate(e)?, rhs.evaluate(e)?) {
+<a href="#h6-2" id="h6-2" class="h">@@ -321,6 +326,7 @@ impl Expression {
+</a>             Self::CompareNE(lhs, rhs) =&gt; {
+                 Self::CompareNE(lhs.transform(pre, post)?.into(), rhs.transform(pre, post)?.into())
+             }
+<a href="#h6-2-3" id="h6-2-3" class="i">+            Self::CompareNull(expr) =&gt; Self::CompareNull(expr.transform(pre, post)?.into()),
+</a> 
+             // Mathematical operations
+             Self::Add(lhs, rhs) =&gt; {
+<a href="#h6-3" id="h6-3" class="h">@@ -368,9 +374,11 @@ impl Expression {
+</a>             | Self::Or(lhs, rhs)
+             | Self::Subtract(lhs, rhs) =&gt; lhs.walk(visitor) &amp;&amp; rhs.walk(visitor),
+ 
+<a href="#h6-3-3" id="h6-3-3" class="d">-            Self::Assert(expr) | Self::Factorial(expr) | Self::Negate(expr) | Self::Not(expr) =&gt; {
+</a><a href="#h6-3-4" id="h6-3-4" class="d">-                expr.walk(visitor)
+</a><a href="#h6-3-5" id="h6-3-5" class="d">-            }
+</a><a href="#h6-3-6" id="h6-3-6" class="i">+            Self::Assert(expr)
+</a><a href="#h6-3-7" id="h6-3-7" class="i">+            | Self::CompareNull(expr)
+</a><a href="#h6-3-8" id="h6-3-8" class="i">+            | Self::Factorial(expr)
+</a><a href="#h6-3-9" id="h6-3-9" class="i">+            | Self::Negate(expr)
+</a><a href="#h6-3-10" id="h6-3-10" class="i">+            | Self::Not(expr) =&gt; expr.walk(visitor),
+</a> 
+             Self::Constant(_) | Self::Field(_) =&gt; true,
+         } {
+</pre>
+</div>
+</body>
+</html>

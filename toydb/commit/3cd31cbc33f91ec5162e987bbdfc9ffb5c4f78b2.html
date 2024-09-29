@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>raft: clean up `message` module - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/3cd31cbc33f91ec5162e987bbdfc9ffb5c4f78b2.html">3cd31cbc33f91ec5162e987bbdfc9ffb5c4f78b2</a>
+<b>parent</b> <a href="../commit/e1c3d9add0bfa3e055bf05893d7e9bd8b4060639.html">e1c3d9add0bfa3e055bf05893d7e9bd8b4060639</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Sat,  8 Jun 2024 10:42:33 +0200
+
+raft: clean up `message` module
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/raft/message.rs</a></td><td> | </td><td class="num">90</td><td><span class="i">++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d">---------------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/raft/node.rs</a></td><td> | </td><td class="num">1</td><td><span class="i"></span><span class="d">-</span></td></tr>
+</table></pre><pre>2 files changed, 52 insertions(+), 39 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/raft/message.rs.html">src/raft/message.rs</a> b/<a href="../file/src/raft/message.rs.html">src/raft/message.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -4,26 +4,50 @@ use crate::error::Result;
+</a> use crate::storage;
+ 
+ use serde_derive::{Deserialize, Serialize};
+<a href="#h0-0-3" id="h0-0-3" class="d">-use std::collections::BTreeMap;
+</a> 
+<a href="#h0-0-5" id="h0-0-5" class="d">-/// A message envelope sent between Raft nodes.
+</a><a href="#h0-0-6" id="h0-0-6" class="i">+/// A message envelope specifying the sender and receiver.
+</a> #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+ pub struct Envelope {
+     /// The sender.
+     pub from: NodeID,
+<a href="#h0-0-11" id="h0-0-11" class="d">-    /// The recipient.
+</a><a href="#h0-0-12" id="h0-0-12" class="d">-    pub to: NodeID,
+</a>     /// The sender&#39;s current term.
+     pub term: Term,
+<a href="#h0-0-15" id="h0-0-15" class="i">+    /// The recipient.
+</a><a href="#h0-0-16" id="h0-0-16" class="i">+    pub to: NodeID,
+</a>     /// The message.
+     pub message: Message,
+ }
+ 
+ impl encoding::Value for Envelope {}
+ 
+<a href="#h0-0-23" id="h0-0-23" class="d">-/// A message sent between Raft nodes.
+</a><a href="#h0-0-24" id="h0-0-24" class="i">+/// A message sent between Raft nodes. Messages are sent asynchronously (i.e.
+</a><a href="#h0-0-25" id="h0-0-25" class="i">+/// they are not request/response) and may be dropped or reordered.
+</a><a href="#h0-0-26" id="h0-0-26" class="i">+///
+</a><a href="#h0-0-27" id="h0-0-27" class="i">+/// In practice, they are sent across a TCP connection and crossbeam channels
+</a><a href="#h0-0-28" id="h0-0-28" class="i">+/// ensuring messages are not dropped or reordered as long as the connection
+</a><a href="#h0-0-29" id="h0-0-29" class="i">+/// remains intact. A message and its response are sent across separate TCP
+</a><a href="#h0-0-30" id="h0-0-30" class="i">+/// connections (outbound from their respective senders).
+</a> #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+ pub enum Message {
+<a href="#h0-0-33" id="h0-0-33" class="i">+    /// Candidates campaign for leadership by soliciting votes from peers.
+</a><a href="#h0-0-34" id="h0-0-34" class="i">+    /// Votes will only be granted if the candidate&#39;s log is at least as
+</a><a href="#h0-0-35" id="h0-0-35" class="i">+    /// up-to-date as the voter.
+</a><a href="#h0-0-36" id="h0-0-36" class="i">+    Campaign {
+</a><a href="#h0-0-37" id="h0-0-37" class="i">+        /// The index of the candidate&#39;s last log entry.
+</a><a href="#h0-0-38" id="h0-0-38" class="i">+        last_index: Index,
+</a><a href="#h0-0-39" id="h0-0-39" class="i">+        /// The term of the candidate&#39;s last log entry.
+</a><a href="#h0-0-40" id="h0-0-40" class="i">+        last_term: Term,
+</a><a href="#h0-0-41" id="h0-0-41" class="i">+    },
+</a><a href="#h0-0-42" id="h0-0-42" class="i">+
+</a><a href="#h0-0-43" id="h0-0-43" class="i">+    /// Followers may vote for a single candidate per term, but only if the
+</a><a href="#h0-0-44" id="h0-0-44" class="i">+    /// candidate&#39;s log is at least as up-to-date as the follower. Candidates
+</a><a href="#h0-0-45" id="h0-0-45" class="i">+    /// implicitly vote for themselves.
+</a><a href="#h0-0-46" id="h0-0-46" class="i">+    CampaignResponse {
+</a><a href="#h0-0-47" id="h0-0-47" class="i">+        /// If true, the follower granted the candidate a vote. A false response
+</a><a href="#h0-0-48" id="h0-0-48" class="i">+        /// isn&#39;t necessary, but is emitted for clarity.
+</a><a href="#h0-0-49" id="h0-0-49" class="i">+        vote: bool,
+</a><a href="#h0-0-50" id="h0-0-50" class="i">+    },
+</a><a href="#h0-0-51" id="h0-0-51" class="i">+
+</a>     /// Leaders send heartbeats periodically, and on client read requests. This
+     /// serves several purposes:
+     ///
+<a href="#h0-1" id="h0-1" class="h">@@ -41,9 +65,12 @@ pub enum Message {
+</a>     /// separation of concerns.
+     Heartbeat {
+         /// The index of the leader&#39;s last log entry. The term is the leader&#39;s
+<a href="#h0-1-3" id="h0-1-3" class="d">-        /// current term, since it appends a noop entry on election win.
+</a><a href="#h0-1-4" id="h0-1-4" class="i">+        /// current term, since it appends a noop entry on election win. The
+</a><a href="#h0-1-5" id="h0-1-5" class="i">+        /// follower compares this to its own log to determine if it&#39;s
+</a><a href="#h0-1-6" id="h0-1-6" class="i">+        /// up-to-date.
+</a>         last_index: Index,
+<a href="#h0-1-8" id="h0-1-8" class="d">-        /// The index of the leader&#39;s last committed log entry. It&#39;s only safe
+</a><a href="#h0-1-9" id="h0-1-9" class="i">+        /// The index of the leader&#39;s last committed log entry. Followers use
+</a><a href="#h0-1-10" id="h0-1-10" class="i">+        /// this to advance their commit index and apply entries. It&#39;s only safe
+</a>         /// to commit this if the local log matches last_index, such that the
+         /// follower&#39;s log is identical to the leader at the commit index.
+         commit_index: Index,
+<a href="#h0-2" id="h0-2" class="h">@@ -62,21 +89,6 @@ pub enum Message {
+</a>         read_seq: ReadSequence,
+     },
+ 
+<a href="#h0-2-3" id="h0-2-3" class="d">-    /// Candidates campaign for leadership by soliciting votes from peers.
+</a><a href="#h0-2-4" id="h0-2-4" class="d">-    Campaign {
+</a><a href="#h0-2-5" id="h0-2-5" class="d">-        /// The index of the candidate&#39;s last stored log entry
+</a><a href="#h0-2-6" id="h0-2-6" class="d">-        last_index: Index,
+</a><a href="#h0-2-7" id="h0-2-7" class="d">-        /// The term of the candidate&#39;s last stored log entry
+</a><a href="#h0-2-8" id="h0-2-8" class="d">-        last_term: Term,
+</a><a href="#h0-2-9" id="h0-2-9" class="d">-    },
+</a><a href="#h0-2-10" id="h0-2-10" class="d">-
+</a><a href="#h0-2-11" id="h0-2-11" class="d">-    /// Followers may vote for a single candidate per term, on a first-come
+</a><a href="#h0-2-12" id="h0-2-12" class="d">-    /// first-serve basis. Candidates implicitly vote for themselves.
+</a><a href="#h0-2-13" id="h0-2-13" class="d">-    CampaignResponse {
+</a><a href="#h0-2-14" id="h0-2-14" class="d">-        /// If true, the sender granted a vote for the candidate.
+</a><a href="#h0-2-15" id="h0-2-15" class="d">-        vote: bool,
+</a><a href="#h0-2-16" id="h0-2-16" class="d">-    },
+</a><a href="#h0-2-17" id="h0-2-17" class="d">-
+</a>     /// Leaders replicate log entries to followers by appending to their logs
+     /// after the given base entry.
+     ///
+<a href="#h0-3" id="h0-3" class="h">@@ -94,7 +106,7 @@ pub enum Message {
+</a>     Append {
+         /// The index of the log entry to append after.
+         base_index: Index,
+<a href="#h0-3-3" id="h0-3-3" class="d">-        /// The term of the log entry to append after.
+</a><a href="#h0-3-4" id="h0-3-4" class="i">+        /// The  term of the base entry.
+</a>         base_term: Term,
+         /// Log entries to append. Must start at base_index + 1.
+         entries: Vec&lt;Entry&gt;,
+<a href="#h0-4" id="h0-4" class="h">@@ -103,13 +115,15 @@ pub enum Message {
+</a>     /// Followers accept or reject appends from the leader depending on whether
+     /// the base entry matches their log.
+     AppendResponse {
+<a href="#h0-4-3" id="h0-4-3" class="d">-        /// If non-zero, the follower accepted entries to this index. The entire
+</a><a href="#h0-4-4" id="h0-4-4" class="d">-        /// log up to this index is consistent with the leader.
+</a><a href="#h0-4-5" id="h0-4-5" class="i">+        /// If non-zero, the follower appended entries up to this index. The
+</a><a href="#h0-4-6" id="h0-4-6" class="i">+        /// entire log up to this index is consistent with the leader. If no
+</a><a href="#h0-4-7" id="h0-4-7" class="i">+        /// entries were sent (a probe), this will be the matching base index.
+</a>         match_index: Index,
+         /// If non-zero, the follower rejected an append at this base index
+<a href="#h0-4-10" id="h0-4-10" class="d">-        /// because the base index/term did not match its log. This may be
+</a><a href="#h0-4-11" id="h0-4-11" class="d">-        /// lowered by the follower if its log is shorter than the base index,
+</a><a href="#h0-4-12" id="h0-4-12" class="d">-        /// to avoid trying each missing entry.
+</a><a href="#h0-4-13" id="h0-4-13" class="i">+        /// because the base index/term did not match its log. If the follower&#39;s
+</a><a href="#h0-4-14" id="h0-4-14" class="i">+        /// log is shorter than the base index, the reject index will be lowered
+</a><a href="#h0-4-15" id="h0-4-15" class="i">+        /// to the index after its last local index, to avoid probing each
+</a><a href="#h0-4-16" id="h0-4-16" class="i">+        /// missing index.
+</a>         reject_index: Index,
+     },
+ 
+<a href="#h0-5" id="h0-5" class="h">@@ -143,11 +157,11 @@ pub type ReadSequence = u64;
+</a> /// A client request, typically passed through to the state machine.
+ #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+ pub enum Request {
+<a href="#h0-5-3" id="h0-5-3" class="d">-    /// A state machine read command. This is not replicated, and only evaluted
+</a><a href="#h0-5-4" id="h0-5-4" class="d">-    /// on the leader.
+</a><a href="#h0-5-5" id="h0-5-5" class="i">+    /// A state machine read command, executed via `State::read`. This is not
+</a><a href="#h0-5-6" id="h0-5-6" class="i">+    /// replicated, and only evaluated on the leader.
+</a>     Read(Vec&lt;u8&gt;),
+<a href="#h0-5-8" id="h0-5-8" class="d">-    /// A state machine write command. This is replicated across all nodes, and
+</a><a href="#h0-5-9" id="h0-5-9" class="d">-    /// must result in a deterministic response.
+</a><a href="#h0-5-10" id="h0-5-10" class="i">+    /// A state machine write command, executed via `State::apply`. This is
+</a><a href="#h0-5-11" id="h0-5-11" class="i">+    /// replicated across all nodes, and must produce a deterministic result.
+</a>     Write(Vec&lt;u8&gt;),
+     /// Requests Raft cluster status from the leader.
+     Status,
+<a href="#h0-6" id="h0-6" class="h">@@ -155,7 +169,7 @@ pub enum Request {
+</a> 
+ impl encoding::Value for Request {}
+ 
+<a href="#h0-6-3" id="h0-6-3" class="d">-/// A client response. This will be wrapped in a Result to handle errors.
+</a><a href="#h0-6-4" id="h0-6-4" class="i">+/// A client response. This will be wrapped in a Result for error handling.
+</a> #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+ pub enum Response {
+     /// A state machine read result.
+<a href="#h0-7" id="h0-7" class="h">@@ -168,20 +182,20 @@ pub enum Response {
+</a> 
+ impl encoding::Value for Response {}
+ 
+<a href="#h0-7-3" id="h0-7-3" class="d">-/// Raft cluster status.
+</a><a href="#h0-7-4" id="h0-7-4" class="i">+/// Raft cluster status. Generated by the leader.
+</a> #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+ pub struct Status {
+     /// The current Raft leader, which generated this status.
+     pub leader: NodeID,
+     /// The current Raft term.
+     pub term: Term,
+<a href="#h0-7-11" id="h0-7-11" class="d">-    /// The match indexes of all nodes. Use a BTreeMap for deterministic
+</a><a href="#h0-7-12" id="h0-7-12" class="d">-    /// debug output.
+</a><a href="#h0-7-13" id="h0-7-13" class="d">-    pub match_index: BTreeMap&lt;NodeID, Index&gt;,
+</a><a href="#h0-7-14" id="h0-7-14" class="i">+    /// The match indexes of all nodes, indicating replication progress. Uses a
+</a><a href="#h0-7-15" id="h0-7-15" class="i">+    /// BTreeMap for test determinism.
+</a><a href="#h0-7-16" id="h0-7-16" class="i">+    pub match_index: std::collections::BTreeMap&lt;NodeID, Index&gt;,
+</a>     /// The current commit index.
+     pub commit_index: Index,
+     /// The current applied index.
+     pub apply_index: Index,
+     /// The log storage engine status.
+<a href="#h0-7-22" id="h0-7-22" class="d">-    pub storage: storage::engine::Status,
+</a><a href="#h0-7-23" id="h0-7-23" class="i">+    pub storage: storage::Status,
+</a> }
+<b>diff --git a/<a id="h1" href="../file/src/raft/node.rs.html">src/raft/node.rs</a> b/<a href="../file/src/raft/node.rs.html">src/raft/node.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -976,7 +976,6 @@ impl RawNode&lt;Leader&gt; {
+</a>                         .iter()
+                         .map(|(id, p)| (*id, p.match_index))
+                         .chain(std::iter::once((self.id, self.log.get_last_index().0)))
+<a href="#h1-0-3" id="h1-0-3" class="d">-                        .sorted()
+</a>                         .collect(),
+                     commit_index: self.log.get_commit_index().0,
+                     apply_index: self.state.get_applied_index(),
+</pre>
+</div>
+</body>
+</html>

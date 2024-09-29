@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Added basic type system - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/21bf6b482fbf2afe67856ecaf3ce121afa4eb262.html">21bf6b482fbf2afe67856ecaf3ce121afa4eb262</a>
+<b>parent</b> <a href="../commit/3344daeabf18f0aa30c9840ad0307355cedac842.html">3344daeabf18f0aa30c9840ad0307355cedac842</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Sat, 24 Aug 2019 16:30:40 +0200
+
+Added basic type system
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">README.md</a></td><td> | </td><td class="num">4</td><td><span class="i">++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">protobuf/toydb.proto</a></td><td> | </td><td class="num">20</td><td><span class="i">++++++++++++++++++++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/bin/toyc.rs</a></td><td> | </td><td class="num">8</td><td><span class="i">++++++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">src/client.rs</a></td><td> | </td><td class="num">72</td><td><span class="i">++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d">----</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h4">src/server/toydb.rs</a></td><td> | </td><td class="num">53</td><td><span class="i">+++++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h5">src/sql/mod.rs</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="A">A</td><td><a href="#h6">src/sql/types.rs</a></td><td> | </td><td class="num">37</td><td><span class="i">+++++++++++++++++++++++++++++++++++++</span><span class="d"></span></td></tr>
+</table></pre><pre>7 files changed, 187 insertions(+), 8 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/README.md.html">README.md</a> b/<a href="../file/README.md.html">README.md</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -28,7 +28,7 @@ $ grpcurl -plaintext -proto protobuf/toydb.proto localhost:9605 ToyDB/Status
+</a> 
+ - [ ] **Storage:** Self-written key-value engine using B+-trees (and possibly LSM-trees), with secondary indexes. MessagePack for serialization. No log compaction or write-ahead log.
+ 
+<a href="#h0-0-3" id="h0-0-3" class="d">-- [ ] **Data Types:** Support for nulls, booleans, signed 64-bit doubles, and short UTF-8 strings.
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+- [x] **Data Types:** Support for nulls, booleans, 64-bit integers, 64-bit floats, and UTF-8 strings up to 1 KB.
+</a> 
+ - [ ] **Constraints:** Compulsory singluar primary keys, unique indexes, and foreign keys.
+ 
+<a href="#h0-1" id="h0-1" class="h">@@ -64,7 +64,7 @@ Below is an incomplete list of known issues preventing this from being a &quot;real&quot; 
+</a> 
+ * **Single node processing:** all operations (both reads and writes) are processed by a single Raft thread on a single node (the master), and the system consists of a single Raft cluster, preventing horizontal scalability and efficient resource utilization.
+ 
+<a href="#h0-1-3" id="h0-1-3" class="d">-* **Client call retries:** there is currently no retries of client-submitted operations, and if a node processing or proxying an operations changes role then the call is dropped.
+</a><a href="#h0-1-4" id="h0-1-4" class="i">+* **Client call retries:** there is currently no retries of client-submitted operations, and if a node processing or proxying an operation changes role then the call is dropped.
+</a> 
+ * **State machine errors:** errors during state machine mutations currently crash the node - it may be beneficial to support user errors which simply skip the erroring log entry.
+ 
+<b>diff --git a/<a id="h1" href="../file/protobuf/toydb.proto.html">protobuf/toydb.proto</a> b/<a href="../file/protobuf/toydb.proto.html">protobuf/toydb.proto</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -8,6 +8,9 @@ service ToyDB {
+</a>   // Echo is a simple echo service.
+   rpc Echo(EchoRequest) returns (EchoResponse) {};
+ 
+<a href="#h1-0-3" id="h1-0-3" class="i">+  // Query runs an SQL query.
+</a><a href="#h1-0-4" id="h1-0-4" class="i">+  rpc Query(QueryRequest) returns (stream Row) {};
+</a><a href="#h1-0-5" id="h1-0-5" class="i">+
+</a>   // Get is a temporary key-value command.
+   rpc Get(GetRequest) returns (GetResponse) {};
+ 
+<a href="#h1-1" id="h1-1" class="h">@@ -31,6 +34,23 @@ message EchoResponse {
+</a>   string value = 1;
+ }
+ 
+<a href="#h1-1-3" id="h1-1-3" class="i">+message QueryRequest {
+</a><a href="#h1-1-4" id="h1-1-4" class="i">+  string query = 1;
+</a><a href="#h1-1-5" id="h1-1-5" class="i">+};
+</a><a href="#h1-1-6" id="h1-1-6" class="i">+
+</a><a href="#h1-1-7" id="h1-1-7" class="i">+message Row {
+</a><a href="#h1-1-8" id="h1-1-8" class="i">+  repeated Field field = 1;
+</a><a href="#h1-1-9" id="h1-1-9" class="i">+};
+</a><a href="#h1-1-10" id="h1-1-10" class="i">+
+</a><a href="#h1-1-11" id="h1-1-11" class="i">+message Field {
+</a><a href="#h1-1-12" id="h1-1-12" class="i">+  oneof value {
+</a><a href="#h1-1-13" id="h1-1-13" class="i">+    bool boolean = 1;
+</a><a href="#h1-1-14" id="h1-1-14" class="i">+    int64 integer = 2;
+</a><a href="#h1-1-15" id="h1-1-15" class="i">+    double float = 3;
+</a><a href="#h1-1-16" id="h1-1-16" class="i">+    string string = 4;
+</a><a href="#h1-1-17" id="h1-1-17" class="i">+  };
+</a><a href="#h1-1-18" id="h1-1-18" class="i">+}
+</a><a href="#h1-1-19" id="h1-1-19" class="i">+
+</a> message GetRequest {
+   string key = 1;
+ }
+<b>diff --git a/<a id="h2" href="../file/src/bin/toyc.rs.html">src/bin/toyc.rs</a> b/<a href="../file/src/bin/toyc.rs.html">src/bin/toyc.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -41,8 +41,12 @@ fn main() -&gt; Result&lt;(), toydb::Error&gt; {
+</a>             Err(ReadlineError::Eof) | Err(ReadlineError::Interrupted) =&gt; break,
+             Err(err) =&gt; return Err(err.into()),
+         };
+<a href="#h2-0-3" id="h2-0-3" class="d">-        let result = client.echo(&amp;query)?;
+</a><a href="#h2-0-4" id="h2-0-4" class="d">-        println!(&quot;{}&quot;, result);
+</a><a href="#h2-0-5" id="h2-0-5" class="i">+        let mut resultset = client.query(&amp;query)?;
+</a><a href="#h2-0-6" id="h2-0-6" class="i">+        println!(&quot;{}&quot;, resultset.columns().join(&quot;|&quot;));
+</a><a href="#h2-0-7" id="h2-0-7" class="i">+        while let Some(Ok(row)) = resultset.next() {
+</a><a href="#h2-0-8" id="h2-0-8" class="i">+            let formatted: Vec&lt;String&gt; = row.into_iter().map(|v| format!(&quot;{}&quot;, v)).collect();
+</a><a href="#h2-0-9" id="h2-0-9" class="i">+            println!(&quot;{}&quot;, formatted.join(&quot;|&quot;));
+</a><a href="#h2-0-10" id="h2-0-10" class="i">+        }
+</a>     }
+     Ok(())
+ }
+<b>diff --git a/<a id="h3" href="../file/src/client.rs.html">src/client.rs</a> b/<a href="../file/src/client.rs.html">src/client.rs</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -1,4 +1,5 @@
+</a> use crate::service;
+<a href="#h3-0-1" id="h3-0-1" class="i">+use crate::sql::types::{Row, Value};
+</a> use crate::Error;
+ use grpc::ClientStubExt;
+ use service::ToyDB;
+<a href="#h3-1" id="h3-1" class="h">@@ -22,10 +23,73 @@ impl Client {
+</a> 
+     /// Runs an echo request
+     pub fn echo(&amp;self, value: &amp;str) -&gt; Result&lt;String, Error&gt; {
+<a href="#h3-1-3" id="h3-1-3" class="d">-        let (_, resp, _) = self.client.echo(
+</a><a href="#h3-1-4" id="h3-1-4" class="d">-            grpc::RequestOptions::new(),
+</a><a href="#h3-1-5" id="h3-1-5" class="d">-            service::EchoRequest { value: value.to_owned(), ..Default::default() },
+</a><a href="#h3-1-6" id="h3-1-6" class="d">-        ).wait()?;
+</a><a href="#h3-1-7" id="h3-1-7" class="i">+        let (_, resp, _) = self
+</a><a href="#h3-1-8" id="h3-1-8" class="i">+            .client
+</a><a href="#h3-1-9" id="h3-1-9" class="i">+            .echo(
+</a><a href="#h3-1-10" id="h3-1-10" class="i">+                grpc::RequestOptions::new(),
+</a><a href="#h3-1-11" id="h3-1-11" class="i">+                service::EchoRequest { value: value.to_owned(), ..Default::default() },
+</a><a href="#h3-1-12" id="h3-1-12" class="i">+            )
+</a><a href="#h3-1-13" id="h3-1-13" class="i">+            .wait()?;
+</a>         Ok(resp.value)
+     }
+<a href="#h3-1-16" id="h3-1-16" class="i">+
+</a><a href="#h3-1-17" id="h3-1-17" class="i">+    /// Runs a query
+</a><a href="#h3-1-18" id="h3-1-18" class="i">+    pub fn query(&amp;self, query: &amp;str) -&gt; Result&lt;ResultSet, Error&gt; {
+</a><a href="#h3-1-19" id="h3-1-19" class="i">+        let (metadata, iter) = self
+</a><a href="#h3-1-20" id="h3-1-20" class="i">+            .client
+</a><a href="#h3-1-21" id="h3-1-21" class="i">+            .query(
+</a><a href="#h3-1-22" id="h3-1-22" class="i">+                grpc::RequestOptions::new(),
+</a><a href="#h3-1-23" id="h3-1-23" class="i">+                service::QueryRequest { query: query.to_owned(), ..Default::default() },
+</a><a href="#h3-1-24" id="h3-1-24" class="i">+            )
+</a><a href="#h3-1-25" id="h3-1-25" class="i">+            .wait()?;
+</a><a href="#h3-1-26" id="h3-1-26" class="i">+        ResultSet::from_grpc(metadata, iter)
+</a><a href="#h3-1-27" id="h3-1-27" class="i">+    }
+</a><a href="#h3-1-28" id="h3-1-28" class="i">+}
+</a><a href="#h3-1-29" id="h3-1-29" class="i">+
+</a><a href="#h3-1-30" id="h3-1-30" class="i">+/// A query result set
+</a><a href="#h3-1-31" id="h3-1-31" class="i">+pub struct ResultSet {
+</a><a href="#h3-1-32" id="h3-1-32" class="i">+    columns: Vec&lt;String&gt;,
+</a><a href="#h3-1-33" id="h3-1-33" class="i">+    rows: Box&lt;dyn Iterator&lt;Item = Result&lt;service::Row, grpc::Error&gt;&gt;&gt;,
+</a><a href="#h3-1-34" id="h3-1-34" class="i">+}
+</a><a href="#h3-1-35" id="h3-1-35" class="i">+
+</a><a href="#h3-1-36" id="h3-1-36" class="i">+impl Iterator for ResultSet {
+</a><a href="#h3-1-37" id="h3-1-37" class="i">+    type Item = Result&lt;Row, Error&gt;;
+</a><a href="#h3-1-38" id="h3-1-38" class="i">+
+</a><a href="#h3-1-39" id="h3-1-39" class="i">+    fn next(&amp;mut self) -&gt; Option&lt;Result&lt;Row, Error&gt;&gt; {
+</a><a href="#h3-1-40" id="h3-1-40" class="i">+        Some(self.rows.next()?.map(Self::row_from_protobuf).map_err(|e| e.into()))
+</a><a href="#h3-1-41" id="h3-1-41" class="i">+    }
+</a><a href="#h3-1-42" id="h3-1-42" class="i">+}
+</a><a href="#h3-1-43" id="h3-1-43" class="i">+
+</a><a href="#h3-1-44" id="h3-1-44" class="i">+impl ResultSet {
+</a><a href="#h3-1-45" id="h3-1-45" class="i">+    fn from_grpc(
+</a><a href="#h3-1-46" id="h3-1-46" class="i">+        metadata: grpc::Metadata,
+</a><a href="#h3-1-47" id="h3-1-47" class="i">+        rows: Box&lt;dyn std::iter::Iterator&lt;Item = Result&lt;service::Row, grpc::Error&gt;&gt;&gt;,
+</a><a href="#h3-1-48" id="h3-1-48" class="i">+    ) -&gt; Result&lt;Self, Error&gt; {
+</a><a href="#h3-1-49" id="h3-1-49" class="i">+        Ok(Self { columns: Self::deserialize(metadata.get(&quot;columns&quot;).unwrap().to_vec())?, rows })
+</a><a href="#h3-1-50" id="h3-1-50" class="i">+    }
+</a><a href="#h3-1-51" id="h3-1-51" class="i">+
+</a><a href="#h3-1-52" id="h3-1-52" class="i">+    pub fn columns(&amp;self) -&gt; Vec&lt;String&gt; {
+</a><a href="#h3-1-53" id="h3-1-53" class="i">+        self.columns.clone()
+</a><a href="#h3-1-54" id="h3-1-54" class="i">+    }
+</a><a href="#h3-1-55" id="h3-1-55" class="i">+
+</a><a href="#h3-1-56" id="h3-1-56" class="i">+    /// Deserializes a value from a byte buffer
+</a><a href="#h3-1-57" id="h3-1-57" class="i">+    fn deserialize&lt;&#39;de, V: serde::Deserialize&lt;&#39;de&gt;&gt;(bytes: Vec&lt;u8&gt;) -&gt; Result&lt;V, Error&gt; {
+</a><a href="#h3-1-58" id="h3-1-58" class="i">+        Ok(serde::Deserialize::deserialize(&amp;mut rmps::Deserializer::new(&amp;bytes[..]))?)
+</a><a href="#h3-1-59" id="h3-1-59" class="i">+    }
+</a><a href="#h3-1-60" id="h3-1-60" class="i">+
+</a><a href="#h3-1-61" id="h3-1-61" class="i">+    /// Converts a protobuf row into a proper row
+</a><a href="#h3-1-62" id="h3-1-62" class="i">+    fn row_from_protobuf(row: service::Row) -&gt; Row {
+</a><a href="#h3-1-63" id="h3-1-63" class="i">+        row.field.into_iter().map(Self::value_from_protobuf).collect()
+</a><a href="#h3-1-64" id="h3-1-64" class="i">+    }
+</a><a href="#h3-1-65" id="h3-1-65" class="i">+
+</a><a href="#h3-1-66" id="h3-1-66" class="i">+    /// Converts a protobuf field into a proper value
+</a><a href="#h3-1-67" id="h3-1-67" class="i">+    fn value_from_protobuf(field: service::Field) -&gt; Value {
+</a><a href="#h3-1-68" id="h3-1-68" class="i">+        match field.value {
+</a><a href="#h3-1-69" id="h3-1-69" class="i">+            None =&gt; Value::Null,
+</a><a href="#h3-1-70" id="h3-1-70" class="i">+            Some(service::Field_oneof_value::boolean(b)) =&gt; Value::Boolean(b),
+</a><a href="#h3-1-71" id="h3-1-71" class="i">+            Some(service::Field_oneof_value::float(f)) =&gt; Value::Float(f),
+</a><a href="#h3-1-72" id="h3-1-72" class="i">+            Some(service::Field_oneof_value::integer(f)) =&gt; Value::Integer(f),
+</a><a href="#h3-1-73" id="h3-1-73" class="i">+            Some(service::Field_oneof_value::string(s)) =&gt; Value::String(s),
+</a><a href="#h3-1-74" id="h3-1-74" class="i">+        }
+</a><a href="#h3-1-75" id="h3-1-75" class="i">+    }
+</a> }
+<b>diff --git a/<a id="h4" href="../file/src/server/toydb.rs.html">src/server/toydb.rs</a> b/<a href="../file/src/server/toydb.rs.html">src/server/toydb.rs</a></b>
+<a href="#h4-0" id="h4-0" class="h">@@ -1,6 +1,8 @@
+</a> use crate::raft::Raft;
+ use crate::service;
+<a href="#h4-0-2" id="h4-0-2" class="i">+use crate::sql::types::{Row, Value};
+</a> use crate::state;
+<a href="#h4-0-4" id="h4-0-4" class="i">+use crate::Error;
+</a> 
+ pub struct ToyDB {
+     pub id: String,
+<a href="#h4-1" id="h4-1" class="h">@@ -17,6 +19,26 @@ impl service::ToyDB for ToyDB {
+</a>         grpc::SingleResponse::completed(service::EchoResponse { value, ..Default::default() })
+     }
+ 
+<a href="#h4-1-3" id="h4-1-3" class="i">+    fn query(
+</a><a href="#h4-1-4" id="h4-1-4" class="i">+        &amp;self,
+</a><a href="#h4-1-5" id="h4-1-5" class="i">+        _: grpc::RequestOptions,
+</a><a href="#h4-1-6" id="h4-1-6" class="i">+        _req: service::QueryRequest,
+</a><a href="#h4-1-7" id="h4-1-7" class="i">+    ) -&gt; grpc::StreamingResponse&lt;service::Row&gt; {
+</a><a href="#h4-1-8" id="h4-1-8" class="i">+        let mut metadata = grpc::Metadata::new();
+</a><a href="#h4-1-9" id="h4-1-9" class="i">+        metadata.add(
+</a><a href="#h4-1-10" id="h4-1-10" class="i">+            grpc::MetadataKey::from(&quot;columns&quot;),
+</a><a href="#h4-1-11" id="h4-1-11" class="i">+            Self::serialize(vec![&quot;null&quot;, &quot;boolean&quot;, &quot;integer&quot;, &quot;float&quot;, &quot;string&quot;]).unwrap().into(),
+</a><a href="#h4-1-12" id="h4-1-12" class="i">+        );
+</a><a href="#h4-1-13" id="h4-1-13" class="i">+        let rows = vec![Self::row_to_protobuf(vec![
+</a><a href="#h4-1-14" id="h4-1-14" class="i">+            Value::Null,
+</a><a href="#h4-1-15" id="h4-1-15" class="i">+            Value::Boolean(true),
+</a><a href="#h4-1-16" id="h4-1-16" class="i">+            Value::Integer(7),
+</a><a href="#h4-1-17" id="h4-1-17" class="i">+            Value::Float(1.23),
+</a><a href="#h4-1-18" id="h4-1-18" class="i">+            Value::String(&quot;Hi! 👋&quot;.into()),
+</a><a href="#h4-1-19" id="h4-1-19" class="i">+        ])];
+</a><a href="#h4-1-20" id="h4-1-20" class="i">+        grpc::StreamingResponse::iter_with_metadata(metadata, rows.into_iter())
+</a><a href="#h4-1-21" id="h4-1-21" class="i">+    }
+</a><a href="#h4-1-22" id="h4-1-22" class="i">+
+</a>     fn get(
+         &amp;self,
+         _: grpc::RequestOptions,
+<a href="#h4-2" id="h4-2" class="h">@@ -67,3 +89,34 @@ impl service::ToyDB for ToyDB {
+</a>         })
+     }
+ }
+<a href="#h4-2-3" id="h4-2-3" class="i">+
+</a><a href="#h4-2-4" id="h4-2-4" class="i">+impl ToyDB {
+</a><a href="#h4-2-5" id="h4-2-5" class="i">+    /// Converts a row into a protobuf row
+</a><a href="#h4-2-6" id="h4-2-6" class="i">+    fn row_to_protobuf(row: Row) -&gt; service::Row {
+</a><a href="#h4-2-7" id="h4-2-7" class="i">+        service::Row {
+</a><a href="#h4-2-8" id="h4-2-8" class="i">+            field: row.into_iter().map(Self::value_to_protobuf).collect(),
+</a><a href="#h4-2-9" id="h4-2-9" class="i">+            ..Default::default()
+</a><a href="#h4-2-10" id="h4-2-10" class="i">+        }
+</a><a href="#h4-2-11" id="h4-2-11" class="i">+    }
+</a><a href="#h4-2-12" id="h4-2-12" class="i">+
+</a><a href="#h4-2-13" id="h4-2-13" class="i">+    /// Converts a value into a protobuf field
+</a><a href="#h4-2-14" id="h4-2-14" class="i">+    fn value_to_protobuf(value: Value) -&gt; service::Field {
+</a><a href="#h4-2-15" id="h4-2-15" class="i">+        service::Field {
+</a><a href="#h4-2-16" id="h4-2-16" class="i">+            value: match value {
+</a><a href="#h4-2-17" id="h4-2-17" class="i">+                Value::Null =&gt; None,
+</a><a href="#h4-2-18" id="h4-2-18" class="i">+                Value::Boolean(b) =&gt; Some(service::Field_oneof_value::boolean(b)),
+</a><a href="#h4-2-19" id="h4-2-19" class="i">+                Value::Float(f) =&gt; Some(service::Field_oneof_value::float(f)),
+</a><a href="#h4-2-20" id="h4-2-20" class="i">+                Value::Integer(i) =&gt; Some(service::Field_oneof_value::integer(i)),
+</a><a href="#h4-2-21" id="h4-2-21" class="i">+                Value::String(s) =&gt; Some(service::Field_oneof_value::string(s)),
+</a><a href="#h4-2-22" id="h4-2-22" class="i">+            },
+</a><a href="#h4-2-23" id="h4-2-23" class="i">+            ..Default::default()
+</a><a href="#h4-2-24" id="h4-2-24" class="i">+        }
+</a><a href="#h4-2-25" id="h4-2-25" class="i">+    }
+</a><a href="#h4-2-26" id="h4-2-26" class="i">+
+</a><a href="#h4-2-27" id="h4-2-27" class="i">+    /// Serializes a value into a byte buffer
+</a><a href="#h4-2-28" id="h4-2-28" class="i">+    fn serialize&lt;V: serde::Serialize&gt;(value: V) -&gt; Result&lt;Vec&lt;u8&gt;, Error&gt; {
+</a><a href="#h4-2-29" id="h4-2-29" class="i">+        let mut bytes = Vec::new();
+</a><a href="#h4-2-30" id="h4-2-30" class="i">+        value.serialize(&amp;mut rmps::Serializer::new(&amp;mut bytes))?;
+</a><a href="#h4-2-31" id="h4-2-31" class="i">+        Ok(bytes)
+</a><a href="#h4-2-32" id="h4-2-32" class="i">+    }
+</a><a href="#h4-2-33" id="h4-2-33" class="i">+}
+</a><b>diff --git a/<a id="h5" href="../file/src/sql/mod.rs.html">src/sql/mod.rs</a> b/<a href="../file/src/sql/mod.rs.html">src/sql/mod.rs</a></b>
+<a href="#h5-0" id="h5-0" class="h">@@ -1 +1,2 @@
+</a> mod parser;
+<a href="#h5-0-1" id="h5-0-1" class="i">+pub mod types;
+</a><b>diff --git a/<a id="h6" href="../file/src/sql/types.rs.html">src/sql/types.rs</a> b/<a href="../file/src/sql/types.rs.html">src/sql/types.rs</a></b>
+<a href="#h6-0" id="h6-0" class="h">@@ -0,0 +1,37 @@
+</a><a href="#h6-0-0" id="h6-0-0" class="i">+/// A value
+</a><a href="#h6-0-1" id="h6-0-1" class="i">+pub enum Value {
+</a><a href="#h6-0-2" id="h6-0-2" class="i">+    /// An unknown value
+</a><a href="#h6-0-3" id="h6-0-3" class="i">+    Null,
+</a><a href="#h6-0-4" id="h6-0-4" class="i">+    /// A boolean
+</a><a href="#h6-0-5" id="h6-0-5" class="i">+    Boolean(bool),
+</a><a href="#h6-0-6" id="h6-0-6" class="i">+    /// A signed 64-bit integer
+</a><a href="#h6-0-7" id="h6-0-7" class="i">+    Integer(i64),
+</a><a href="#h6-0-8" id="h6-0-8" class="i">+    /// A signed 64-bit float
+</a><a href="#h6-0-9" id="h6-0-9" class="i">+    Float(f64),
+</a><a href="#h6-0-10" id="h6-0-10" class="i">+    /// A UTF-8 encoded string
+</a><a href="#h6-0-11" id="h6-0-11" class="i">+    String(String),
+</a><a href="#h6-0-12" id="h6-0-12" class="i">+}
+</a><a href="#h6-0-13" id="h6-0-13" class="i">+
+</a><a href="#h6-0-14" id="h6-0-14" class="i">+impl std::fmt::Display for Value {
+</a><a href="#h6-0-15" id="h6-0-15" class="i">+    fn fmt(&amp;self, f: &amp;mut std::fmt::Formatter) -&gt; std::fmt::Result {
+</a><a href="#h6-0-16" id="h6-0-16" class="i">+        f.write_str(
+</a><a href="#h6-0-17" id="h6-0-17" class="i">+            match self {
+</a><a href="#h6-0-18" id="h6-0-18" class="i">+                Value::Null =&gt; &quot;NULL&quot;.to_string(),
+</a><a href="#h6-0-19" id="h6-0-19" class="i">+                Value::Boolean(b) =&gt; {
+</a><a href="#h6-0-20" id="h6-0-20" class="i">+                    if *b {
+</a><a href="#h6-0-21" id="h6-0-21" class="i">+                        &quot;TRUE&quot;.to_string()
+</a><a href="#h6-0-22" id="h6-0-22" class="i">+                    } else {
+</a><a href="#h6-0-23" id="h6-0-23" class="i">+                        &quot;FALSE&quot;.to_string()
+</a><a href="#h6-0-24" id="h6-0-24" class="i">+                    }
+</a><a href="#h6-0-25" id="h6-0-25" class="i">+                }
+</a><a href="#h6-0-26" id="h6-0-26" class="i">+                Value::Integer(i) =&gt; i.to_string(),
+</a><a href="#h6-0-27" id="h6-0-27" class="i">+                Value::Float(f) =&gt; f.to_string(),
+</a><a href="#h6-0-28" id="h6-0-28" class="i">+                Value::String(s) =&gt; s.clone(),
+</a><a href="#h6-0-29" id="h6-0-29" class="i">+            }
+</a><a href="#h6-0-30" id="h6-0-30" class="i">+            .as_ref(),
+</a><a href="#h6-0-31" id="h6-0-31" class="i">+        )
+</a><a href="#h6-0-32" id="h6-0-32" class="i">+    }
+</a><a href="#h6-0-33" id="h6-0-33" class="i">+}
+</a><a href="#h6-0-34" id="h6-0-34" class="i">+
+</a><a href="#h6-0-35" id="h6-0-35" class="i">+/// A row of values
+</a><a href="#h6-0-36" id="h6-0-36" class="i">+pub type Row = Vec&lt;Value&gt;;
+</a></pre>
+</div>
+</body>
+</html>

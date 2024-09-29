@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>sql: retain original columns in `Nothing` nodes - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/f629387203a3f2864b2bdfc1978431cd6b7656c2.html">f629387203a3f2864b2bdfc1978431cd6b7656c2</a>
+<b>parent</b> <a href="../commit/b4b65c6b880bdfb7aefcfc697148e8285df5830c.html">b4b65c6b880bdfb7aefcfc697148e8285df5830c</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Tue, 16 Jul 2024 22:22:48 +0200
+
+sql: retain original columns in `Nothing` nodes
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/sql/execution/execute.rs</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/sql/planner/optimizer.rs</a></td><td> | </td><td class="num">46</td><td><span class="i">+++++++++++++++++++++++++++</span><span class="d">-------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/sql/planner/plan.rs</a></td><td> | </td><td class="num">20</td><td><span class="i">++++++++++++</span><span class="d">--------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">src/sql/testscripts/optimizer/short_circuit</a></td><td> | </td><td class="num">31</td><td><span class="i">++++++++++++++++++++</span><span class="d">-----------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h4">src/sql/testscripts/queries/select</a></td><td> | </td><td class="num">6</td><td><span class="i">++++++</span><span class="d"></span></td></tr>
+</table></pre><pre>5 files changed, 66 insertions(+), 39 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/sql/execution/execute.rs.html">src/sql/execution/execute.rs</a> b/<a href="../file/src/sql/execution/execute.rs.html">src/sql/execution/execute.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -96,7 +96,7 @@ pub fn execute(node: Node, txn: &amp;impl Transaction) -&gt; Result&lt;Rows&gt; {
+</a>             join::nested_loop(left, right, right_size, predicate, outer)
+         }
+ 
+<a href="#h0-0-3" id="h0-0-3" class="d">-        Node::Nothing =&gt; Ok(source::nothing()),
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+        Node::Nothing { .. } =&gt; Ok(source::nothing()),
+</a> 
+         Node::Offset { source, offset } =&gt; {
+             let source = execute(*source, txn)?;
+<b>diff --git a/<a id="h1" href="../file/src/sql/planner/optimizer.rs.html">src/sql/planner/optimizer.rs</a> b/<a href="../file/src/sql/planner/optimizer.rs.html">src/sql/planner/optimizer.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -287,6 +287,12 @@ pub(super) fn short_circuit(node: Node) -&gt; Result&lt;Node&gt; {
+</a>     use Expression::Constant;
+     use Value::{Boolean, Null};
+ 
+<a href="#h1-0-3" id="h1-0-3" class="i">+    /// Creates a Nothing node with the columns of the original node.
+</a><a href="#h1-0-4" id="h1-0-4" class="i">+    fn nothing(node: &amp;Node) -&gt; Node {
+</a><a href="#h1-0-5" id="h1-0-5" class="i">+        let columns = (0..node.size()).map(|i| node.column_label(i)).collect();
+</a><a href="#h1-0-6" id="h1-0-6" class="i">+        Node::Nothing { columns }
+</a><a href="#h1-0-7" id="h1-0-7" class="i">+    }
+</a><a href="#h1-0-8" id="h1-0-8" class="i">+
+</a>     let transform = |node| match node {
+         // Filter nodes that always yield true are unnecessary: remove them.
+         Node::Filter { source, predicate: Constant(Boolean(true)) } =&gt; *source,
+<a href="#h1-1" id="h1-1" class="h">@@ -300,32 +306,34 @@ pub(super) fn short_circuit(node: Node) -&gt; Result&lt;Node&gt; {
+</a>         }
+ 
+         // Short-circuit nodes that can&#39;t produce anything by replacing them
+<a href="#h1-1-3" id="h1-1-3" class="d">-        // with a Nothing node.
+</a><a href="#h1-1-4" id="h1-1-4" class="d">-        Node::Filter { predicate: Constant(Boolean(false) | Null), .. } =&gt; Node::Nothing,
+</a><a href="#h1-1-5" id="h1-1-5" class="d">-        Node::IndexLookup { values, .. } if values.is_empty() =&gt; Node::Nothing,
+</a><a href="#h1-1-6" id="h1-1-6" class="d">-        Node::KeyLookup { keys, .. } if keys.is_empty() =&gt; Node::Nothing,
+</a><a href="#h1-1-7" id="h1-1-7" class="d">-        Node::Limit { limit: 0, .. } =&gt; Node::Nothing,
+</a><a href="#h1-1-8" id="h1-1-8" class="d">-        Node::NestedLoopJoin { predicate: Some(Constant(Boolean(false) | Null)), .. } =&gt; {
+</a><a href="#h1-1-9" id="h1-1-9" class="d">-            Node::Nothing
+</a><a href="#h1-1-10" id="h1-1-10" class="i">+        // with a Nothing node, retaining the columns.
+</a><a href="#h1-1-11" id="h1-1-11" class="i">+        ref node @ Node::Filter { predicate: Constant(Boolean(false) | Null), .. } =&gt; nothing(node),
+</a><a href="#h1-1-12" id="h1-1-12" class="i">+        ref node @ Node::IndexLookup { ref values, .. } if values.is_empty() =&gt; nothing(node),
+</a><a href="#h1-1-13" id="h1-1-13" class="i">+        ref node @ Node::KeyLookup { ref keys, .. } if keys.is_empty() =&gt; nothing(node),
+</a><a href="#h1-1-14" id="h1-1-14" class="i">+        ref node @ Node::Limit { limit: 0, .. } =&gt; nothing(node),
+</a><a href="#h1-1-15" id="h1-1-15" class="i">+        ref node @ Node::NestedLoopJoin {
+</a><a href="#h1-1-16" id="h1-1-16" class="i">+            predicate: Some(Constant(Boolean(false) | Null)), ..
+</a><a href="#h1-1-17" id="h1-1-17" class="i">+        } =&gt; nothing(node),
+</a><a href="#h1-1-18" id="h1-1-18" class="i">+        ref node @ Node::Scan { filter: Some(Constant(Boolean(false) | Null)), .. } =&gt; {
+</a><a href="#h1-1-19" id="h1-1-19" class="i">+            nothing(node)
+</a>         }
+<a href="#h1-1-21" id="h1-1-21" class="d">-        Node::Scan { filter: Some(Constant(Boolean(false) | Null)), .. } =&gt; Node::Nothing,
+</a><a href="#h1-1-22" id="h1-1-22" class="d">-        Node::Values { rows, .. } if rows.is_empty() =&gt; Node::Nothing,
+</a><a href="#h1-1-23" id="h1-1-23" class="i">+        Node::Values { rows } if rows.is_empty() =&gt; Node::Nothing { columns: vec![] },
+</a> 
+         // Short-circuit nodes that pull from a Nothing node.
+         //
+         // NB: does not short-circuit aggregation, since an aggregation over 0
+         // rows should produce a result.
+<a href="#h1-1-29" id="h1-1-29" class="d">-        Node::Filter { source, .. }
+</a><a href="#h1-1-30" id="h1-1-30" class="d">-        | Node::HashJoin { left: source, .. }
+</a><a href="#h1-1-31" id="h1-1-31" class="d">-        | Node::HashJoin { right: source, .. }
+</a><a href="#h1-1-32" id="h1-1-32" class="d">-        | Node::NestedLoopJoin { left: source, .. }
+</a><a href="#h1-1-33" id="h1-1-33" class="d">-        | Node::NestedLoopJoin { right: source, .. }
+</a><a href="#h1-1-34" id="h1-1-34" class="d">-        | Node::Offset { source, .. }
+</a><a href="#h1-1-35" id="h1-1-35" class="d">-        | Node::Order { source, .. }
+</a><a href="#h1-1-36" id="h1-1-36" class="d">-        | Node::Projection { source, .. }
+</a><a href="#h1-1-37" id="h1-1-37" class="d">-            if *source == Node::Nothing =&gt;
+</a><a href="#h1-1-38" id="h1-1-38" class="i">+        ref node @ (Node::Filter { ref source, .. }
+</a><a href="#h1-1-39" id="h1-1-39" class="i">+        | Node::HashJoin { left: ref source, .. }
+</a><a href="#h1-1-40" id="h1-1-40" class="i">+        | Node::HashJoin { right: ref source, .. }
+</a><a href="#h1-1-41" id="h1-1-41" class="i">+        | Node::NestedLoopJoin { left: ref source, .. }
+</a><a href="#h1-1-42" id="h1-1-42" class="i">+        | Node::NestedLoopJoin { right: ref source, .. }
+</a><a href="#h1-1-43" id="h1-1-43" class="i">+        | Node::Offset { ref source, .. }
+</a><a href="#h1-1-44" id="h1-1-44" class="i">+        | Node::Order { ref source, .. }
+</a><a href="#h1-1-45" id="h1-1-45" class="i">+        | Node::Projection { ref source, .. })
+</a><a href="#h1-1-46" id="h1-1-46" class="i">+            if matches!(**source, Node::Nothing { .. }) =&gt;
+</a>         {
+<a href="#h1-1-48" id="h1-1-48" class="d">-            Node::Nothing
+</a><a href="#h1-1-49" id="h1-1-49" class="i">+            nothing(node)
+</a>         }
+ 
+         // Remove noop projections that simply pass through the source columns.
+<b>diff --git a/<a id="h2" href="../file/src/sql/planner/plan.rs.html">src/sql/planner/plan.rs</a> b/<a href="../file/src/sql/planner/plan.rs.html">src/sql/planner/plan.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -109,8 +109,9 @@ pub enum Node {
+</a>     /// When outer is true (e.g. LEFT JOIN), a left row without a right match is
+     /// emitted anyway, with NULLs for the right row.
+     NestedLoopJoin { left: Box&lt;Node&gt;, right: Box&lt;Node&gt;, predicate: Option&lt;Expression&gt;, outer: bool },
+<a href="#h2-0-3" id="h2-0-3" class="d">-    /// Nothing does not emit anything.
+</a><a href="#h2-0-4" id="h2-0-4" class="d">-    Nothing,
+</a><a href="#h2-0-5" id="h2-0-5" class="i">+    /// Nothing does not emit anything, but retains the column names of any
+</a><a href="#h2-0-6" id="h2-0-6" class="i">+    /// replaced nodes for results and plan expression display.
+</a><a href="#h2-0-7" id="h2-0-7" class="i">+    Nothing { columns: Vec&lt;Label&gt; },
+</a>     /// Discards the first offset rows from source, emits the rest.
+     Offset { source: Box&lt;Node&gt;, offset: usize },
+     /// Sorts the source rows by the given expression/direction pairs. Buffers
+<a href="#h2-1" id="h2-1" class="h">@@ -174,7 +175,7 @@ impl Node {
+</a> 
+             node @ (Self::IndexLookup { .. }
+             | Self::KeyLookup { .. }
+<a href="#h2-1-3" id="h2-1-3" class="d">-            | Self::Nothing
+</a><a href="#h2-1-4" id="h2-1-4" class="i">+            | Self::Nothing { .. }
+</a>             | Self::Scan { .. }
+             | Self::Values { .. }) =&gt; node,
+         };
+<a href="#h2-2" id="h2-2" class="h">@@ -232,7 +233,7 @@ impl Node {
+</a>             | Self::KeyLookup { .. }
+             | Self::Limit { .. }
+             | Self::NestedLoopJoin { predicate: None, .. }
+<a href="#h2-2-3" id="h2-2-3" class="d">-            | Self::Nothing
+</a><a href="#h2-2-4" id="h2-2-4" class="i">+            | Self::Nothing { .. }
+</a>             | Self::Offset { .. }
+             | Self::Scan { filter: None, .. }
+             | Self::Remap { .. }) =&gt; node,
+<a href="#h2-3" id="h2-3" class="h">@@ -262,7 +263,7 @@ impl Node {
+</a>             // Some can&#39;t have names.
+             Self::HashJoin { .. }
+             | Self::NestedLoopJoin { .. }
+<a href="#h2-3-3" id="h2-3-3" class="d">-            | Self::Nothing
+</a><a href="#h2-3-4" id="h2-3-4" class="i">+            | Self::Nothing { .. }
+</a>             | Self::Values { .. } =&gt; None,
+         }
+     }
+<a href="#h2-4" id="h2-4" class="h">@@ -314,8 +315,11 @@ impl Node {
+</a>             | Self::Offset { source, .. }
+             | Self::Order { source, .. } =&gt; source.column_label(index),
+ 
+<a href="#h2-4-3" id="h2-4-3" class="i">+            // Nothing nodes contain the original columns of replaced nodes.
+</a><a href="#h2-4-4" id="h2-4-4" class="i">+            Self::Nothing { columns } =&gt; columns.get(index).cloned().unwrap_or(Label::None),
+</a><a href="#h2-4-5" id="h2-4-5" class="i">+
+</a>             // And some don&#39;t have any names at all.
+<a href="#h2-4-7" id="h2-4-7" class="d">-            Self::Nothing | Self::Values { .. } =&gt; Label::None,
+</a><a href="#h2-4-8" id="h2-4-8" class="i">+            Self::Values { .. } =&gt; Label::None,
+</a>         }
+     }
+ 
+<a href="#h2-5" id="h2-5" class="h">@@ -346,7 +350,7 @@ impl Node {
+</a>             | Self::Order { source, .. } =&gt; source.size(),
+ 
+             // And some are trivial.
+<a href="#h2-5-3" id="h2-5-3" class="d">-            Self::Nothing =&gt; 0,
+</a><a href="#h2-5-4" id="h2-5-4" class="i">+            Self::Nothing { columns } =&gt; columns.len(),
+</a>             Self::Values { rows } =&gt; rows.first().map(|row| row.len()).unwrap_or(0),
+         }
+     }
+<a href="#h2-6" id="h2-6" class="h">@@ -479,7 +483,7 @@ impl Node {
+</a>                 left.format(f, prefix.clone(), false, false)?;
+                 right.format(f, prefix, false, true)?;
+             }
+<a href="#h2-6-3" id="h2-6-3" class="d">-            Self::Nothing =&gt; {
+</a><a href="#h2-6-4" id="h2-6-4" class="i">+            Self::Nothing { .. } =&gt; {
+</a>                 write!(f, &quot;Nothing&quot;)?;
+             }
+             Self::Offset { source, offset } =&gt; {
+<b>diff --git a/<a id="h3" href="../file/src/sql/testscripts/optimizer/short_circuit.html">src/sql/testscripts/optimizer/short_circuit</a> b/<a href="../file/src/sql/testscripts/optimizer/short_circuit.html">src/sql/testscripts/optimizer/short_circuit</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -56,8 +56,8 @@ Short circuit:
+</a> 3, c, 2, 2
+ 3, c, 3, 3
+ 
+<a href="#h3-0-3" id="h3-0-3" class="d">-# FALSE predicates → Nothing
+</a><a href="#h3-0-4" id="h3-0-4" class="d">-[opt]&gt; SELECT * FROM test WHERE FALSE
+</a><a href="#h3-0-5" id="h3-0-5" class="i">+# FALSE predicates → Nothing (but retains column headers)
+</a><a href="#h3-0-6" id="h3-0-6" class="i">+[opt,header]&gt; SELECT * FROM test WHERE FALSE
+</a> ---
+ Initial:
+    Filter: FALSE
+<a href="#h3-1" id="h3-1" class="h">@@ -66,8 +66,9 @@ Filter pushdown:
+</a>    Scan: test (FALSE)
+ Short circuit:
+    Nothing
+<a href="#h3-1-3" id="h3-1-3" class="i">+test.id, test.value
+</a> 
+<a href="#h3-1-5" id="h3-1-5" class="d">-[opt]&gt; SELECT 1, 2, 3 WHERE FALSE
+</a><a href="#h3-1-6" id="h3-1-6" class="i">+[opt,header]&gt; SELECT 1, 2, 3 WHERE FALSE
+</a> ---
+ Initial:
+    Projection: 1, 2, 3
+<a href="#h3-2" id="h3-2" class="h">@@ -75,8 +76,9 @@ Initial:
+</a>       └─ Values: blank row
+ Short circuit:
+    Nothing
+<a href="#h3-2-3" id="h3-2-3" class="i">+, , 
+</a> 
+<a href="#h3-2-5" id="h3-2-5" class="d">-[opt]&gt; SELECT * FROM test JOIN ref ON ref.test_id = test.id AND FALSE
+</a><a href="#h3-2-6" id="h3-2-6" class="i">+[opt,header]&gt; SELECT * FROM test JOIN ref ON ref.test_id = test.id AND FALSE
+</a> ---
+ Initial:
+    NestedLoopJoin: inner on ref.test_id = test.id AND FALSE
+<a href="#h3-3" id="h3-3" class="h">@@ -92,9 +94,10 @@ Filter pushdown:
+</a>    └─ Scan: ref (FALSE)
+ Short circuit:
+    Nothing
+<a href="#h3-3-3" id="h3-3-3" class="i">+test.id, test.value, ref.id, ref.test_id
+</a> 
+ # NULL predicates → Nothing
+<a href="#h3-3-6" id="h3-3-6" class="d">-[opt]&gt; SELECT * FROM test WHERE NULL
+</a><a href="#h3-3-7" id="h3-3-7" class="i">+[opt,header]&gt; SELECT * FROM test WHERE NULL
+</a> ---
+ Initial:
+    Filter: NULL
+<a href="#h3-4" id="h3-4" class="h">@@ -103,8 +106,9 @@ Filter pushdown:
+</a>    Scan: test (NULL)
+ Short circuit:
+    Nothing
+<a href="#h3-4-3" id="h3-4-3" class="i">+test.id, test.value
+</a> 
+<a href="#h3-4-5" id="h3-4-5" class="d">-[opt]&gt; SELECT 1, 2, 3 WHERE NULL
+</a><a href="#h3-4-6" id="h3-4-6" class="i">+[opt,header]&gt; SELECT 1, 2, 3 WHERE NULL
+</a> ---
+ Initial:
+    Projection: 1, 2, 3
+<a href="#h3-5" id="h3-5" class="h">@@ -112,8 +116,9 @@ Initial:
+</a>       └─ Values: blank row
+ Short circuit:
+    Nothing
+<a href="#h3-5-3" id="h3-5-3" class="i">+, , 
+</a> 
+<a href="#h3-5-5" id="h3-5-5" class="d">-[opt]&gt; SELECT * FROM test JOIN ref ON ref.test_id = test.id AND NULL
+</a><a href="#h3-5-6" id="h3-5-6" class="i">+[opt,header]&gt; SELECT * FROM test JOIN ref ON ref.test_id = test.id AND NULL
+</a> ---
+ Initial:
+    NestedLoopJoin: inner on ref.test_id = test.id AND NULL
+<a href="#h3-6" id="h3-6" class="h">@@ -129,9 +134,10 @@ Join type:
+</a>    └─ Scan: ref (NULL)
+ Short circuit:
+    Nothing
+<a href="#h3-6-3" id="h3-6-3" class="i">+test.id, test.value, ref.id, ref.test_id
+</a> 
+<a href="#h3-6-5" id="h3-6-5" class="d">-# Empty key/index lookups.
+</a><a href="#h3-6-6" id="h3-6-6" class="d">-[opt]&gt; SELECT * FROM test WHERE id = NULL
+</a><a href="#h3-6-7" id="h3-6-7" class="i">+# Empty key/index lookups → Nothing
+</a><a href="#h3-6-8" id="h3-6-8" class="i">+[opt,header]&gt; SELECT * FROM test WHERE id = NULL
+</a> ---
+ Initial:
+    Filter: test.id = NULL
+<a href="#h3-7" id="h3-7" class="h">@@ -142,8 +148,9 @@ Index lookup:
+</a>    KeyLookup: test (0 keys)
+ Short circuit:
+    Nothing
+<a href="#h3-7-3" id="h3-7-3" class="i">+test.id, test.value
+</a> 
+<a href="#h3-7-5" id="h3-7-5" class="d">-[opt]&gt; SELECT * FROM ref WHERE test_id = NULL
+</a><a href="#h3-7-6" id="h3-7-6" class="i">+[opt,header]&gt; SELECT * FROM ref WHERE test_id = NULL
+</a> ---
+ Initial:
+    Filter: ref.test_id = NULL
+<a href="#h3-8" id="h3-8" class="h">@@ -154,15 +161,17 @@ Index lookup:
+</a>    IndexLookup: ref.test_id (0 values)
+ Short circuit:
+    Nothing
+<a href="#h3-8-3" id="h3-8-3" class="i">+ref.id, ref.test_id
+</a> 
+ # LIMIT 0 → Nothing
+<a href="#h3-8-6" id="h3-8-6" class="d">-[opt]&gt; SELECT * FROM test LIMIT 0
+</a><a href="#h3-8-7" id="h3-8-7" class="i">+[opt,header]&gt; SELECT * FROM test LIMIT 0
+</a> ---
+ Initial:
+    Limit: 0
+    └─ Scan: test
+ Short circuit:
+    Nothing
+<a href="#h3-8-14" id="h3-8-14" class="i">+test.id, test.value
+</a> 
+ # Remove projections that simply pass through source columns. Aliased
+ # column names are retained.
+<b>diff --git a/<a id="h4" href="../file/src/sql/testscripts/queries/select.html">src/sql/testscripts/queries/select</a> b/<a href="../file/src/sql/testscripts/queries/select.html">src/sql/testscripts/queries/select</a></b>
+<a href="#h4-0" id="h4-0" class="h">@@ -200,3 +200,9 @@ NULL, b
+</a> 2, 2
+ 3, 1
+ 3, 2
+<a href="#h4-0-3" id="h4-0-3" class="i">+
+</a><a href="#h4-0-4" id="h4-0-4" class="i">+# A select with no rows optimized to a Nothing node still emits headers.
+</a><a href="#h4-0-5" id="h4-0-5" class="i">+[plan,header]&gt; SELECT * FROM test WHERE FALSE
+</a><a href="#h4-0-6" id="h4-0-6" class="i">+---
+</a><a href="#h4-0-7" id="h4-0-7" class="i">+Nothing
+</a><a href="#h4-0-8" id="h4-0-8" class="i">+test.id, test.bool, test.float, test.int, test.string
+</a></pre>
+</div>
+</body>
+</html>

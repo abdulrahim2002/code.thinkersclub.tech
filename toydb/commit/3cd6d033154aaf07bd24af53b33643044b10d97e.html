@@ -1,0 +1,1102 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Simplified transaction mode handling - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/3cd6d033154aaf07bd24af53b33643044b10d97e.html">3cd6d033154aaf07bd24af53b33643044b10d97e</a>
+<b>parent</b> <a href="../commit/6185d4d913d7f4cddec9e9fdbe607c918225cf34.html">6185d4d913d7f4cddec9e9fdbe607c918225cf34</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Sat, 14 Dec 2019 18:49:42 +0100
+
+Simplified transaction mode handling
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">protobuf/toydb.proto</a></td><td> | </td><td class="num">5</td><td><span class="i">+</span><span class="d">----</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/bin/toysql.rs</a></td><td> | </td><td class="num">19</td><td><span class="i">++++++++++++</span><span class="d">-------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/client.rs</a></td><td> | </td><td class="num">37</td><td><span class="i">+++++++++++++</span><span class="d">------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">src/kv/mod.rs</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h4">src/kv/mvcc.rs</a></td><td> | </td><td class="num">259</td><td><span class="i">+++++++++++++++++++++++++++++++++++++++</span><span class="d">----------------------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h5">src/server/toydb.rs</a></td><td> | </td><td class="num">110</td><td><span class="i">+++++++++++++++++++++++++++++</span><span class="d">--------------------------------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h6">src/sql/engine/kv.rs</a></td><td> | </td><td class="num">14</td><td><span class="i">+++++++</span><span class="d">-------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h7">src/sql/engine/mod.rs</a></td><td> | </td><td class="num">10</td><td><span class="i">+++++++</span><span class="d">---</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h8">src/sql/engine/raft.rs</a></td><td> | </td><td class="num">140</td><td><span class="i">+++++++++++</span><span class="d">--------------------------------------------------------------------</span></td></tr>
+</table></pre><pre>9 files changed, 227 insertions(+), 369 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/protobuf/toydb.proto.html">protobuf/toydb.proto</a> b/<a href="../file/protobuf/toydb.proto.html">protobuf/toydb.proto</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -29,10 +29,7 @@ message StatusResponse {
+</a> 
+ message QueryRequest {
+   string query = 1;
+<a href="#h0-0-3" id="h0-0-3" class="d">-  oneof mode {
+</a><a href="#h0-0-4" id="h0-0-4" class="d">-    uint64 txn_id = 2;
+</a><a href="#h0-0-5" id="h0-0-5" class="d">-    uint64 snapshot_version = 3;
+</a><a href="#h0-0-6" id="h0-0-6" class="d">-  }
+</a><a href="#h0-0-7" id="h0-0-7" class="i">+  uint64 txn_id = 2;
+</a> };
+ 
+ message Row {
+<b>diff --git a/<a id="h1" href="../file/src/bin/toysql.rs.html">src/bin/toysql.rs</a> b/<a href="../file/src/bin/toysql.rs.html">src/bin/toysql.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -148,12 +148,16 @@ Semicolons are not supported. The following !-commands are also available:
+</a>         let resultset = self.client.query(query)?;
+ 
+         match resultset.effect() {
+<a href="#h1-0-3" id="h1-0-3" class="d">-            Some(toydb::client::Effect::Begin { id, readonly: false }) =&gt; {
+</a><a href="#h1-0-4" id="h1-0-4" class="i">+            Some(toydb::client::Effect::Begin { id, mode: toydb::client::Mode::ReadWrite }) =&gt; {
+</a>                 println!(&quot;Began transaction {}&quot;, id)
+             }
+<a href="#h1-0-7" id="h1-0-7" class="d">-            Some(toydb::client::Effect::Begin { id, readonly: true }) =&gt; {
+</a><a href="#h1-0-8" id="h1-0-8" class="d">-                println!(&quot;Began read-only transaction in snapshot of version {}&quot;, id)
+</a><a href="#h1-0-9" id="h1-0-9" class="i">+            Some(toydb::client::Effect::Begin { id, mode: toydb::client::Mode::ReadOnly }) =&gt; {
+</a><a href="#h1-0-10" id="h1-0-10" class="i">+                println!(&quot;Began read-only transaction {}&quot;, id)
+</a>             }
+<a href="#h1-0-12" id="h1-0-12" class="i">+            Some(toydb::client::Effect::Begin {
+</a><a href="#h1-0-13" id="h1-0-13" class="i">+                id,
+</a><a href="#h1-0-14" id="h1-0-14" class="i">+                mode: toydb::client::Mode::Snapshot { version },
+</a><a href="#h1-0-15" id="h1-0-15" class="i">+            }) =&gt; println!(&quot;Began read-only transaction {} in version {} snapshot&quot;, id, version),
+</a>             Some(toydb::client::Effect::Commit(id)) =&gt; println!(&quot;Committed transaction {}&quot;, id),
+             Some(toydb::client::Effect::Rollback(id)) =&gt; println!(&quot;Rolled back transaction {}&quot;, id),
+             None =&gt; {}
+<a href="#h1-1" id="h1-1" class="h">@@ -171,10 +175,11 @@ Semicolons are not supported. The following !-commands are also available:
+</a> 
+     /// Prompts the user for input
+     fn prompt(&amp;mut self) -&gt; Result&lt;Option&lt;String&gt;, toydb::Error&gt; {
+<a href="#h1-1-3" id="h1-1-3" class="d">-        let prompt = match self.client.mode() {
+</a><a href="#h1-1-4" id="h1-1-4" class="d">-            toydb::client::Mode::Statement =&gt; &quot;toydb&gt; &quot;.into(),
+</a><a href="#h1-1-5" id="h1-1-5" class="d">-            toydb::client::Mode::Transaction(id) =&gt; format!(&quot;toydb:{}&gt; &quot;, id),
+</a><a href="#h1-1-6" id="h1-1-6" class="d">-            toydb::client::Mode::Snapshot(version) =&gt; format!(&quot;toydb@{}&gt; &quot;, version),
+</a><a href="#h1-1-7" id="h1-1-7" class="i">+        let prompt = match self.client.txn() {
+</a><a href="#h1-1-8" id="h1-1-8" class="i">+            Some((id, toydb::client::Mode::ReadWrite)) =&gt; format!(&quot;toydb:{}&gt; &quot;, id),
+</a><a href="#h1-1-9" id="h1-1-9" class="i">+            Some((id, toydb::client::Mode::ReadOnly)) =&gt; format!(&quot;toydb:{}&gt; &quot;, id),
+</a><a href="#h1-1-10" id="h1-1-10" class="i">+            Some((_, toydb::client::Mode::Snapshot { version })) =&gt; format!(&quot;toydb@{}&gt; &quot;, version),
+</a><a href="#h1-1-11" id="h1-1-11" class="i">+            None =&gt; &quot;toydb&gt; &quot;.into(),
+</a>         };
+         match self.editor.readline(&amp;prompt) {
+             Ok(input) =&gt; {
+<b>diff --git a/<a id="h2" href="../file/src/client.rs.html">src/client.rs</a> b/<a href="../file/src/client.rs.html">src/client.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -1,4 +1,5 @@
+</a> use crate::service;
+<a href="#h2-0-1" id="h2-0-1" class="i">+pub use crate::sql::engine::Mode;
+</a> use crate::sql::types::{Row, Value};
+ use crate::utility::deserialize;
+ use crate::Error;
+<a href="#h2-1" id="h2-1" class="h">@@ -8,15 +9,7 @@ use service::ToyDB;
+</a> /// A ToyDB client
+ pub struct Client {
+     client: service::ToyDBClient,
+<a href="#h2-1-3" id="h2-1-3" class="d">-    mode: Mode,
+</a><a href="#h2-1-4" id="h2-1-4" class="d">-}
+</a><a href="#h2-1-5" id="h2-1-5" class="d">-
+</a><a href="#h2-1-6" id="h2-1-6" class="d">-#[derive(Clone, Debug)]
+</a><a href="#h2-1-7" id="h2-1-7" class="d">-/// A ToyDB client mode.
+</a><a href="#h2-1-8" id="h2-1-8" class="d">-pub enum Mode {
+</a><a href="#h2-1-9" id="h2-1-9" class="d">-    Statement,
+</a><a href="#h2-1-10" id="h2-1-10" class="d">-    Transaction(u64),
+</a><a href="#h2-1-11" id="h2-1-11" class="d">-    Snapshot(u64),
+</a><a href="#h2-1-12" id="h2-1-12" class="i">+    txn: Option&lt;(u64, Mode)&gt;,
+</a> }
+ 
+ impl Client {
+<a href="#h2-2" id="h2-2" class="h">@@ -24,7 +17,7 @@ impl Client {
+</a>     pub fn new(host: &amp;str, port: u16) -&gt; Result&lt;Self, Error&gt; {
+         Ok(Self {
+             client: service::ToyDBClient::new_plain(host, port, grpc::ClientConf::new())?,
+<a href="#h2-2-3" id="h2-2-3" class="d">-            mode: Mode::Statement,
+</a><a href="#h2-2-4" id="h2-2-4" class="i">+            txn: None,
+</a>         })
+     }
+ 
+<a href="#h2-3" id="h2-3" class="h">@@ -49,9 +42,9 @@ impl Client {
+</a>         Ok(resp.name.to_vec())
+     }
+ 
+<a href="#h2-3-3" id="h2-3-3" class="d">-    /// Returns the client mode
+</a><a href="#h2-3-4" id="h2-3-4" class="d">-    pub fn mode(&amp;self) -&gt; Mode {
+</a><a href="#h2-3-5" id="h2-3-5" class="d">-        self.mode.clone()
+</a><a href="#h2-3-6" id="h2-3-6" class="i">+    /// Returns the client transaction info, if any
+</a><a href="#h2-3-7" id="h2-3-7" class="i">+    pub fn txn(&amp;self) -&gt; Option&lt;(u64, Mode)&gt; {
+</a><a href="#h2-3-8" id="h2-3-8" class="i">+        self.txn.clone()
+</a>     }
+ 
+     /// Runs a query
+<a href="#h2-4" id="h2-4" class="h">@@ -62,12 +55,9 @@ impl Client {
+</a>                 grpc::RequestOptions::new(),
+                 service::QueryRequest {
+                     query: query.to_owned(),
+<a href="#h2-4-3" id="h2-4-3" class="d">-                    mode: match self.mode {
+</a><a href="#h2-4-4" id="h2-4-4" class="d">-                        Mode::Statement =&gt; None,
+</a><a href="#h2-4-5" id="h2-4-5" class="d">-                        Mode::Transaction(id) =&gt; Some(service::QueryRequest_oneof_mode::txn_id(id)),
+</a><a href="#h2-4-6" id="h2-4-6" class="d">-                        Mode::Snapshot(version) =&gt; {
+</a><a href="#h2-4-7" id="h2-4-7" class="d">-                            Some(service::QueryRequest_oneof_mode::snapshot_version(version))
+</a><a href="#h2-4-8" id="h2-4-8" class="d">-                        }
+</a><a href="#h2-4-9" id="h2-4-9" class="i">+                    txn_id: match self.txn {
+</a><a href="#h2-4-10" id="h2-4-10" class="i">+                        Some((id, _)) =&gt; id,
+</a><a href="#h2-4-11" id="h2-4-11" class="i">+                        None =&gt; 0,
+</a>                     },
+                     ..Default::default()
+                 },
+<a href="#h2-5" id="h2-5" class="h">@@ -75,10 +65,9 @@ impl Client {
+</a>             .wait()?;
+         let rs = ResultSet::from_grpc(metadata, iter)?;
+         match rs.effect() {
+<a href="#h2-5-3" id="h2-5-3" class="d">-            Some(Effect::Begin { id, readonly: false }) =&gt; self.mode = Mode::Transaction(id),
+</a><a href="#h2-5-4" id="h2-5-4" class="d">-            Some(Effect::Begin { id, readonly: true }) =&gt; self.mode = Mode::Snapshot(id),
+</a><a href="#h2-5-5" id="h2-5-5" class="d">-            Some(Effect::Commit(_)) =&gt; self.mode = Mode::Statement,
+</a><a href="#h2-5-6" id="h2-5-6" class="d">-            Some(Effect::Rollback(_)) =&gt; self.mode = Mode::Statement,
+</a><a href="#h2-5-7" id="h2-5-7" class="i">+            Some(Effect::Begin { id, mode }) =&gt; self.txn = Some((id, mode)),
+</a><a href="#h2-5-8" id="h2-5-8" class="i">+            Some(Effect::Commit(_)) =&gt; self.txn = None,
+</a><a href="#h2-5-9" id="h2-5-9" class="i">+            Some(Effect::Rollback(_)) =&gt; self.txn = None,
+</a>             None =&gt; {}
+         }
+         Ok(rs)
+<a href="#h2-6" id="h2-6" class="h">@@ -103,7 +92,7 @@ pub struct ResultSet {
+</a> 
+ #[derive(Clone, Debug, Serialize, Deserialize)]
+ pub enum Effect {
+<a href="#h2-6-3" id="h2-6-3" class="d">-    Begin { id: u64, readonly: bool },
+</a><a href="#h2-6-4" id="h2-6-4" class="i">+    Begin { id: u64, mode: Mode },
+</a>     Commit(u64),
+     Rollback(u64),
+ }
+<b>diff --git a/<a id="h3" href="../file/src/kv/mod.rs.html">src/kv/mod.rs</a> b/<a href="../file/src/kv/mod.rs.html">src/kv/mod.rs</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -2,5 +2,5 @@ mod mvcc;
+</a> mod simple;
+ pub mod storage;
+ 
+<a href="#h3-0-3" id="h3-0-3" class="d">-pub use mvcc::{Transaction, MVCC};
+</a><a href="#h3-0-4" id="h3-0-4" class="i">+pub use mvcc::{Mode, Transaction, MVCC};
+</a> pub use simple::Simple;
+<b>diff --git a/<a id="h4" href="../file/src/kv/mvcc.rs.html">src/kv/mvcc.rs</a> b/<a href="../file/src/kv/mvcc.rs.html">src/kv/mvcc.rs</a></b>
+<a href="#h4-0" id="h4-0" class="h">@@ -4,7 +4,7 @@ use crate::Error;
+</a> 
+ use std::collections::HashSet;
+ use std::ops::{Bound, RangeBounds};
+<a href="#h4-0-3" id="h4-0-3" class="d">-use std::sync::{Arc, RwLock, RwLockWriteGuard};
+</a><a href="#h4-0-4" id="h4-0-4" class="i">+use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
+</a> 
+ /// An MVCC-based transactional key-value store
+ pub struct MVCC&lt;S: Storage&gt; {
+<a href="#h4-1" id="h4-1" class="h">@@ -17,21 +17,47 @@ impl&lt;S: Storage&gt; MVCC&lt;S&gt; {
+</a>         Self { storage: Arc::new(RwLock::new(storage)) }
+     }
+ 
+<a href="#h4-1-3" id="h4-1-3" class="d">-    /// Begins a new transaction
+</a><a href="#h4-1-4" id="h4-1-4" class="i">+    /// Begins a new transaction in the default mutable mode
+</a><a href="#h4-1-5" id="h4-1-5" class="i">+    #[allow(dead_code)]
+</a>     pub fn begin(&amp;self) -&gt; Result&lt;Transaction&lt;S&gt;, Error&gt; {
+<a href="#h4-1-7" id="h4-1-7" class="d">-        Transaction::new(self.storage.clone())
+</a><a href="#h4-1-8" id="h4-1-8" class="i">+        Transaction::begin(self.storage.clone(), Mode::ReadWrite)
+</a>     }
+ 
+<a href="#h4-1-11" id="h4-1-11" class="d">-    /// Begins a new read-only transaction, optionally at the given version
+</a><a href="#h4-1-12" id="h4-1-12" class="d">-    #[allow(dead_code)]
+</a><a href="#h4-1-13" id="h4-1-13" class="d">-    pub fn begin_readonly(&amp;self, version: Option&lt;u64&gt;) -&gt; Result&lt;Transaction&lt;S&gt;, Error&gt; {
+</a><a href="#h4-1-14" id="h4-1-14" class="d">-        Transaction::new_readonly(self.storage.clone(), version)
+</a><a href="#h4-1-15" id="h4-1-15" class="i">+    /// Begins a new transaction in the given mode
+</a><a href="#h4-1-16" id="h4-1-16" class="i">+    pub fn begin_with_mode(&amp;self, mode: Mode) -&gt; Result&lt;Transaction&lt;S&gt;, Error&gt; {
+</a><a href="#h4-1-17" id="h4-1-17" class="i">+        Transaction::begin(self.storage.clone(), mode)
+</a>     }
+ 
+     /// Resumes a transaction
+<a href="#h4-1-21" id="h4-1-21" class="d">-    #[allow(dead_code)]
+</a>     pub fn resume(&amp;self, id: u64) -&gt; Result&lt;Transaction&lt;S&gt;, Error&gt; {
+<a href="#h4-1-23" id="h4-1-23" class="d">-        Transaction::new_resume(self.storage.clone(), id)
+</a><a href="#h4-1-24" id="h4-1-24" class="i">+        Transaction::resume(self.storage.clone(), id)
+</a><a href="#h4-1-25" id="h4-1-25" class="i">+    }
+</a><a href="#h4-1-26" id="h4-1-26" class="i">+}
+</a><a href="#h4-1-27" id="h4-1-27" class="i">+
+</a><a href="#h4-1-28" id="h4-1-28" class="i">+/// An MVCC transaction mode
+</a><a href="#h4-1-29" id="h4-1-29" class="i">+#[derive(Clone, Debug, Serialize, Deserialize)]
+</a><a href="#h4-1-30" id="h4-1-30" class="i">+pub enum Mode {
+</a><a href="#h4-1-31" id="h4-1-31" class="i">+    ReadWrite,
+</a><a href="#h4-1-32" id="h4-1-32" class="i">+    // FIXME Add transient read-only transactions
+</a><a href="#h4-1-33" id="h4-1-33" class="i">+    ReadOnly,
+</a><a href="#h4-1-34" id="h4-1-34" class="i">+    Snapshot { version: u64 },
+</a><a href="#h4-1-35" id="h4-1-35" class="i">+}
+</a><a href="#h4-1-36" id="h4-1-36" class="i">+
+</a><a href="#h4-1-37" id="h4-1-37" class="i">+impl Mode {
+</a><a href="#h4-1-38" id="h4-1-38" class="i">+    fn assert_mutable(&amp;self) -&gt; Result&lt;(), Error&gt; {
+</a><a href="#h4-1-39" id="h4-1-39" class="i">+        if self.is_mutable() {
+</a><a href="#h4-1-40" id="h4-1-40" class="i">+            Ok(())
+</a><a href="#h4-1-41" id="h4-1-41" class="i">+        } else {
+</a><a href="#h4-1-42" id="h4-1-42" class="i">+            Err(Error::ReadOnly)
+</a><a href="#h4-1-43" id="h4-1-43" class="i">+        }
+</a><a href="#h4-1-44" id="h4-1-44" class="i">+    }
+</a><a href="#h4-1-45" id="h4-1-45" class="i">+
+</a><a href="#h4-1-46" id="h4-1-46" class="i">+    fn is_mutable(&amp;self) -&gt; bool {
+</a><a href="#h4-1-47" id="h4-1-47" class="i">+        match self {
+</a><a href="#h4-1-48" id="h4-1-48" class="i">+            Self::ReadWrite =&gt; true,
+</a><a href="#h4-1-49" id="h4-1-49" class="i">+            Self::ReadOnly =&gt; false,
+</a><a href="#h4-1-50" id="h4-1-50" class="i">+            Self::Snapshot { .. } =&gt; false,
+</a><a href="#h4-1-51" id="h4-1-51" class="i">+        }
+</a>     }
+ }
+ 
+<a href="#h4-2" id="h4-2" class="h">@@ -39,70 +65,44 @@ impl&lt;S: Storage&gt; MVCC&lt;S&gt; {
+</a> pub struct Transaction&lt;S: Storage&gt; {
+     storage: Arc&lt;RwLock&lt;S&gt;&gt;,
+     id: u64,
+<a href="#h4-2-3" id="h4-2-3" class="d">-    readonly: bool,
+</a><a href="#h4-2-4" id="h4-2-4" class="d">-    invisible: HashSet&lt;u64&gt;,
+</a><a href="#h4-2-5" id="h4-2-5" class="i">+    mode: Mode,
+</a><a href="#h4-2-6" id="h4-2-6" class="i">+    snapshot: Snapshot,
+</a> }
+ 
+ impl&lt;S: Storage&gt; Transaction&lt;S&gt; {
+<a href="#h4-2-10" id="h4-2-10" class="d">-    /// Creates a new transaction
+</a><a href="#h4-2-11" id="h4-2-11" class="d">-    fn new(storage: Arc&lt;RwLock&lt;S&gt;&gt;) -&gt; Result&lt;Self, Error&gt; {
+</a><a href="#h4-2-12" id="h4-2-12" class="d">-        let mut txn = Self { storage, id: 0, readonly: false, invisible: HashSet::new() };
+</a><a href="#h4-2-13" id="h4-2-13" class="d">-        {
+</a><a href="#h4-2-14" id="h4-2-14" class="d">-            let mut storage = txn.storage.write()?;
+</a><a href="#h4-2-15" id="h4-2-15" class="d">-            txn.id = match storage.read(&amp;Key::TxnNext.encode())? {
+</a><a href="#h4-2-16" id="h4-2-16" class="i">+    /// Begins a new transaction
+</a><a href="#h4-2-17" id="h4-2-17" class="i">+    fn begin(storage: Arc&lt;RwLock&lt;S&gt;&gt;, mode: Mode) -&gt; Result&lt;Self, Error&gt; {
+</a><a href="#h4-2-18" id="h4-2-18" class="i">+        // FIXME Handle transient
+</a><a href="#h4-2-19" id="h4-2-19" class="i">+        let id = {
+</a><a href="#h4-2-20" id="h4-2-20" class="i">+            let mut storage = storage.write()?;
+</a><a href="#h4-2-21" id="h4-2-21" class="i">+            let id = match storage.read(&amp;Key::TxnNext.encode())? {
+</a>                 Some(v) =&gt; deserialize(v)?,
+                 None =&gt; 1,
+             };
+<a href="#h4-2-25" id="h4-2-25" class="d">-            storage.write(&amp;Key::TxnNext.encode(), serialize(txn.id + 1)?)?;
+</a><a href="#h4-2-26" id="h4-2-26" class="d">-
+</a><a href="#h4-2-27" id="h4-2-27" class="d">-            for r in storage.scan(&amp;Key::TxnActive(0).encode()..&amp;Key::TxnActive(txn.id).encode()) {
+</a><a href="#h4-2-28" id="h4-2-28" class="d">-                let (k, _) = r?;
+</a><a href="#h4-2-29" id="h4-2-29" class="d">-                match Key::decode(k)? {
+</a><a href="#h4-2-30" id="h4-2-30" class="d">-                    Key::TxnActive(id) =&gt; txn.invisible.insert(id),
+</a><a href="#h4-2-31" id="h4-2-31" class="d">-                    _ =&gt; return Err(Error::Value(&quot;Unexpected MVCC key, wanted TxnActive&quot;.into())),
+</a><a href="#h4-2-32" id="h4-2-32" class="d">-                };
+</a><a href="#h4-2-33" id="h4-2-33" class="d">-            }
+</a><a href="#h4-2-34" id="h4-2-34" class="d">-            storage.write(&amp;Key::TxnActive(txn.id).encode(), serialize(txn.invisible.clone())?)?;
+</a><a href="#h4-2-35" id="h4-2-35" class="d">-        }
+</a><a href="#h4-2-36" id="h4-2-36" class="d">-        Ok(txn)
+</a><a href="#h4-2-37" id="h4-2-37" class="d">-    }
+</a><a href="#h4-2-38" id="h4-2-38" class="d">-
+</a><a href="#h4-2-39" id="h4-2-39" class="d">-    /// Creates a new read-only transaction at the given version
+</a><a href="#h4-2-40" id="h4-2-40" class="d">-    // FIXME Actually, read-only transactions must be persisted as well, since we need to
+</a><a href="#h4-2-41" id="h4-2-41" class="d">-    // be able to resume them with the correct invisible transactions. This means that all
+</a><a href="#h4-2-42" id="h4-2-42" class="d">-    // of the logic in sql::engine::Snapshot must be removed.
+</a><a href="#h4-2-43" id="h4-2-43" class="d">-    fn new_readonly(storage: Arc&lt;RwLock&lt;S&gt;&gt;, id: Option&lt;u64&gt;) -&gt; Result&lt;Self, Error&gt; {
+</a><a href="#h4-2-44" id="h4-2-44" class="d">-        let next_id = match storage.read()?.read(&amp;Key::TxnNext.encode())? {
+</a><a href="#h4-2-45" id="h4-2-45" class="d">-            Some(v) =&gt; deserialize(v)?,
+</a><a href="#h4-2-46" id="h4-2-46" class="d">-            None =&gt; 1,
+</a><a href="#h4-2-47" id="h4-2-47" class="i">+            storage.write(&amp;Key::TxnNext.encode(), serialize(id + 1)?)?;
+</a><a href="#h4-2-48" id="h4-2-48" class="i">+            storage.write(&amp;Key::TxnActive(id).encode(), serialize(mode.clone())?)?;
+</a><a href="#h4-2-49" id="h4-2-49" class="i">+            id
+</a>         };
+<a href="#h4-2-51" id="h4-2-51" class="d">-        let id = id.unwrap_or_else(|| next_id - 1);
+</a><a href="#h4-2-52" id="h4-2-52" class="d">-        if id &gt;= next_id {
+</a><a href="#h4-2-53" id="h4-2-53" class="d">-            return Err(Error::Value(&quot;Can&#39;t start read-only transaction in the future&quot;.into()));
+</a><a href="#h4-2-54" id="h4-2-54" class="d">-        }
+</a><a href="#h4-2-55" id="h4-2-55" class="d">-        let mut txn = Self { storage, id, readonly: true, invisible: HashSet::new() };
+</a><a href="#h4-2-56" id="h4-2-56" class="d">-        for r in
+</a><a href="#h4-2-57" id="h4-2-57" class="d">-            txn.storage.read()?.scan(&amp;Key::TxnActive(0).encode()..=&amp;Key::TxnActive(txn.id).encode())
+</a><a href="#h4-2-58" id="h4-2-58" class="d">-        {
+</a><a href="#h4-2-59" id="h4-2-59" class="d">-            let (k, _) = r?;
+</a><a href="#h4-2-60" id="h4-2-60" class="d">-            match Key::decode(k)? {
+</a><a href="#h4-2-61" id="h4-2-61" class="d">-                Key::TxnActive(id) =&gt; txn.invisible.insert(id),
+</a><a href="#h4-2-62" id="h4-2-62" class="d">-                _ =&gt; return Err(Error::Value(&quot;Unexpected MVCC key, wanted TxnActive&quot;.into())),
+</a><a href="#h4-2-63" id="h4-2-63" class="d">-            };
+</a><a href="#h4-2-64" id="h4-2-64" class="d">-        }
+</a><a href="#h4-2-65" id="h4-2-65" class="d">-        Ok(txn)
+</a><a href="#h4-2-66" id="h4-2-66" class="i">+        let snapshot = match &amp;mode {
+</a><a href="#h4-2-67" id="h4-2-67" class="i">+            Mode::Snapshot { version } =&gt; Snapshot::restore(&amp;storage.read()?, *version)?,
+</a><a href="#h4-2-68" id="h4-2-68" class="i">+            _ =&gt; Snapshot::take(&amp;mut storage.write()?, id)?,
+</a><a href="#h4-2-69" id="h4-2-69" class="i">+        };
+</a><a href="#h4-2-70" id="h4-2-70" class="i">+        Ok(Self { storage, id, mode, snapshot })
+</a>     }
+ 
+     /// Resumes a transaction
+<a href="#h4-2-74" id="h4-2-74" class="d">-    fn new_resume(storage: Arc&lt;RwLock&lt;S&gt;&gt;, id: u64) -&gt; Result&lt;Self, Error&gt; {
+</a><a href="#h4-2-75" id="h4-2-75" class="i">+    fn resume(storage: Arc&lt;RwLock&lt;S&gt;&gt;, id: u64) -&gt; Result&lt;Self, Error&gt; {
+</a>         let key = Key::TxnActive(id).encode();
+<a href="#h4-2-77" id="h4-2-77" class="d">-        let mut txn = Self { storage, id, readonly: false, invisible: HashSet::new() };
+</a><a href="#h4-2-78" id="h4-2-78" class="d">-        if let Some(v) = txn.storage.read()?.read(&amp;key)? {
+</a><a href="#h4-2-79" id="h4-2-79" class="d">-            txn.invisible = deserialize(v)?;
+</a><a href="#h4-2-80" id="h4-2-80" class="i">+        let mode = if let Some(v) = storage.read()?.read(&amp;key)? {
+</a><a href="#h4-2-81" id="h4-2-81" class="i">+            deserialize(v)?
+</a>         } else {
+             return Err(Error::Value(format!(&quot;Unable to resume non-existant transaction {}&quot;, id)));
+         };
+<a href="#h4-2-85" id="h4-2-85" class="d">-        Ok(txn)
+</a><a href="#h4-2-86" id="h4-2-86" class="i">+        let snapshot = match &amp;mode {
+</a><a href="#h4-2-87" id="h4-2-87" class="i">+            Mode::Snapshot { version } =&gt; Snapshot::restore(&amp;storage.read()?, *version)?,
+</a><a href="#h4-2-88" id="h4-2-88" class="i">+            _ =&gt; Snapshot::restore(&amp;storage.read()?, id)?,
+</a><a href="#h4-2-89" id="h4-2-89" class="i">+        };
+</a><a href="#h4-2-90" id="h4-2-90" class="i">+        Ok(Self { storage, id, mode, snapshot })
+</a>     }
+ 
+     /// Returns the transaction ID
+<a href="#h4-3" id="h4-3" class="h">@@ -110,9 +110,14 @@ impl&lt;S: Storage&gt; Transaction&lt;S&gt; {
+</a>         self.id
+     }
+ 
+<a href="#h4-3-3" id="h4-3-3" class="i">+    /// Returns the transaction mode
+</a><a href="#h4-3-4" id="h4-3-4" class="i">+    pub fn mode(&amp;self) -&gt; Mode {
+</a><a href="#h4-3-5" id="h4-3-5" class="i">+        self.mode.clone()
+</a><a href="#h4-3-6" id="h4-3-6" class="i">+    }
+</a><a href="#h4-3-7" id="h4-3-7" class="i">+
+</a>     /// Commits the transaction
+     pub fn commit(self) -&gt; Result&lt;(), Error&gt; {
+<a href="#h4-3-10" id="h4-3-10" class="d">-        if !self.readonly {
+</a><a href="#h4-3-11" id="h4-3-11" class="i">+        if self.mode.is_mutable() {
+</a>             self.storage.write()?.remove(&amp;Key::TxnActive(self.id).encode())?;
+         }
+         Ok(())
+<a href="#h4-4" id="h4-4" class="h">@@ -120,7 +125,7 @@ impl&lt;S: Storage&gt; Transaction&lt;S&gt; {
+</a> 
+     /// Rolls back the transaction
+     pub fn rollback(self) -&gt; Result&lt;(), Error&gt; {
+<a href="#h4-4-3" id="h4-4-3" class="d">-        if !self.readonly {
+</a><a href="#h4-4-4" id="h4-4-4" class="i">+        if self.mode.is_mutable() {
+</a>             let mut storage = self.storage.write()?;
+             let start = Key::TxnUpdatedStart(self.id).encode();
+             let end = Key::TxnUpdatedEnd(self.id).encode();
+<a href="#h4-5" id="h4-5" class="h">@@ -140,7 +145,7 @@ impl&lt;S: Storage&gt; Transaction&lt;S&gt; {
+</a> 
+     /// Deletes a key
+     pub fn delete(&amp;mut self, key: &amp;[u8]) -&gt; Result&lt;(), Error&gt; {
+<a href="#h4-5-3" id="h4-5-3" class="d">-        self.assert_mutable()?;
+</a><a href="#h4-5-4" id="h4-5-4" class="i">+        self.mode.assert_mutable()?;
+</a>         let mut storage = self.storage.write()?;
+         if self.is_dirty(&amp;mut storage, key)? {
+             return Err(Error::Serialization);
+<a href="#h4-6" id="h4-6" class="h">@@ -159,7 +164,7 @@ impl&lt;S: Storage&gt; Transaction&lt;S&gt; {
+</a>         let to = Key::Record(key.to_vec(), self.id).encode();
+         let mut range = self.storage.read()?.scan(from..=to).rev();
+         while let Some((k, v)) = range.next().transpose()? {
+<a href="#h4-6-3" id="h4-6-3" class="d">-            if !self.is_visible(Key::decode(k)?.version()?)? {
+</a><a href="#h4-6-4" id="h4-6-4" class="i">+            if !self.snapshot.is_visible(Key::decode(k)?.version()?) {
+</a>                 continue;
+             }
+             return match Value::decode(v)? {
+<a href="#h4-7" id="h4-7" class="h">@@ -186,16 +191,15 @@ impl&lt;S: Storage&gt; Transaction&lt;S&gt; {
+</a>         };
+         Ok(Box::new(Scan {
+             range: self.storage.read()?.scan((from, to)),
+<a href="#h4-7-3" id="h4-7-3" class="d">-            id: self.id,
+</a><a href="#h4-7-4" id="h4-7-4" class="i">+            snapshot: self.snapshot.clone(),
+</a>             seen: None,
+             rev_ignore: None,
+<a href="#h4-7-7" id="h4-7-7" class="d">-            invisible: self.invisible.clone(),
+</a>         }))
+     }
+ 
+     /// Sets a key
+     pub fn set(&amp;mut self, key: &amp;[u8], value: Vec&lt;u8&gt;) -&gt; Result&lt;(), Error&gt; {
+<a href="#h4-7-13" id="h4-7-13" class="d">-        self.assert_mutable()?;
+</a><a href="#h4-7-14" id="h4-7-14" class="i">+        self.mode.assert_mutable()?;
+</a>         let mut storage = self.storage.write()?;
+         if self.is_dirty(&amp;mut storage, key)? {
+             return Err(Error::Serialization);
+<a href="#h4-8" id="h4-8" class="h">@@ -207,19 +211,10 @@ impl&lt;S: Storage&gt; Transaction&lt;S&gt; {
+</a>         Ok(())
+     }
+ 
+<a href="#h4-8-3" id="h4-8-3" class="d">-    /// Asserts that the transaction is read-write, otherwise returns an error
+</a><a href="#h4-8-4" id="h4-8-4" class="d">-    fn assert_mutable(&amp;self) -&gt; Result&lt;(), Error&gt; {
+</a><a href="#h4-8-5" id="h4-8-5" class="d">-        if self.readonly {
+</a><a href="#h4-8-6" id="h4-8-6" class="d">-            Err(Error::ReadOnly)
+</a><a href="#h4-8-7" id="h4-8-7" class="d">-        } else {
+</a><a href="#h4-8-8" id="h4-8-8" class="d">-            Ok(())
+</a><a href="#h4-8-9" id="h4-8-9" class="d">-        }
+</a><a href="#h4-8-10" id="h4-8-10" class="d">-    }
+</a><a href="#h4-8-11" id="h4-8-11" class="d">-
+</a>     /// Checks whether the key is dirty, i.e. if it has any uncommitted changes
+     fn is_dirty(&amp;self, storage: &amp;mut RwLockWriteGuard&lt;S&gt;, key: &amp;[u8]) -&gt; Result&lt;bool, Error&gt; {
+         let mut min = self.id + 1;
+<a href="#h4-8-15" id="h4-8-15" class="d">-        for id in self.invisible.iter().cloned() {
+</a><a href="#h4-8-16" id="h4-8-16" class="i">+        for id in self.snapshot.invisible.iter().cloned() {
+</a>             if id &lt; min {
+                 min = id
+             }
+<a href="#h4-9" id="h4-9" class="h">@@ -228,24 +223,56 @@ impl&lt;S: Storage&gt; Transaction&lt;S&gt; {
+</a>         let to = Key::Record(key.to_vec(), std::u64::MAX).encode();
+         let mut range = storage.scan(from..to);
+         while let Some((k, _)) = range.next().transpose()? {
+<a href="#h4-9-3" id="h4-9-3" class="d">-            if !self.is_visible(Key::decode(k)?.version()?)? {
+</a><a href="#h4-9-4" id="h4-9-4" class="i">+            if !self.snapshot.is_visible(Key::decode(k)?.version()?) {
+</a>                 return Ok(true);
+             }
+         }
+         Ok(false)
+     }
+<a href="#h4-9-10" id="h4-9-10" class="i">+}
+</a><a href="#h4-9-11" id="h4-9-11" class="i">+
+</a><a href="#h4-9-12" id="h4-9-12" class="i">+/// A versioned snapshot
+</a><a href="#h4-9-13" id="h4-9-13" class="i">+#[derive(Clone)]
+</a><a href="#h4-9-14" id="h4-9-14" class="i">+pub struct Snapshot {
+</a><a href="#h4-9-15" id="h4-9-15" class="i">+    version: u64,
+</a><a href="#h4-9-16" id="h4-9-16" class="i">+    invisible: HashSet&lt;u64&gt;,
+</a><a href="#h4-9-17" id="h4-9-17" class="i">+}
+</a><a href="#h4-9-18" id="h4-9-18" class="i">+
+</a><a href="#h4-9-19" id="h4-9-19" class="i">+impl Snapshot {
+</a><a href="#h4-9-20" id="h4-9-20" class="i">+    /// Takes a new snapshot
+</a><a href="#h4-9-21" id="h4-9-21" class="i">+    fn take(storage: &amp;mut RwLockWriteGuard&lt;impl Storage&gt;, version: u64) -&gt; Result&lt;Self, Error&gt; {
+</a><a href="#h4-9-22" id="h4-9-22" class="i">+        let mut snapshot = Self { version, invisible: HashSet::new() };
+</a><a href="#h4-9-23" id="h4-9-23" class="i">+        for r in storage.scan(&amp;Key::TxnActive(0).encode()..&amp;Key::TxnActive(version).encode()) {
+</a><a href="#h4-9-24" id="h4-9-24" class="i">+            let (k, _) = r?;
+</a><a href="#h4-9-25" id="h4-9-25" class="i">+            match Key::decode(k)? {
+</a><a href="#h4-9-26" id="h4-9-26" class="i">+                Key::TxnActive(id) =&gt; snapshot.invisible.insert(id),
+</a><a href="#h4-9-27" id="h4-9-27" class="i">+                _ =&gt; return Err(Error::Value(&quot;Unexpected MVCC key, wanted TxnActive&quot;.into())),
+</a><a href="#h4-9-28" id="h4-9-28" class="i">+            };
+</a><a href="#h4-9-29" id="h4-9-29" class="i">+        }
+</a><a href="#h4-9-30" id="h4-9-30" class="i">+        storage
+</a><a href="#h4-9-31" id="h4-9-31" class="i">+            .write(&amp;Key::TxnSnapshot(version).encode(), serialize(snapshot.invisible.clone())?)?;
+</a><a href="#h4-9-32" id="h4-9-32" class="i">+        Ok(snapshot)
+</a><a href="#h4-9-33" id="h4-9-33" class="i">+    }
+</a><a href="#h4-9-34" id="h4-9-34" class="i">+
+</a><a href="#h4-9-35" id="h4-9-35" class="i">+    /// Restores an existing snapshot
+</a><a href="#h4-9-36" id="h4-9-36" class="i">+    fn restore(storage: &amp;RwLockReadGuard&lt;impl Storage&gt;, version: u64) -&gt; Result&lt;Self, Error&gt; {
+</a><a href="#h4-9-37" id="h4-9-37" class="i">+        if let Some(v) = storage.read(&amp;Key::TxnSnapshot(version).encode())? {
+</a><a href="#h4-9-38" id="h4-9-38" class="i">+            Ok(Self { version, invisible: deserialize(v)? })
+</a><a href="#h4-9-39" id="h4-9-39" class="i">+        } else {
+</a><a href="#h4-9-40" id="h4-9-40" class="i">+            Err(Error::Value(format!(&quot;Unable to find snapshot for version {}&quot;, version)))
+</a><a href="#h4-9-41" id="h4-9-41" class="i">+        }
+</a><a href="#h4-9-42" id="h4-9-42" class="i">+    }
+</a> 
+     /// Checks whether the given version is visible to us
+<a href="#h4-9-45" id="h4-9-45" class="d">-    fn is_visible(&amp;self, version: u64) -&gt; Result&lt;bool, Error&gt; {
+</a><a href="#h4-9-46" id="h4-9-46" class="d">-        Ok(version &lt;= self.id &amp;&amp; self.invisible.get(&amp;version).is_none())
+</a><a href="#h4-9-47" id="h4-9-47" class="i">+    fn is_visible(&amp;self, version: u64) -&gt; bool {
+</a><a href="#h4-9-48" id="h4-9-48" class="i">+        version &lt;= self.version &amp;&amp; self.invisible.get(&amp;version).is_none()
+</a>     }
+ }
+ 
+ /// A key range scan
+ pub struct Scan {
+     range: Range,
+<a href="#h4-9-55" id="h4-9-55" class="d">-    id: u64,
+</a><a href="#h4-9-56" id="h4-9-56" class="d">-    invisible: HashSet&lt;u64&gt;,
+</a><a href="#h4-9-57" id="h4-9-57" class="i">+    snapshot: Snapshot,
+</a>     seen: Option&lt;(Vec&lt;u8&gt;, Vec&lt;u8&gt;)&gt;,
+     rev_ignore: Option&lt;(Vec&lt;u8&gt;)&gt;,
+ }
+<a href="#h4-10" id="h4-10" class="h">@@ -261,7 +288,7 @@ impl Iterator for Scan {
+</a>                         Key::Record(key, version) =&gt; (key, version),
+                         _ =&gt; panic!(&quot;Not implemented&quot;),
+                     };
+<a href="#h4-10-3" id="h4-10-3" class="d">-                    if version &gt; self.id || self.invisible.get(&amp;version).is_some() {
+</a><a href="#h4-10-4" id="h4-10-4" class="i">+                    if !self.snapshot.is_visible(version) {
+</a>                         continue;
+                     }
+                     let value = match Value::decode(v).unwrap() {
+<a href="#h4-11" id="h4-11" class="h">@@ -312,7 +339,7 @@ impl DoubleEndedIterator for Scan {
+</a>                         Key::Record(key, version) =&gt; (key, version),
+                         _ =&gt; panic!(&quot;Not implemented&quot;),
+                     };
+<a href="#h4-11-3" id="h4-11-3" class="d">-                    if version &gt; self.id || self.invisible.get(&amp;version).is_some() {
+</a><a href="#h4-11-4" id="h4-11-4" class="i">+                    if !self.snapshot.is_visible(version) {
+</a>                         continue;
+                     }
+                     if let Some(ignore) = &amp;self.rev_ignore {
+<a href="#h4-12" id="h4-12" class="h">@@ -338,6 +365,7 @@ impl DoubleEndedIterator for Scan {
+</a> enum Key {
+     TxnNext,
+     TxnActive(u64),
+<a href="#h4-12-3" id="h4-12-3" class="i">+    TxnSnapshot(u64),
+</a>     TxnUpdatedStart(u64),
+     TxnUpdated(u64, Vec&lt;u8&gt;),
+     TxnUpdatedEnd(u64),
+<a href="#h4-13" id="h4-13" class="h">@@ -362,6 +390,15 @@ impl Key {
+</a>             }
+             Some(0x03) =&gt; {
+                 let bytes: Vec&lt;u8&gt; = iter.collect();
+<a href="#h4-13-3" id="h4-13-3" class="i">+                if bytes.len() != 8 {
+</a><a href="#h4-13-4" id="h4-13-4" class="i">+                    return Err(Error::Value(&quot;Unable to parse MVCC snapshot version&quot;.into()));
+</a><a href="#h4-13-5" id="h4-13-5" class="i">+                }
+</a><a href="#h4-13-6" id="h4-13-6" class="i">+                let mut version = [0; 8];
+</a><a href="#h4-13-7" id="h4-13-7" class="i">+                version.copy_from_slice(&amp;bytes[..]);
+</a><a href="#h4-13-8" id="h4-13-8" class="i">+                Ok(Key::TxnSnapshot(u64::from_be_bytes(version)))
+</a><a href="#h4-13-9" id="h4-13-9" class="i">+            }
+</a><a href="#h4-13-10" id="h4-13-10" class="i">+            Some(0x04) =&gt; {
+</a><a href="#h4-13-11" id="h4-13-11" class="i">+                let bytes: Vec&lt;u8&gt; = iter.collect();
+</a>                 if bytes.len() &lt; 10 {
+                     return Err(Error::Value(&quot;Unable to parse MVCC update key&quot;.into()));
+                 }
+<a href="#h4-14" id="h4-14" class="h">@@ -379,7 +416,6 @@ impl Key {
+</a>                 let key = bytes[9..].to_vec();
+                 Ok(Key::TxnUpdated(id, key))
+             }
+<a href="#h4-14-3" id="h4-14-3" class="d">-
+</a>             Some(0xf1) =&gt; {
+                 let mut key: Vec&lt;u8&gt; = iter.collect();
+                 if key.len() &lt; 9 {
+<a href="#h4-15" id="h4-15" class="h">@@ -400,13 +436,14 @@ impl Key {
+</a>         match self {
+             Self::TxnNext =&gt; vec![0x01],
+             Self::TxnActive(id) =&gt; [vec![0x02], id.to_be_bytes().to_vec()].concat(),
+<a href="#h4-15-3" id="h4-15-3" class="i">+            Self::TxnSnapshot(version) =&gt; [vec![0x03], version.to_be_bytes().to_vec()].concat(),
+</a>             Self::TxnUpdatedStart(id) =&gt; {
+<a href="#h4-15-5" id="h4-15-5" class="d">-                [vec![0x03], id.to_be_bytes().to_vec(), vec![0x00]].concat()
+</a><a href="#h4-15-6" id="h4-15-6" class="i">+                [vec![0x04], id.to_be_bytes().to_vec(), vec![0x00]].concat()
+</a>             }
+             Self::TxnUpdated(id, key) =&gt; {
+<a href="#h4-15-9" id="h4-15-9" class="d">-                [vec![0x03], id.to_be_bytes().to_vec(), vec![0x00], key].concat()
+</a><a href="#h4-15-10" id="h4-15-10" class="i">+                [vec![0x04], id.to_be_bytes().to_vec(), vec![0x00], key].concat()
+</a>             }
+<a href="#h4-15-12" id="h4-15-12" class="d">-            Self::TxnUpdatedEnd(id) =&gt; [vec![0x03], id.to_be_bytes().to_vec(), vec![0xff]].concat(),
+</a><a href="#h4-15-13" id="h4-15-13" class="i">+            Self::TxnUpdatedEnd(id) =&gt; [vec![0x04], id.to_be_bytes().to_vec(), vec![0xff]].concat(),
+</a>             Self::RecordStart =&gt; vec![0xf0],
+             Self::Record(key, version) =&gt; {
+                 // We have to use 0x00 as a key/version separator, and use 0x00 0xff as an
+<a href="#h4-16" id="h4-16" class="h">@@ -498,32 +535,6 @@ pub mod tests {
+</a>     }
+ 
+     #[test]
+<a href="#h4-16-3" id="h4-16-3" class="d">-    fn test_begin_readonly() -&gt; Result&lt;(), Error&gt; {
+</a><a href="#h4-16-4" id="h4-16-4" class="d">-        let mvcc = setup();
+</a><a href="#h4-16-5" id="h4-16-5" class="d">-
+</a><a href="#h4-16-6" id="h4-16-6" class="d">-        let txn = mvcc.begin_readonly(None)?;
+</a><a href="#h4-16-7" id="h4-16-7" class="d">-        assert_eq!(txn.id(), 0);
+</a><a href="#h4-16-8" id="h4-16-8" class="d">-        txn.commit()?;
+</a><a href="#h4-16-9" id="h4-16-9" class="d">-
+</a><a href="#h4-16-10" id="h4-16-10" class="d">-        let txn = mvcc.begin_readonly(None)?;
+</a><a href="#h4-16-11" id="h4-16-11" class="d">-        assert_eq!(txn.id(), 0);
+</a><a href="#h4-16-12" id="h4-16-12" class="d">-        txn.commit()?;
+</a><a href="#h4-16-13" id="h4-16-13" class="d">-
+</a><a href="#h4-16-14" id="h4-16-14" class="d">-        let txn = mvcc.begin()?;
+</a><a href="#h4-16-15" id="h4-16-15" class="d">-        txn.commit()?;
+</a><a href="#h4-16-16" id="h4-16-16" class="d">-        let txn = mvcc.begin()?;
+</a><a href="#h4-16-17" id="h4-16-17" class="d">-        txn.commit()?;
+</a><a href="#h4-16-18" id="h4-16-18" class="d">-        let txn = mvcc.begin()?;
+</a><a href="#h4-16-19" id="h4-16-19" class="d">-        txn.commit()?;
+</a><a href="#h4-16-20" id="h4-16-20" class="d">-
+</a><a href="#h4-16-21" id="h4-16-21" class="d">-        let txn = mvcc.begin_readonly(None)?;
+</a><a href="#h4-16-22" id="h4-16-22" class="d">-        assert_eq!(txn.id(), 3);
+</a><a href="#h4-16-23" id="h4-16-23" class="d">-        txn.commit()?;
+</a><a href="#h4-16-24" id="h4-16-24" class="d">-
+</a><a href="#h4-16-25" id="h4-16-25" class="d">-        Ok(())
+</a><a href="#h4-16-26" id="h4-16-26" class="d">-    }
+</a><a href="#h4-16-27" id="h4-16-27" class="d">-
+</a><a href="#h4-16-28" id="h4-16-28" class="d">-    #[test]
+</a>     fn test_resume() -&gt; Result&lt;(), Error&gt; {
+         let mvcc = setup();
+ 
+<a href="#h4-17" id="h4-17" class="h">@@ -558,7 +569,7 @@ pub mod tests {
+</a>         assert_eq!(None, tr.get(b&quot;c&quot;)?);
+ 
+         // A separate transaction should not see t2&#39;s changes, but should see the others
+<a href="#h4-17-3" id="h4-17-3" class="d">-        let t = mvcc.begin_readonly(None)?;
+</a><a href="#h4-17-4" id="h4-17-4" class="i">+        let t = mvcc.begin()?;
+</a>         assert_eq!(Some(b&quot;t1&quot;.to_vec()), t.get(b&quot;a&quot;)?);
+         assert_eq!(Some(b&quot;t0&quot;.to_vec()), t.get(b&quot;b&quot;)?);
+         assert_eq!(Some(b&quot;t3&quot;.to_vec()), t.get(b&quot;c&quot;)?);
+<a href="#h4-18" id="h4-18" class="h">@@ -567,7 +578,7 @@ pub mod tests {
+</a>         // Once tr commits, a separate transaction should see t2&#39;s changes
+         tr.commit()?;
+ 
+<a href="#h4-18-3" id="h4-18-3" class="d">-        let t = mvcc.begin_readonly(None)?;
+</a><a href="#h4-18-4" id="h4-18-4" class="i">+        let t = mvcc.begin()?;
+</a>         assert_eq!(Some(b&quot;t1&quot;.to_vec()), t.get(b&quot;a&quot;)?);
+         assert_eq!(Some(b&quot;t2&quot;.to_vec()), t.get(b&quot;b&quot;)?);
+         assert_eq!(Some(b&quot;t3&quot;.to_vec()), t.get(b&quot;c&quot;)?);
+<a href="#h4-19" id="h4-19" class="h">@@ -676,22 +687,6 @@ pub mod tests {
+</a>     }
+ 
+     #[test]
+<a href="#h4-19-3" id="h4-19-3" class="d">-    fn test_txn_get_readonly_hides_uncomitted() -&gt; Result&lt;(), Error&gt; {
+</a><a href="#h4-19-4" id="h4-19-4" class="d">-        let mvcc = setup();
+</a><a href="#h4-19-5" id="h4-19-5" class="d">-
+</a><a href="#h4-19-6" id="h4-19-6" class="d">-        let mut t1 = mvcc.begin()?;
+</a><a href="#h4-19-7" id="h4-19-7" class="d">-        t1.set(b&quot;a&quot;, vec![0x01])?;
+</a><a href="#h4-19-8" id="h4-19-8" class="d">-        let mut t2 = mvcc.begin()?;
+</a><a href="#h4-19-9" id="h4-19-9" class="d">-        t2.set(b&quot;c&quot;, vec![0x03])?;
+</a><a href="#h4-19-10" id="h4-19-10" class="d">-
+</a><a href="#h4-19-11" id="h4-19-11" class="d">-        let tr = mvcc.begin_readonly(None)?;
+</a><a href="#h4-19-12" id="h4-19-12" class="d">-        assert_eq!(None, tr.get(b&quot;a&quot;)?);
+</a><a href="#h4-19-13" id="h4-19-13" class="d">-        assert_eq!(None, tr.get(b&quot;c&quot;)?);
+</a><a href="#h4-19-14" id="h4-19-14" class="d">-
+</a><a href="#h4-19-15" id="h4-19-15" class="d">-        Ok(())
+</a><a href="#h4-19-16" id="h4-19-16" class="d">-    }
+</a><a href="#h4-19-17" id="h4-19-17" class="d">-
+</a><a href="#h4-19-18" id="h4-19-18" class="d">-    #[test]
+</a>     fn test_txn_get_readonly_historical() -&gt; Result&lt;(), Error&gt; {
+         let mvcc = setup();
+ 
+<a href="#h4-20" id="h4-20" class="h">@@ -707,7 +702,7 @@ pub mod tests {
+</a>         txn.set(b&quot;c&quot;, vec![0x03])?;
+         txn.commit()?;
+ 
+<a href="#h4-20-3" id="h4-20-3" class="d">-        let tr = mvcc.begin_readonly(Some(2))?;
+</a><a href="#h4-20-4" id="h4-20-4" class="i">+        let tr = mvcc.begin_with_mode(Mode::Snapshot { version: 2 })?;
+</a>         assert_eq!(Some(vec![0x01]), tr.get(b&quot;a&quot;)?);
+         assert_eq!(Some(vec![0x02]), tr.get(b&quot;b&quot;)?);
+         assert_eq!(None, tr.get(b&quot;c&quot;)?);
+<b>diff --git a/<a id="h5" href="../file/src/server/toydb.rs.html">src/server/toydb.rs</a> b/<a href="../file/src/server/toydb.rs.html">src/server/toydb.rs</a></b>
+<a href="#h5-0" id="h5-0" class="h">@@ -5,8 +5,7 @@ use crate::sql;
+</a> use crate::sql::types::{Row, Value};
+ use crate::utility::serialize;
+ use crate::Error;
+<a href="#h5-0-3" id="h5-0-3" class="d">-use sql::engine::Engine;
+</a><a href="#h5-0-4" id="h5-0-4" class="d">-use sql::engine::Transaction;
+</a><a href="#h5-0-5" id="h5-0-5" class="i">+use sql::engine::{Engine, Mode, Transaction};
+</a> 
+ pub struct ToyDB {
+     pub id: String,
+<a href="#h5-1" id="h5-1" class="h">@@ -59,14 +58,7 @@ impl service::ToyDB for ToyDB {
+</a>         _: grpc::RequestOptions,
+         req: service::QueryRequest,
+     ) -&gt; grpc::StreamingResponse&lt;service::Row&gt; {
+<a href="#h5-1-3" id="h5-1-3" class="d">-        let mode = match req.mode {
+</a><a href="#h5-1-4" id="h5-1-4" class="d">-            Some(service::QueryRequest_oneof_mode::txn_id(id)) =&gt; client::Mode::Transaction(id),
+</a><a href="#h5-1-5" id="h5-1-5" class="d">-            Some(service::QueryRequest_oneof_mode::snapshot_version(version)) =&gt; {
+</a><a href="#h5-1-6" id="h5-1-6" class="d">-                client::Mode::Snapshot(version)
+</a><a href="#h5-1-7" id="h5-1-7" class="d">-            }
+</a><a href="#h5-1-8" id="h5-1-8" class="d">-            None =&gt; client::Mode::Statement,
+</a><a href="#h5-1-9" id="h5-1-9" class="d">-        };
+</a><a href="#h5-1-10" id="h5-1-10" class="d">-        let result = match self.execute(mode, &amp;req.query) {
+</a><a href="#h5-1-11" id="h5-1-11" class="i">+        let result = match self.execute(Some(req.txn_id).filter(|&amp;id| id &gt; 0), &amp;req.query) {
+</a>             Ok(result) =&gt; result,
+             Err(err) =&gt; {
+                 return grpc::StreamingResponse::completed(vec![service::Row {
+<a href="#h5-2" id="h5-2" class="h">@@ -107,66 +99,37 @@ impl service::ToyDB for ToyDB {
+</a> 
+ impl ToyDB {
+     /// Executes an SQL statement
+<a href="#h5-2-3" id="h5-2-3" class="d">-    fn execute(&amp;self, mode: client::Mode, query: &amp;str) -&gt; Result&lt;sql::types::ResultSet, Error&gt; {
+</a><a href="#h5-2-4" id="h5-2-4" class="i">+    fn execute(&amp;self, txn_id: Option&lt;u64&gt;, query: &amp;str) -&gt; Result&lt;sql::types::ResultSet, Error&gt; {
+</a>         let statement = sql::Parser::new(query).parse()?;
+ 
+         // FIXME Needs to return effect for DDL statements as well
+<a href="#h5-2-8" id="h5-2-8" class="d">-        match mode {
+</a><a href="#h5-2-9" id="h5-2-9" class="d">-            // Ongoing transaction
+</a><a href="#h5-2-10" id="h5-2-10" class="d">-            client::Mode::Transaction(txn_id) =&gt; {
+</a><a href="#h5-2-11" id="h5-2-11" class="d">-                let mut txn = self.engine.resume(txn_id)?;
+</a><a href="#h5-2-12" id="h5-2-12" class="d">-                match statement {
+</a><a href="#h5-2-13" id="h5-2-13" class="d">-                    sql::ast::Statement::Begin { .. } =&gt; {
+</a><a href="#h5-2-14" id="h5-2-14" class="d">-                        Err(Error::Value(&quot;Already in a transaction&quot;.into()))
+</a><a href="#h5-2-15" id="h5-2-15" class="d">-                    }
+</a><a href="#h5-2-16" id="h5-2-16" class="d">-                    sql::ast::Statement::Commit =&gt; {
+</a><a href="#h5-2-17" id="h5-2-17" class="d">-                        let mut rs = sql::types::ResultSet::empty();
+</a><a href="#h5-2-18" id="h5-2-18" class="d">-                        rs.effect = Some(client::Effect::Commit(txn.id()));
+</a><a href="#h5-2-19" id="h5-2-19" class="d">-                        txn.commit()?;
+</a><a href="#h5-2-20" id="h5-2-20" class="d">-                        Ok(rs)
+</a><a href="#h5-2-21" id="h5-2-21" class="d">-                    }
+</a><a href="#h5-2-22" id="h5-2-22" class="d">-                    sql::ast::Statement::Rollback =&gt; {
+</a><a href="#h5-2-23" id="h5-2-23" class="d">-                        let mut rs = sql::types::ResultSet::empty();
+</a><a href="#h5-2-24" id="h5-2-24" class="d">-                        rs.effect = Some(client::Effect::Rollback(txn.id()));
+</a><a href="#h5-2-25" id="h5-2-25" class="d">-                        txn.rollback()?;
+</a><a href="#h5-2-26" id="h5-2-26" class="d">-                        Ok(rs)
+</a><a href="#h5-2-27" id="h5-2-27" class="d">-                    }
+</a><a href="#h5-2-28" id="h5-2-28" class="d">-                    _ =&gt; {
+</a><a href="#h5-2-29" id="h5-2-29" class="d">-                        let rs = sql::Plan::build(statement)?
+</a><a href="#h5-2-30" id="h5-2-30" class="d">-                            .optimize()?
+</a><a href="#h5-2-31" id="h5-2-31" class="d">-                            .execute(sql::Context { txn: &amp;mut txn })?;
+</a><a href="#h5-2-32" id="h5-2-32" class="d">-                        Ok(rs)
+</a><a href="#h5-2-33" id="h5-2-33" class="d">-                    }
+</a><a href="#h5-2-34" id="h5-2-34" class="i">+        if let Some(txn_id) = txn_id {
+</a><a href="#h5-2-35" id="h5-2-35" class="i">+            let mut txn = self.engine.resume(txn_id)?;
+</a><a href="#h5-2-36" id="h5-2-36" class="i">+            match statement {
+</a><a href="#h5-2-37" id="h5-2-37" class="i">+                sql::ast::Statement::Begin { .. } =&gt; {
+</a><a href="#h5-2-38" id="h5-2-38" class="i">+                    Err(Error::Value(&quot;Already in a transaction&quot;.into()))
+</a>                 }
+<a href="#h5-2-40" id="h5-2-40" class="d">-            }
+</a><a href="#h5-2-41" id="h5-2-41" class="d">-            // Ongoing read-only snapshot transaction
+</a><a href="#h5-2-42" id="h5-2-42" class="d">-            client::Mode::Snapshot(version) =&gt; {
+</a><a href="#h5-2-43" id="h5-2-43" class="d">-                let mut txn = self.engine.snapshot(Some(version))?;
+</a><a href="#h5-2-44" id="h5-2-44" class="d">-                match statement {
+</a><a href="#h5-2-45" id="h5-2-45" class="d">-                    sql::ast::Statement::Begin { .. } =&gt; {
+</a><a href="#h5-2-46" id="h5-2-46" class="d">-                        Err(Error::Value(&quot;Already in a transaction&quot;.into()))
+</a><a href="#h5-2-47" id="h5-2-47" class="d">-                    }
+</a><a href="#h5-2-48" id="h5-2-48" class="d">-                    sql::ast::Statement::Commit =&gt; {
+</a><a href="#h5-2-49" id="h5-2-49" class="d">-                        let mut rs = sql::types::ResultSet::empty();
+</a><a href="#h5-2-50" id="h5-2-50" class="d">-                        rs.effect = Some(client::Effect::Commit(txn.id()));
+</a><a href="#h5-2-51" id="h5-2-51" class="d">-                        txn.commit()?;
+</a><a href="#h5-2-52" id="h5-2-52" class="d">-                        Ok(rs)
+</a><a href="#h5-2-53" id="h5-2-53" class="d">-                    }
+</a><a href="#h5-2-54" id="h5-2-54" class="d">-                    sql::ast::Statement::Rollback =&gt; {
+</a><a href="#h5-2-55" id="h5-2-55" class="d">-                        let mut rs = sql::types::ResultSet::empty();
+</a><a href="#h5-2-56" id="h5-2-56" class="d">-                        rs.effect = Some(client::Effect::Rollback(txn.id()));
+</a><a href="#h5-2-57" id="h5-2-57" class="d">-                        txn.rollback()?;
+</a><a href="#h5-2-58" id="h5-2-58" class="d">-                        Ok(rs)
+</a><a href="#h5-2-59" id="h5-2-59" class="d">-                    }
+</a><a href="#h5-2-60" id="h5-2-60" class="d">-                    _ =&gt; {
+</a><a href="#h5-2-61" id="h5-2-61" class="d">-                        let rs = sql::Plan::build(statement)?
+</a><a href="#h5-2-62" id="h5-2-62" class="d">-                            .optimize()?
+</a><a href="#h5-2-63" id="h5-2-63" class="d">-                            .execute(sql::Context { txn: &amp;mut txn })?;
+</a><a href="#h5-2-64" id="h5-2-64" class="d">-                        Ok(rs)
+</a><a href="#h5-2-65" id="h5-2-65" class="d">-                    }
+</a><a href="#h5-2-66" id="h5-2-66" class="i">+                sql::ast::Statement::Commit =&gt; {
+</a><a href="#h5-2-67" id="h5-2-67" class="i">+                    let mut rs = sql::types::ResultSet::empty();
+</a><a href="#h5-2-68" id="h5-2-68" class="i">+                    rs.effect = Some(client::Effect::Commit(txn.id()));
+</a><a href="#h5-2-69" id="h5-2-69" class="i">+                    txn.commit()?;
+</a><a href="#h5-2-70" id="h5-2-70" class="i">+                    Ok(rs)
+</a><a href="#h5-2-71" id="h5-2-71" class="i">+                }
+</a><a href="#h5-2-72" id="h5-2-72" class="i">+                sql::ast::Statement::Rollback =&gt; {
+</a><a href="#h5-2-73" id="h5-2-73" class="i">+                    let mut rs = sql::types::ResultSet::empty();
+</a><a href="#h5-2-74" id="h5-2-74" class="i">+                    rs.effect = Some(client::Effect::Rollback(txn.id()));
+</a><a href="#h5-2-75" id="h5-2-75" class="i">+                    txn.rollback()?;
+</a><a href="#h5-2-76" id="h5-2-76" class="i">+                    Ok(rs)
+</a><a href="#h5-2-77" id="h5-2-77" class="i">+                }
+</a><a href="#h5-2-78" id="h5-2-78" class="i">+                _ =&gt; {
+</a><a href="#h5-2-79" id="h5-2-79" class="i">+                    let rs = sql::Plan::build(statement)?
+</a><a href="#h5-2-80" id="h5-2-80" class="i">+                        .optimize()?
+</a><a href="#h5-2-81" id="h5-2-81" class="i">+                        .execute(sql::Context { txn: &amp;mut txn })?;
+</a><a href="#h5-2-82" id="h5-2-82" class="i">+                    Ok(rs)
+</a>                 }
+             }
+<a href="#h5-2-85" id="h5-2-85" class="d">-            client::Mode::Statement =&gt; match statement {
+</a><a href="#h5-2-86" id="h5-2-86" class="i">+        } else {
+</a><a href="#h5-2-87" id="h5-2-87" class="i">+            match statement {
+</a>                 sql::ast::Statement::Begin { readonly: false, version } =&gt; {
+                     if version.is_some() {
+                         return Err(Error::Value(
+<a href="#h5-3" id="h5-3" class="h">@@ -175,20 +138,27 @@ impl ToyDB {
+</a>                     }
+                     let txn = self.engine.begin()?;
+                     let mut rs = sql::types::ResultSet::empty();
+<a href="#h5-3-3" id="h5-3-3" class="d">-                    rs.effect = Some(client::Effect::Begin { id: txn.id(), readonly: false });
+</a><a href="#h5-3-4" id="h5-3-4" class="i">+                    rs.effect = Some(client::Effect::Begin { id: txn.id(), mode: txn.mode() });
+</a><a href="#h5-3-5" id="h5-3-5" class="i">+                    Ok(rs)
+</a><a href="#h5-3-6" id="h5-3-6" class="i">+                }
+</a><a href="#h5-3-7" id="h5-3-7" class="i">+                sql::ast::Statement::Begin { readonly: true, version: None } =&gt; {
+</a><a href="#h5-3-8" id="h5-3-8" class="i">+                    let txn = self.engine.begin_with_mode(Mode::ReadOnly)?;
+</a><a href="#h5-3-9" id="h5-3-9" class="i">+                    let mut rs = sql::types::ResultSet::empty();
+</a><a href="#h5-3-10" id="h5-3-10" class="i">+                    rs.effect = Some(client::Effect::Begin { id: txn.id(), mode: txn.mode() });
+</a>                     Ok(rs)
+                 }
+<a href="#h5-3-13" id="h5-3-13" class="d">-                sql::ast::Statement::Begin { readonly: true, version } =&gt; {
+</a><a href="#h5-3-14" id="h5-3-14" class="d">-                    let txn = self.engine.snapshot(version)?;
+</a><a href="#h5-3-15" id="h5-3-15" class="i">+                sql::ast::Statement::Begin { readonly: true, version: Some(version) } =&gt; {
+</a><a href="#h5-3-16" id="h5-3-16" class="i">+                    let txn = self.engine.begin_with_mode(Mode::Snapshot { version })?;
+</a>                     let mut rs = sql::types::ResultSet::empty();
+<a href="#h5-3-18" id="h5-3-18" class="d">-                    rs.effect = Some(client::Effect::Begin { id: txn.id(), readonly: true });
+</a><a href="#h5-3-19" id="h5-3-19" class="i">+                    rs.effect = Some(client::Effect::Begin { id: txn.id(), mode: txn.mode() });
+</a>                     Ok(rs)
+                 }
+                 sql::ast::Statement::Commit | sql::ast::Statement::Rollback =&gt; {
+                     Err(Error::Value(&quot;Not in a transaction&quot;.into()))
+                 }
+                 sql::ast::Statement::Select { .. } =&gt; {
+<a href="#h5-3-26" id="h5-3-26" class="d">-                    let mut txn = self.engine.snapshot(None)?;
+</a><a href="#h5-3-27" id="h5-3-27" class="i">+                    // FIXME Should use transient transaction
+</a><a href="#h5-3-28" id="h5-3-28" class="i">+                    let mut txn = self.engine.begin_with_mode(Mode::ReadOnly)?;
+</a>                     let result = sql::Plan::build(statement)?
+                         .optimize()?
+                         .execute(sql::Context { txn: &amp;mut txn });
+<a href="#h5-4" id="h5-4" class="h">@@ -203,7 +173,7 @@ impl ToyDB {
+</a>                     txn.commit()?;
+                     result
+                 }
+<a href="#h5-4-3" id="h5-4-3" class="d">-            },
+</a><a href="#h5-4-4" id="h5-4-4" class="i">+            }
+</a>         }
+     }
+ 
+<b>diff --git a/<a id="h6" href="../file/src/sql/engine/kv.rs.html">src/sql/engine/kv.rs</a> b/<a href="../file/src/sql/engine/kv.rs.html">src/sql/engine/kv.rs</a></b>
+<a href="#h6-0" id="h6-0" class="h">@@ -1,5 +1,6 @@
+</a> use super::super::schema;
+ use super::super::types;
+<a href="#h6-0-2" id="h6-0-2" class="i">+use super::Mode;
+</a> use crate::kv;
+ use crate::utility::{deserialize, serialize};
+ use crate::Error;
+<a href="#h6-1" id="h6-1" class="h">@@ -16,19 +17,14 @@ impl&lt;S: kv::storage::Storage&gt; KV&lt;S&gt; {
+</a> 
+ impl&lt;S: kv::storage::Storage&gt; super::Engine for KV&lt;S&gt; {
+     type Transaction = Transaction&lt;S&gt;;
+<a href="#h6-1-3" id="h6-1-3" class="d">-    type Snapshot = Transaction&lt;S&gt;;
+</a> 
+<a href="#h6-1-5" id="h6-1-5" class="d">-    fn begin(&amp;self) -&gt; Result&lt;Self::Transaction, Error&gt; {
+</a><a href="#h6-1-6" id="h6-1-6" class="d">-        Ok(Self::Transaction::new(self.kv.begin()?))
+</a><a href="#h6-1-7" id="h6-1-7" class="i">+    fn begin_with_mode(&amp;self, mode: Mode) -&gt; Result&lt;Self::Transaction, Error&gt; {
+</a><a href="#h6-1-8" id="h6-1-8" class="i">+        Ok(Self::Transaction::new(self.kv.begin_with_mode(mode)?))
+</a>     }
+ 
+     fn resume(&amp;self, id: u64) -&gt; Result&lt;Self::Transaction, Error&gt; {
+         Ok(Self::Transaction::new(self.kv.resume(id)?))
+     }
+<a href="#h6-1-14" id="h6-1-14" class="d">-
+</a><a href="#h6-1-15" id="h6-1-15" class="d">-    fn snapshot(&amp;self, version: Option&lt;u64&gt;) -&gt; Result&lt;Self::Snapshot, Error&gt; {
+</a><a href="#h6-1-16" id="h6-1-16" class="d">-        Ok(Self::Transaction::new(self.kv.begin_readonly(version)?))
+</a><a href="#h6-1-17" id="h6-1-17" class="d">-    }
+</a> }
+ 
+ pub struct Transaction&lt;S: kv::storage::Storage&gt; {
+<a href="#h6-2" id="h6-2" class="h">@@ -46,6 +42,10 @@ impl&lt;S: kv::storage::Storage&gt; super::Transaction for Transaction&lt;S&gt; {
+</a>         self.txn.id()
+     }
+ 
+<a href="#h6-2-3" id="h6-2-3" class="i">+    fn mode(&amp;self) -&gt; Mode {
+</a><a href="#h6-2-4" id="h6-2-4" class="i">+        self.txn.mode()
+</a><a href="#h6-2-5" id="h6-2-5" class="i">+    }
+</a><a href="#h6-2-6" id="h6-2-6" class="i">+
+</a>     fn commit(self) -&gt; Result&lt;(), Error&gt; {
+         self.txn.commit()
+     }
+<b>diff --git a/<a id="h7" href="../file/src/sql/engine/mod.rs.html">src/sql/engine/mod.rs</a> b/<a href="../file/src/sql/engine/mod.rs.html">src/sql/engine/mod.rs</a></b>
+<a href="#h7-0" id="h7-0" class="h">@@ -1,6 +1,7 @@
+</a> mod kv;
+ mod raft;
+ 
+<a href="#h7-0-3" id="h7-0-3" class="i">+pub use crate::kv::Mode;
+</a> pub use kv::KV;
+ pub use raft::Raft;
+ 
+<a href="#h7-1" id="h7-1" class="h">@@ -10,15 +11,18 @@ use crate::Error;
+</a> 
+ pub trait Engine {
+     type Transaction: Transaction;
+<a href="#h7-1-3" id="h7-1-3" class="d">-    type Snapshot: Transaction;
+</a> 
+<a href="#h7-1-5" id="h7-1-5" class="d">-    fn begin(&amp;self) -&gt; Result&lt;Self::Transaction, Error&gt;;
+</a><a href="#h7-1-6" id="h7-1-6" class="i">+    fn begin(&amp;self) -&gt; Result&lt;Self::Transaction, Error&gt; {
+</a><a href="#h7-1-7" id="h7-1-7" class="i">+        self.begin_with_mode(Mode::ReadWrite)
+</a><a href="#h7-1-8" id="h7-1-8" class="i">+    }
+</a><a href="#h7-1-9" id="h7-1-9" class="i">+
+</a><a href="#h7-1-10" id="h7-1-10" class="i">+    fn begin_with_mode(&amp;self, mode: Mode) -&gt; Result&lt;Self::Transaction, Error&gt;;
+</a>     fn resume(&amp;self, id: u64) -&gt; Result&lt;Self::Transaction, Error&gt;;
+<a href="#h7-1-12" id="h7-1-12" class="d">-    fn snapshot(&amp;self, version: Option&lt;u64&gt;) -&gt; Result&lt;Self::Snapshot, Error&gt;;
+</a> }
+ 
+ pub trait Transaction {
+     fn id(&amp;self) -&gt; u64;
+<a href="#h7-1-17" id="h7-1-17" class="i">+    fn mode(&amp;self) -&gt; Mode;
+</a>     fn commit(self) -&gt; Result&lt;(), Error&gt;;
+     fn rollback(self) -&gt; Result&lt;(), Error&gt;;
+ 
+<b>diff --git a/<a id="h8" href="../file/src/sql/engine/raft.rs.html">src/sql/engine/raft.rs</a> b/<a href="../file/src/sql/engine/raft.rs.html">src/sql/engine/raft.rs</a></b>
+<a href="#h8-0" id="h8-0" class="h">@@ -1,6 +1,7 @@
+</a> use super::super::schema;
+ use super::super::types;
+ use super::Engine as _;
+<a href="#h8-0-3" id="h8-0-3" class="i">+use super::Mode;
+</a> use super::Transaction as _;
+ use crate::kv;
+ use crate::raft;
+<a href="#h8-1" id="h8-1" class="h">@@ -10,7 +11,7 @@ use crate::Error;
+</a> /// A state machine mutation
+ #[derive(Clone, Debug, Serialize, Deserialize)]
+ enum Mutation {
+<a href="#h8-1-3" id="h8-1-3" class="d">-    Begin,
+</a><a href="#h8-1-4" id="h8-1-4" class="i">+    Begin(Mode),
+</a>     Commit(u64),
+     Rollback(u64),
+ 
+<a href="#h8-2" id="h8-2" class="h">@@ -25,7 +26,6 @@ enum Mutation {
+</a> /// A state machine query
+ #[derive(Clone, Debug, Serialize, Deserialize)]
+ enum Query {
+<a href="#h8-2-3" id="h8-2-3" class="d">-    BeginReadOnly(Option&lt;u64&gt;),
+</a>     Resume(u64),
+ 
+     Read { txn_id: u64, table: String, id: types::Value },
+<a href="#h8-3" id="h8-3" class="h">@@ -33,13 +33,6 @@ enum Query {
+</a> 
+     ListTables { txn_id: u64 },
+     ReadTable { txn_id: u64, table: String },
+<a href="#h8-3-3" id="h8-3-3" class="d">-
+</a><a href="#h8-3-4" id="h8-3-4" class="d">-    // FIXME Snapshot queries shouldn&#39;t be separate variants
+</a><a href="#h8-3-5" id="h8-3-5" class="d">-    ReadSnapshot { version: u64, table: String, id: types::Value },
+</a><a href="#h8-3-6" id="h8-3-6" class="d">-    ScanSnapshot { version: u64, table: String },
+</a><a href="#h8-3-7" id="h8-3-7" class="d">-
+</a><a href="#h8-3-8" id="h8-3-8" class="d">-    ListTablesSnapshot { version: u64 },
+</a><a href="#h8-3-9" id="h8-3-9" class="d">-    ReadTableSnapshot { version: u64, table: String },
+</a> }
+ 
+ pub struct Raft {
+<a href="#h8-4" id="h8-4" class="h">@@ -60,36 +53,32 @@ impl Raft {
+</a> 
+ impl super::Engine for Raft {
+     type Transaction = Transaction;
+<a href="#h8-4-3" id="h8-4-3" class="d">-    type Snapshot = Snapshot;
+</a> 
+<a href="#h8-4-5" id="h8-4-5" class="d">-    fn begin(&amp;self) -&gt; Result&lt;Self::Transaction, Error&gt; {
+</a><a href="#h8-4-6" id="h8-4-6" class="d">-        Transaction::new(self.raft.clone())
+</a><a href="#h8-4-7" id="h8-4-7" class="i">+    fn begin_with_mode(&amp;self, mode: Mode) -&gt; Result&lt;Self::Transaction, Error&gt; {
+</a><a href="#h8-4-8" id="h8-4-8" class="i">+        Transaction::begin_with_mode(self.raft.clone(), mode)
+</a>     }
+ 
+     fn resume(&amp;self, id: u64) -&gt; Result&lt;Self::Transaction, Error&gt; {
+         Transaction::resume(self.raft.clone(), id)
+     }
+<a href="#h8-4-14" id="h8-4-14" class="d">-
+</a><a href="#h8-4-15" id="h8-4-15" class="d">-    fn snapshot(&amp;self, version: Option&lt;u64&gt;) -&gt; Result&lt;Self::Snapshot, Error&gt; {
+</a><a href="#h8-4-16" id="h8-4-16" class="d">-        Snapshot::new(self.raft.clone(), version)
+</a><a href="#h8-4-17" id="h8-4-17" class="d">-    }
+</a> }
+ 
+ #[derive(Clone)]
+ pub struct Transaction {
+     raft: raft::Raft,
+     id: u64,
+<a href="#h8-4-24" id="h8-4-24" class="i">+    mode: Mode,
+</a> }
+ 
+ impl Transaction {
+<a href="#h8-4-28" id="h8-4-28" class="d">-    fn new(raft: raft::Raft) -&gt; Result&lt;Self, Error&gt; {
+</a><a href="#h8-4-29" id="h8-4-29" class="d">-        let id = deserialize(raft.mutate(serialize(Mutation::Begin)?)?)?;
+</a><a href="#h8-4-30" id="h8-4-30" class="d">-        Ok(Self { raft, id })
+</a><a href="#h8-4-31" id="h8-4-31" class="i">+    fn begin_with_mode(raft: raft::Raft, mode: Mode) -&gt; Result&lt;Self, Error&gt; {
+</a><a href="#h8-4-32" id="h8-4-32" class="i">+        let id = deserialize(raft.mutate(serialize(Mutation::Begin(mode.clone()))?)?)?;
+</a><a href="#h8-4-33" id="h8-4-33" class="i">+        Ok(Self { raft, id, mode })
+</a>     }
+ 
+     fn resume(raft: raft::Raft, id: u64) -&gt; Result&lt;Self, Error&gt; {
+<a href="#h8-4-37" id="h8-4-37" class="d">-        let id = deserialize(raft.query(serialize(Query::Resume(id))?)?)?;
+</a><a href="#h8-4-38" id="h8-4-38" class="d">-        Ok(Self { raft, id })
+</a><a href="#h8-4-39" id="h8-4-39" class="i">+        let (id, mode) = deserialize(raft.query(serialize(Query::Resume(id))?)?)?;
+</a><a href="#h8-4-40" id="h8-4-40" class="i">+        Ok(Self { raft, id, mode })
+</a>     }
+ }
+ 
+<a href="#h8-5" id="h8-5" class="h">@@ -98,6 +87,10 @@ impl super::Transaction for Transaction {
+</a>         self.id
+     }
+ 
+<a href="#h8-5-3" id="h8-5-3" class="i">+    fn mode(&amp;self) -&gt; Mode {
+</a><a href="#h8-5-4" id="h8-5-4" class="i">+        self.mode.clone()
+</a><a href="#h8-5-5" id="h8-5-5" class="i">+    }
+</a><a href="#h8-5-6" id="h8-5-6" class="i">+
+</a>     fn commit(self) -&gt; Result&lt;(), Error&gt; {
+         deserialize(self.raft.mutate(serialize(Mutation::Commit(self.id))?)?)
+     }
+<a href="#h8-6" id="h8-6" class="h">@@ -180,85 +173,6 @@ impl super::Transaction for Transaction {
+</a>     }
+ }
+ 
+<a href="#h8-6-3" id="h8-6-3" class="d">-#[derive(Clone)]
+</a><a href="#h8-6-4" id="h8-6-4" class="d">-pub struct Snapshot {
+</a><a href="#h8-6-5" id="h8-6-5" class="d">-    raft: raft::Raft,
+</a><a href="#h8-6-6" id="h8-6-6" class="d">-    version: u64,
+</a><a href="#h8-6-7" id="h8-6-7" class="d">-}
+</a><a href="#h8-6-8" id="h8-6-8" class="d">-
+</a><a href="#h8-6-9" id="h8-6-9" class="d">-impl Snapshot {
+</a><a href="#h8-6-10" id="h8-6-10" class="d">-    fn new(raft: raft::Raft, version: Option&lt;u64&gt;) -&gt; Result&lt;Self, Error&gt; {
+</a><a href="#h8-6-11" id="h8-6-11" class="d">-        let version = deserialize(raft.query(serialize(Query::BeginReadOnly(version))?)?)?;
+</a><a href="#h8-6-12" id="h8-6-12" class="d">-        Ok(Self { raft, version })
+</a><a href="#h8-6-13" id="h8-6-13" class="d">-    }
+</a><a href="#h8-6-14" id="h8-6-14" class="d">-}
+</a><a href="#h8-6-15" id="h8-6-15" class="d">-
+</a><a href="#h8-6-16" id="h8-6-16" class="d">-impl super::Transaction for Snapshot {
+</a><a href="#h8-6-17" id="h8-6-17" class="d">-    fn id(&amp;self) -&gt; u64 {
+</a><a href="#h8-6-18" id="h8-6-18" class="d">-        self.version
+</a><a href="#h8-6-19" id="h8-6-19" class="d">-    }
+</a><a href="#h8-6-20" id="h8-6-20" class="d">-
+</a><a href="#h8-6-21" id="h8-6-21" class="d">-    fn commit(self) -&gt; Result&lt;(), Error&gt; {
+</a><a href="#h8-6-22" id="h8-6-22" class="d">-        Ok(())
+</a><a href="#h8-6-23" id="h8-6-23" class="d">-    }
+</a><a href="#h8-6-24" id="h8-6-24" class="d">-
+</a><a href="#h8-6-25" id="h8-6-25" class="d">-    fn rollback(self) -&gt; Result&lt;(), Error&gt; {
+</a><a href="#h8-6-26" id="h8-6-26" class="d">-        Ok(())
+</a><a href="#h8-6-27" id="h8-6-27" class="d">-    }
+</a><a href="#h8-6-28" id="h8-6-28" class="d">-
+</a><a href="#h8-6-29" id="h8-6-29" class="d">-    fn create(&amp;mut self, _table: &amp;str, _row: types::Row) -&gt; Result&lt;(), Error&gt; {
+</a><a href="#h8-6-30" id="h8-6-30" class="d">-        Err(Error::ReadOnly)
+</a><a href="#h8-6-31" id="h8-6-31" class="d">-    }
+</a><a href="#h8-6-32" id="h8-6-32" class="d">-
+</a><a href="#h8-6-33" id="h8-6-33" class="d">-    fn delete(&amp;mut self, _table: &amp;str, _id: &amp;types::Value) -&gt; Result&lt;(), Error&gt; {
+</a><a href="#h8-6-34" id="h8-6-34" class="d">-        Err(Error::ReadOnly)
+</a><a href="#h8-6-35" id="h8-6-35" class="d">-    }
+</a><a href="#h8-6-36" id="h8-6-36" class="d">-
+</a><a href="#h8-6-37" id="h8-6-37" class="d">-    fn read(&amp;self, table: &amp;str, id: &amp;types::Value) -&gt; Result&lt;Option&lt;types::Row&gt;, Error&gt; {
+</a><a href="#h8-6-38" id="h8-6-38" class="d">-        deserialize(self.raft.query(serialize(Query::ReadSnapshot {
+</a><a href="#h8-6-39" id="h8-6-39" class="d">-            version: self.version,
+</a><a href="#h8-6-40" id="h8-6-40" class="d">-            table: table.into(),
+</a><a href="#h8-6-41" id="h8-6-41" class="d">-            id: id.clone(),
+</a><a href="#h8-6-42" id="h8-6-42" class="d">-        })?)?)
+</a><a href="#h8-6-43" id="h8-6-43" class="d">-    }
+</a><a href="#h8-6-44" id="h8-6-44" class="d">-
+</a><a href="#h8-6-45" id="h8-6-45" class="d">-    fn scan(&amp;self, table: &amp;str) -&gt; Result&lt;super::Scan, Error&gt; {
+</a><a href="#h8-6-46" id="h8-6-46" class="d">-        Ok(Box::new(
+</a><a href="#h8-6-47" id="h8-6-47" class="d">-            deserialize::&lt;Vec&lt;types::Row&gt;&gt;(self.raft.query(serialize(Query::ScanSnapshot {
+</a><a href="#h8-6-48" id="h8-6-48" class="d">-                version: self.version,
+</a><a href="#h8-6-49" id="h8-6-49" class="d">-                table: table.into(),
+</a><a href="#h8-6-50" id="h8-6-50" class="d">-            })?)?)?
+</a><a href="#h8-6-51" id="h8-6-51" class="d">-            .into_iter()
+</a><a href="#h8-6-52" id="h8-6-52" class="d">-            .map(Ok),
+</a><a href="#h8-6-53" id="h8-6-53" class="d">-        ))
+</a><a href="#h8-6-54" id="h8-6-54" class="d">-    }
+</a><a href="#h8-6-55" id="h8-6-55" class="d">-
+</a><a href="#h8-6-56" id="h8-6-56" class="d">-    fn update(&amp;mut self, _table: &amp;str, _id: &amp;types::Value, _row: types::Row) -&gt; Result&lt;(), Error&gt; {
+</a><a href="#h8-6-57" id="h8-6-57" class="d">-        Err(Error::ReadOnly)
+</a><a href="#h8-6-58" id="h8-6-58" class="d">-    }
+</a><a href="#h8-6-59" id="h8-6-59" class="d">-
+</a><a href="#h8-6-60" id="h8-6-60" class="d">-    fn create_table(&amp;mut self, _table: &amp;schema::Table) -&gt; Result&lt;(), Error&gt; {
+</a><a href="#h8-6-61" id="h8-6-61" class="d">-        Err(Error::ReadOnly)
+</a><a href="#h8-6-62" id="h8-6-62" class="d">-    }
+</a><a href="#h8-6-63" id="h8-6-63" class="d">-
+</a><a href="#h8-6-64" id="h8-6-64" class="d">-    fn delete_table(&amp;mut self, _table: &amp;str) -&gt; Result&lt;(), Error&gt; {
+</a><a href="#h8-6-65" id="h8-6-65" class="d">-        Err(Error::ReadOnly)
+</a><a href="#h8-6-66" id="h8-6-66" class="d">-    }
+</a><a href="#h8-6-67" id="h8-6-67" class="d">-
+</a><a href="#h8-6-68" id="h8-6-68" class="d">-    fn list_tables(&amp;self) -&gt; Result&lt;Vec&lt;schema::Table&gt;, Error&gt; {
+</a><a href="#h8-6-69" id="h8-6-69" class="d">-        deserialize(
+</a><a href="#h8-6-70" id="h8-6-70" class="d">-            self.raft.query(serialize(Query::ListTablesSnapshot { version: self.version })?)?,
+</a><a href="#h8-6-71" id="h8-6-71" class="d">-        )
+</a><a href="#h8-6-72" id="h8-6-72" class="d">-    }
+</a><a href="#h8-6-73" id="h8-6-73" class="d">-
+</a><a href="#h8-6-74" id="h8-6-74" class="d">-    fn read_table(&amp;self, table: &amp;str) -&gt; Result&lt;Option&lt;schema::Table&gt;, Error&gt; {
+</a><a href="#h8-6-75" id="h8-6-75" class="d">-        deserialize(self.raft.query(serialize(Query::ReadTableSnapshot {
+</a><a href="#h8-6-76" id="h8-6-76" class="d">-            version: self.version,
+</a><a href="#h8-6-77" id="h8-6-77" class="d">-            table: table.into(),
+</a><a href="#h8-6-78" id="h8-6-78" class="d">-        })?)?)
+</a><a href="#h8-6-79" id="h8-6-79" class="d">-    }
+</a><a href="#h8-6-80" id="h8-6-80" class="d">-}
+</a><a href="#h8-6-81" id="h8-6-81" class="d">-
+</a> /// The underlying state machine for the Raft-based engine
+ pub struct State&lt;S: kv::storage::Storage&gt; {
+     engine: super::KV&lt;S&gt;,
+<a href="#h8-7" id="h8-7" class="h">@@ -279,7 +193,7 @@ impl&lt;S: kv::storage::Storage&gt; State&lt;S&gt; {
+</a> impl&lt;S: kv::storage::Storage&gt; raft::State for State&lt;S&gt; {
+     fn mutate(&amp;mut self, command: Vec&lt;u8&gt;) -&gt; Result&lt;Vec&lt;u8&gt;, Error&gt; {
+         match deserialize(command)? {
+<a href="#h8-7-3" id="h8-7-3" class="d">-            Mutation::Begin =&gt; serialize(self.engine.begin()?.id()),
+</a><a href="#h8-7-4" id="h8-7-4" class="i">+            Mutation::Begin(mode) =&gt; serialize(self.engine.begin_with_mode(mode)?.id()),
+</a>             Mutation::Commit(txn_id) =&gt; serialize(self.engine.resume(txn_id)?.commit()?),
+             Mutation::Rollback(txn_id) =&gt; serialize(self.engine.resume(txn_id)?.rollback()?),
+ 
+<a href="#h8-8" id="h8-8" class="h">@@ -304,8 +218,10 @@ impl&lt;S: kv::storage::Storage&gt; raft::State for State&lt;S&gt; {
+</a> 
+     fn query(&amp;self, command: Vec&lt;u8&gt;) -&gt; Result&lt;Vec&lt;u8&gt;, Error&gt; {
+         match deserialize(command)? {
+<a href="#h8-8-3" id="h8-8-3" class="d">-            Query::BeginReadOnly(version) =&gt; serialize(self.engine.snapshot(version)?.id()),
+</a><a href="#h8-8-4" id="h8-8-4" class="d">-            Query::Resume(id) =&gt; serialize(self.engine.resume(id)?.id()),
+</a><a href="#h8-8-5" id="h8-8-5" class="i">+            Query::Resume(id) =&gt; {
+</a><a href="#h8-8-6" id="h8-8-6" class="i">+                let txn = self.engine.resume(id)?;
+</a><a href="#h8-8-7" id="h8-8-7" class="i">+                serialize((txn.id(), txn.mode()))
+</a><a href="#h8-8-8" id="h8-8-8" class="i">+            }
+</a> 
+             Query::Read { txn_id, table, id } =&gt; {
+                 serialize(self.engine.resume(txn_id)?.read(&amp;table, &amp;id)?)
+<a href="#h8-9" id="h8-9" class="h">@@ -322,24 +238,6 @@ impl&lt;S: kv::storage::Storage&gt; raft::State for State&lt;S&gt; {
+</a>             Query::ReadTable { txn_id, table } =&gt; {
+                 serialize(self.engine.resume(txn_id)?.read_table(&amp;table)?)
+             }
+<a href="#h8-9-3" id="h8-9-3" class="d">-
+</a><a href="#h8-9-4" id="h8-9-4" class="d">-            Query::ReadSnapshot { version, table, id } =&gt; {
+</a><a href="#h8-9-5" id="h8-9-5" class="d">-                serialize(self.engine.snapshot(Some(version))?.read(&amp;table, &amp;id)?)
+</a><a href="#h8-9-6" id="h8-9-6" class="d">-            }
+</a><a href="#h8-9-7" id="h8-9-7" class="d">-            // FIXME This needs to stream rows
+</a><a href="#h8-9-8" id="h8-9-8" class="d">-            Query::ScanSnapshot { version, table } =&gt; serialize(
+</a><a href="#h8-9-9" id="h8-9-9" class="d">-                self.engine
+</a><a href="#h8-9-10" id="h8-9-10" class="d">-                    .snapshot(Some(version))?
+</a><a href="#h8-9-11" id="h8-9-11" class="d">-                    .scan(&amp;table)?
+</a><a href="#h8-9-12" id="h8-9-12" class="d">-                    .collect::&lt;Result&lt;Vec&lt;types::Row&gt;, Error&gt;&gt;()?,
+</a><a href="#h8-9-13" id="h8-9-13" class="d">-            ),
+</a><a href="#h8-9-14" id="h8-9-14" class="d">-
+</a><a href="#h8-9-15" id="h8-9-15" class="d">-            Query::ListTablesSnapshot { version } =&gt; {
+</a><a href="#h8-9-16" id="h8-9-16" class="d">-                serialize(self.engine.snapshot(Some(version))?.list_tables()?)
+</a><a href="#h8-9-17" id="h8-9-17" class="d">-            }
+</a><a href="#h8-9-18" id="h8-9-18" class="d">-            Query::ReadTableSnapshot { version, table } =&gt; {
+</a><a href="#h8-9-19" id="h8-9-19" class="d">-                serialize(self.engine.snapshot(Some(version))?.read_table(&amp;table)?)
+</a><a href="#h8-9-20" id="h8-9-20" class="d">-            }
+</a>         }
+     }
+ }
+</pre>
+</div>
+</body>
+</html>

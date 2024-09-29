@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Simplify initial Raft log replay. - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/c1a8859133157626f0618cc80c955dbbd2b4dd96.html">c1a8859133157626f0618cc80c955dbbd2b4dd96</a>
+<b>parent</b> <a href="../commit/75c33b491568f201c5cd39270fdfc9b251dfd64c.html">75c33b491568f201c5cd39270fdfc9b251dfd64c</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Sat, 18 Nov 2023 13:53:27 +0100
+
+Simplify initial Raft log replay.
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/raft/log.rs</a></td><td> | </td><td class="num">8</td><td><span class="i">++++</span><span class="d">----</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/raft/mod.rs</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/raft/node/mod.rs</a></td><td> | </td><td class="num">16</td><td><span class="i">++</span><span class="d">--------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">src/raft/state.rs</a></td><td> | </td><td class="num">64</td><td><span class="i">+++++++++++++++++++++++++++++++++++++++</span><span class="d">-------------------------</span></td></tr>
+</table></pre><pre>4 files changed, 46 insertions(+), 44 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/raft/log.rs.html">src/raft/log.rs</a> b/<a href="../file/src/raft/log.rs.html">src/raft/log.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -54,9 +54,6 @@ impl KeyPrefix {
+</a>         keycode::serialize(self)
+     }
+ }
+<a href="#h0-0-3" id="h0-0-3" class="d">-/// A log scan
+</a><a href="#h0-0-4" id="h0-0-4" class="d">-pub type Scan&lt;&#39;a&gt; = Box&lt;dyn Iterator&lt;Item = Result&lt;Entry&gt;&gt; + &#39;a&gt;;
+</a><a href="#h0-0-5" id="h0-0-5" class="d">-
+</a> /// A Raft log.
+ pub struct Log {
+     /// The underlying storage engine.
+<a href="#h0-1" id="h0-1" class="h">@@ -197,7 +194,10 @@ impl Log {
+</a>     }
+ 
+     /// Iterates over log entries in the given index range.
+<a href="#h0-1-3" id="h0-1-3" class="d">-    pub fn scan(&amp;mut self, range: impl std::ops::RangeBounds&lt;Index&gt;) -&gt; Result&lt;Scan&gt; {
+</a><a href="#h0-1-4" id="h0-1-4" class="i">+    pub fn scan(
+</a><a href="#h0-1-5" id="h0-1-5" class="i">+        &amp;mut self,
+</a><a href="#h0-1-6" id="h0-1-6" class="i">+        range: impl std::ops::RangeBounds&lt;Index&gt;,
+</a><a href="#h0-1-7" id="h0-1-7" class="i">+    ) -&gt; Result&lt;Box&lt;dyn Iterator&lt;Item = Result&lt;Entry&gt;&gt; + &#39;_&gt;&gt; {
+</a>         let from = match range.start_bound() {
+             std::ops::Bound::Excluded(i) =&gt; std::ops::Bound::Excluded(Key::Entry(*i).encode()?),
+             std::ops::Bound::Included(i) =&gt; std::ops::Bound::Included(Key::Entry(*i).encode()?),
+<b>diff --git a/<a id="h1" href="../file/src/raft/mod.rs.html">src/raft/mod.rs</a> b/<a href="../file/src/raft/mod.rs.html">src/raft/mod.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -4,7 +4,7 @@ mod node;
+</a> mod server;
+ mod state;
+ 
+<a href="#h1-0-3" id="h1-0-3" class="d">-pub use self::log::{Engine, Entry, Index, Log, Scan};
+</a><a href="#h1-0-4" id="h1-0-4" class="i">+pub use self::log::{Engine, Entry, Index, Log};
+</a> pub use message::{Address, Event, Message, Request, Response};
+ pub use node::{Node, NodeID, Status, Term};
+ pub use server::Server;
+<b>diff --git a/<a id="h2" href="../file/src/raft/node/mod.rs.html">src/raft/node/mod.rs</a> b/<a href="../file/src/raft/node/mod.rs.html">src/raft/node/mod.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -57,21 +57,9 @@ impl Node {
+</a>         mut state: Box&lt;dyn State&gt;,
+         node_tx: mpsc::UnboundedSender&lt;Message&gt;,
+     ) -&gt; Result&lt;Self&gt; {
+<a href="#h2-0-3" id="h2-0-3" class="d">-        let applied_index = state.applied_index();
+</a><a href="#h2-0-4" id="h2-0-4" class="d">-        let (commit_index, _) = log.get_commit_index();
+</a><a href="#h2-0-5" id="h2-0-5" class="d">-        if applied_index &gt; commit_index {
+</a><a href="#h2-0-6" id="h2-0-6" class="d">-            return Err(Error::Internal(format!(
+</a><a href="#h2-0-7" id="h2-0-7" class="d">-                &quot;State machine applied index {} greater than log committed index {}&quot;,
+</a><a href="#h2-0-8" id="h2-0-8" class="d">-                applied_index, commit_index
+</a><a href="#h2-0-9" id="h2-0-9" class="d">-            )));
+</a><a href="#h2-0-10" id="h2-0-10" class="d">-        }
+</a><a href="#h2-0-11" id="h2-0-11" class="d">-
+</a>         let (state_tx, state_rx) = mpsc::unbounded_channel();
+         let mut driver = Driver::new(state_rx, node_tx.clone());
+<a href="#h2-0-14" id="h2-0-14" class="d">-        if commit_index &gt; applied_index {
+</a><a href="#h2-0-15" id="h2-0-15" class="d">-            info!(&quot;Replaying log entries {} to {}&quot;, applied_index + 1, commit_index);
+</a><a href="#h2-0-16" id="h2-0-16" class="d">-            driver.replay(&amp;mut *state, log.scan((applied_index + 1)..=commit_index)?)?;
+</a><a href="#h2-0-17" id="h2-0-17" class="d">-        };
+</a><a href="#h2-0-18" id="h2-0-18" class="i">+        driver.apply_log(&amp;mut *state, &amp;mut log)?;
+</a>         tokio::spawn(driver.drive(state));
+ 
+         let (term, voted_for) = log.get_term()?;
+<a href="#h2-1" id="h2-1" class="h">@@ -504,7 +492,7 @@ mod tests {
+</a>         assert_eq!(
+             Node::new(1, vec![2, 3], log, state.clone(), node_tx).await.err(),
+             Some(Error::Internal(
+<a href="#h2-1-3" id="h2-1-3" class="d">-                &quot;State machine applied index 4 greater than log committed index 3&quot;.into()
+</a><a href="#h2-1-4" id="h2-1-4" class="i">+                &quot;State machine applied index 4 greater than log commit index 3&quot;.into()
+</a>             ))
+         );
+         Ok(())
+<b>diff --git a/<a id="h3" href="../file/src/raft/state.rs.html">src/raft/state.rs</a> b/<a href="../file/src/raft/state.rs.html">src/raft/state.rs</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -1,4 +1,4 @@
+</a><a href="#h3-0-0" id="h3-0-0" class="d">-use super::{Address, Entry, Event, Index, Message, Response, Scan, Status, Term};
+</a><a href="#h3-0-1" id="h3-0-1" class="i">+use super::{Address, Entry, Event, Index, Log, Message, Response, Status, Term};
+</a> use crate::error::{Error, Result};
+ 
+ use log::{debug, error};
+<a href="#h3-1" id="h3-1" class="h">@@ -87,18 +87,44 @@ impl Driver {
+</a>         Ok(())
+     }
+ 
+<a href="#h3-1-3" id="h3-1-3" class="d">-    /// Synchronously (re)plays a set of log entries, for initial sync.
+</a><a href="#h3-1-4" id="h3-1-4" class="d">-    pub fn replay(&amp;mut self, state: &amp;mut dyn State, mut scan: Scan) -&gt; Result&lt;()&gt; {
+</a><a href="#h3-1-5" id="h3-1-5" class="d">-        while let Some(entry) = scan.next().transpose()? {
+</a><a href="#h3-1-6" id="h3-1-6" class="d">-            debug!(&quot;Replaying {:?}&quot;, entry);
+</a><a href="#h3-1-7" id="h3-1-7" class="d">-            if let Some(command) = entry.command {
+</a><a href="#h3-1-8" id="h3-1-8" class="d">-                match state.mutate(entry.index, command) {
+</a><a href="#h3-1-9" id="h3-1-9" class="d">-                    Err(error @ Error::Internal(_)) =&gt; return Err(error),
+</a><a href="#h3-1-10" id="h3-1-10" class="d">-                    _ =&gt; self.applied_index = entry.index,
+</a><a href="#h3-1-11" id="h3-1-11" class="d">-                }
+</a><a href="#h3-1-12" id="h3-1-12" class="i">+    /// Applies committed log entries to the state machine.
+</a><a href="#h3-1-13" id="h3-1-13" class="i">+    pub fn apply_log(&amp;mut self, state: &amp;mut dyn State, log: &amp;mut Log) -&gt; Result&lt;Index&gt; {
+</a><a href="#h3-1-14" id="h3-1-14" class="i">+        let applied_index = state.applied_index();
+</a><a href="#h3-1-15" id="h3-1-15" class="i">+        let (commit_index, _) = log.get_commit_index();
+</a><a href="#h3-1-16" id="h3-1-16" class="i">+        if applied_index &gt; commit_index {
+</a><a href="#h3-1-17" id="h3-1-17" class="i">+            return Err(Error::Internal(format!(
+</a><a href="#h3-1-18" id="h3-1-18" class="i">+                &quot;State machine applied index {} greater than log commit index {}&quot;,
+</a><a href="#h3-1-19" id="h3-1-19" class="i">+                applied_index, commit_index
+</a><a href="#h3-1-20" id="h3-1-20" class="i">+            )));
+</a><a href="#h3-1-21" id="h3-1-21" class="i">+        }
+</a><a href="#h3-1-22" id="h3-1-22" class="i">+        if applied_index &lt; commit_index {
+</a><a href="#h3-1-23" id="h3-1-23" class="i">+            let mut scan = log.scan((applied_index + 1)..=commit_index)?;
+</a><a href="#h3-1-24" id="h3-1-24" class="i">+            while let Some(entry) = scan.next().transpose()? {
+</a><a href="#h3-1-25" id="h3-1-25" class="i">+                self.apply(state, entry)?;
+</a>             }
+         }
+<a href="#h3-1-28" id="h3-1-28" class="d">-        Ok(())
+</a><a href="#h3-1-29" id="h3-1-29" class="i">+        Ok(self.applied_index)
+</a><a href="#h3-1-30" id="h3-1-30" class="i">+    }
+</a><a href="#h3-1-31" id="h3-1-31" class="i">+
+</a><a href="#h3-1-32" id="h3-1-32" class="i">+    /// Applies an entry to the state machine.
+</a><a href="#h3-1-33" id="h3-1-33" class="i">+    pub fn apply(&amp;mut self, state: &amp;mut dyn State, entry: Entry) -&gt; Result&lt;Index&gt; {
+</a><a href="#h3-1-34" id="h3-1-34" class="i">+        // Apply the command, unless it&#39;s a noop.
+</a><a href="#h3-1-35" id="h3-1-35" class="i">+        debug!(&quot;Applying {:?}&quot;, entry);
+</a><a href="#h3-1-36" id="h3-1-36" class="i">+        if let Some(command) = entry.command {
+</a><a href="#h3-1-37" id="h3-1-37" class="i">+            match state.mutate(entry.index, command) {
+</a><a href="#h3-1-38" id="h3-1-38" class="i">+                Err(error @ Error::Internal(_)) =&gt; return Err(error),
+</a><a href="#h3-1-39" id="h3-1-39" class="i">+                result =&gt; self.notify_applied(entry.index, result)?,
+</a><a href="#h3-1-40" id="h3-1-40" class="i">+            };
+</a><a href="#h3-1-41" id="h3-1-41" class="i">+        }
+</a><a href="#h3-1-42" id="h3-1-42" class="i">+        // We have to track applied_index here, separately from the state machine, because
+</a><a href="#h3-1-43" id="h3-1-43" class="i">+        // no-op log entries are significant for whether a query should be executed.
+</a><a href="#h3-1-44" id="h3-1-44" class="i">+        //
+</a><a href="#h3-1-45" id="h3-1-45" class="i">+        // TODO: track noop commands in the state machine.
+</a><a href="#h3-1-46" id="h3-1-46" class="i">+        self.applied_index = entry.index;
+</a><a href="#h3-1-47" id="h3-1-47" class="i">+        // Try to execute any pending queries, since they may have been submitted for a
+</a><a href="#h3-1-48" id="h3-1-48" class="i">+        // commit_index which hadn&#39;t been applied yet.
+</a><a href="#h3-1-49" id="h3-1-49" class="i">+        self.query_execute(state)?;
+</a><a href="#h3-1-50" id="h3-1-50" class="i">+        Ok(self.applied_index)
+</a>     }
+ 
+     /// Executes a state machine instruction.
+<a href="#h3-2" id="h3-2" class="h">@@ -110,20 +136,8 @@ impl Driver {
+</a>                 self.query_abort()?;
+             }
+ 
+<a href="#h3-2-3" id="h3-2-3" class="d">-            Instruction::Apply { entry: Entry { index, command, .. } } =&gt; {
+</a><a href="#h3-2-4" id="h3-2-4" class="d">-                if let Some(command) = command {
+</a><a href="#h3-2-5" id="h3-2-5" class="d">-                    debug!(&quot;Applying state machine command {}: {:?}&quot;, index, command);
+</a><a href="#h3-2-6" id="h3-2-6" class="d">-                    match tokio::task::block_in_place(|| state.mutate(index, command)) {
+</a><a href="#h3-2-7" id="h3-2-7" class="d">-                        Err(error @ Error::Internal(_)) =&gt; return Err(error),
+</a><a href="#h3-2-8" id="h3-2-8" class="d">-                        result =&gt; self.notify_applied(index, result)?,
+</a><a href="#h3-2-9" id="h3-2-9" class="d">-                    };
+</a><a href="#h3-2-10" id="h3-2-10" class="d">-                }
+</a><a href="#h3-2-11" id="h3-2-11" class="d">-                // We have to track applied_index here, separately from the state machine, because
+</a><a href="#h3-2-12" id="h3-2-12" class="d">-                // no-op log entries are significant for whether a query should be executed.
+</a><a href="#h3-2-13" id="h3-2-13" class="d">-                self.applied_index = index;
+</a><a href="#h3-2-14" id="h3-2-14" class="d">-                // Try to execute any pending queries, since they may have been submitted for a
+</a><a href="#h3-2-15" id="h3-2-15" class="d">-                // commit_index which hadn&#39;t been applied yet.
+</a><a href="#h3-2-16" id="h3-2-16" class="d">-                self.query_execute(state)?;
+</a><a href="#h3-2-17" id="h3-2-17" class="i">+            Instruction::Apply { entry } =&gt; {
+</a><a href="#h3-2-18" id="h3-2-18" class="i">+                self.apply(state, entry)?;
+</a>             }
+ 
+             Instruction::Notify { id, address, index } =&gt; {
+</pre>
+</div>
+</body>
+</html>

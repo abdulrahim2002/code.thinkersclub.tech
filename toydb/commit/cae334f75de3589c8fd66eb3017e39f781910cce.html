@@ -1,0 +1,585 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>sql: cleaned up schema module - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/cae334f75de3589c8fd66eb3017e39f781910cce.html">cae334f75de3589c8fd66eb3017e39f781910cce</a>
+<b>parent</b> <a href="../commit/62cd8320ca57baf6a7d023842895bce59cd1fed3.html">62cd8320ca57baf6a7d023842895bce59cd1fed3</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Sat, 11 Jan 2020 15:50:27 +0100
+
+sql: cleaned up schema module
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/sql/engine/kv.rs</a></td><td> | </td><td class="num">6</td><td><span class="i">+++</span><span class="d">---</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/sql/executor/delete.rs</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/sql/executor/insert.rs</a></td><td> | </td><td class="num">15</td><td><span class="i">++++++++</span><span class="d">-------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">src/sql/executor/update.rs</a></td><td> | </td><td class="num">16</td><td><span class="i">++++++</span><span class="d">----------</span></td></tr>
+<tr><td class="A">A</td><td><a href="#h4">src/sql/tests/results/insert_values_extra</a></td><td> | </td><td class="num">89</td><td><span class="i">+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h5">src/sql/tests/schema.rs</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h6">src/sql/tests/sql.rs</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h7">src/sql/types/mod.rs</a></td><td> | </td><td class="num">8</td><td><span class="i">+</span><span class="d">-------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h8">src/sql/types/schema.rs</a></td><td> | </td><td class="num">204</td><td><span class="i">+++++++++++++++++++++++++++++++++++++++</span><span class="d">----------------------------------------</span></td></tr>
+</table></pre><pre>9 files changed, 210 insertions(+), 133 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/sql/engine/kv.rs.html">src/sql/engine/kv.rs</a> b/<a href="../file/src/sql/engine/kv.rs.html">src/sql/engine/kv.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -59,7 +59,7 @@ impl&lt;S: kv::storage::Storage&gt; super::Transaction for Transaction&lt;S&gt; {
+</a>             .read_table(&amp;table)?
+             .ok_or_else(|| Error::Value(format!(&quot;Table {} does not exist&quot;, table)))?;
+         table.validate_row(&amp;row, self)?;
+<a href="#h0-0-3" id="h0-0-3" class="d">-        let id = table.row_key(&amp;row)?;
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+        let id = table.get_row_key(&amp;row)?;
+</a>         if self.read(&amp;table.name, &amp;id)?.is_some() {
+             return Err(Error::Value(format!(
+                 &quot;Primary key {} already exists for table {}&quot;,
+<a href="#h0-1" id="h0-1" class="h">@@ -73,7 +73,7 @@ impl&lt;S: kv::storage::Storage&gt; super::Transaction for Transaction&lt;S&gt; {
+</a>         let table = self
+             .read_table(&amp;table)?
+             .ok_or_else(|| Error::Value(format!(&quot;Table {} does not exist&quot;, table)))?;
+<a href="#h0-1-3" id="h0-1-3" class="d">-        table.assert_pk_unreferenced(id, self)?;
+</a><a href="#h0-1-4" id="h0-1-4" class="i">+        table.assert_unreferenced_key(id, self)?;
+</a>         self.txn.delete(&amp;Key::Row(&amp;table.name, id).encode())
+     }
+ 
+<a href="#h0-2" id="h0-2" class="h">@@ -97,7 +97,7 @@ impl&lt;S: kv::storage::Storage&gt; super::Transaction for Transaction&lt;S&gt; {
+</a>             .read_table(&amp;table)?
+             .ok_or_else(|| Error::Value(format!(&quot;Table {} does not exist&quot;, table)))?;
+         // If the primary key changes we do a delete and create, otherwise we replace the row
+<a href="#h0-2-3" id="h0-2-3" class="d">-        if id != &amp;table.row_key(&amp;row)? {
+</a><a href="#h0-2-4" id="h0-2-4" class="i">+        if id != &amp;table.get_row_key(&amp;row)? {
+</a>             self.delete(&amp;table.name, id)?;
+             self.create(&amp;table.name, row)
+         } else {
+<b>diff --git a/<a id="h1" href="../file/src/sql/executor/delete.rs.html">src/sql/executor/delete.rs</a> b/<a href="../file/src/sql/executor/delete.rs.html">src/sql/executor/delete.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -17,7 +17,7 @@ impl Delete {
+</a>             .read_table(&amp;table)?
+             .ok_or_else(|| Error::Value(format!(&quot;Table {} not found&quot;, table)))?;
+         while let Some(row) = source.fetch()? {
+<a href="#h1-0-3" id="h1-0-3" class="d">-            ctx.txn.delete(&amp;table.name, &amp;table.row_key(&amp;row)?)?
+</a><a href="#h1-0-4" id="h1-0-4" class="i">+            ctx.txn.delete(&amp;table.name, &amp;table.get_row_key(&amp;row)?)?
+</a>         }
+         Ok(Box::new(Self))
+     }
+<b>diff --git a/<a id="h2" href="../file/src/sql/executor/insert.rs.html">src/sql/executor/insert.rs</a> b/<a href="../file/src/sql/executor/insert.rs.html">src/sql/executor/insert.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -19,13 +19,14 @@ impl Insert {
+</a>             .ok_or_else(|| Error::Value(format!(&quot;Table {} does not exist&quot;, table)))?;
+         let env = Environment::empty();
+         for exprs in expressions {
+<a href="#h2-0-3" id="h2-0-3" class="d">-            ctx.txn.create(
+</a><a href="#h2-0-4" id="h2-0-4" class="d">-                &amp;table.name,
+</a><a href="#h2-0-5" id="h2-0-5" class="d">-                table.make_row(
+</a><a href="#h2-0-6" id="h2-0-6" class="d">-                    exprs.into_iter().map(|e| e.evaluate(&amp;env)).collect::&lt;Result&lt;_, Error&gt;&gt;()?,
+</a><a href="#h2-0-7" id="h2-0-7" class="d">-                    if !columns.is_empty() { Some(&amp;columns) } else { None },
+</a><a href="#h2-0-8" id="h2-0-8" class="d">-                )?,
+</a><a href="#h2-0-9" id="h2-0-9" class="d">-            )?;
+</a><a href="#h2-0-10" id="h2-0-10" class="i">+            let mut row =
+</a><a href="#h2-0-11" id="h2-0-11" class="i">+                exprs.into_iter().map(|e| e.evaluate(&amp;env)).collect::&lt;Result&lt;_, Error&gt;&gt;()?;
+</a><a href="#h2-0-12" id="h2-0-12" class="i">+            if columns.is_empty() {
+</a><a href="#h2-0-13" id="h2-0-13" class="i">+                row = table.pad_row(row)?;
+</a><a href="#h2-0-14" id="h2-0-14" class="i">+            } else {
+</a><a href="#h2-0-15" id="h2-0-15" class="i">+                row = table.make_row(&amp;columns, row)?;
+</a><a href="#h2-0-16" id="h2-0-16" class="i">+            }
+</a><a href="#h2-0-17" id="h2-0-17" class="i">+            ctx.txn.create(&amp;table.name, row)?;
+</a>         }
+         Ok(Box::new(Self))
+     }
+<b>diff --git a/<a id="h3" href="../file/src/sql/executor/update.rs.html">src/sql/executor/update.rs</a> b/<a href="../file/src/sql/executor/update.rs.html">src/sql/executor/update.rs</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -19,17 +19,13 @@ impl Update {
+</a>             .txn
+             .read_table(&amp;table)?
+             .ok_or_else(|| Error::Value(format!(&quot;Table {} does not exist&quot;, table)))?;
+<a href="#h3-0-3" id="h3-0-3" class="d">-        while let Some(row) = source.fetch()? {
+</a><a href="#h3-0-4" id="h3-0-4" class="d">-            let id = table.row_key(&amp;row)?;
+</a><a href="#h3-0-5" id="h3-0-5" class="d">-            let mut keyed_row = table.row_to_hashmap(row);
+</a><a href="#h3-0-6" id="h3-0-6" class="d">-            let env = Environment::new(keyed_row.clone());
+</a><a href="#h3-0-7" id="h3-0-7" class="d">-            for (c, expr) in &amp;expressions {
+</a><a href="#h3-0-8" id="h3-0-8" class="d">-                *keyed_row
+</a><a href="#h3-0-9" id="h3-0-9" class="d">-                    .get_mut(c)
+</a><a href="#h3-0-10" id="h3-0-10" class="d">-                    .ok_or_else(|| Error::Value(format!(&quot;Unknown column {}&quot;, c)))? =
+</a><a href="#h3-0-11" id="h3-0-11" class="d">-                    expr.evaluate(&amp;env)?;
+</a><a href="#h3-0-12" id="h3-0-12" class="i">+        while let Some(mut row) = source.fetch()? {
+</a><a href="#h3-0-13" id="h3-0-13" class="i">+            let id = table.get_row_key(&amp;row)?;
+</a><a href="#h3-0-14" id="h3-0-14" class="i">+            let env = Environment::new(table.make_row_hashmap(row.clone()));
+</a><a href="#h3-0-15" id="h3-0-15" class="i">+            for (field, expr) in &amp;expressions {
+</a><a href="#h3-0-16" id="h3-0-16" class="i">+                table.set_row_field(&amp;mut row, field, expr.evaluate(&amp;env)?)?;
+</a>             }
+<a href="#h3-0-18" id="h3-0-18" class="d">-            ctx.txn.update(&amp;table.name, &amp;id, table.row_from_hashmap(keyed_row))?
+</a><a href="#h3-0-19" id="h3-0-19" class="i">+            ctx.txn.update(&amp;table.name, &amp;id, row)?
+</a>         }
+         Ok(Box::new(Self))
+     }
+<b>diff --git a/<a id="h4" href="../file/src/sql/tests/results/insert_values_extra.html">src/sql/tests/results/insert_values_extra</a> b/<a href="../file/src/sql/tests/results/insert_values_extra.html">src/sql/tests/results/insert_values_extra</a></b>
+<a href="#h4-0" id="h4-0" class="h">@@ -0,0 +1,88 @@
+</a><a href="#h4-0-0" id="h4-0-0" class="i">+Query: INSERT INTO genres VALUES (9, &#39;Western&#39;, NULL)
+</a><a href="#h4-0-1" id="h4-0-1" class="i">+
+</a><a href="#h4-0-2" id="h4-0-2" class="i">+Tokens:
+</a><a href="#h4-0-3" id="h4-0-3" class="i">+  Keyword(Insert)
+</a><a href="#h4-0-4" id="h4-0-4" class="i">+  Keyword(Into)
+</a><a href="#h4-0-5" id="h4-0-5" class="i">+  Ident(&quot;genres&quot;)
+</a><a href="#h4-0-6" id="h4-0-6" class="i">+  Keyword(Values)
+</a><a href="#h4-0-7" id="h4-0-7" class="i">+  OpenParen
+</a><a href="#h4-0-8" id="h4-0-8" class="i">+  Number(&quot;9&quot;)
+</a><a href="#h4-0-9" id="h4-0-9" class="i">+  Comma
+</a><a href="#h4-0-10" id="h4-0-10" class="i">+  String(&quot;Western&quot;)
+</a><a href="#h4-0-11" id="h4-0-11" class="i">+  Comma
+</a><a href="#h4-0-12" id="h4-0-12" class="i">+  Keyword(Null)
+</a><a href="#h4-0-13" id="h4-0-13" class="i">+  CloseParen
+</a><a href="#h4-0-14" id="h4-0-14" class="i">+
+</a><a href="#h4-0-15" id="h4-0-15" class="i">+AST: Insert {
+</a><a href="#h4-0-16" id="h4-0-16" class="i">+    table: &quot;genres&quot;,
+</a><a href="#h4-0-17" id="h4-0-17" class="i">+    columns: None,
+</a><a href="#h4-0-18" id="h4-0-18" class="i">+    values: [
+</a><a href="#h4-0-19" id="h4-0-19" class="i">+        [
+</a><a href="#h4-0-20" id="h4-0-20" class="i">+            Literal(
+</a><a href="#h4-0-21" id="h4-0-21" class="i">+                Integer(
+</a><a href="#h4-0-22" id="h4-0-22" class="i">+                    9,
+</a><a href="#h4-0-23" id="h4-0-23" class="i">+                ),
+</a><a href="#h4-0-24" id="h4-0-24" class="i">+            ),
+</a><a href="#h4-0-25" id="h4-0-25" class="i">+            Literal(
+</a><a href="#h4-0-26" id="h4-0-26" class="i">+                String(
+</a><a href="#h4-0-27" id="h4-0-27" class="i">+                    &quot;Western&quot;,
+</a><a href="#h4-0-28" id="h4-0-28" class="i">+                ),
+</a><a href="#h4-0-29" id="h4-0-29" class="i">+            ),
+</a><a href="#h4-0-30" id="h4-0-30" class="i">+            Literal(
+</a><a href="#h4-0-31" id="h4-0-31" class="i">+                Null,
+</a><a href="#h4-0-32" id="h4-0-32" class="i">+            ),
+</a><a href="#h4-0-33" id="h4-0-33" class="i">+        ],
+</a><a href="#h4-0-34" id="h4-0-34" class="i">+    ],
+</a><a href="#h4-0-35" id="h4-0-35" class="i">+}
+</a><a href="#h4-0-36" id="h4-0-36" class="i">+
+</a><a href="#h4-0-37" id="h4-0-37" class="i">+Plan: Plan {
+</a><a href="#h4-0-38" id="h4-0-38" class="i">+    root: Insert {
+</a><a href="#h4-0-39" id="h4-0-39" class="i">+        table: &quot;genres&quot;,
+</a><a href="#h4-0-40" id="h4-0-40" class="i">+        columns: [],
+</a><a href="#h4-0-41" id="h4-0-41" class="i">+        expressions: [
+</a><a href="#h4-0-42" id="h4-0-42" class="i">+            [
+</a><a href="#h4-0-43" id="h4-0-43" class="i">+                Constant(
+</a><a href="#h4-0-44" id="h4-0-44" class="i">+                    Integer(
+</a><a href="#h4-0-45" id="h4-0-45" class="i">+                        9,
+</a><a href="#h4-0-46" id="h4-0-46" class="i">+                    ),
+</a><a href="#h4-0-47" id="h4-0-47" class="i">+                ),
+</a><a href="#h4-0-48" id="h4-0-48" class="i">+                Constant(
+</a><a href="#h4-0-49" id="h4-0-49" class="i">+                    String(
+</a><a href="#h4-0-50" id="h4-0-50" class="i">+                        &quot;Western&quot;,
+</a><a href="#h4-0-51" id="h4-0-51" class="i">+                    ),
+</a><a href="#h4-0-52" id="h4-0-52" class="i">+                ),
+</a><a href="#h4-0-53" id="h4-0-53" class="i">+                Constant(
+</a><a href="#h4-0-54" id="h4-0-54" class="i">+                    Null,
+</a><a href="#h4-0-55" id="h4-0-55" class="i">+                ),
+</a><a href="#h4-0-56" id="h4-0-56" class="i">+            ],
+</a><a href="#h4-0-57" id="h4-0-57" class="i">+        ],
+</a><a href="#h4-0-58" id="h4-0-58" class="i">+    },
+</a><a href="#h4-0-59" id="h4-0-59" class="i">+}
+</a><a href="#h4-0-60" id="h4-0-60" class="i">+
+</a><a href="#h4-0-61" id="h4-0-61" class="i">+Optimized plan: Plan {
+</a><a href="#h4-0-62" id="h4-0-62" class="i">+    root: Insert {
+</a><a href="#h4-0-63" id="h4-0-63" class="i">+        table: &quot;genres&quot;,
+</a><a href="#h4-0-64" id="h4-0-64" class="i">+        columns: [],
+</a><a href="#h4-0-65" id="h4-0-65" class="i">+        expressions: [
+</a><a href="#h4-0-66" id="h4-0-66" class="i">+            [
+</a><a href="#h4-0-67" id="h4-0-67" class="i">+                Constant(
+</a><a href="#h4-0-68" id="h4-0-68" class="i">+                    Integer(
+</a><a href="#h4-0-69" id="h4-0-69" class="i">+                        9,
+</a><a href="#h4-0-70" id="h4-0-70" class="i">+                    ),
+</a><a href="#h4-0-71" id="h4-0-71" class="i">+                ),
+</a><a href="#h4-0-72" id="h4-0-72" class="i">+                Constant(
+</a><a href="#h4-0-73" id="h4-0-73" class="i">+                    String(
+</a><a href="#h4-0-74" id="h4-0-74" class="i">+                        &quot;Western&quot;,
+</a><a href="#h4-0-75" id="h4-0-75" class="i">+                    ),
+</a><a href="#h4-0-76" id="h4-0-76" class="i">+                ),
+</a><a href="#h4-0-77" id="h4-0-77" class="i">+                Constant(
+</a><a href="#h4-0-78" id="h4-0-78" class="i">+                    Null,
+</a><a href="#h4-0-79" id="h4-0-79" class="i">+                ),
+</a><a href="#h4-0-80" id="h4-0-80" class="i">+            ],
+</a><a href="#h4-0-81" id="h4-0-81" class="i">+        ],
+</a><a href="#h4-0-82" id="h4-0-82" class="i">+    },
+</a><a href="#h4-0-83" id="h4-0-83" class="i">+}
+</a><a href="#h4-0-84" id="h4-0-84" class="i">+
+</a><a href="#h4-0-85" id="h4-0-85" class="i">+Query: INSERT INTO genres VALUES (9, &#39;Western&#39;, NULL)
+</a><a href="#h4-0-86" id="h4-0-86" class="i">+
+</a><a href="#h4-0-87" id="h4-0-87" class="i">+Result: Value(&quot;Invalid row size for table genres&quot;)
+</a><a href="#h4-0-88" id="h4-0-88" class="i">+\ No newline at end of file
+</a><b>diff --git a/<a id="h5" href="../file/src/sql/tests/schema.rs.html">src/sql/tests/schema.rs</a> b/<a href="../file/src/sql/tests/schema.rs.html">src/sql/tests/schema.rs</a></b>
+<a href="#h5-0" id="h5-0" class="h">@@ -311,7 +311,7 @@ test_schema! { with [
+</a>             &quot;integer&quot; INTEGER UNIQUE,
+             &quot;string&quot; STRING UNIQUE
+         )&quot;#,
+<a href="#h5-0-3" id="h5-0-3" class="d">-        r#&quot;INSERT INTO &quot;unique&quot; VALUES (0, NULL, NULL, NULL, NULL, NULL)&quot;#,
+</a><a href="#h5-0-4" id="h5-0-4" class="i">+        r#&quot;INSERT INTO &quot;unique&quot; VALUES (0, NULL, NULL, NULL, NULL)&quot;#,
+</a>         r#&quot;INSERT INTO &quot;unique&quot; VALUES (1, TRUE, 3.14, 7, &#39;foo&#39;)&quot;#,
+     ];
+     insert_unique_boolean: r#&quot;INSERT INTO &quot;unique&quot; (id, &quot;boolean&quot;) VALUES (2, FALSE)&quot;#,
+<b>diff --git a/<a id="h6" href="../file/src/sql/tests/sql.rs.html">src/sql/tests/sql.rs</a> b/<a href="../file/src/sql/tests/sql.rs.html">src/sql/tests/sql.rs</a></b>
+<a href="#h6-0" id="h6-0" class="h">@@ -144,6 +144,7 @@ test_sql! {
+</a>     insert_expression: &quot;INSERT INTO movies VALUES (2 * 5 - 1, &#39;District 9&#39;, 1 / 1, 2 * 1000 + 1 * 10 - --1, 793 / 1e2, TRUE OR FALSE)&quot;,
+     insert_partial: &quot;INSERT INTO movies (title, released, id, genre_id, rating) VALUES (&#39;District 9&#39;, 2009, 9, 1, 7.9)&quot;,
+     insert_values: &quot;INSERT INTO genres VALUES (9, &#39;Western&#39;)&quot;,
+<a href="#h6-0-3" id="h6-0-3" class="i">+    insert_values_extra: &quot;INSERT INTO genres VALUES (9, &#39;Western&#39;, NULL)&quot;,
+</a>     insert_error_columns_duplicate: &quot;INSERT INTO genres (id, name, id) VALUES (9, &#39;Western&#39;, 9)&quot;,
+     insert_error_columns_mismatch: &quot;INSERT INTO genres (id) VALUES (9, &#39;Western&#39;)&quot;,
+ 
+<b>diff --git a/<a id="h7" href="../file/src/sql/types/mod.rs.html">src/sql/types/mod.rs</a> b/<a href="../file/src/sql/types/mod.rs.html">src/sql/types/mod.rs</a></b>
+<a href="#h7-0" id="h7-0" class="h">@@ -1,10 +1,4 @@
+</a><a href="#h7-0-0" id="h7-0-0" class="d">-//! Type system for the SQL engine, containing:
+</a><a href="#h7-0-1" id="h7-0-1" class="d">-//!
+</a><a href="#h7-0-2" id="h7-0-2" class="d">-//! - Data types (e.g. integers and strings)
+</a><a href="#h7-0-3" id="h7-0-3" class="d">-//! - Values of a specific type
+</a><a href="#h7-0-4" id="h7-0-4" class="d">-//! - Rows of values
+</a><a href="#h7-0-5" id="h7-0-5" class="d">-//! - Expressions made up of values and operators
+</a><a href="#h7-0-6" id="h7-0-6" class="d">-//! - Schemas made up of tables and columns
+</a><a href="#h7-0-7" id="h7-0-7" class="i">+//! Type system for the SQL engine, containing data types, values, rows, expressions, and schemas
+</a> 
+ mod datatype;
+ pub mod expression;
+<b>diff --git a/<a id="h8" href="../file/src/sql/types/schema.rs.html">src/sql/types/schema.rs</a> b/<a href="../file/src/sql/types/schema.rs.html">src/sql/types/schema.rs</a></b>
+<a href="#h8-0" id="h8-0" class="h">@@ -6,11 +6,7 @@ use crate::Error;
+</a> use regex::Regex;
+ use std::collections::HashMap;
+ 
+<a href="#h8-0-3" id="h8-0-3" class="d">-lazy_static! {
+</a><a href="#h8-0-4" id="h8-0-4" class="d">-    static ref RE_IDENT: Regex = Regex::new(r#&quot;^\w[\w_]*$&quot;#).unwrap();
+</a><a href="#h8-0-5" id="h8-0-5" class="d">-}
+</a><a href="#h8-0-6" id="h8-0-6" class="d">-
+</a><a href="#h8-0-7" id="h8-0-7" class="d">-/// A table
+</a><a href="#h8-0-8" id="h8-0-8" class="i">+/// A table schema
+</a> #[derive(Clone, Debug, Deserialize, Serialize)]
+ pub struct Table {
+     /// The table name
+<a href="#h8-1" id="h8-1" class="h">@@ -28,25 +24,18 @@ impl Table {
+</a> 
+     /// Generates an SQL DDL query for the table schema
+     pub fn as_sql(&amp;self) -&gt; String {
+<a href="#h8-1-3" id="h8-1-3" class="d">-        let mut sql = String::from(&quot;CREATE TABLE &quot;);
+</a><a href="#h8-1-4" id="h8-1-4" class="d">-        if RE_IDENT.is_match(&amp;self.name) &amp;&amp; Keyword::from_str(&amp;self.name).is_none() {
+</a><a href="#h8-1-5" id="h8-1-5" class="d">-            sql += &amp;self.name;
+</a><a href="#h8-1-6" id="h8-1-6" class="d">-        } else {
+</a><a href="#h8-1-7" id="h8-1-7" class="d">-            sql += &amp;format!(&quot;\&quot;{}\&quot;&quot;, self.name.replace(&quot;\&quot;&quot;, &quot;\&quot;\&quot;&quot;));
+</a><a href="#h8-1-8" id="h8-1-8" class="d">-        }
+</a><a href="#h8-1-9" id="h8-1-9" class="d">-        sql += &amp;format!(
+</a><a href="#h8-1-10" id="h8-1-10" class="d">-            &quot; (\n{}\n)&quot;,
+</a><a href="#h8-1-11" id="h8-1-11" class="i">+        format!(
+</a><a href="#h8-1-12" id="h8-1-12" class="i">+            &quot;CREATE TABLE {} (\n{}\n)&quot;,
+</a><a href="#h8-1-13" id="h8-1-13" class="i">+            format_ident(&amp;self.name),
+</a>             self.columns
+                 .iter()
+                 .map(|c| format!(&quot;  {}&quot;, c.as_sql()))
+                 .collect::&lt;Vec&lt;String&gt;&gt;()
+                 .join(&quot;,\n&quot;)
+<a href="#h8-1-19" id="h8-1-19" class="d">-        );
+</a><a href="#h8-1-20" id="h8-1-20" class="d">-        sql
+</a><a href="#h8-1-21" id="h8-1-21" class="i">+        )
+</a>     }
+ 
+     /// Asserts that the table is not referenced by other tables, otherwise returns an error
+<a href="#h8-1-25" id="h8-1-25" class="d">-    // FIXME Should cache or index the data
+</a>     pub fn assert_unreferenced(&amp;self, txn: &amp;mut dyn Transaction) -&gt; Result&lt;(), Error&gt; {
+         for source in txn.scan_tables()?.filter(|t| t.name != self.name) {
+             if let Some(column) =
+<a href="#h8-2" id="h8-2" class="h">@@ -62,7 +51,7 @@ impl Table {
+</a>     }
+ 
+     /// Asserts that this primary key is not referenced from any other rows, otherwise errors
+<a href="#h8-2-3" id="h8-2-3" class="d">-    pub fn assert_pk_unreferenced(
+</a><a href="#h8-2-4" id="h8-2-4" class="i">+    pub fn assert_unreferenced_key(
+</a>         &amp;self,
+         pk: &amp;Value,
+         txn: &amp;mut dyn Transaction,
+<a href="#h8-3" id="h8-3" class="h">@@ -81,7 +70,7 @@ impl Table {
+</a>             while let Some(row) = scan.next().transpose()? {
+                 for (i, column) in refs.iter() {
+                     if row.get(*i).unwrap_or(&amp;Value::Null) == pk
+<a href="#h8-3-3" id="h8-3-3" class="d">-                        &amp;&amp; (source.name != self.name || &amp;source.row_key(&amp;row)? != pk)
+</a><a href="#h8-3-4" id="h8-3-4" class="i">+                        &amp;&amp; (source.name != self.name || &amp;source.get_row_key(&amp;row)? != pk)
+</a>                     {
+                         return Err(Error::Value(format!(
+                             &quot;Primary key {} is referenced by table {} column {}&quot;,
+<a href="#h8-4" id="h8-4" class="h">@@ -95,87 +84,29 @@ impl Table {
+</a>     }
+ 
+     /// Fetches a column by name
+<a href="#h8-4-3" id="h8-4-3" class="d">-    /// FIXME Should index these for performance
+</a><a href="#h8-4-4" id="h8-4-4" class="d">-    pub fn get_column(&amp;self, name: &amp;str) -&gt; Option&lt;&amp;Column&gt; {
+</a><a href="#h8-4-5" id="h8-4-5" class="d">-        self.columns.iter().find(|c| c.name == name)
+</a><a href="#h8-4-6" id="h8-4-6" class="i">+    pub fn get_column(&amp;self, name: &amp;str) -&gt; Result&lt;&amp;Column, Error&gt; {
+</a><a href="#h8-4-7" id="h8-4-7" class="i">+        self.columns.iter().find(|c| c.name == name).ok_or_else(|| {
+</a><a href="#h8-4-8" id="h8-4-8" class="i">+            Error::Value(format!(&quot;Column {} not found in table {}&quot;, name, self.name))
+</a><a href="#h8-4-9" id="h8-4-9" class="i">+        })
+</a>     }
+ 
+     /// Fetches a column index by name
+<a href="#h8-4-13" id="h8-4-13" class="d">-    /// FIXME Should index this for performance
+</a><a href="#h8-4-14" id="h8-4-14" class="d">-    pub fn get_column_index(&amp;self, name: &amp;str) -&gt; Option&lt;usize&gt; {
+</a><a href="#h8-4-15" id="h8-4-15" class="d">-        self.columns.iter().position(|c| c.name == name)
+</a><a href="#h8-4-16" id="h8-4-16" class="d">-    }
+</a><a href="#h8-4-17" id="h8-4-17" class="d">-
+</a><a href="#h8-4-18" id="h8-4-18" class="d">-    // Builds a row from a set of values, optionally with a set of column names, padding
+</a><a href="#h8-4-19" id="h8-4-19" class="d">-    // it with default values as necessary.
+</a><a href="#h8-4-20" id="h8-4-20" class="d">-    pub fn make_row(&amp;self, values: Vec&lt;Value&gt;, columns: Option&lt;&amp;[String]&gt;) -&gt; Result&lt;Row, Error&gt; {
+</a><a href="#h8-4-21" id="h8-4-21" class="d">-        if let Some(columns) = columns {
+</a><a href="#h8-4-22" id="h8-4-22" class="d">-            if values.len() != columns.len() {
+</a><a href="#h8-4-23" id="h8-4-23" class="d">-                return Err(Error::Value(&quot;Column and value counts do not match&quot;.into()));
+</a><a href="#h8-4-24" id="h8-4-24" class="d">-            }
+</a><a href="#h8-4-25" id="h8-4-25" class="d">-            let mut inputs = HashMap::new();
+</a><a href="#h8-4-26" id="h8-4-26" class="d">-            for (c, v) in columns.iter().zip(values.into_iter()) {
+</a><a href="#h8-4-27" id="h8-4-27" class="d">-                if self.get_column(c).is_none() {
+</a><a href="#h8-4-28" id="h8-4-28" class="d">-                    return Err(Error::Value(format!(
+</a><a href="#h8-4-29" id="h8-4-29" class="d">-                        &quot;Unknown column {} in table {}&quot;,
+</a><a href="#h8-4-30" id="h8-4-30" class="d">-                        c, self.name
+</a><a href="#h8-4-31" id="h8-4-31" class="d">-                    )));
+</a><a href="#h8-4-32" id="h8-4-32" class="d">-                }
+</a><a href="#h8-4-33" id="h8-4-33" class="d">-                if inputs.insert(c.clone(), v).is_some() {
+</a><a href="#h8-4-34" id="h8-4-34" class="d">-                    return Err(Error::Value(format!(&quot;Column {} given multiple times&quot;, c)));
+</a><a href="#h8-4-35" id="h8-4-35" class="d">-                }
+</a><a href="#h8-4-36" id="h8-4-36" class="d">-            }
+</a><a href="#h8-4-37" id="h8-4-37" class="d">-            let mut row = Row::new();
+</a><a href="#h8-4-38" id="h8-4-38" class="d">-            for column in self.columns.iter() {
+</a><a href="#h8-4-39" id="h8-4-39" class="d">-                if let Some(value) = inputs.get(&amp;column.name) {
+</a><a href="#h8-4-40" id="h8-4-40" class="d">-                    row.push(value.clone())
+</a><a href="#h8-4-41" id="h8-4-41" class="d">-                } else if let Some(value) = &amp;column.default {
+</a><a href="#h8-4-42" id="h8-4-42" class="d">-                    row.push(value.clone())
+</a><a href="#h8-4-43" id="h8-4-43" class="d">-                } else {
+</a><a href="#h8-4-44" id="h8-4-44" class="d">-                    return Err(Error::Value(format!(&quot;No value given for column {}&quot;, column.name)));
+</a><a href="#h8-4-45" id="h8-4-45" class="d">-                }
+</a><a href="#h8-4-46" id="h8-4-46" class="d">-            }
+</a><a href="#h8-4-47" id="h8-4-47" class="d">-            Ok(row)
+</a><a href="#h8-4-48" id="h8-4-48" class="d">-        } else {
+</a><a href="#h8-4-49" id="h8-4-49" class="d">-            let mut row = Row::new();
+</a><a href="#h8-4-50" id="h8-4-50" class="d">-            for (i, column) in self.columns.iter().enumerate() {
+</a><a href="#h8-4-51" id="h8-4-51" class="d">-                if let Some(value) = values.get(i) {
+</a><a href="#h8-4-52" id="h8-4-52" class="d">-                    row.push(value.clone())
+</a><a href="#h8-4-53" id="h8-4-53" class="d">-                } else if let Some(value) = &amp;column.default {
+</a><a href="#h8-4-54" id="h8-4-54" class="d">-                    row.push(value.clone())
+</a><a href="#h8-4-55" id="h8-4-55" class="d">-                } else {
+</a><a href="#h8-4-56" id="h8-4-56" class="d">-                    return Err(Error::Value(format!(&quot;No value given for column {}&quot;, column.name)));
+</a><a href="#h8-4-57" id="h8-4-57" class="d">-                }
+</a><a href="#h8-4-58" id="h8-4-58" class="d">-            }
+</a><a href="#h8-4-59" id="h8-4-59" class="d">-            Ok(row)
+</a><a href="#h8-4-60" id="h8-4-60" class="d">-        }
+</a><a href="#h8-4-61" id="h8-4-61" class="i">+    pub fn get_column_index(&amp;self, name: &amp;str) -&gt; Result&lt;usize, Error&gt; {
+</a><a href="#h8-4-62" id="h8-4-62" class="i">+        self.columns.iter().position(|c| c.name == name).ok_or_else(|| {
+</a><a href="#h8-4-63" id="h8-4-63" class="i">+            Error::Value(format!(&quot;Column {} not found in table {}&quot;, name, self.name))
+</a><a href="#h8-4-64" id="h8-4-64" class="i">+        })
+</a>     }
+ 
+     /// Returns the primary key column of the table
+<a href="#h8-4-68" id="h8-4-68" class="d">-    pub fn primary_key(&amp;self) -&gt; Result&lt;&amp;Column, Error&gt; {
+</a><a href="#h8-4-69" id="h8-4-69" class="i">+    pub fn get_primary_key(&amp;self) -&gt; Result&lt;&amp;Column, Error&gt; {
+</a>         self.columns
+             .iter()
+             .find(|c| c.primary_key)
+<a href="#h8-4-73" id="h8-4-73" class="d">-            .ok_or_else(|| Error::Value(&quot;Primary key not found&quot;.into()))
+</a><a href="#h8-4-74" id="h8-4-74" class="d">-    }
+</a><a href="#h8-4-75" id="h8-4-75" class="d">-
+</a><a href="#h8-4-76" id="h8-4-76" class="d">-    /// Returns a row from a hashmap keyed by column name, padding it with nulls if needed
+</a><a href="#h8-4-77" id="h8-4-77" class="d">-    pub fn row_from_hashmap(&amp;self, row: HashMap&lt;String, Value&gt;) -&gt; Row {
+</a><a href="#h8-4-78" id="h8-4-78" class="d">-        self.columns.iter().map(|c| row.get(&amp;c.name).cloned().unwrap_or(Value::Null)).collect()
+</a><a href="#h8-4-79" id="h8-4-79" class="d">-    }
+</a><a href="#h8-4-80" id="h8-4-80" class="d">-
+</a><a href="#h8-4-81" id="h8-4-81" class="d">-    /// Returns the row as a hashmap keyed by column name, padding the row with nulls if needed
+</a><a href="#h8-4-82" id="h8-4-82" class="d">-    pub fn row_to_hashmap(&amp;self, row: Row) -&gt; HashMap&lt;String, Value&gt; {
+</a><a href="#h8-4-83" id="h8-4-83" class="d">-        self.columns
+</a><a href="#h8-4-84" id="h8-4-84" class="d">-            .iter()
+</a><a href="#h8-4-85" id="h8-4-85" class="d">-            .map(|c| c.name.clone())
+</a><a href="#h8-4-86" id="h8-4-86" class="d">-            .zip(row.into_iter().chain(std::iter::repeat(Value::Null)))
+</a><a href="#h8-4-87" id="h8-4-87" class="d">-            .collect()
+</a><a href="#h8-4-88" id="h8-4-88" class="i">+            .ok_or_else(|| Error::Value(format!(&quot;Primary key not found in table {}&quot;, self.name)))
+</a>     }
+ 
+     /// Returns the primary key value of a row
+<a href="#h8-4-92" id="h8-4-92" class="d">-    pub fn row_key(&amp;self, row: &amp;[Value]) -&gt; Result&lt;Value, Error&gt; {
+</a><a href="#h8-4-93" id="h8-4-93" class="d">-        // FIXME This should be indexed
+</a><a href="#h8-4-94" id="h8-4-94" class="i">+    pub fn get_row_key(&amp;self, row: &amp;[Value]) -&gt; Result&lt;Value, Error&gt; {
+</a>         row.get(
+             self.columns
+                 .iter()
+<a href="#h8-5" id="h8-5" class="h">@@ -186,6 +117,60 @@ impl Table {
+</a>         .ok_or_else(|| Error::Value(&quot;Primary key value not found for row&quot;.into()))
+     }
+ 
+<a href="#h8-5-3" id="h8-5-3" class="i">+    // Builds a row from a set of values, optionally with a set of column names, padding
+</a><a href="#h8-5-4" id="h8-5-4" class="i">+    // it with default values as necessary.
+</a><a href="#h8-5-5" id="h8-5-5" class="i">+    pub fn make_row(&amp;self, columns: &amp;[String], values: Vec&lt;Value&gt;) -&gt; Result&lt;Row, Error&gt; {
+</a><a href="#h8-5-6" id="h8-5-6" class="i">+        if columns.len() != values.len() {
+</a><a href="#h8-5-7" id="h8-5-7" class="i">+            return Err(Error::Value(&quot;Column and value counts do not match&quot;.into()));
+</a><a href="#h8-5-8" id="h8-5-8" class="i">+        }
+</a><a href="#h8-5-9" id="h8-5-9" class="i">+        let mut inputs = HashMap::new();
+</a><a href="#h8-5-10" id="h8-5-10" class="i">+        for (c, v) in columns.iter().zip(values.into_iter()) {
+</a><a href="#h8-5-11" id="h8-5-11" class="i">+            self.get_column(c)?;
+</a><a href="#h8-5-12" id="h8-5-12" class="i">+            if inputs.insert(c.clone(), v).is_some() {
+</a><a href="#h8-5-13" id="h8-5-13" class="i">+                return Err(Error::Value(format!(&quot;Column {} given multiple times&quot;, c)));
+</a><a href="#h8-5-14" id="h8-5-14" class="i">+            }
+</a><a href="#h8-5-15" id="h8-5-15" class="i">+        }
+</a><a href="#h8-5-16" id="h8-5-16" class="i">+        let mut row = Row::new();
+</a><a href="#h8-5-17" id="h8-5-17" class="i">+        for column in self.columns.iter() {
+</a><a href="#h8-5-18" id="h8-5-18" class="i">+            if let Some(value) = inputs.get(&amp;column.name) {
+</a><a href="#h8-5-19" id="h8-5-19" class="i">+                row.push(value.clone())
+</a><a href="#h8-5-20" id="h8-5-20" class="i">+            } else if let Some(value) = &amp;column.default {
+</a><a href="#h8-5-21" id="h8-5-21" class="i">+                row.push(value.clone())
+</a><a href="#h8-5-22" id="h8-5-22" class="i">+            } else {
+</a><a href="#h8-5-23" id="h8-5-23" class="i">+                return Err(Error::Value(format!(&quot;No value given for column {}&quot;, column.name)));
+</a><a href="#h8-5-24" id="h8-5-24" class="i">+            }
+</a><a href="#h8-5-25" id="h8-5-25" class="i">+        }
+</a><a href="#h8-5-26" id="h8-5-26" class="i">+        Ok(row)
+</a><a href="#h8-5-27" id="h8-5-27" class="i">+    }
+</a><a href="#h8-5-28" id="h8-5-28" class="i">+
+</a><a href="#h8-5-29" id="h8-5-29" class="i">+    /// Makes a hashmap for a row
+</a><a href="#h8-5-30" id="h8-5-30" class="i">+    pub fn make_row_hashmap(&amp;self, row: Row) -&gt; HashMap&lt;String, Value&gt; {
+</a><a href="#h8-5-31" id="h8-5-31" class="i">+        self.columns
+</a><a href="#h8-5-32" id="h8-5-32" class="i">+            .iter()
+</a><a href="#h8-5-33" id="h8-5-33" class="i">+            .map(|c| c.name.clone())
+</a><a href="#h8-5-34" id="h8-5-34" class="i">+            .zip(row.into_iter().chain(std::iter::repeat(Value::Null)))
+</a><a href="#h8-5-35" id="h8-5-35" class="i">+            .collect()
+</a><a href="#h8-5-36" id="h8-5-36" class="i">+    }
+</a><a href="#h8-5-37" id="h8-5-37" class="i">+
+</a><a href="#h8-5-38" id="h8-5-38" class="i">+    /// Pads a row with default values where possible
+</a><a href="#h8-5-39" id="h8-5-39" class="i">+    pub fn pad_row(&amp;self, mut row: Row) -&gt; Result&lt;Row, Error&gt; {
+</a><a href="#h8-5-40" id="h8-5-40" class="i">+        for column in self.columns.iter().skip(row.len()) {
+</a><a href="#h8-5-41" id="h8-5-41" class="i">+            if let Some(default) = &amp;column.default {
+</a><a href="#h8-5-42" id="h8-5-42" class="i">+                row.push(default.clone())
+</a><a href="#h8-5-43" id="h8-5-43" class="i">+            } else {
+</a><a href="#h8-5-44" id="h8-5-44" class="i">+                return Err(Error::Value(format!(&quot;No default value for column {}&quot;, column.name)));
+</a><a href="#h8-5-45" id="h8-5-45" class="i">+            }
+</a><a href="#h8-5-46" id="h8-5-46" class="i">+        }
+</a><a href="#h8-5-47" id="h8-5-47" class="i">+        Ok(row)
+</a><a href="#h8-5-48" id="h8-5-48" class="i">+    }
+</a><a href="#h8-5-49" id="h8-5-49" class="i">+
+</a><a href="#h8-5-50" id="h8-5-50" class="i">+    /// Sets a named row field to a value
+</a><a href="#h8-5-51" id="h8-5-51" class="i">+    pub fn set_row_field(&amp;self, row: &amp;mut Row, field: &amp;str, value: Value) -&gt; Result&lt;(), Error&gt; {
+</a><a href="#h8-5-52" id="h8-5-52" class="i">+        *row.get_mut(self.get_column_index(field)?)
+</a><a href="#h8-5-53" id="h8-5-53" class="i">+            .ok_or_else(|| Error::Value(format!(&quot;Field {} not found in row&quot;, field)))? = value;
+</a><a href="#h8-5-54" id="h8-5-54" class="i">+        Ok(())
+</a><a href="#h8-5-55" id="h8-5-55" class="i">+    }
+</a><a href="#h8-5-56" id="h8-5-56" class="i">+
+</a>     /// Validates the table schema
+     pub fn validate(&amp;self, txn: &amp;mut dyn Transaction) -&gt; Result&lt;(), Error&gt; {
+         if self.columns.is_empty() {
+<a href="#h8-6" id="h8-6" class="h">@@ -207,7 +192,7 @@ impl Table {
+</a>         if row.len() != self.columns.len() {
+             return Err(Error::Value(format!(&quot;Invalid row size for table {}&quot;, self.name)));
+         }
+<a href="#h8-6-3" id="h8-6-3" class="d">-        let pk = self.row_key(row)?;
+</a><a href="#h8-6-4" id="h8-6-4" class="i">+        let pk = self.get_row_key(row)?;
+</a>         for (column, value) in self.columns.iter().zip(row.iter()) {
+             column.validate_value(self, &amp;pk, value, txn)?;
+         }
+<a href="#h8-7" id="h8-7" class="h">@@ -215,7 +200,7 @@ impl Table {
+</a>     }
+ }
+ 
+<a href="#h8-7-3" id="h8-7-3" class="d">-/// A table column
+</a><a href="#h8-7-4" id="h8-7-4" class="i">+/// A table column schema
+</a> #[derive(Clone, Debug, Deserialize, Serialize)]
+ pub struct Column {
+     /// Column name
+<a href="#h8-8" id="h8-8" class="h">@@ -237,12 +222,7 @@ pub struct Column {
+</a> impl Column {
+     /// Generates SQL DDL for the column
+     pub fn as_sql(&amp;self) -&gt; String {
+<a href="#h8-8-3" id="h8-8-3" class="d">-        let mut sql = String::new();
+</a><a href="#h8-8-4" id="h8-8-4" class="d">-        if RE_IDENT.is_match(&amp;self.name) &amp;&amp; Keyword::from_str(&amp;self.name).is_none() {
+</a><a href="#h8-8-5" id="h8-8-5" class="d">-            sql += &amp;self.name;
+</a><a href="#h8-8-6" id="h8-8-6" class="d">-        } else {
+</a><a href="#h8-8-7" id="h8-8-7" class="d">-            sql += &amp;format!(&quot;\&quot;{}\&quot;&quot;, self.name.replace(&quot;\&quot;&quot;, &quot;\&quot;\&quot;&quot;));
+</a><a href="#h8-8-8" id="h8-8-8" class="d">-        }
+</a><a href="#h8-8-9" id="h8-8-9" class="i">+        let mut sql = format_ident(&amp;self.name);
+</a>         sql += &amp;format!(&quot; {}&quot;, self.datatype);
+         if self.primary_key {
+             sql += &quot; PRIMARY KEY&quot;;
+<a href="#h8-9" id="h8-9" class="h">@@ -264,12 +244,15 @@ impl Column {
+</a> 
+     /// Validates the column schema
+     pub fn validate(&amp;self, table: &amp;Table, txn: &amp;mut dyn Transaction) -&gt; Result&lt;(), Error&gt; {
+<a href="#h8-9-3" id="h8-9-3" class="i">+        // Validate primary key
+</a>         if self.primary_key &amp;&amp; self.nullable {
+             return Err(Error::Value(format!(&quot;Primary key {} cannot be nullable&quot;, self.name)));
+         }
+         if self.primary_key &amp;&amp; !self.unique {
+             return Err(Error::Value(format!(&quot;Primary key {} must be unique&quot;, self.name)));
+         }
+<a href="#h8-9-10" id="h8-9-10" class="i">+
+</a><a href="#h8-9-11" id="h8-9-11" class="i">+        // Validate default value
+</a>         if let Some(default) = &amp;self.default {
+             if let Some(datatype) = default.datatype() {
+                 if datatype != self.datatype {
+<a href="#h8-10" id="h8-10" class="h">@@ -290,6 +273,8 @@ impl Column {
+</a>                 self.name
+             )));
+         }
+<a href="#h8-10-3" id="h8-10-3" class="i">+
+</a><a href="#h8-10-4" id="h8-10-4" class="i">+        // Validate references
+</a>         if let Some(reference) = &amp;self.references {
+             let target = if reference == &amp;table.name {
+                 table.clone()
+<a href="#h8-11" id="h8-11" class="h">@@ -301,16 +286,17 @@ impl Column {
+</a>                     ))
+                 })?
+             };
+<a href="#h8-11-3" id="h8-11-3" class="d">-            if self.datatype != target.primary_key()?.datatype {
+</a><a href="#h8-11-4" id="h8-11-4" class="i">+            if self.datatype != target.get_primary_key()?.datatype {
+</a>                 return Err(Error::Value(format!(
+                     &quot;Can&#39;t reference {} primary key of table {} from {} column {}&quot;,
+<a href="#h8-11-7" id="h8-11-7" class="d">-                    target.primary_key()?.datatype,
+</a><a href="#h8-11-8" id="h8-11-8" class="i">+                    target.get_primary_key()?.datatype,
+</a>                     target.name,
+                     self.datatype,
+                     self.name
+                 )));
+             }
+         }
+<a href="#h8-11-15" id="h8-11-15" class="i">+
+</a>         Ok(())
+     }
+ 
+<a href="#h8-12" id="h8-12" class="h">@@ -357,15 +343,12 @@ impl Column {
+</a> 
+         // Validate uniqueness constraints
+         if self.unique &amp;&amp; !self.primary_key &amp;&amp; value != &amp;Value::Null {
+<a href="#h8-12-3" id="h8-12-3" class="d">-            let index = table.get_column_index(&amp;self.name).ok_or_else(|| {
+</a><a href="#h8-12-4" id="h8-12-4" class="d">-                Error::Internal(format!(
+</a><a href="#h8-12-5" id="h8-12-5" class="d">-                    &quot;Unable to find column {} in table {}&quot;,
+</a><a href="#h8-12-6" id="h8-12-6" class="d">-                    self.name, table.name,
+</a><a href="#h8-12-7" id="h8-12-7" class="d">-                ))
+</a><a href="#h8-12-8" id="h8-12-8" class="d">-            })?;
+</a><a href="#h8-12-9" id="h8-12-9" class="i">+            let index = table.get_column_index(&amp;self.name)?;
+</a>             let mut scan = txn.scan(&amp;table.name)?;
+             while let Some(row) = scan.next().transpose()? {
+<a href="#h8-12-12" id="h8-12-12" class="d">-                if row.get(index).unwrap_or(&amp;Value::Null) == value &amp;&amp; &amp;table.row_key(&amp;row)? != pk {
+</a><a href="#h8-12-13" id="h8-12-13" class="i">+                if row.get(index).unwrap_or(&amp;Value::Null) == value
+</a><a href="#h8-12-14" id="h8-12-14" class="i">+                    &amp;&amp; &amp;table.get_row_key(&amp;row)? != pk
+</a><a href="#h8-12-15" id="h8-12-15" class="i">+                {
+</a>                     return Err(Error::Value(format!(
+                         &quot;Unique value {} already exists for column {}&quot;,
+                         value, self.name
+<a href="#h8-13" id="h8-13" class="h">@@ -377,3 +360,16 @@ impl Column {
+</a>         Ok(())
+     }
+ }
+<a href="#h8-13-3" id="h8-13-3" class="i">+
+</a><a href="#h8-13-4" id="h8-13-4" class="i">+// Formats an identifier by quoting it as appropriate
+</a><a href="#h8-13-5" id="h8-13-5" class="i">+fn format_ident(ident: &amp;str) -&gt; String {
+</a><a href="#h8-13-6" id="h8-13-6" class="i">+    lazy_static! {
+</a><a href="#h8-13-7" id="h8-13-7" class="i">+        static ref RE_IDENT: Regex = Regex::new(r#&quot;^\w[\w_]*$&quot;#).unwrap();
+</a><a href="#h8-13-8" id="h8-13-8" class="i">+    }
+</a><a href="#h8-13-9" id="h8-13-9" class="i">+
+</a><a href="#h8-13-10" id="h8-13-10" class="i">+    if RE_IDENT.is_match(ident) &amp;&amp; Keyword::from_str(ident).is_none() {
+</a><a href="#h8-13-11" id="h8-13-11" class="i">+        ident.to_string()
+</a><a href="#h8-13-12" id="h8-13-12" class="i">+    } else {
+</a><a href="#h8-13-13" id="h8-13-13" class="i">+        format!(&quot;\&quot;{}\&quot;&quot;, ident.replace(&quot;\&quot;&quot;, &quot;\&quot;\&quot;&quot;))
+</a><a href="#h8-13-14" id="h8-13-14" class="i">+    }
+</a><a href="#h8-13-15" id="h8-13-15" class="i">+}
+</a></pre>
+</div>
+</body>
+</html>

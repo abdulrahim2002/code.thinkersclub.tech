@@ -1,0 +1,1981 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>workload: rewrite workload tool - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/53f8028a6467810c649beef426f7e59fc12eb0d1.html">53f8028a6467810c649beef426f7e59fc12eb0d1</a>
+<b>parent</b> <a href="../commit/fe0ed7243fb90b321c59d5e609cff758e3e36d50.html">fe0ed7243fb90b321c59d5e609cff758e3e36d50</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Sat,  6 Apr 2024 08:23:09 +0200
+
+workload: rewrite workload tool
+
+This patch rewrites the `bank` workload into a more general `workload`
+tool, and adds simple `read` and `write` workloads too. It also makes
+several opportunistic simplifications of client code.
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">Cargo.lock</a></td><td> | </td><td class="num">185</td><td><span class="i">+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d">------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">Cargo.toml</a></td><td> | </td><td class="num">7</td><td><span class="i">+++++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">README.md</a></td><td> | </td><td class="num">91</td><td><span class="i">+++++++++++++++++++++++++++++++++++++</span><span class="d">-------------------------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">docs/architecture.md</a></td><td> | </td><td class="num">8</td><td><span class="i">+</span><span class="d">-------</span></td></tr>
+<tr><td class="D">D</td><td><a href="#h4">src/bin/bank.rs</a></td><td> | </td><td class="num">279</td><td><span class="i"></span><span class="d">-------------------------------------------------------------------------------</span></td></tr>
+<tr><td class="A">A</td><td><a href="#h5">src/bin/workload.rs</a></td><td> | </td><td class="num">582</td><td><span class="i">++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h6">src/client.rs</a></td><td> | </td><td class="num">165</td><td><span class="i">++++++++++</span><span class="d">---------------------------------------------------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h7">src/error.rs</a></td><td> | </td><td class="num">18</td><td><span class="i">++++++++++++++++++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h8">src/lib.rs</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h9">src/sql/execution/mod.rs</a></td><td> | </td><td class="num">10</td><td><span class="i">++++++++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h10">tests/client/mod.rs</a></td><td> | </td><td class="num">16</td><td><span class="i">+++++++</span><span class="d">---------</span></td></tr>
+<tr><td class="D">D</td><td><a href="#h11">tests/client/pool.rs</a></td><td> | </td><td class="num">67</td><td><span class="i"></span><span class="d">-------------------------------------------------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h12">tests/cluster/isolation.rs</a></td><td> | </td><td class="num">12</td><td><span class="i">++++++</span><span class="d">------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h13">tests/cluster/recovery.rs</a></td><td> | </td><td class="num">4</td><td><span class="i">++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h14">tests/setup.rs</a></td><td> | </td><td class="num">38</td><td><span class="i">++++</span><span class="d">----------------------------------</span></td></tr>
+</table></pre><pre>15 files changed, 869 insertions(+), 614 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/Cargo.lock.html">Cargo.lock</a> b/<a href="../file/Cargo.lock.html">Cargo.lock</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -75,6 +75,19 @@ dependencies = [
+</a> ]
+ 
+ [[package]]
+<a href="#h0-0-3" id="h0-0-3" class="i">+name = &quot;async-channel&quot;
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+version = &quot;2.2.0&quot;
+</a><a href="#h0-0-5" id="h0-0-5" class="i">+source = &quot;registry+https://github.com/rust-lang/crates.io-index&quot;
+</a><a href="#h0-0-6" id="h0-0-6" class="i">+checksum = &quot;f28243a43d821d11341ab73c80bed182dc015c514b951616cf79bd4af39af0c3&quot;
+</a><a href="#h0-0-7" id="h0-0-7" class="i">+dependencies = [
+</a><a href="#h0-0-8" id="h0-0-8" class="i">+ &quot;concurrent-queue&quot;,
+</a><a href="#h0-0-9" id="h0-0-9" class="i">+ &quot;event-listener&quot;,
+</a><a href="#h0-0-10" id="h0-0-10" class="i">+ &quot;event-listener-strategy&quot;,
+</a><a href="#h0-0-11" id="h0-0-11" class="i">+ &quot;futures-core&quot;,
+</a><a href="#h0-0-12" id="h0-0-12" class="i">+ &quot;pin-project-lite&quot;,
+</a><a href="#h0-0-13" id="h0-0-13" class="i">+]
+</a><a href="#h0-0-14" id="h0-0-14" class="i">+
+</a><a href="#h0-0-15" id="h0-0-15" class="i">+[[package]]
+</a> name = &quot;async-trait&quot;
+ version = &quot;0.1.79&quot;
+ source = &quot;registry+https://github.com/rust-lang/crates.io-index&quot;
+<a href="#h0-1" id="h0-1" class="h">@@ -168,6 +181,12 @@ dependencies = [
+</a> ]
+ 
+ [[package]]
+<a href="#h0-1-3" id="h0-1-3" class="i">+name = &quot;byteorder&quot;
+</a><a href="#h0-1-4" id="h0-1-4" class="i">+version = &quot;1.5.0&quot;
+</a><a href="#h0-1-5" id="h0-1-5" class="i">+source = &quot;registry+https://github.com/rust-lang/crates.io-index&quot;
+</a><a href="#h0-1-6" id="h0-1-6" class="i">+checksum = &quot;1fd0f2584146f6f2ef48085050886acf353beff7305ebd1ae69500e27c67f64b&quot;
+</a><a href="#h0-1-7" id="h0-1-7" class="i">+
+</a><a href="#h0-1-8" id="h0-1-8" class="i">+[[package]]
+</a> name = &quot;bytes&quot;
+ version = &quot;1.6.0&quot;
+ source = &quot;registry+https://github.com/rust-lang/crates.io-index&quot;
+<a href="#h0-2" id="h0-2" class="h">@@ -199,7 +218,7 @@ checksum = &quot;4ea181bf566f71cb9a5d17a59e1871af638180a18fb0035c92ae62b705207123&quot;
+</a> dependencies = [
+  &quot;atty&quot;,
+  &quot;bitflags 1.3.2&quot;,
+<a href="#h0-2-3" id="h0-2-3" class="d">- &quot;clap_derive&quot;,
+</a><a href="#h0-2-4" id="h0-2-4" class="i">+ &quot;clap_derive 3.2.25&quot;,
+</a>  &quot;clap_lex 0.2.4&quot;,
+  &quot;indexmap 1.9.3&quot;,
+  &quot;once_cell&quot;,
+<a href="#h0-3" id="h0-3" class="h">@@ -215,6 +234,7 @@ source = &quot;registry+https://github.com/rust-lang/crates.io-index&quot;
+</a> checksum = &quot;90bc066a67923782aa8515dbaea16946c5bcc5addbd668bb80af688e53e548a0&quot;
+ dependencies = [
+  &quot;clap_builder&quot;,
+<a href="#h0-3-3" id="h0-3-3" class="i">+ &quot;clap_derive 4.5.4&quot;,
+</a> ]
+ 
+ [[package]]
+<a href="#h0-4" id="h0-4" class="h">@@ -235,7 +255,7 @@ version = &quot;3.2.25&quot;
+</a> source = &quot;registry+https://github.com/rust-lang/crates.io-index&quot;
+ checksum = &quot;ae6371b8bdc8b7d3959e9cf7b22d4435ef3e79e138688421ec654acf8c81b008&quot;
+ dependencies = [
+<a href="#h0-4-3" id="h0-4-3" class="d">- &quot;heck&quot;,
+</a><a href="#h0-4-4" id="h0-4-4" class="i">+ &quot;heck 0.4.1&quot;,
+</a>  &quot;proc-macro-error&quot;,
+  &quot;proc-macro2&quot;,
+  &quot;quote&quot;,
+<a href="#h0-5" id="h0-5" class="h">@@ -243,6 +263,18 @@ dependencies = [
+</a> ]
+ 
+ [[package]]
+<a href="#h0-5-3" id="h0-5-3" class="i">+name = &quot;clap_derive&quot;
+</a><a href="#h0-5-4" id="h0-5-4" class="i">+version = &quot;4.5.4&quot;
+</a><a href="#h0-5-5" id="h0-5-5" class="i">+source = &quot;registry+https://github.com/rust-lang/crates.io-index&quot;
+</a><a href="#h0-5-6" id="h0-5-6" class="i">+checksum = &quot;528131438037fd55894f62d6e9f068b8f45ac57ffa77517819645d10aed04f64&quot;
+</a><a href="#h0-5-7" id="h0-5-7" class="i">+dependencies = [
+</a><a href="#h0-5-8" id="h0-5-8" class="i">+ &quot;heck 0.5.0&quot;,
+</a><a href="#h0-5-9" id="h0-5-9" class="i">+ &quot;proc-macro2&quot;,
+</a><a href="#h0-5-10" id="h0-5-10" class="i">+ &quot;quote&quot;,
+</a><a href="#h0-5-11" id="h0-5-11" class="i">+ &quot;syn 2.0.58&quot;,
+</a><a href="#h0-5-12" id="h0-5-12" class="i">+]
+</a><a href="#h0-5-13" id="h0-5-13" class="i">+
+</a><a href="#h0-5-14" id="h0-5-14" class="i">+[[package]]
+</a> name = &quot;clap_lex&quot;
+ version = &quot;0.2.4&quot;
+ source = &quot;registry+https://github.com/rust-lang/crates.io-index&quot;
+<a href="#h0-6" id="h0-6" class="h">@@ -273,6 +305,15 @@ source = &quot;registry+https://github.com/rust-lang/crates.io-index&quot;
+</a> checksum = &quot;acbf1af155f9b9ef647e42cdc158db4b64a1b61f743629225fde6f3e0be2a7c7&quot;
+ 
+ [[package]]
+<a href="#h0-6-3" id="h0-6-3" class="i">+name = &quot;concurrent-queue&quot;
+</a><a href="#h0-6-4" id="h0-6-4" class="i">+version = &quot;2.4.0&quot;
+</a><a href="#h0-6-5" id="h0-6-5" class="i">+source = &quot;registry+https://github.com/rust-lang/crates.io-index&quot;
+</a><a href="#h0-6-6" id="h0-6-6" class="i">+checksum = &quot;d16048cd947b08fa32c24458a22f5dc5e835264f689f4f5653210c69fd107363&quot;
+</a><a href="#h0-6-7" id="h0-6-7" class="i">+dependencies = [
+</a><a href="#h0-6-8" id="h0-6-8" class="i">+ &quot;crossbeam-utils&quot;,
+</a><a href="#h0-6-9" id="h0-6-9" class="i">+]
+</a><a href="#h0-6-10" id="h0-6-10" class="i">+
+</a><a href="#h0-6-11" id="h0-6-11" class="i">+[[package]]
+</a> name = &quot;config&quot;
+ version = &quot;0.14.0&quot;
+ source = &quot;registry+https://github.com/rust-lang/crates.io-index&quot;
+<a href="#h0-7" id="h0-7" class="h">@@ -343,6 +384,30 @@ dependencies = [
+</a> ]
+ 
+ [[package]]
+<a href="#h0-7-3" id="h0-7-3" class="i">+name = &quot;crc32fast&quot;
+</a><a href="#h0-7-4" id="h0-7-4" class="i">+version = &quot;1.4.0&quot;
+</a><a href="#h0-7-5" id="h0-7-5" class="i">+source = &quot;registry+https://github.com/rust-lang/crates.io-index&quot;
+</a><a href="#h0-7-6" id="h0-7-6" class="i">+checksum = &quot;b3855a8a784b474f333699ef2bbca9db2c4a1f6d9088a90a2d25b1eb53111eaa&quot;
+</a><a href="#h0-7-7" id="h0-7-7" class="i">+dependencies = [
+</a><a href="#h0-7-8" id="h0-7-8" class="i">+ &quot;cfg-if&quot;,
+</a><a href="#h0-7-9" id="h0-7-9" class="i">+]
+</a><a href="#h0-7-10" id="h0-7-10" class="i">+
+</a><a href="#h0-7-11" id="h0-7-11" class="i">+[[package]]
+</a><a href="#h0-7-12" id="h0-7-12" class="i">+name = &quot;crossbeam-channel&quot;
+</a><a href="#h0-7-13" id="h0-7-13" class="i">+version = &quot;0.5.12&quot;
+</a><a href="#h0-7-14" id="h0-7-14" class="i">+source = &quot;registry+https://github.com/rust-lang/crates.io-index&quot;
+</a><a href="#h0-7-15" id="h0-7-15" class="i">+checksum = &quot;ab3db02a9c5b5121e1e42fbdb1aeb65f5e02624cc58c43f2884c6ccac0b82f95&quot;
+</a><a href="#h0-7-16" id="h0-7-16" class="i">+dependencies = [
+</a><a href="#h0-7-17" id="h0-7-17" class="i">+ &quot;crossbeam-utils&quot;,
+</a><a href="#h0-7-18" id="h0-7-18" class="i">+]
+</a><a href="#h0-7-19" id="h0-7-19" class="i">+
+</a><a href="#h0-7-20" id="h0-7-20" class="i">+[[package]]
+</a><a href="#h0-7-21" id="h0-7-21" class="i">+name = &quot;crossbeam-utils&quot;
+</a><a href="#h0-7-22" id="h0-7-22" class="i">+version = &quot;0.8.19&quot;
+</a><a href="#h0-7-23" id="h0-7-23" class="i">+source = &quot;registry+https://github.com/rust-lang/crates.io-index&quot;
+</a><a href="#h0-7-24" id="h0-7-24" class="i">+checksum = &quot;248e3bacc7dc6baa3b21e405ee045c3047101a49145e7e9eca583ab4c2ca5345&quot;
+</a><a href="#h0-7-25" id="h0-7-25" class="i">+
+</a><a href="#h0-7-26" id="h0-7-26" class="i">+[[package]]
+</a> name = &quot;crunchy&quot;
+ version = &quot;0.2.2&quot;
+ source = &quot;registry+https://github.com/rust-lang/crates.io-index&quot;
+<a href="#h0-8" id="h0-8" class="h">@@ -429,6 +494,12 @@ dependencies = [
+</a> ]
+ 
+ [[package]]
+<a href="#h0-8-3" id="h0-8-3" class="i">+name = &quot;either&quot;
+</a><a href="#h0-8-4" id="h0-8-4" class="i">+version = &quot;1.10.0&quot;
+</a><a href="#h0-8-5" id="h0-8-5" class="i">+source = &quot;registry+https://github.com/rust-lang/crates.io-index&quot;
+</a><a href="#h0-8-6" id="h0-8-6" class="i">+checksum = &quot;11157ac094ffbdde99aa67b23417ebdd801842852b500e395a45a9c0aac03e4a&quot;
+</a><a href="#h0-8-7" id="h0-8-7" class="i">+
+</a><a href="#h0-8-8" id="h0-8-8" class="i">+[[package]]
+</a> name = &quot;encode_unicode&quot;
+ version = &quot;0.3.6&quot;
+ source = &quot;registry+https://github.com/rust-lang/crates.io-index&quot;
+<a href="#h0-9" id="h0-9" class="h">@@ -483,6 +554,27 @@ source = &quot;registry+https://github.com/rust-lang/crates.io-index&quot;
+</a> checksum = &quot;a0474425d51df81997e2f90a21591180b38eccf27292d755f3e30750225c175b&quot;
+ 
+ [[package]]
+<a href="#h0-9-3" id="h0-9-3" class="i">+name = &quot;event-listener&quot;
+</a><a href="#h0-9-4" id="h0-9-4" class="i">+version = &quot;5.3.0&quot;
+</a><a href="#h0-9-5" id="h0-9-5" class="i">+source = &quot;registry+https://github.com/rust-lang/crates.io-index&quot;
+</a><a href="#h0-9-6" id="h0-9-6" class="i">+checksum = &quot;6d9944b8ca13534cdfb2800775f8dd4902ff3fc75a50101466decadfdf322a24&quot;
+</a><a href="#h0-9-7" id="h0-9-7" class="i">+dependencies = [
+</a><a href="#h0-9-8" id="h0-9-8" class="i">+ &quot;concurrent-queue&quot;,
+</a><a href="#h0-9-9" id="h0-9-9" class="i">+ &quot;parking&quot;,
+</a><a href="#h0-9-10" id="h0-9-10" class="i">+ &quot;pin-project-lite&quot;,
+</a><a href="#h0-9-11" id="h0-9-11" class="i">+]
+</a><a href="#h0-9-12" id="h0-9-12" class="i">+
+</a><a href="#h0-9-13" id="h0-9-13" class="i">+[[package]]
+</a><a href="#h0-9-14" id="h0-9-14" class="i">+name = &quot;event-listener-strategy&quot;
+</a><a href="#h0-9-15" id="h0-9-15" class="i">+version = &quot;0.5.1&quot;
+</a><a href="#h0-9-16" id="h0-9-16" class="i">+source = &quot;registry+https://github.com/rust-lang/crates.io-index&quot;
+</a><a href="#h0-9-17" id="h0-9-17" class="i">+checksum = &quot;332f51cb23d20b0de8458b86580878211da09bcd4503cb579c225b3d124cabb3&quot;
+</a><a href="#h0-9-18" id="h0-9-18" class="i">+dependencies = [
+</a><a href="#h0-9-19" id="h0-9-19" class="i">+ &quot;event-listener&quot;,
+</a><a href="#h0-9-20" id="h0-9-20" class="i">+ &quot;pin-project-lite&quot;,
+</a><a href="#h0-9-21" id="h0-9-21" class="i">+]
+</a><a href="#h0-9-22" id="h0-9-22" class="i">+
+</a><a href="#h0-9-23" id="h0-9-23" class="i">+[[package]]
+</a> name = &quot;fastrand&quot;
+ version = &quot;2.0.2&quot;
+ source = &quot;registry+https://github.com/rust-lang/crates.io-index&quot;
+<a href="#h0-10" id="h0-10" class="h">@@ -500,6 +592,16 @@ dependencies = [
+</a> ]
+ 
+ [[package]]
+<a href="#h0-10-3" id="h0-10-3" class="i">+name = &quot;flate2&quot;
+</a><a href="#h0-10-4" id="h0-10-4" class="i">+version = &quot;1.0.28&quot;
+</a><a href="#h0-10-5" id="h0-10-5" class="i">+source = &quot;registry+https://github.com/rust-lang/crates.io-index&quot;
+</a><a href="#h0-10-6" id="h0-10-6" class="i">+checksum = &quot;46303f565772937ffe1d394a4fac6f411c6013172fadde9dcdb1e147a086940e&quot;
+</a><a href="#h0-10-7" id="h0-10-7" class="i">+dependencies = [
+</a><a href="#h0-10-8" id="h0-10-8" class="i">+ &quot;crc32fast&quot;,
+</a><a href="#h0-10-9" id="h0-10-9" class="i">+ &quot;miniz_oxide&quot;,
+</a><a href="#h0-10-10" id="h0-10-10" class="i">+]
+</a><a href="#h0-10-11" id="h0-10-11" class="i">+
+</a><a href="#h0-10-12" id="h0-10-12" class="i">+[[package]]
+</a> name = &quot;fs4&quot;
+ version = &quot;0.8.2&quot;
+ source = &quot;registry+https://github.com/rust-lang/crates.io-index&quot;
+<a href="#h0-11" id="h0-11" class="h">@@ -662,12 +764,32 @@ source = &quot;registry+https://github.com/rust-lang/crates.io-index&quot;
+</a> checksum = &quot;290f1a1d9242c78d09ce40a5e87e7554ee637af1351968159f4952f028f75604&quot;
+ 
+ [[package]]
+<a href="#h0-11-3" id="h0-11-3" class="i">+name = &quot;hdrhistogram&quot;
+</a><a href="#h0-11-4" id="h0-11-4" class="i">+version = &quot;7.5.4&quot;
+</a><a href="#h0-11-5" id="h0-11-5" class="i">+source = &quot;registry+https://github.com/rust-lang/crates.io-index&quot;
+</a><a href="#h0-11-6" id="h0-11-6" class="i">+checksum = &quot;765c9198f173dd59ce26ff9f95ef0aafd0a0fe01fb9d72841bc5066a4c06511d&quot;
+</a><a href="#h0-11-7" id="h0-11-7" class="i">+dependencies = [
+</a><a href="#h0-11-8" id="h0-11-8" class="i">+ &quot;base64&quot;,
+</a><a href="#h0-11-9" id="h0-11-9" class="i">+ &quot;byteorder&quot;,
+</a><a href="#h0-11-10" id="h0-11-10" class="i">+ &quot;crossbeam-channel&quot;,
+</a><a href="#h0-11-11" id="h0-11-11" class="i">+ &quot;flate2&quot;,
+</a><a href="#h0-11-12" id="h0-11-12" class="i">+ &quot;nom&quot;,
+</a><a href="#h0-11-13" id="h0-11-13" class="i">+ &quot;num-traits&quot;,
+</a><a href="#h0-11-14" id="h0-11-14" class="i">+]
+</a><a href="#h0-11-15" id="h0-11-15" class="i">+
+</a><a href="#h0-11-16" id="h0-11-16" class="i">+[[package]]
+</a> name = &quot;heck&quot;
+ version = &quot;0.4.1&quot;
+ source = &quot;registry+https://github.com/rust-lang/crates.io-index&quot;
+ checksum = &quot;95505c38b4572b2d910cecb0281560f54b440a19336cbbcb27bf6ce6adc6f5a8&quot;
+ 
+ [[package]]
+<a href="#h0-11-23" id="h0-11-23" class="i">+name = &quot;heck&quot;
+</a><a href="#h0-11-24" id="h0-11-24" class="i">+version = &quot;0.5.0&quot;
+</a><a href="#h0-11-25" id="h0-11-25" class="i">+source = &quot;registry+https://github.com/rust-lang/crates.io-index&quot;
+</a><a href="#h0-11-26" id="h0-11-26" class="i">+checksum = &quot;2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea&quot;
+</a><a href="#h0-11-27" id="h0-11-27" class="i">+
+</a><a href="#h0-11-28" id="h0-11-28" class="i">+[[package]]
+</a> name = &quot;hermit-abi&quot;
+ version = &quot;0.1.19&quot;
+ source = &quot;registry+https://github.com/rust-lang/crates.io-index&quot;
+<a href="#h0-12" id="h0-12" class="h">@@ -718,6 +840,24 @@ dependencies = [
+</a> ]
+ 
+ [[package]]
+<a href="#h0-12-3" id="h0-12-3" class="i">+name = &quot;itertools&quot;
+</a><a href="#h0-12-4" id="h0-12-4" class="i">+version = &quot;0.10.5&quot;
+</a><a href="#h0-12-5" id="h0-12-5" class="i">+source = &quot;registry+https://github.com/rust-lang/crates.io-index&quot;
+</a><a href="#h0-12-6" id="h0-12-6" class="i">+checksum = &quot;b0fd2260e829bddf4cb6ea802289de2f86d6a7a690192fbe91b3f46e0f2c8473&quot;
+</a><a href="#h0-12-7" id="h0-12-7" class="i">+dependencies = [
+</a><a href="#h0-12-8" id="h0-12-8" class="i">+ &quot;either&quot;,
+</a><a href="#h0-12-9" id="h0-12-9" class="i">+]
+</a><a href="#h0-12-10" id="h0-12-10" class="i">+
+</a><a href="#h0-12-11" id="h0-12-11" class="i">+[[package]]
+</a><a href="#h0-12-12" id="h0-12-12" class="i">+name = &quot;itertools&quot;
+</a><a href="#h0-12-13" id="h0-12-13" class="i">+version = &quot;0.12.1&quot;
+</a><a href="#h0-12-14" id="h0-12-14" class="i">+source = &quot;registry+https://github.com/rust-lang/crates.io-index&quot;
+</a><a href="#h0-12-15" id="h0-12-15" class="i">+checksum = &quot;ba291022dbbd398a455acf126c1e341954079855bc60dfdda641363bd6922569&quot;
+</a><a href="#h0-12-16" id="h0-12-16" class="i">+dependencies = [
+</a><a href="#h0-12-17" id="h0-12-17" class="i">+ &quot;either&quot;,
+</a><a href="#h0-12-18" id="h0-12-18" class="i">+]
+</a><a href="#h0-12-19" id="h0-12-19" class="i">+
+</a><a href="#h0-12-20" id="h0-12-20" class="i">+[[package]]
+</a> name = &quot;itoa&quot;
+ version = &quot;1.0.11&quot;
+ source = &quot;registry+https://github.com/rust-lang/crates.io-index&quot;
+<a href="#h0-13" id="h0-13" class="h">@@ -807,16 +947,6 @@ dependencies = [
+</a> ]
+ 
+ [[package]]
+<a href="#h0-13-3" id="h0-13-3" class="d">-name = &quot;names&quot;
+</a><a href="#h0-13-4" id="h0-13-4" class="d">-version = &quot;0.14.0&quot;
+</a><a href="#h0-13-5" id="h0-13-5" class="d">-source = &quot;registry+https://github.com/rust-lang/crates.io-index&quot;
+</a><a href="#h0-13-6" id="h0-13-6" class="d">-checksum = &quot;7bddcd3bf5144b6392de80e04c347cd7fab2508f6df16a85fc496ecd5cec39bc&quot;
+</a><a href="#h0-13-7" id="h0-13-7" class="d">-dependencies = [
+</a><a href="#h0-13-8" id="h0-13-8" class="d">- &quot;clap 3.2.25&quot;,
+</a><a href="#h0-13-9" id="h0-13-9" class="d">- &quot;rand 0.8.5&quot;,
+</a><a href="#h0-13-10" id="h0-13-10" class="d">-]
+</a><a href="#h0-13-11" id="h0-13-11" class="d">-
+</a><a href="#h0-13-12" id="h0-13-12" class="d">-[[package]]
+</a> name = &quot;nibble_vec&quot;
+ version = &quot;0.1.0&quot;
+ source = &quot;registry+https://github.com/rust-lang/crates.io-index&quot;
+<a href="#h0-14" id="h0-14" class="h">@@ -854,6 +984,15 @@ source = &quot;registry+https://github.com/rust-lang/crates.io-index&quot;
+</a> checksum = &quot;51d515d32fb182ee37cda2ccdcb92950d6a3c2893aa280e540671c2cd0f3b1d9&quot;
+ 
+ [[package]]
+<a href="#h0-14-3" id="h0-14-3" class="i">+name = &quot;num-traits&quot;
+</a><a href="#h0-14-4" id="h0-14-4" class="i">+version = &quot;0.2.18&quot;
+</a><a href="#h0-14-5" id="h0-14-5" class="i">+source = &quot;registry+https://github.com/rust-lang/crates.io-index&quot;
+</a><a href="#h0-14-6" id="h0-14-6" class="i">+checksum = &quot;da0df0e5185db44f69b44f26786fe401b6c293d1907744beaa7fa62b2e5a517a&quot;
+</a><a href="#h0-14-7" id="h0-14-7" class="i">+dependencies = [
+</a><a href="#h0-14-8" id="h0-14-8" class="i">+ &quot;autocfg&quot;,
+</a><a href="#h0-14-9" id="h0-14-9" class="i">+]
+</a><a href="#h0-14-10" id="h0-14-10" class="i">+
+</a><a href="#h0-14-11" id="h0-14-11" class="i">+[[package]]
+</a> name = &quot;num_cpus&quot;
+ version = &quot;1.16.0&quot;
+ source = &quot;registry+https://github.com/rust-lang/crates.io-index&quot;
+<a href="#h0-15" id="h0-15" class="h">@@ -904,6 +1043,12 @@ source = &quot;registry+https://github.com/rust-lang/crates.io-index&quot;
+</a> checksum = &quot;e2355d85b9a3786f481747ced0e0ff2ba35213a1f9bd406ed906554d7af805a1&quot;
+ 
+ [[package]]
+<a href="#h0-15-3" id="h0-15-3" class="i">+name = &quot;parking&quot;
+</a><a href="#h0-15-4" id="h0-15-4" class="i">+version = &quot;2.2.0&quot;
+</a><a href="#h0-15-5" id="h0-15-5" class="i">+source = &quot;registry+https://github.com/rust-lang/crates.io-index&quot;
+</a><a href="#h0-15-6" id="h0-15-6" class="i">+checksum = &quot;bb813b8af86854136c6922af0598d719255ecb2179515e6e7730d468f05c9cae&quot;
+</a><a href="#h0-15-7" id="h0-15-7" class="i">+
+</a><a href="#h0-15-8" id="h0-15-8" class="i">+[[package]]
+</a> name = &quot;parking_lot&quot;
+ version = &quot;0.12.1&quot;
+ source = &quot;registry+https://github.com/rust-lang/crates.io-index&quot;
+<a href="#h0-16" id="h0-16" class="h">@@ -984,6 +1129,17 @@ dependencies = [
+</a> ]
+ 
+ [[package]]
+<a href="#h0-16-3" id="h0-16-3" class="i">+name = &quot;petname&quot;
+</a><a href="#h0-16-4" id="h0-16-4" class="i">+version = &quot;1.1.3&quot;
+</a><a href="#h0-16-5" id="h0-16-5" class="i">+source = &quot;registry+https://github.com/rust-lang/crates.io-index&quot;
+</a><a href="#h0-16-6" id="h0-16-6" class="i">+checksum = &quot;fce4164d60963550beb856b011fdf32b03b0e8bc0c3fce023c7b0ccecddf7950&quot;
+</a><a href="#h0-16-7" id="h0-16-7" class="i">+dependencies = [
+</a><a href="#h0-16-8" id="h0-16-8" class="i">+ &quot;clap 3.2.25&quot;,
+</a><a href="#h0-16-9" id="h0-16-9" class="i">+ &quot;itertools 0.10.5&quot;,
+</a><a href="#h0-16-10" id="h0-16-10" class="i">+ &quot;rand 0.8.5&quot;,
+</a><a href="#h0-16-11" id="h0-16-11" class="i">+]
+</a><a href="#h0-16-12" id="h0-16-12" class="i">+
+</a><a href="#h0-16-13" id="h0-16-13" class="i">+[[package]]
+</a> name = &quot;pin-project&quot;
+ version = &quot;1.1.5&quot;
+ source = &quot;registry+https://github.com/rust-lang/crates.io-index&quot;
+<a href="#h0-17" id="h0-17" class="h">@@ -1675,6 +1831,7 @@ dependencies = [
+</a> name = &quot;toydb&quot;
+ version = &quot;0.1.0&quot;
+ dependencies = [
+<a href="#h0-17-3" id="h0-17-3" class="i">+ &quot;async-channel&quot;,
+</a>  &quot;bincode&quot;,
+  &quot;clap 4.5.4&quot;,
+  &quot;config&quot;,
+<a href="#h0-18" id="h0-18" class="h">@@ -1683,11 +1840,13 @@ dependencies = [
+</a>  &quot;futures&quot;,
+  &quot;futures-util&quot;,
+  &quot;goldenfile&quot;,
+<a href="#h0-18-3" id="h0-18-3" class="i">+ &quot;hdrhistogram&quot;,
+</a>  &quot;hex&quot;,
+<a href="#h0-18-5" id="h0-18-5" class="i">+ &quot;itertools 0.12.1&quot;,
+</a>  &quot;lazy_static&quot;,
+  &quot;log&quot;,
+<a href="#h0-18-8" id="h0-18-8" class="d">- &quot;names&quot;,
+</a>  &quot;paste&quot;,
+<a href="#h0-18-10" id="h0-18-10" class="i">+ &quot;petname&quot;,
+</a>  &quot;pretty_assertions&quot;,
+  &quot;rand 0.8.5&quot;,
+  &quot;regex&quot;,
+<b>diff --git a/<a id="h1" href="../file/Cargo.toml.html">Cargo.toml</a> b/<a href="../file/Cargo.toml.html">Cargo.toml</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -10,17 +10,20 @@ default-run = &quot;toydb&quot;
+</a> doctest = false
+ 
+ [dependencies]
+<a href="#h1-0-3" id="h1-0-3" class="i">+async-channel = &quot;~2.2.0&quot;
+</a> bincode = &quot;~1.3.3&quot;
+<a href="#h1-0-5" id="h1-0-5" class="d">-clap = { version = &quot;~4.5.4&quot;, features = [&quot;cargo&quot;] }
+</a><a href="#h1-0-6" id="h1-0-6" class="i">+clap = { version = &quot;~4.5.4&quot;, features = [&quot;cargo&quot;, &quot;derive&quot;] }
+</a> config = &quot;~0.14.0&quot;
+ derivative = &quot;~2.2.0&quot;
+ fs4 = &quot;~0.8.1&quot;
+ futures = &quot;~0.3.15&quot;
+ futures-util = &quot;~0.3.15&quot;
+<a href="#h1-0-12" id="h1-0-12" class="i">+hdrhistogram = &quot;~7.5.4&quot;
+</a> hex = &quot;~0.4.3&quot;
+<a href="#h1-0-14" id="h1-0-14" class="i">+itertools = &quot;0.12.1&quot;
+</a> lazy_static = &quot;~1.4.0&quot;
+ log = &quot;~0.4.14&quot;
+<a href="#h1-0-17" id="h1-0-17" class="d">-names = &quot;~0.14.0&quot;
+</a><a href="#h1-0-18" id="h1-0-18" class="i">+petname = &quot;1.1.3&quot;
+</a> rand = &quot;~0.8.3&quot;
+ regex = &quot;1.5.4&quot;
+ rustyline = &quot;~14.0.0&quot;
+<b>diff --git a/<a id="h2" href="../file/README.md.html">README.md</a> b/<a href="../file/README.md.html">README.md</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -31,13 +31,13 @@ database internals.
+</a> ## Usage
+ 
+ With a [Rust compiler](https://www.rust-lang.org/tools/install) installed, a local five-node 
+<a href="#h2-0-3" id="h2-0-3" class="d">-cluster can be started on `localhost` ports `9601` to `9605`:
+</a><a href="#h2-0-4" id="h2-0-4" class="i">+cluster can be started on `localhost` ports `9601` to `9605`, with data under `cluster/*/data`:
+</a> 
+ ```
+ $ ./cluster/run.sh
+ ```
+ 
+<a href="#h2-0-10" id="h2-0-10" class="d">-A command-line client can be built and used with the node on `localhost` port `9605`:
+</a><a href="#h2-0-11" id="h2-0-11" class="i">+A command-line client can be built and used with node 5 on `localhost:9605`:
+</a> 
+ ```
+ $ cargo run --release --bin toysql
+<a href="#h2-1" id="h2-1" class="h">@@ -73,64 +73,57 @@ desirable but not yet implemented.
+</a> Execute `cargo test` to run all tests, or check out the latest
+ [CI run](https://github.com/erikgrinaker/toydb/actions/workflows/ci.yml).
+ 
+<a href="#h2-1-3" id="h2-1-3" class="d">-## Performance
+</a><a href="#h2-1-4" id="h2-1-4" class="i">+## Benchmarks
+</a> 
+<a href="#h2-1-6" id="h2-1-6" class="d">-Performance is not a primary goal of toyDB, but it has a bank simulation as a basic gauge of
+</a><a href="#h2-1-7" id="h2-1-7" class="d">-throughput and correctness. This creates a set of customers and accounts, and spawns several
+</a><a href="#h2-1-8" id="h2-1-8" class="d">-concurrent workers that make random transfers between them, retrying serialization failures and
+</a><a href="#h2-1-9" id="h2-1-9" class="d">-verifying invariants:
+</a><a href="#h2-1-10" id="h2-1-10" class="i">+toyDB is not optimized for performance, but it comes with a `workload` benchmarking tool that can
+</a><a href="#h2-1-11" id="h2-1-11" class="i">+run various workloads against a toyDB cluster. For example:
+</a> 
+ ```sh
+<a href="#h2-1-14" id="h2-1-14" class="d">-$ cargo run --release --bin bank
+</a><a href="#h2-1-15" id="h2-1-15" class="d">-Created 100 customers (1000 accounts) in 0.123s
+</a><a href="#h2-1-16" id="h2-1-16" class="d">-Verified that total balance is 100000 with no negative balances
+</a><a href="#h2-1-17" id="h2-1-17" class="d">-
+</a><a href="#h2-1-18" id="h2-1-18" class="d">-Thread 0 transferred   18 from  92 (0911) to 100 (0994) in 0.007s (1 attempts)
+</a><a href="#h2-1-19" id="h2-1-19" class="d">-Thread 1 transferred   84 from  61 (0601) to  85 (0843) in 0.007s (1 attempts)
+</a><a href="#h2-1-20" id="h2-1-20" class="d">-Thread 3 transferred   15 from  40 (0393) to  62 (0614) in 0.007s (1 attempts)
+</a><a href="#h2-1-21" id="h2-1-21" class="i">+# Start a 5-node toyDB cluster.
+</a><a href="#h2-1-22" id="h2-1-22" class="i">+$ ./cluster/run.sh
+</a> [...]
+<a href="#h2-1-24" id="h2-1-24" class="d">-Thread 6 transferred   48 from  78 (0777) to  52 (0513) in 0.004s (1 attempts)
+</a><a href="#h2-1-25" id="h2-1-25" class="d">-Thread 3 transferred   57 from  93 (0921) to  19 (0188) in 0.065s (2 attempts)
+</a><a href="#h2-1-26" id="h2-1-26" class="d">-Thread 4 transferred   70 from  35 (0347) to  49 (0484) in 0.068s (2 attempts)
+</a> 
+<a href="#h2-1-28" id="h2-1-28" class="d">-Ran 1000 transactions in 0.937s (1067.691/s)
+</a><a href="#h2-1-29" id="h2-1-29" class="d">-Verified that total balance is 100000 with no negative balances
+</a><a href="#h2-1-30" id="h2-1-30" class="i">+# Run a read-only benchmark via all 5 nodes.
+</a><a href="#h2-1-31" id="h2-1-31" class="i">+$ cargo run --release --bin workload read
+</a><a href="#h2-1-32" id="h2-1-32" class="i">+Preparing initial dataset... done (0.096s)
+</a><a href="#h2-1-33" id="h2-1-33" class="i">+Spawning 16 workers... done (0.003s)
+</a><a href="#h2-1-34" id="h2-1-34" class="i">+Running workload read (rows=1000 size=64 batch=1)...
+</a><a href="#h2-1-35" id="h2-1-35" class="i">+
+</a><a href="#h2-1-36" id="h2-1-36" class="i">+Time   Progress     Txns      Rate       p50       p90       p99      pMax
+</a><a href="#h2-1-37" id="h2-1-37" class="i">+1.0s       7.2%     7186    7181/s     2.3ms     3.1ms     4.0ms     9.6ms
+</a><a href="#h2-1-38" id="h2-1-38" class="i">+2.0s      14.4%    14416    7205/s     2.3ms     3.1ms     4.2ms     9.6ms
+</a><a href="#h2-1-39" id="h2-1-39" class="i">+3.0s      22.5%    22518    7504/s     2.2ms     2.9ms     4.0ms     9.6ms
+</a><a href="#h2-1-40" id="h2-1-40" class="i">+4.0s      30.3%    30303    7574/s     2.2ms     2.9ms     3.8ms     9.6ms
+</a><a href="#h2-1-41" id="h2-1-41" class="i">+5.0s      38.2%    38200    7639/s     2.2ms     2.8ms     3.7ms     9.6ms
+</a><a href="#h2-1-42" id="h2-1-42" class="i">+6.0s      46.0%    45961    7659/s     2.2ms     2.8ms     3.7ms     9.6ms
+</a><a href="#h2-1-43" id="h2-1-43" class="i">+7.0s      53.3%    53343    7620/s     2.2ms     2.8ms     3.7ms     9.6ms
+</a><a href="#h2-1-44" id="h2-1-44" class="i">+8.0s      61.2%    61220    7651/s     2.2ms     2.8ms     3.6ms     9.6ms
+</a><a href="#h2-1-45" id="h2-1-45" class="i">+9.0s      68.2%    68194    7576/s     2.2ms     2.8ms     3.7ms     9.6ms
+</a><a href="#h2-1-46" id="h2-1-46" class="i">+10.0s     75.8%    75800    7579/s     2.2ms     2.8ms     3.7ms     9.6ms
+</a><a href="#h2-1-47" id="h2-1-47" class="i">+11.0s     82.9%    82864    7533/s     2.2ms     2.9ms     3.7ms    18.2ms
+</a><a href="#h2-1-48" id="h2-1-48" class="i">+12.0s     90.6%    90583    7548/s     2.2ms     2.9ms     3.7ms    18.2ms
+</a><a href="#h2-1-49" id="h2-1-49" class="i">+13.0s     98.3%    98311    7562/s     2.2ms     2.9ms     3.7ms    18.2ms
+</a><a href="#h2-1-50" id="h2-1-50" class="i">+13.2s    100.0%   100000    7569/s     2.2ms     2.9ms     3.7ms    18.2ms
+</a><a href="#h2-1-51" id="h2-1-51" class="i">+
+</a><a href="#h2-1-52" id="h2-1-52" class="i">+Verifying dataset... done (0.001s)
+</a> ```
+ 
+<a href="#h2-1-55" id="h2-1-55" class="d">-The informal target was 100 transactions per second, and these results exceed that by an order
+</a><a href="#h2-1-56" id="h2-1-56" class="d">-of magnitude. For an unoptimized implementation, this is certainly &quot;good enough&quot;. However, this
+</a><a href="#h2-1-57" id="h2-1-57" class="d">-is with a single node and fsync disabled - the table below shows results for other configurations,
+</a><a href="#h2-1-58" id="h2-1-58" class="d">-revealing clear potential for improvement:
+</a><a href="#h2-1-59" id="h2-1-59" class="d">-
+</a><a href="#h2-1-60" id="h2-1-60" class="d">-|             | `sync: false` | `sync: true` |
+</a><a href="#h2-1-61" id="h2-1-61" class="d">-|-------------|---------------|--------------|
+</a><a href="#h2-1-62" id="h2-1-62" class="d">-| **1 node**  | 1067 txn/s    | 38 txn/s     |
+</a><a href="#h2-1-63" id="h2-1-63" class="d">-| **5 nodes** | 417 txn/s     | 19 txn/s     |
+</a><a href="#h2-1-64" id="h2-1-64" class="i">+The available workloads are:
+</a> 
+<a href="#h2-1-66" id="h2-1-66" class="d">-Note that each transaction consists of six statements, including joins, not just a single update:
+</a><a href="#h2-1-67" id="h2-1-67" class="i">+* `read`: single-row primary key lookups.
+</a><a href="#h2-1-68" id="h2-1-68" class="i">+* `write`: single-row inserts to sequential primary keys.
+</a><a href="#h2-1-69" id="h2-1-69" class="i">+* `bank`: makes bank transfers between various customers and accounts. To make things interesting,
+</a><a href="#h2-1-70" id="h2-1-70" class="i">+  this includes joins, secondary indexes, sorting, and conflicts.
+</a> 
+<a href="#h2-1-72" id="h2-1-72" class="d">-```sql
+</a><a href="#h2-1-73" id="h2-1-73" class="d">-BEGIN;
+</a><a href="#h2-1-74" id="h2-1-74" class="i">+For more information about workloads and parameters, run `cargo run --bin workload -- --help`.
+</a> 
+<a href="#h2-1-76" id="h2-1-76" class="d">--- Find the sender account with the highest balance
+</a><a href="#h2-1-77" id="h2-1-77" class="d">-SELECT a.id, a.balance
+</a><a href="#h2-1-78" id="h2-1-78" class="d">-FROM account a JOIN customer c ON a.customer_id = c.id
+</a><a href="#h2-1-79" id="h2-1-79" class="d">-WHERE c.id = {sender}
+</a><a href="#h2-1-80" id="h2-1-80" class="d">-ORDER BY a.balance DESC
+</a><a href="#h2-1-81" id="h2-1-81" class="d">-LIMIT 1;
+</a><a href="#h2-1-82" id="h2-1-82" class="i">+Example workload results:
+</a> 
+<a href="#h2-1-84" id="h2-1-84" class="d">--- Find the receiver account with the lowest balance
+</a><a href="#h2-1-85" id="h2-1-85" class="d">-SELECT a.id, a.balance
+</a><a href="#h2-1-86" id="h2-1-86" class="d">-FROM account a JOIN customer c ON a.customer_id = c.id
+</a><a href="#h2-1-87" id="h2-1-87" class="d">-WHERE c.id = {receiver}
+</a><a href="#h2-1-88" id="h2-1-88" class="d">-ORDER BY a.balance ASC
+</a><a href="#h2-1-89" id="h2-1-89" class="d">-LIMIT 1;
+</a><a href="#h2-1-90" id="h2-1-90" class="d">-
+</a><a href="#h2-1-91" id="h2-1-91" class="d">--- Transfer a random amount within the sender&#39;s balance to the receiver
+</a><a href="#h2-1-92" id="h2-1-92" class="d">-UPDATE account SET balance = balance - {amount} WHERE id = {source};
+</a><a href="#h2-1-93" id="h2-1-93" class="d">-UPDATE account SET balance = balance + {amount} WHERE id = {destination};
+</a><a href="#h2-1-94" id="h2-1-94" class="d">-
+</a><a href="#h2-1-95" id="h2-1-95" class="d">-COMMIT;
+</a><a href="#h2-1-96" id="h2-1-96" class="i">+```
+</a><a href="#h2-1-97" id="h2-1-97" class="i">+Workload   Time       Txns      Rate       p50       p90       p99      pMax
+</a><a href="#h2-1-98" id="h2-1-98" class="i">+read       13.2s    100000    7569/s     2.2ms     2.9ms     3.7ms    18.2ms
+</a><a href="#h2-1-99" id="h2-1-99" class="i">+write      22.2s    100000    4502/s     3.9ms     4.5ms     4.9ms    15.7ms
+</a><a href="#h2-1-100" id="h2-1-100" class="i">+bank       155.0s   100000     645/s    16.9ms    41.7ms    95.0ms  1044.4ms
+</a> ```
+ 
+ ## Debugging
+<b>diff --git a/<a id="h3" href="../file/docs/architecture.md.html">docs/architecture.md</a> b/<a href="../file/docs/architecture.md.html">docs/architecture.md</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -735,13 +735,7 @@ out of scope for the project.
+</a> 
+ The toyDB [`Client`](https://github.com/erikgrinaker/toydb/blob/master/src/client.rs) provides a 
+ simple API for interacting with a server, mainly by executing SQL statements via `execute()` 
+<a href="#h3-0-3" id="h3-0-3" class="d">-returning `sql::ResultSet`. It also has the convenience method `with_txn()`, taking a closure 
+</a><a href="#h3-0-4" id="h3-0-4" class="d">-that executes a series of SQL statements while automatically catching and retrying serialization
+</a><a href="#h3-0-5" id="h3-0-5" class="d">-errors.
+</a><a href="#h3-0-6" id="h3-0-6" class="d">-
+</a><a href="#h3-0-7" id="h3-0-7" class="d">-There is also `client::Pool`, which manages a set of pre-connected clients that can be retrieved
+</a><a href="#h3-0-8" id="h3-0-8" class="d">-for running short-lived queries in a multi-threaded application without incurring connection
+</a><a href="#h3-0-9" id="h3-0-9" class="d">-setup costs.
+</a><a href="#h3-0-10" id="h3-0-10" class="i">+returning `sql::ResultSet`.
+</a> 
+ The [`toysql`](https://github.com/erikgrinaker/toydb/blob/master/src/bin/toysql.rs) command-line
+ client is a simple REPL client that connects to a server using the toyDB `Client` and continually 
+<b>diff --git a/<a id="h4" href="../file/src/bin/bank.rs.html">src/bin/bank.rs</a> b/<a href="../file/src/bin/bank.rs.html">src/bin/bank.rs</a></b>
+<a href="#h4-0" id="h4-0" class="h">@@ -1,279 +0,0 @@
+</a><a href="#h4-0-0" id="h4-0-0" class="d">-/*
+</a><a href="#h4-0-1" id="h4-0-1" class="d">- * Simulates a bank, by creating a set of accounts and making concurrent transfers between them:
+</a><a href="#h4-0-2" id="h4-0-2" class="d">- *
+</a><a href="#h4-0-3" id="h4-0-3" class="d">- * - Connect to the given toyDB hosts (-H default 127.0.0.1:9605, can give multiple)
+</a><a href="#h4-0-4" id="h4-0-4" class="d">- * - Create C customers (-C default 100)
+</a><a href="#h4-0-5" id="h4-0-5" class="d">- * - Create a accounts per customer with initial balance 100 (-a default 10)
+</a><a href="#h4-0-6" id="h4-0-6" class="d">- * - Spawn c concurrent workers (-c default 8)
+</a><a href="#h4-0-7" id="h4-0-7" class="d">- * - Queue t transactions between two random customers (-t default 1000)
+</a><a href="#h4-0-8" id="h4-0-8" class="d">- *   - Begin a new transaction
+</a><a href="#h4-0-9" id="h4-0-9" class="d">- *   - Find the sender account with the largest balance
+</a><a href="#h4-0-10" id="h4-0-10" class="d">- *   - Find the receiver account with the lowest balance
+</a><a href="#h4-0-11" id="h4-0-11" class="d">- *   - Reduce the sender account by a random amount
+</a><a href="#h4-0-12" id="h4-0-12" class="d">- *   - Increase the receiver account by the same amount
+</a><a href="#h4-0-13" id="h4-0-13" class="d">- *   - Commit the transaction, or retry with exponential backoff on serialization errors
+</a><a href="#h4-0-14" id="h4-0-14" class="d">- * - Check that invariants still hold (same total balance, no negative balances)
+</a><a href="#h4-0-15" id="h4-0-15" class="d">- */
+</a><a href="#h4-0-16" id="h4-0-16" class="d">-
+</a><a href="#h4-0-17" id="h4-0-17" class="d">-#![warn(clippy::all)]
+</a><a href="#h4-0-18" id="h4-0-18" class="d">-
+</a><a href="#h4-0-19" id="h4-0-19" class="d">-use futures::stream::TryStreamExt as _;
+</a><a href="#h4-0-20" id="h4-0-20" class="d">-use rand::distributions::Distribution;
+</a><a href="#h4-0-21" id="h4-0-21" class="d">-use rand::Rng as _;
+</a><a href="#h4-0-22" id="h4-0-22" class="d">-use std::cell::Cell;
+</a><a href="#h4-0-23" id="h4-0-23" class="d">-use std::rc::Rc;
+</a><a href="#h4-0-24" id="h4-0-24" class="d">-use tokio::net::ToSocketAddrs;
+</a><a href="#h4-0-25" id="h4-0-25" class="d">-use toydb::client::Pool;
+</a><a href="#h4-0-26" id="h4-0-26" class="d">-use toydb::error::{Error, Result};
+</a><a href="#h4-0-27" id="h4-0-27" class="d">-
+</a><a href="#h4-0-28" id="h4-0-28" class="d">-#[tokio::main]
+</a><a href="#h4-0-29" id="h4-0-29" class="d">-async fn main() -&gt; Result&lt;()&gt; {
+</a><a href="#h4-0-30" id="h4-0-30" class="d">-    let args = clap::command!()
+</a><a href="#h4-0-31" id="h4-0-31" class="d">-        .about(&quot;A bank workload, which makes concurrent transfers between accounts.&quot;)
+</a><a href="#h4-0-32" id="h4-0-32" class="d">-        .args([
+</a><a href="#h4-0-33" id="h4-0-33" class="d">-            clap::Arg::new(&quot;host&quot;)
+</a><a href="#h4-0-34" id="h4-0-34" class="d">-                .short(&#39;H&#39;)
+</a><a href="#h4-0-35" id="h4-0-35" class="d">-                .long(&quot;host&quot;)
+</a><a href="#h4-0-36" id="h4-0-36" class="d">-                .help(&quot;Host to connect to, optionally with port number&quot;)
+</a><a href="#h4-0-37" id="h4-0-37" class="d">-                .num_args(1..)
+</a><a href="#h4-0-38" id="h4-0-38" class="d">-                .default_value(&quot;127.0.0.1:9605&quot;),
+</a><a href="#h4-0-39" id="h4-0-39" class="d">-            clap::Arg::new(&quot;concurrency&quot;)
+</a><a href="#h4-0-40" id="h4-0-40" class="d">-                .short(&#39;c&#39;)
+</a><a href="#h4-0-41" id="h4-0-41" class="d">-                .long(&quot;concurrency&quot;)
+</a><a href="#h4-0-42" id="h4-0-42" class="d">-                .help(&quot;Concurrent workers to spawn&quot;)
+</a><a href="#h4-0-43" id="h4-0-43" class="d">-                .value_parser(clap::value_parser!(u64))
+</a><a href="#h4-0-44" id="h4-0-44" class="d">-                .default_value(&quot;8&quot;),
+</a><a href="#h4-0-45" id="h4-0-45" class="d">-            clap::Arg::new(&quot;customers&quot;)
+</a><a href="#h4-0-46" id="h4-0-46" class="d">-                .short(&#39;C&#39;)
+</a><a href="#h4-0-47" id="h4-0-47" class="d">-                .long(&quot;customers&quot;)
+</a><a href="#h4-0-48" id="h4-0-48" class="d">-                .help(&quot;Number of customers to create&quot;)
+</a><a href="#h4-0-49" id="h4-0-49" class="d">-                .value_parser(clap::value_parser!(u64))
+</a><a href="#h4-0-50" id="h4-0-50" class="d">-                .default_value(&quot;100&quot;),
+</a><a href="#h4-0-51" id="h4-0-51" class="d">-            clap::Arg::new(&quot;accounts&quot;)
+</a><a href="#h4-0-52" id="h4-0-52" class="d">-                .short(&#39;a&#39;)
+</a><a href="#h4-0-53" id="h4-0-53" class="d">-                .long(&quot;accounts&quot;)
+</a><a href="#h4-0-54" id="h4-0-54" class="d">-                .help(&quot;Number of accounts to create per customer&quot;)
+</a><a href="#h4-0-55" id="h4-0-55" class="d">-                .value_parser(clap::value_parser!(u64))
+</a><a href="#h4-0-56" id="h4-0-56" class="d">-                .default_value(&quot;10&quot;),
+</a><a href="#h4-0-57" id="h4-0-57" class="d">-            clap::Arg::new(&quot;transactions&quot;)
+</a><a href="#h4-0-58" id="h4-0-58" class="d">-                .short(&#39;t&#39;)
+</a><a href="#h4-0-59" id="h4-0-59" class="d">-                .long(&quot;transactions&quot;)
+</a><a href="#h4-0-60" id="h4-0-60" class="d">-                .help(&quot;Number of account transfers to execute&quot;)
+</a><a href="#h4-0-61" id="h4-0-61" class="d">-                .value_parser(clap::value_parser!(u64))
+</a><a href="#h4-0-62" id="h4-0-62" class="d">-                .default_value(&quot;1000&quot;),
+</a><a href="#h4-0-63" id="h4-0-63" class="d">-        ])
+</a><a href="#h4-0-64" id="h4-0-64" class="d">-        .get_matches();
+</a><a href="#h4-0-65" id="h4-0-65" class="d">-
+</a><a href="#h4-0-66" id="h4-0-66" class="d">-    Bank::new(
+</a><a href="#h4-0-67" id="h4-0-67" class="d">-        args.get_many::&lt;String&gt;(&quot;host&quot;).unwrap().collect(),
+</a><a href="#h4-0-68" id="h4-0-68" class="d">-        *args.get_one::&lt;u64&gt;(&quot;concurrency&quot;).unwrap(),
+</a><a href="#h4-0-69" id="h4-0-69" class="d">-        *args.get_one(&quot;customers&quot;).unwrap(),
+</a><a href="#h4-0-70" id="h4-0-70" class="d">-        *args.get_one(&quot;accounts&quot;).unwrap(),
+</a><a href="#h4-0-71" id="h4-0-71" class="d">-    )
+</a><a href="#h4-0-72" id="h4-0-72" class="d">-    .await?
+</a><a href="#h4-0-73" id="h4-0-73" class="d">-    .run(*args.get_one(&quot;transactions&quot;).unwrap())
+</a><a href="#h4-0-74" id="h4-0-74" class="d">-    .await
+</a><a href="#h4-0-75" id="h4-0-75" class="d">-}
+</a><a href="#h4-0-76" id="h4-0-76" class="d">-
+</a><a href="#h4-0-77" id="h4-0-77" class="d">-struct Bank {
+</a><a href="#h4-0-78" id="h4-0-78" class="d">-    clients: Pool,
+</a><a href="#h4-0-79" id="h4-0-79" class="d">-    customers: u64,
+</a><a href="#h4-0-80" id="h4-0-80" class="d">-    customer_accounts: u64,
+</a><a href="#h4-0-81" id="h4-0-81" class="d">-}
+</a><a href="#h4-0-82" id="h4-0-82" class="d">-
+</a><a href="#h4-0-83" id="h4-0-83" class="d">-impl Bank {
+</a><a href="#h4-0-84" id="h4-0-84" class="d">-    const INITIAL_BALANCE: u64 = 100;
+</a><a href="#h4-0-85" id="h4-0-85" class="d">-
+</a><a href="#h4-0-86" id="h4-0-86" class="d">-    // Creates a new bank simulation.
+</a><a href="#h4-0-87" id="h4-0-87" class="d">-    async fn new&lt;A: ToSocketAddrs + Clone&gt;(
+</a><a href="#h4-0-88" id="h4-0-88" class="d">-        addrs: Vec&lt;A&gt;,
+</a><a href="#h4-0-89" id="h4-0-89" class="d">-        concurrency: u64,
+</a><a href="#h4-0-90" id="h4-0-90" class="d">-        customers: u64,
+</a><a href="#h4-0-91" id="h4-0-91" class="d">-        accounts: u64,
+</a><a href="#h4-0-92" id="h4-0-92" class="d">-    ) -&gt; Result&lt;Self&gt; {
+</a><a href="#h4-0-93" id="h4-0-93" class="d">-        Ok(Self {
+</a><a href="#h4-0-94" id="h4-0-94" class="d">-            clients: Pool::new(addrs, concurrency).await?,
+</a><a href="#h4-0-95" id="h4-0-95" class="d">-            customers,
+</a><a href="#h4-0-96" id="h4-0-96" class="d">-            customer_accounts: accounts,
+</a><a href="#h4-0-97" id="h4-0-97" class="d">-        })
+</a><a href="#h4-0-98" id="h4-0-98" class="d">-    }
+</a><a href="#h4-0-99" id="h4-0-99" class="d">-
+</a><a href="#h4-0-100" id="h4-0-100" class="d">-    // Runs the bank simulation, making transfers between customer accounts.
+</a><a href="#h4-0-101" id="h4-0-101" class="d">-    async fn run(&amp;self, transactions: u64) -&gt; Result&lt;()&gt; {
+</a><a href="#h4-0-102" id="h4-0-102" class="d">-        self.setup().await?;
+</a><a href="#h4-0-103" id="h4-0-103" class="d">-        self.verify().await?;
+</a><a href="#h4-0-104" id="h4-0-104" class="d">-        println!();
+</a><a href="#h4-0-105" id="h4-0-105" class="d">-
+</a><a href="#h4-0-106" id="h4-0-106" class="d">-        let mut rng = rand::thread_rng();
+</a><a href="#h4-0-107" id="h4-0-107" class="d">-        let customers = rand::distributions::Uniform::from(1..=self.customers);
+</a><a href="#h4-0-108" id="h4-0-108" class="d">-        let transfers = futures::stream::iter(
+</a><a href="#h4-0-109" id="h4-0-109" class="d">-            std::iter::from_fn(|| Some((customers.sample(&amp;mut rng), customers.sample(&amp;mut rng))))
+</a><a href="#h4-0-110" id="h4-0-110" class="d">-                .filter(|(from, to)| from != to)
+</a><a href="#h4-0-111" id="h4-0-111" class="d">-                .map(Ok)
+</a><a href="#h4-0-112" id="h4-0-112" class="d">-                .take(transactions as usize),
+</a><a href="#h4-0-113" id="h4-0-113" class="d">-        );
+</a><a href="#h4-0-114" id="h4-0-114" class="d">-
+</a><a href="#h4-0-115" id="h4-0-115" class="d">-        let start = std::time::Instant::now();
+</a><a href="#h4-0-116" id="h4-0-116" class="d">-        transfers
+</a><a href="#h4-0-117" id="h4-0-117" class="d">-            .try_for_each_concurrent(self.clients.size(), |(from, to)| self.transfer(from, to))
+</a><a href="#h4-0-118" id="h4-0-118" class="d">-            .await?;
+</a><a href="#h4-0-119" id="h4-0-119" class="d">-        let elapsed = start.elapsed().as_secs_f64();
+</a><a href="#h4-0-120" id="h4-0-120" class="d">-
+</a><a href="#h4-0-121" id="h4-0-121" class="d">-        println!();
+</a><a href="#h4-0-122" id="h4-0-122" class="d">-        println!(
+</a><a href="#h4-0-123" id="h4-0-123" class="d">-            &quot;Ran {} transactions in {:.3}s ({:.3}/s)&quot;,
+</a><a href="#h4-0-124" id="h4-0-124" class="d">-            transactions,
+</a><a href="#h4-0-125" id="h4-0-125" class="d">-            elapsed,
+</a><a href="#h4-0-126" id="h4-0-126" class="d">-            transactions as f64 / elapsed
+</a><a href="#h4-0-127" id="h4-0-127" class="d">-        );
+</a><a href="#h4-0-128" id="h4-0-128" class="d">-
+</a><a href="#h4-0-129" id="h4-0-129" class="d">-        self.verify().await?;
+</a><a href="#h4-0-130" id="h4-0-130" class="d">-        Ok(())
+</a><a href="#h4-0-131" id="h4-0-131" class="d">-    }
+</a><a href="#h4-0-132" id="h4-0-132" class="d">-
+</a><a href="#h4-0-133" id="h4-0-133" class="d">-    // Sets up the database with customers and accounts.
+</a><a href="#h4-0-134" id="h4-0-134" class="d">-    async fn setup(&amp;self) -&gt; Result&lt;()&gt; {
+</a><a href="#h4-0-135" id="h4-0-135" class="d">-        let client = self.clients.get().await;
+</a><a href="#h4-0-136" id="h4-0-136" class="d">-        let start = std::time::Instant::now();
+</a><a href="#h4-0-137" id="h4-0-137" class="d">-        client.execute(&quot;BEGIN&quot;).await?;
+</a><a href="#h4-0-138" id="h4-0-138" class="d">-        client
+</a><a href="#h4-0-139" id="h4-0-139" class="d">-            .execute(
+</a><a href="#h4-0-140" id="h4-0-140" class="d">-                &quot;CREATE TABLE customer (
+</a><a href="#h4-0-141" id="h4-0-141" class="d">-                    id INTEGER PRIMARY KEY,
+</a><a href="#h4-0-142" id="h4-0-142" class="d">-                    name STRING NOT NULL
+</a><a href="#h4-0-143" id="h4-0-143" class="d">-                )&quot;,
+</a><a href="#h4-0-144" id="h4-0-144" class="d">-            )
+</a><a href="#h4-0-145" id="h4-0-145" class="d">-            .await?;
+</a><a href="#h4-0-146" id="h4-0-146" class="d">-        client
+</a><a href="#h4-0-147" id="h4-0-147" class="d">-            .execute(
+</a><a href="#h4-0-148" id="h4-0-148" class="d">-                &quot;CREATE TABLE account (
+</a><a href="#h4-0-149" id="h4-0-149" class="d">-                    id INTEGER PRIMARY KEY,
+</a><a href="#h4-0-150" id="h4-0-150" class="d">-                    customer_id INTEGER NOT NULL INDEX REFERENCES customer,
+</a><a href="#h4-0-151" id="h4-0-151" class="d">-                    balance INTEGER NOT NULL
+</a><a href="#h4-0-152" id="h4-0-152" class="d">-                )&quot;,
+</a><a href="#h4-0-153" id="h4-0-153" class="d">-            )
+</a><a href="#h4-0-154" id="h4-0-154" class="d">-            .await?;
+</a><a href="#h4-0-155" id="h4-0-155" class="d">-        client
+</a><a href="#h4-0-156" id="h4-0-156" class="d">-            .execute(&amp;format!(
+</a><a href="#h4-0-157" id="h4-0-157" class="d">-                &quot;INSERT INTO customer VALUES {}&quot;,
+</a><a href="#h4-0-158" id="h4-0-158" class="d">-                (1..=self.customers)
+</a><a href="#h4-0-159" id="h4-0-159" class="d">-                    .zip(names::Generator::with_naming(names::Name::Plain))
+</a><a href="#h4-0-160" id="h4-0-160" class="d">-                    .map(|(id, name)| format!(&quot;({}, &#39;{}&#39;)&quot;, id, name))
+</a><a href="#h4-0-161" id="h4-0-161" class="d">-                    .collect::&lt;Vec&lt;String&gt;&gt;()
+</a><a href="#h4-0-162" id="h4-0-162" class="d">-                    .join(&quot;, &quot;)
+</a><a href="#h4-0-163" id="h4-0-163" class="d">-            ))
+</a><a href="#h4-0-164" id="h4-0-164" class="d">-            .await?;
+</a><a href="#h4-0-165" id="h4-0-165" class="d">-        client
+</a><a href="#h4-0-166" id="h4-0-166" class="d">-            .execute(&amp;format!(
+</a><a href="#h4-0-167" id="h4-0-167" class="d">-                &quot;INSERT INTO account VALUES {}&quot;,
+</a><a href="#h4-0-168" id="h4-0-168" class="d">-                (1..=self.customers)
+</a><a href="#h4-0-169" id="h4-0-169" class="d">-                    .flat_map(|c| (1..=self.customer_accounts).map(move |a| (c, a)))
+</a><a href="#h4-0-170" id="h4-0-170" class="d">-                    .map(|(c, a)| (c, (c - 1) * self.customer_accounts + a))
+</a><a href="#h4-0-171" id="h4-0-171" class="d">-                    .map(|(c, a)| (format!(&quot;({}, {}, {})&quot;, a, c, Self::INITIAL_BALANCE)))
+</a><a href="#h4-0-172" id="h4-0-172" class="d">-                    .collect::&lt;Vec&lt;String&gt;&gt;()
+</a><a href="#h4-0-173" id="h4-0-173" class="d">-                    .join(&quot;, &quot;)
+</a><a href="#h4-0-174" id="h4-0-174" class="d">-            ))
+</a><a href="#h4-0-175" id="h4-0-175" class="d">-            .await?;
+</a><a href="#h4-0-176" id="h4-0-176" class="d">-        client.execute(&quot;COMMIT&quot;).await?;
+</a><a href="#h4-0-177" id="h4-0-177" class="d">-
+</a><a href="#h4-0-178" id="h4-0-178" class="d">-        println!(
+</a><a href="#h4-0-179" id="h4-0-179" class="d">-            &quot;Created {} customers ({} accounts) in {:.3}s&quot;,
+</a><a href="#h4-0-180" id="h4-0-180" class="d">-            self.customers,
+</a><a href="#h4-0-181" id="h4-0-181" class="d">-            self.customers * self.customer_accounts,
+</a><a href="#h4-0-182" id="h4-0-182" class="d">-            start.elapsed().as_secs_f64()
+</a><a href="#h4-0-183" id="h4-0-183" class="d">-        );
+</a><a href="#h4-0-184" id="h4-0-184" class="d">-        Ok(())
+</a><a href="#h4-0-185" id="h4-0-185" class="d">-    }
+</a><a href="#h4-0-186" id="h4-0-186" class="d">-
+</a><a href="#h4-0-187" id="h4-0-187" class="d">-    /// Verifies that all invariants hold (same total balance, no negative balances).
+</a><a href="#h4-0-188" id="h4-0-188" class="d">-    async fn verify(&amp;self) -&gt; Result&lt;()&gt; {
+</a><a href="#h4-0-189" id="h4-0-189" class="d">-        let client = self.clients.get().await;
+</a><a href="#h4-0-190" id="h4-0-190" class="d">-        let expect = self.customers * self.customer_accounts * Self::INITIAL_BALANCE;
+</a><a href="#h4-0-191" id="h4-0-191" class="d">-        let balance =
+</a><a href="#h4-0-192" id="h4-0-192" class="d">-            client.execute(&quot;SELECT SUM(balance) FROM account&quot;).await?.into_value()?.integer()?
+</a><a href="#h4-0-193" id="h4-0-193" class="d">-                as u64;
+</a><a href="#h4-0-194" id="h4-0-194" class="d">-        if balance != expect {
+</a><a href="#h4-0-195" id="h4-0-195" class="d">-            return Err(Error::Value(format!(
+</a><a href="#h4-0-196" id="h4-0-196" class="d">-                &quot;Expected total balance {}, found {}&quot;,
+</a><a href="#h4-0-197" id="h4-0-197" class="d">-                expect, balance
+</a><a href="#h4-0-198" id="h4-0-198" class="d">-            )));
+</a><a href="#h4-0-199" id="h4-0-199" class="d">-        }
+</a><a href="#h4-0-200" id="h4-0-200" class="d">-        let negative = client
+</a><a href="#h4-0-201" id="h4-0-201" class="d">-            .execute(&quot;SELECT COUNT(*) FROM account WHERE balance &lt; 0&quot;)
+</a><a href="#h4-0-202" id="h4-0-202" class="d">-            .await?
+</a><a href="#h4-0-203" id="h4-0-203" class="d">-            .into_value()?
+</a><a href="#h4-0-204" id="h4-0-204" class="d">-            .integer()?;
+</a><a href="#h4-0-205" id="h4-0-205" class="d">-        if negative &gt; 0 {
+</a><a href="#h4-0-206" id="h4-0-206" class="d">-            return Err(Error::Value(format!(&quot;Found {} accounts with negative balance&quot;, negative)));
+</a><a href="#h4-0-207" id="h4-0-207" class="d">-        }
+</a><a href="#h4-0-208" id="h4-0-208" class="d">-        println!(&quot;Verified that total balance is {} with no negative balances&quot;, balance);
+</a><a href="#h4-0-209" id="h4-0-209" class="d">-        Ok(())
+</a><a href="#h4-0-210" id="h4-0-210" class="d">-    }
+</a><a href="#h4-0-211" id="h4-0-211" class="d">-
+</a><a href="#h4-0-212" id="h4-0-212" class="d">-    /// Transfers a random amount between two customers, retrying serialization failures.
+</a><a href="#h4-0-213" id="h4-0-213" class="d">-    async fn transfer(&amp;self, from: u64, to: u64) -&gt; Result&lt;()&gt; {
+</a><a href="#h4-0-214" id="h4-0-214" class="d">-        let client = self.clients.get().await;
+</a><a href="#h4-0-215" id="h4-0-215" class="d">-        let attempts = Rc::new(Cell::new(0_u8));
+</a><a href="#h4-0-216" id="h4-0-216" class="d">-        let start = std::time::Instant::now();
+</a><a href="#h4-0-217" id="h4-0-217" class="d">-
+</a><a href="#h4-0-218" id="h4-0-218" class="d">-        let (from_account, to_account, amount) = client
+</a><a href="#h4-0-219" id="h4-0-219" class="d">-            .with_txn(|txn| {
+</a><a href="#h4-0-220" id="h4-0-220" class="d">-                let attempts = attempts.clone();
+</a><a href="#h4-0-221" id="h4-0-221" class="d">-                async move {
+</a><a href="#h4-0-222" id="h4-0-222" class="d">-                    attempts.set(attempts.get() + 1);
+</a><a href="#h4-0-223" id="h4-0-223" class="d">-                    let mut row = txn
+</a><a href="#h4-0-224" id="h4-0-224" class="d">-                        .execute(&amp;format!(
+</a><a href="#h4-0-225" id="h4-0-225" class="d">-                            &quot;SELECT a.id, a.balance
+</a><a href="#h4-0-226" id="h4-0-226" class="d">-                            FROM account a JOIN customer c ON a.customer_id = c.id
+</a><a href="#h4-0-227" id="h4-0-227" class="d">-                            WHERE c.id = {}
+</a><a href="#h4-0-228" id="h4-0-228" class="d">-                            ORDER BY a.balance DESC
+</a><a href="#h4-0-229" id="h4-0-229" class="d">-                            LIMIT 1&quot;,
+</a><a href="#h4-0-230" id="h4-0-230" class="d">-                            from
+</a><a href="#h4-0-231" id="h4-0-231" class="d">-                        ))
+</a><a href="#h4-0-232" id="h4-0-232" class="d">-                        .await?
+</a><a href="#h4-0-233" id="h4-0-233" class="d">-                        .into_row()?;
+</a><a href="#h4-0-234" id="h4-0-234" class="d">-                    let from_account = row.remove(0).integer()?;
+</a><a href="#h4-0-235" id="h4-0-235" class="d">-                    let from_balance = row.remove(0).integer()?;
+</a><a href="#h4-0-236" id="h4-0-236" class="d">-
+</a><a href="#h4-0-237" id="h4-0-237" class="d">-                    let to_account = txn
+</a><a href="#h4-0-238" id="h4-0-238" class="d">-                        .execute(&amp;format!(
+</a><a href="#h4-0-239" id="h4-0-239" class="d">-                            &quot;SELECT a.id, a.balance
+</a><a href="#h4-0-240" id="h4-0-240" class="d">-                            FROM account a JOIN customer c ON a.customer_id = c.id
+</a><a href="#h4-0-241" id="h4-0-241" class="d">-                            WHERE c.id = {}
+</a><a href="#h4-0-242" id="h4-0-242" class="d">-                            ORDER BY a.balance ASC
+</a><a href="#h4-0-243" id="h4-0-243" class="d">-                            LIMIT 1&quot;,
+</a><a href="#h4-0-244" id="h4-0-244" class="d">-                            to
+</a><a href="#h4-0-245" id="h4-0-245" class="d">-                        ))
+</a><a href="#h4-0-246" id="h4-0-246" class="d">-                        .await?
+</a><a href="#h4-0-247" id="h4-0-247" class="d">-                        .into_value()?
+</a><a href="#h4-0-248" id="h4-0-248" class="d">-                        .integer()?;
+</a><a href="#h4-0-249" id="h4-0-249" class="d">-
+</a><a href="#h4-0-250" id="h4-0-250" class="d">-                    let amount = rand::thread_rng().gen_range(0..=from_balance);
+</a><a href="#h4-0-251" id="h4-0-251" class="d">-                    txn.execute(&amp;format!(
+</a><a href="#h4-0-252" id="h4-0-252" class="d">-                        &quot;UPDATE account SET balance = balance - {} WHERE id = {}&quot;,
+</a><a href="#h4-0-253" id="h4-0-253" class="d">-                        amount, from_account,
+</a><a href="#h4-0-254" id="h4-0-254" class="d">-                    ))
+</a><a href="#h4-0-255" id="h4-0-255" class="d">-                    .await?;
+</a><a href="#h4-0-256" id="h4-0-256" class="d">-                    txn.execute(&amp;format!(
+</a><a href="#h4-0-257" id="h4-0-257" class="d">-                        &quot;UPDATE account SET balance = balance + {} WHERE id = {}&quot;,
+</a><a href="#h4-0-258" id="h4-0-258" class="d">-                        amount, to_account,
+</a><a href="#h4-0-259" id="h4-0-259" class="d">-                    ))
+</a><a href="#h4-0-260" id="h4-0-260" class="d">-                    .await?;
+</a><a href="#h4-0-261" id="h4-0-261" class="d">-                    Ok((from_account, to_account, amount))
+</a><a href="#h4-0-262" id="h4-0-262" class="d">-                }
+</a><a href="#h4-0-263" id="h4-0-263" class="d">-            })
+</a><a href="#h4-0-264" id="h4-0-264" class="d">-            .await?;
+</a><a href="#h4-0-265" id="h4-0-265" class="d">-
+</a><a href="#h4-0-266" id="h4-0-266" class="d">-        println!(
+</a><a href="#h4-0-267" id="h4-0-267" class="d">-            &quot;Thread {} transferred {: &gt;4} from {: &gt;3} ({:0&gt;4}) to {: &gt;3} ({:0&gt;4}) in {:.3}s ({} attempts)&quot;,
+</a><a href="#h4-0-268" id="h4-0-268" class="d">-            client.id(),
+</a><a href="#h4-0-269" id="h4-0-269" class="d">-            amount,
+</a><a href="#h4-0-270" id="h4-0-270" class="d">-            from,
+</a><a href="#h4-0-271" id="h4-0-271" class="d">-            from_account,
+</a><a href="#h4-0-272" id="h4-0-272" class="d">-            to,
+</a><a href="#h4-0-273" id="h4-0-273" class="d">-            to_account,
+</a><a href="#h4-0-274" id="h4-0-274" class="d">-            start.elapsed().as_secs_f64(),
+</a><a href="#h4-0-275" id="h4-0-275" class="d">-            attempts.get());
+</a><a href="#h4-0-276" id="h4-0-276" class="d">-        Ok(())
+</a><a href="#h4-0-277" id="h4-0-277" class="d">-    }
+</a><a href="#h4-0-278" id="h4-0-278" class="d">-}
+</a><b>diff --git a/<a id="h5" href="../file/src/bin/workload.rs.html">src/bin/workload.rs</a> b/<a href="../file/src/bin/workload.rs.html">src/bin/workload.rs</a></b>
+<a href="#h5-0" id="h5-0" class="h">@@ -0,0 +1,582 @@
+</a><a href="#h5-0-0" id="h5-0-0" class="i">+//! Runs toyDB workload benchmarks. For example, a read-only
+</a><a href="#h5-0-1" id="h5-0-1" class="i">+//! workload can be run as:
+</a><a href="#h5-0-2" id="h5-0-2" class="i">+//!
+</a><a href="#h5-0-3" id="h5-0-3" class="i">+//! cargo run --bin workload --
+</a><a href="#h5-0-4" id="h5-0-4" class="i">+//!     --hosts localhost:9605,localhost:9604,localhost:9603
+</a><a href="#h5-0-5" id="h5-0-5" class="i">+//!     --concurrency 16 --count 100000
+</a><a href="#h5-0-6" id="h5-0-6" class="i">+//!     read --rows 1000 --size 65536 --batch 10
+</a><a href="#h5-0-7" id="h5-0-7" class="i">+//!
+</a><a href="#h5-0-8" id="h5-0-8" class="i">+//! See --help for a list of available workloads and arguments.
+</a><a href="#h5-0-9" id="h5-0-9" class="i">+
+</a><a href="#h5-0-10" id="h5-0-10" class="i">+#![warn(clippy::all)]
+</a><a href="#h5-0-11" id="h5-0-11" class="i">+
+</a><a href="#h5-0-12" id="h5-0-12" class="i">+use clap::Parser;
+</a><a href="#h5-0-13" id="h5-0-13" class="i">+use itertools::Itertools;
+</a><a href="#h5-0-14" id="h5-0-14" class="i">+use rand::distributions::Distribution;
+</a><a href="#h5-0-15" id="h5-0-15" class="i">+use rand::rngs::StdRng;
+</a><a href="#h5-0-16" id="h5-0-16" class="i">+use rand::{Rng, SeedableRng};
+</a><a href="#h5-0-17" id="h5-0-17" class="i">+use std::collections::HashSet;
+</a><a href="#h5-0-18" id="h5-0-18" class="i">+use std::io::Write as _;
+</a><a href="#h5-0-19" id="h5-0-19" class="i">+use std::time::Duration;
+</a><a href="#h5-0-20" id="h5-0-20" class="i">+use toydb::error::{Error, Result};
+</a><a href="#h5-0-21" id="h5-0-21" class="i">+use toydb::{Client, ResultSet};
+</a><a href="#h5-0-22" id="h5-0-22" class="i">+
+</a><a href="#h5-0-23" id="h5-0-23" class="i">+#[tokio::main]
+</a><a href="#h5-0-24" id="h5-0-24" class="i">+async fn main() -&gt; Result&lt;()&gt; {
+</a><a href="#h5-0-25" id="h5-0-25" class="i">+    let Command { runner, subcommand } = Command::parse();
+</a><a href="#h5-0-26" id="h5-0-26" class="i">+    match subcommand {
+</a><a href="#h5-0-27" id="h5-0-27" class="i">+        Subcommand::Read(read) =&gt; runner.run(read).await,
+</a><a href="#h5-0-28" id="h5-0-28" class="i">+        Subcommand::Write(write) =&gt; runner.run(write).await,
+</a><a href="#h5-0-29" id="h5-0-29" class="i">+        Subcommand::Bank(bank) =&gt; runner.run(bank).await,
+</a><a href="#h5-0-30" id="h5-0-30" class="i">+    }
+</a><a href="#h5-0-31" id="h5-0-31" class="i">+}
+</a><a href="#h5-0-32" id="h5-0-32" class="i">+
+</a><a href="#h5-0-33" id="h5-0-33" class="i">+/// Handles command-line parsing.
+</a><a href="#h5-0-34" id="h5-0-34" class="i">+#[derive(clap::Parser)]
+</a><a href="#h5-0-35" id="h5-0-35" class="i">+#[command(about = &quot;Runs toyDB workload benchmarks.&quot;, version, propagate_version = true)]
+</a><a href="#h5-0-36" id="h5-0-36" class="i">+struct Command {
+</a><a href="#h5-0-37" id="h5-0-37" class="i">+    #[command(flatten)]
+</a><a href="#h5-0-38" id="h5-0-38" class="i">+    runner: Runner,
+</a><a href="#h5-0-39" id="h5-0-39" class="i">+
+</a><a href="#h5-0-40" id="h5-0-40" class="i">+    #[command(subcommand)]
+</a><a href="#h5-0-41" id="h5-0-41" class="i">+    subcommand: Subcommand,
+</a><a href="#h5-0-42" id="h5-0-42" class="i">+}
+</a><a href="#h5-0-43" id="h5-0-43" class="i">+
+</a><a href="#h5-0-44" id="h5-0-44" class="i">+#[derive(clap::Subcommand)]
+</a><a href="#h5-0-45" id="h5-0-45" class="i">+enum Subcommand {
+</a><a href="#h5-0-46" id="h5-0-46" class="i">+    Read(Read),
+</a><a href="#h5-0-47" id="h5-0-47" class="i">+    Write(Write),
+</a><a href="#h5-0-48" id="h5-0-48" class="i">+    Bank(Bank),
+</a><a href="#h5-0-49" id="h5-0-49" class="i">+}
+</a><a href="#h5-0-50" id="h5-0-50" class="i">+
+</a><a href="#h5-0-51" id="h5-0-51" class="i">+/// Runs a workload benchmark.
+</a><a href="#h5-0-52" id="h5-0-52" class="i">+#[derive(clap::Args)]
+</a><a href="#h5-0-53" id="h5-0-53" class="i">+struct Runner {
+</a><a href="#h5-0-54" id="h5-0-54" class="i">+    /// Hosts to connect to (optionally with port number).
+</a><a href="#h5-0-55" id="h5-0-55" class="i">+    #[arg(
+</a><a href="#h5-0-56" id="h5-0-56" class="i">+        short = &#39;H&#39;,
+</a><a href="#h5-0-57" id="h5-0-57" class="i">+        long,
+</a><a href="#h5-0-58" id="h5-0-58" class="i">+        value_delimiter = &#39;,&#39;,
+</a><a href="#h5-0-59" id="h5-0-59" class="i">+        default_value = &quot;localhost:9605,localhost:9604,localhost:9603,localhost:9602,localhost:9601&quot;
+</a><a href="#h5-0-60" id="h5-0-60" class="i">+    )]
+</a><a href="#h5-0-61" id="h5-0-61" class="i">+    hosts: Vec&lt;String&gt;,
+</a><a href="#h5-0-62" id="h5-0-62" class="i">+
+</a><a href="#h5-0-63" id="h5-0-63" class="i">+    /// Number of concurrent workers to spawn.
+</a><a href="#h5-0-64" id="h5-0-64" class="i">+    #[arg(short, long, default_value = &quot;16&quot;)]
+</a><a href="#h5-0-65" id="h5-0-65" class="i">+    concurrency: usize,
+</a><a href="#h5-0-66" id="h5-0-66" class="i">+
+</a><a href="#h5-0-67" id="h5-0-67" class="i">+    /// Number of transactions to execute.
+</a><a href="#h5-0-68" id="h5-0-68" class="i">+    #[arg(short = &#39;n&#39;, long, default_value = &quot;100000&quot;)]
+</a><a href="#h5-0-69" id="h5-0-69" class="i">+    count: usize,
+</a><a href="#h5-0-70" id="h5-0-70" class="i">+
+</a><a href="#h5-0-71" id="h5-0-71" class="i">+    /// Seed to use for random number generation.
+</a><a href="#h5-0-72" id="h5-0-72" class="i">+    #[arg(short, long, default_value = &quot;16791084677885396490&quot;)]
+</a><a href="#h5-0-73" id="h5-0-73" class="i">+    seed: u64,
+</a><a href="#h5-0-74" id="h5-0-74" class="i">+}
+</a><a href="#h5-0-75" id="h5-0-75" class="i">+
+</a><a href="#h5-0-76" id="h5-0-76" class="i">+impl Runner {
+</a><a href="#h5-0-77" id="h5-0-77" class="i">+    /// Runs the specified workload.
+</a><a href="#h5-0-78" id="h5-0-78" class="i">+    async fn run&lt;W: Workload&gt;(self, workload: W) -&gt; Result&lt;()&gt; {
+</a><a href="#h5-0-79" id="h5-0-79" class="i">+        let mut rng = rand::rngs::StdRng::seed_from_u64(self.seed);
+</a><a href="#h5-0-80" id="h5-0-80" class="i">+        let mut client = Client::new(&amp;self.hosts[0]).await?;
+</a><a href="#h5-0-81" id="h5-0-81" class="i">+
+</a><a href="#h5-0-82" id="h5-0-82" class="i">+        // Set up a histogram recording txn latencies as nanoseconds. The
+</a><a href="#h5-0-83" id="h5-0-83" class="i">+        // buckets range from 0.001s to 10s.
+</a><a href="#h5-0-84" id="h5-0-84" class="i">+        let mut hist =
+</a><a href="#h5-0-85" id="h5-0-85" class="i">+            hdrhistogram::Histogram::&lt;u32&gt;::new_with_bounds(1_000, 10_000_000_000, 3)?.into_sync();
+</a><a href="#h5-0-86" id="h5-0-86" class="i">+
+</a><a href="#h5-0-87" id="h5-0-87" class="i">+        // Prepare the dataset.
+</a><a href="#h5-0-88" id="h5-0-88" class="i">+        print!(&quot;Preparing initial dataset... &quot;);
+</a><a href="#h5-0-89" id="h5-0-89" class="i">+        std::io::stdout().flush()?;
+</a><a href="#h5-0-90" id="h5-0-90" class="i">+        let start = std::time::Instant::now();
+</a><a href="#h5-0-91" id="h5-0-91" class="i">+        workload.prepare(&amp;mut client, &amp;mut rng).await?;
+</a><a href="#h5-0-92" id="h5-0-92" class="i">+        println!(&quot;done ({:.3}s)&quot;, start.elapsed().as_secs_f64());
+</a><a href="#h5-0-93" id="h5-0-93" class="i">+
+</a><a href="#h5-0-94" id="h5-0-94" class="i">+        // Spawn workers, round robin across hosts.
+</a><a href="#h5-0-95" id="h5-0-95" class="i">+        print!(&quot;Spawning {} workers... &quot;, self.concurrency);
+</a><a href="#h5-0-96" id="h5-0-96" class="i">+        std::io::stdout().flush()?;
+</a><a href="#h5-0-97" id="h5-0-97" class="i">+        let start = std::time::Instant::now();
+</a><a href="#h5-0-98" id="h5-0-98" class="i">+
+</a><a href="#h5-0-99" id="h5-0-99" class="i">+        let mut js = tokio::task::JoinSet::&lt;Result&lt;()&gt;&gt;::new();
+</a><a href="#h5-0-100" id="h5-0-100" class="i">+        let (work_tx, work_rx) = async_channel::bounded(self.concurrency);
+</a><a href="#h5-0-101" id="h5-0-101" class="i">+
+</a><a href="#h5-0-102" id="h5-0-102" class="i">+        for addr in self.hosts.iter().cycle().take(self.concurrency) {
+</a><a href="#h5-0-103" id="h5-0-103" class="i">+            let mut client = Client::new(addr).await?;
+</a><a href="#h5-0-104" id="h5-0-104" class="i">+            let work_rx = work_rx.clone();
+</a><a href="#h5-0-105" id="h5-0-105" class="i">+            let mut recorder = hist.recorder();
+</a><a href="#h5-0-106" id="h5-0-106" class="i">+            js.spawn(async move {
+</a><a href="#h5-0-107" id="h5-0-107" class="i">+                while let Ok(item) = work_rx.recv().await {
+</a><a href="#h5-0-108" id="h5-0-108" class="i">+                    let start = std::time::Instant::now();
+</a><a href="#h5-0-109" id="h5-0-109" class="i">+                    Self::execute_with_retry::&lt;W&gt;(&amp;mut client, item).await?;
+</a><a href="#h5-0-110" id="h5-0-110" class="i">+                    recorder.record(start.elapsed().as_nanos() as u64)?;
+</a><a href="#h5-0-111" id="h5-0-111" class="i">+                }
+</a><a href="#h5-0-112" id="h5-0-112" class="i">+                Ok(())
+</a><a href="#h5-0-113" id="h5-0-113" class="i">+            });
+</a><a href="#h5-0-114" id="h5-0-114" class="i">+        }
+</a><a href="#h5-0-115" id="h5-0-115" class="i">+
+</a><a href="#h5-0-116" id="h5-0-116" class="i">+        println!(&quot;done ({:.3}s)&quot;, start.elapsed().as_secs_f64());
+</a><a href="#h5-0-117" id="h5-0-117" class="i">+
+</a><a href="#h5-0-118" id="h5-0-118" class="i">+        // Spawn work generator.
+</a><a href="#h5-0-119" id="h5-0-119" class="i">+        {
+</a><a href="#h5-0-120" id="h5-0-120" class="i">+            println!(&quot;Running workload {}...&quot;, workload);
+</a><a href="#h5-0-121" id="h5-0-121" class="i">+            let generator = workload.generate(rng).take(self.count);
+</a><a href="#h5-0-122" id="h5-0-122" class="i">+            js.spawn(async move {
+</a><a href="#h5-0-123" id="h5-0-123" class="i">+                for item in generator {
+</a><a href="#h5-0-124" id="h5-0-124" class="i">+                    work_tx.send(item).await?;
+</a><a href="#h5-0-125" id="h5-0-125" class="i">+                }
+</a><a href="#h5-0-126" id="h5-0-126" class="i">+                work_tx.close();
+</a><a href="#h5-0-127" id="h5-0-127" class="i">+                Ok(())
+</a><a href="#h5-0-128" id="h5-0-128" class="i">+            });
+</a><a href="#h5-0-129" id="h5-0-129" class="i">+        }
+</a><a href="#h5-0-130" id="h5-0-130" class="i">+
+</a><a href="#h5-0-131" id="h5-0-131" class="i">+        // Wait for workers to complete, and periodically print stats.
+</a><a href="#h5-0-132" id="h5-0-132" class="i">+        let start = std::time::Instant::now();
+</a><a href="#h5-0-133" id="h5-0-133" class="i">+        let mut ticker = tokio::time::interval(Duration::from_secs(1));
+</a><a href="#h5-0-134" id="h5-0-134" class="i">+        ticker.tick().await; // skip first tick
+</a><a href="#h5-0-135" id="h5-0-135" class="i">+
+</a><a href="#h5-0-136" id="h5-0-136" class="i">+        println!();
+</a><a href="#h5-0-137" id="h5-0-137" class="i">+        println!(&quot;Time   Progress     Txns      Rate       p50       p90       p99      pMax&quot;);
+</a><a href="#h5-0-138" id="h5-0-138" class="i">+
+</a><a href="#h5-0-139" id="h5-0-139" class="i">+        let mut print_stats = || {
+</a><a href="#h5-0-140" id="h5-0-140" class="i">+            let duration = start.elapsed().as_secs_f64();
+</a><a href="#h5-0-141" id="h5-0-141" class="i">+            hist.refresh_timeout(Duration::from_secs(1));
+</a><a href="#h5-0-142" id="h5-0-142" class="i">+            println!(
+</a><a href="#h5-0-143" id="h5-0-143" class="i">+                &quot;{:&lt;8} {:&gt;5.1}%  {:&gt;7}  {:&gt;6.0}/s  {:&gt;6.1}ms  {:&gt;6.1}ms  {:&gt;6.1}ms  {:&gt;6.1}ms&quot;,
+</a><a href="#h5-0-144" id="h5-0-144" class="i">+                format!(&quot;{:.1}s&quot;, duration),
+</a><a href="#h5-0-145" id="h5-0-145" class="i">+                hist.len() as f64 / self.count as f64 * 100.0,
+</a><a href="#h5-0-146" id="h5-0-146" class="i">+                hist.len(),
+</a><a href="#h5-0-147" id="h5-0-147" class="i">+                hist.len() as f64 / duration,
+</a><a href="#h5-0-148" id="h5-0-148" class="i">+                Duration::from_nanos(hist.value_at_quantile(0.5)).as_secs_f64() * 1000.0,
+</a><a href="#h5-0-149" id="h5-0-149" class="i">+                Duration::from_nanos(hist.value_at_quantile(0.9)).as_secs_f64() * 1000.0,
+</a><a href="#h5-0-150" id="h5-0-150" class="i">+                Duration::from_nanos(hist.value_at_quantile(0.99)).as_secs_f64() * 1000.0,
+</a><a href="#h5-0-151" id="h5-0-151" class="i">+                Duration::from_nanos(hist.max()).as_secs_f64() * 1000.0,
+</a><a href="#h5-0-152" id="h5-0-152" class="i">+            );
+</a><a href="#h5-0-153" id="h5-0-153" class="i">+        };
+</a><a href="#h5-0-154" id="h5-0-154" class="i">+
+</a><a href="#h5-0-155" id="h5-0-155" class="i">+        loop {
+</a><a href="#h5-0-156" id="h5-0-156" class="i">+            tokio::select! {
+</a><a href="#h5-0-157" id="h5-0-157" class="i">+                // Print stats every second.
+</a><a href="#h5-0-158" id="h5-0-158" class="i">+                _ = ticker.tick() =&gt; print_stats(),
+</a><a href="#h5-0-159" id="h5-0-159" class="i">+
+</a><a href="#h5-0-160" id="h5-0-160" class="i">+                // Check if tasks are done.
+</a><a href="#h5-0-161" id="h5-0-161" class="i">+                result = js.join_next() =&gt; match result {
+</a><a href="#h5-0-162" id="h5-0-162" class="i">+                    Some(result) =&gt; result??,
+</a><a href="#h5-0-163" id="h5-0-163" class="i">+                    None =&gt; break,
+</a><a href="#h5-0-164" id="h5-0-164" class="i">+                },
+</a><a href="#h5-0-165" id="h5-0-165" class="i">+            }
+</a><a href="#h5-0-166" id="h5-0-166" class="i">+        }
+</a><a href="#h5-0-167" id="h5-0-167" class="i">+        print_stats();
+</a><a href="#h5-0-168" id="h5-0-168" class="i">+        println!();
+</a><a href="#h5-0-169" id="h5-0-169" class="i">+
+</a><a href="#h5-0-170" id="h5-0-170" class="i">+        // Verify the final dataset.
+</a><a href="#h5-0-171" id="h5-0-171" class="i">+        print!(&quot;Verifying dataset... &quot;);
+</a><a href="#h5-0-172" id="h5-0-172" class="i">+        std::io::stdout().flush()?;
+</a><a href="#h5-0-173" id="h5-0-173" class="i">+        let start = std::time::Instant::now();
+</a><a href="#h5-0-174" id="h5-0-174" class="i">+        workload.verify(&amp;mut client, self.count).await?;
+</a><a href="#h5-0-175" id="h5-0-175" class="i">+        println!(&quot;done ({:.3}s)&quot;, start.elapsed().as_secs_f64());
+</a><a href="#h5-0-176" id="h5-0-176" class="i">+
+</a><a href="#h5-0-177" id="h5-0-177" class="i">+        Ok(())
+</a><a href="#h5-0-178" id="h5-0-178" class="i">+    }
+</a><a href="#h5-0-179" id="h5-0-179" class="i">+
+</a><a href="#h5-0-180" id="h5-0-180" class="i">+    /// Executes a workload item, automatically retrying serialization errors.
+</a><a href="#h5-0-181" id="h5-0-181" class="i">+    /// Due to async trait/lifetime hassles, this is on the runner rather than
+</a><a href="#h5-0-182" id="h5-0-182" class="i">+    /// the client or workload trait.
+</a><a href="#h5-0-183" id="h5-0-183" class="i">+    ///
+</a><a href="#h5-0-184" id="h5-0-184" class="i">+    /// TODO: move this to a Client.with_txn() helper once async is removed.
+</a><a href="#h5-0-185" id="h5-0-185" class="i">+    async fn execute_with_retry&lt;W: Workload&gt;(client: &amp;mut Client, item: W::Item) -&gt; Result&lt;()&gt; {
+</a><a href="#h5-0-186" id="h5-0-186" class="i">+        const MAX_RETRIES: u32 = 10;
+</a><a href="#h5-0-187" id="h5-0-187" class="i">+        const MIN_WAIT: u64 = 10;
+</a><a href="#h5-0-188" id="h5-0-188" class="i">+        const MAX_WAIT: u64 = 2_000;
+</a><a href="#h5-0-189" id="h5-0-189" class="i">+
+</a><a href="#h5-0-190" id="h5-0-190" class="i">+        let mut retries: u32 = 0;
+</a><a href="#h5-0-191" id="h5-0-191" class="i">+        loop {
+</a><a href="#h5-0-192" id="h5-0-192" class="i">+            match W::execute(client, &amp;item).await {
+</a><a href="#h5-0-193" id="h5-0-193" class="i">+                Ok(()) =&gt; return Ok(()),
+</a><a href="#h5-0-194" id="h5-0-194" class="i">+                Err(Error::Serialization | Error::Abort) if retries &lt; MAX_RETRIES =&gt; {
+</a><a href="#h5-0-195" id="h5-0-195" class="i">+                    if client.txn().is_some() {
+</a><a href="#h5-0-196" id="h5-0-196" class="i">+                        client.execute(&quot;ROLLBACK&quot;).await?;
+</a><a href="#h5-0-197" id="h5-0-197" class="i">+                    }
+</a><a href="#h5-0-198" id="h5-0-198" class="i">+
+</a><a href="#h5-0-199" id="h5-0-199" class="i">+                    // Use exponential backoff starting at MIN_WAIT doubling up
+</a><a href="#h5-0-200" id="h5-0-200" class="i">+                    // to MAX_WAIT, but randomize the wait time in this interval
+</a><a href="#h5-0-201" id="h5-0-201" class="i">+                    // to reduce the chance of collisions.
+</a><a href="#h5-0-202" id="h5-0-202" class="i">+                    let mut wait = std::cmp::min(MIN_WAIT * 2_u64.pow(retries), MAX_WAIT);
+</a><a href="#h5-0-203" id="h5-0-203" class="i">+                    wait = rand::thread_rng().gen_range(MIN_WAIT..=wait);
+</a><a href="#h5-0-204" id="h5-0-204" class="i">+                    tokio::time::sleep(std::time::Duration::from_millis(wait)).await;
+</a><a href="#h5-0-205" id="h5-0-205" class="i">+                    retries += 1;
+</a><a href="#h5-0-206" id="h5-0-206" class="i">+                }
+</a><a href="#h5-0-207" id="h5-0-207" class="i">+                Err(e) =&gt; {
+</a><a href="#h5-0-208" id="h5-0-208" class="i">+                    if client.txn().is_some() {
+</a><a href="#h5-0-209" id="h5-0-209" class="i">+                        client.execute(&quot;ROLLBACK&quot;).await.ok(); // ignore rollback error
+</a><a href="#h5-0-210" id="h5-0-210" class="i">+                    }
+</a><a href="#h5-0-211" id="h5-0-211" class="i">+                    return Err(e);
+</a><a href="#h5-0-212" id="h5-0-212" class="i">+                }
+</a><a href="#h5-0-213" id="h5-0-213" class="i">+            }
+</a><a href="#h5-0-214" id="h5-0-214" class="i">+        }
+</a><a href="#h5-0-215" id="h5-0-215" class="i">+    }
+</a><a href="#h5-0-216" id="h5-0-216" class="i">+}
+</a><a href="#h5-0-217" id="h5-0-217" class="i">+
+</a><a href="#h5-0-218" id="h5-0-218" class="i">+/// A workload.
+</a><a href="#h5-0-219" id="h5-0-219" class="i">+trait Workload: std::fmt::Display + &#39;static {
+</a><a href="#h5-0-220" id="h5-0-220" class="i">+    /// A work item.
+</a><a href="#h5-0-221" id="h5-0-221" class="i">+    type Item: Send;
+</a><a href="#h5-0-222" id="h5-0-222" class="i">+
+</a><a href="#h5-0-223" id="h5-0-223" class="i">+    /// Prepares the workload by creating initial tables and data.
+</a><a href="#h5-0-224" id="h5-0-224" class="i">+    async fn prepare(&amp;self, client: &amp;mut Client, rng: &amp;mut StdRng) -&gt; Result&lt;()&gt;;
+</a><a href="#h5-0-225" id="h5-0-225" class="i">+
+</a><a href="#h5-0-226" id="h5-0-226" class="i">+    /// Generates work items as an iterator.
+</a><a href="#h5-0-227" id="h5-0-227" class="i">+    fn generate(&amp;self, rng: StdRng) -&gt; impl Iterator&lt;Item = Self::Item&gt; + Send + &#39;static;
+</a><a href="#h5-0-228" id="h5-0-228" class="i">+
+</a><a href="#h5-0-229" id="h5-0-229" class="i">+    /// Executes a single work item. This will automatically be retried on
+</a><a href="#h5-0-230" id="h5-0-230" class="i">+    /// certain errors, and must use a transaction where appropriate.
+</a><a href="#h5-0-231" id="h5-0-231" class="i">+    fn execute(
+</a><a href="#h5-0-232" id="h5-0-232" class="i">+        client: &amp;mut Client,
+</a><a href="#h5-0-233" id="h5-0-233" class="i">+        item: &amp;Self::Item,
+</a><a href="#h5-0-234" id="h5-0-234" class="i">+    ) -&gt; impl std::future::Future&lt;Output = Result&lt;()&gt;&gt; + Send;
+</a><a href="#h5-0-235" id="h5-0-235" class="i">+
+</a><a href="#h5-0-236" id="h5-0-236" class="i">+    /// Verifies the dataset after the workload has completed.
+</a><a href="#h5-0-237" id="h5-0-237" class="i">+    async fn verify(&amp;self, _client: &amp;mut Client, _txns: usize) -&gt; Result&lt;()&gt; {
+</a><a href="#h5-0-238" id="h5-0-238" class="i">+        Ok(())
+</a><a href="#h5-0-239" id="h5-0-239" class="i">+    }
+</a><a href="#h5-0-240" id="h5-0-240" class="i">+}
+</a><a href="#h5-0-241" id="h5-0-241" class="i">+
+</a><a href="#h5-0-242" id="h5-0-242" class="i">+/// A read-only workload. Creates an id,value table and populates it with the
+</a><a href="#h5-0-243" id="h5-0-243" class="i">+/// given row count and value size. Then runs batches of random primary key
+</a><a href="#h5-0-244" id="h5-0-244" class="i">+/// lookups (SELECT * FROM read WHERE id = 1 OR id = 2 ...).
+</a><a href="#h5-0-245" id="h5-0-245" class="i">+#[derive(clap::Args, Clone)]
+</a><a href="#h5-0-246" id="h5-0-246" class="i">+#[command(about = &quot;A read-only workload using primary key lookups&quot;)]
+</a><a href="#h5-0-247" id="h5-0-247" class="i">+struct Read {
+</a><a href="#h5-0-248" id="h5-0-248" class="i">+    /// Total number of rows in data set.
+</a><a href="#h5-0-249" id="h5-0-249" class="i">+    #[arg(short, long, default_value = &quot;1000&quot;)]
+</a><a href="#h5-0-250" id="h5-0-250" class="i">+    rows: u64,
+</a><a href="#h5-0-251" id="h5-0-251" class="i">+
+</a><a href="#h5-0-252" id="h5-0-252" class="i">+    /// Row value size (excluding primary key).
+</a><a href="#h5-0-253" id="h5-0-253" class="i">+    #[arg(short, long, default_value = &quot;64&quot;)]
+</a><a href="#h5-0-254" id="h5-0-254" class="i">+    size: usize,
+</a><a href="#h5-0-255" id="h5-0-255" class="i">+
+</a><a href="#h5-0-256" id="h5-0-256" class="i">+    /// Number of rows to fetch in a single select.
+</a><a href="#h5-0-257" id="h5-0-257" class="i">+    #[arg(short, long, default_value = &quot;1&quot;)]
+</a><a href="#h5-0-258" id="h5-0-258" class="i">+    batch: usize,
+</a><a href="#h5-0-259" id="h5-0-259" class="i">+}
+</a><a href="#h5-0-260" id="h5-0-260" class="i">+
+</a><a href="#h5-0-261" id="h5-0-261" class="i">+impl std::fmt::Display for Read {
+</a><a href="#h5-0-262" id="h5-0-262" class="i">+    fn fmt(&amp;self, f: &amp;mut std::fmt::Formatter&lt;&#39;_&gt;) -&gt; std::fmt::Result {
+</a><a href="#h5-0-263" id="h5-0-263" class="i">+        write!(f, &quot;read (rows={} size={} batch={})&quot;, self.rows, self.size, self.batch)
+</a><a href="#h5-0-264" id="h5-0-264" class="i">+    }
+</a><a href="#h5-0-265" id="h5-0-265" class="i">+}
+</a><a href="#h5-0-266" id="h5-0-266" class="i">+
+</a><a href="#h5-0-267" id="h5-0-267" class="i">+impl Workload for Read {
+</a><a href="#h5-0-268" id="h5-0-268" class="i">+    type Item = HashSet&lt;u64&gt;;
+</a><a href="#h5-0-269" id="h5-0-269" class="i">+
+</a><a href="#h5-0-270" id="h5-0-270" class="i">+    async fn prepare(&amp;self, client: &amp;mut Client, rng: &amp;mut StdRng) -&gt; Result&lt;()&gt; {
+</a><a href="#h5-0-271" id="h5-0-271" class="i">+        client.execute(&quot;BEGIN&quot;).await?;
+</a><a href="#h5-0-272" id="h5-0-272" class="i">+        client.execute(r#&quot;DROP TABLE IF EXISTS &quot;read&quot;&quot;#).await?;
+</a><a href="#h5-0-273" id="h5-0-273" class="i">+        client
+</a><a href="#h5-0-274" id="h5-0-274" class="i">+            .execute(r#&quot;CREATE TABLE &quot;read&quot; (id INT PRIMARY KEY, value STRING NOT NULL)&quot;#)
+</a><a href="#h5-0-275" id="h5-0-275" class="i">+            .await?;
+</a><a href="#h5-0-276" id="h5-0-276" class="i">+
+</a><a href="#h5-0-277" id="h5-0-277" class="i">+        let chars = &amp;mut rand::distributions::Alphanumeric.sample_iter(rng).map(|b| b as char);
+</a><a href="#h5-0-278" id="h5-0-278" class="i">+        let rows = (1..=self.rows).map(|id| (id, chars.take(self.size).collect::&lt;String&gt;()));
+</a><a href="#h5-0-279" id="h5-0-279" class="i">+        let chunks = rows.chunks(100);
+</a><a href="#h5-0-280" id="h5-0-280" class="i">+        let queries = chunks.into_iter().map(|chunk| {
+</a><a href="#h5-0-281" id="h5-0-281" class="i">+            format!(
+</a><a href="#h5-0-282" id="h5-0-282" class="i">+                r#&quot;INSERT INTO &quot;read&quot; (id, value) VALUES ({})&quot;#,
+</a><a href="#h5-0-283" id="h5-0-283" class="i">+                chunk.map(|(id, value)| format!(&quot;{}, &#39;{}&#39;&quot;, id, value)).join(&quot;), (&quot;)
+</a><a href="#h5-0-284" id="h5-0-284" class="i">+            )
+</a><a href="#h5-0-285" id="h5-0-285" class="i">+        });
+</a><a href="#h5-0-286" id="h5-0-286" class="i">+        for query in queries {
+</a><a href="#h5-0-287" id="h5-0-287" class="i">+            client.execute(&amp;query).await?;
+</a><a href="#h5-0-288" id="h5-0-288" class="i">+        }
+</a><a href="#h5-0-289" id="h5-0-289" class="i">+        client.execute(&quot;COMMIT&quot;).await?;
+</a><a href="#h5-0-290" id="h5-0-290" class="i">+        Ok(())
+</a><a href="#h5-0-291" id="h5-0-291" class="i">+    }
+</a><a href="#h5-0-292" id="h5-0-292" class="i">+
+</a><a href="#h5-0-293" id="h5-0-293" class="i">+    fn generate(&amp;self, rng: StdRng) -&gt; impl Iterator&lt;Item = Self::Item&gt; + &#39;static {
+</a><a href="#h5-0-294" id="h5-0-294" class="i">+        ReadGenerator {
+</a><a href="#h5-0-295" id="h5-0-295" class="i">+            batch: self.batch,
+</a><a href="#h5-0-296" id="h5-0-296" class="i">+            dist: rand::distributions::Uniform::new(1, self.rows + 1),
+</a><a href="#h5-0-297" id="h5-0-297" class="i">+            rng,
+</a><a href="#h5-0-298" id="h5-0-298" class="i">+        }
+</a><a href="#h5-0-299" id="h5-0-299" class="i">+    }
+</a><a href="#h5-0-300" id="h5-0-300" class="i">+
+</a><a href="#h5-0-301" id="h5-0-301" class="i">+    async fn execute(client: &amp;mut Client, item: &amp;Self::Item) -&gt; Result&lt;()&gt; {
+</a><a href="#h5-0-302" id="h5-0-302" class="i">+        let batch_size = item.len();
+</a><a href="#h5-0-303" id="h5-0-303" class="i">+        let query = format!(
+</a><a href="#h5-0-304" id="h5-0-304" class="i">+            r#&quot;SELECT * FROM &quot;read&quot; WHERE {}&quot;#,
+</a><a href="#h5-0-305" id="h5-0-305" class="i">+            item.iter().map(|id| format!(&quot;id = {}&quot;, id)).join(&quot; OR &quot;)
+</a><a href="#h5-0-306" id="h5-0-306" class="i">+        );
+</a><a href="#h5-0-307" id="h5-0-307" class="i">+        let rows = client.execute(&amp;query).await?.into_rows()?;
+</a><a href="#h5-0-308" id="h5-0-308" class="i">+        assert_eq!(rows.count(), batch_size, &quot;Unexpected row count&quot;);
+</a><a href="#h5-0-309" id="h5-0-309" class="i">+        Ok(())
+</a><a href="#h5-0-310" id="h5-0-310" class="i">+    }
+</a><a href="#h5-0-311" id="h5-0-311" class="i">+
+</a><a href="#h5-0-312" id="h5-0-312" class="i">+    async fn verify(&amp;self, client: &amp;mut Client, _: usize) -&gt; Result&lt;()&gt; {
+</a><a href="#h5-0-313" id="h5-0-313" class="i">+        let count =
+</a><a href="#h5-0-314" id="h5-0-314" class="i">+            client.execute(r#&quot;SELECT COUNT(*) FROM &quot;read&quot;&quot;#).await?.into_value()?.integer()?;
+</a><a href="#h5-0-315" id="h5-0-315" class="i">+        assert_eq!(count as u64, self.rows, &quot;Unexpected row count&quot;);
+</a><a href="#h5-0-316" id="h5-0-316" class="i">+        Ok(())
+</a><a href="#h5-0-317" id="h5-0-317" class="i">+    }
+</a><a href="#h5-0-318" id="h5-0-318" class="i">+}
+</a><a href="#h5-0-319" id="h5-0-319" class="i">+
+</a><a href="#h5-0-320" id="h5-0-320" class="i">+/// A Read workload generator, yielding batches of random, unique primary keys.
+</a><a href="#h5-0-321" id="h5-0-321" class="i">+struct ReadGenerator {
+</a><a href="#h5-0-322" id="h5-0-322" class="i">+    batch: usize,
+</a><a href="#h5-0-323" id="h5-0-323" class="i">+    rng: StdRng,
+</a><a href="#h5-0-324" id="h5-0-324" class="i">+    dist: rand::distributions::Uniform&lt;u64&gt;,
+</a><a href="#h5-0-325" id="h5-0-325" class="i">+}
+</a><a href="#h5-0-326" id="h5-0-326" class="i">+
+</a><a href="#h5-0-327" id="h5-0-327" class="i">+impl Iterator for ReadGenerator {
+</a><a href="#h5-0-328" id="h5-0-328" class="i">+    type Item = &lt;Read as Workload&gt;::Item;
+</a><a href="#h5-0-329" id="h5-0-329" class="i">+
+</a><a href="#h5-0-330" id="h5-0-330" class="i">+    fn next(&amp;mut self) -&gt; Option&lt;Self::Item&gt; {
+</a><a href="#h5-0-331" id="h5-0-331" class="i">+        let mut ids = HashSet::new();
+</a><a href="#h5-0-332" id="h5-0-332" class="i">+        for id in self.dist.sample_iter(&amp;mut self.rng) {
+</a><a href="#h5-0-333" id="h5-0-333" class="i">+            ids.insert(id);
+</a><a href="#h5-0-334" id="h5-0-334" class="i">+            if ids.len() &gt;= self.batch {
+</a><a href="#h5-0-335" id="h5-0-335" class="i">+                break;
+</a><a href="#h5-0-336" id="h5-0-336" class="i">+            }
+</a><a href="#h5-0-337" id="h5-0-337" class="i">+        }
+</a><a href="#h5-0-338" id="h5-0-338" class="i">+        Some(ids)
+</a><a href="#h5-0-339" id="h5-0-339" class="i">+    }
+</a><a href="#h5-0-340" id="h5-0-340" class="i">+}
+</a><a href="#h5-0-341" id="h5-0-341" class="i">+
+</a><a href="#h5-0-342" id="h5-0-342" class="i">+/// A write-only workload. Creates an id,value table, and writes rows with
+</a><a href="#h5-0-343" id="h5-0-343" class="i">+/// sequential primary keys and the given value size, in the given batch size
+</a><a href="#h5-0-344" id="h5-0-344" class="i">+/// (INSERT INTO write (id, value) VALUES ...). The number of rows written
+</a><a href="#h5-0-345" id="h5-0-345" class="i">+/// is given by Runner.count * Write.batch.
+</a><a href="#h5-0-346" id="h5-0-346" class="i">+#[derive(clap::Args, Clone)]
+</a><a href="#h5-0-347" id="h5-0-347" class="i">+#[command(about = &quot;A write-only workload writing sequential rows&quot;)]
+</a><a href="#h5-0-348" id="h5-0-348" class="i">+struct Write {
+</a><a href="#h5-0-349" id="h5-0-349" class="i">+    /// Row value size (excluding primary key).
+</a><a href="#h5-0-350" id="h5-0-350" class="i">+    #[arg(short, long, default_value = &quot;64&quot;)]
+</a><a href="#h5-0-351" id="h5-0-351" class="i">+    size: usize,
+</a><a href="#h5-0-352" id="h5-0-352" class="i">+
+</a><a href="#h5-0-353" id="h5-0-353" class="i">+    /// Number of rows to write in a single insert query.
+</a><a href="#h5-0-354" id="h5-0-354" class="i">+    #[arg(short, long, default_value = &quot;1&quot;)]
+</a><a href="#h5-0-355" id="h5-0-355" class="i">+    batch: usize,
+</a><a href="#h5-0-356" id="h5-0-356" class="i">+}
+</a><a href="#h5-0-357" id="h5-0-357" class="i">+
+</a><a href="#h5-0-358" id="h5-0-358" class="i">+impl std::fmt::Display for Write {
+</a><a href="#h5-0-359" id="h5-0-359" class="i">+    fn fmt(&amp;self, f: &amp;mut std::fmt::Formatter&lt;&#39;_&gt;) -&gt; std::fmt::Result {
+</a><a href="#h5-0-360" id="h5-0-360" class="i">+        write!(f, &quot;write (size={} batch={})&quot;, self.size, self.batch)
+</a><a href="#h5-0-361" id="h5-0-361" class="i">+    }
+</a><a href="#h5-0-362" id="h5-0-362" class="i">+}
+</a><a href="#h5-0-363" id="h5-0-363" class="i">+
+</a><a href="#h5-0-364" id="h5-0-364" class="i">+impl Workload for Write {
+</a><a href="#h5-0-365" id="h5-0-365" class="i">+    type Item = Vec&lt;(u64, String)&gt;;
+</a><a href="#h5-0-366" id="h5-0-366" class="i">+
+</a><a href="#h5-0-367" id="h5-0-367" class="i">+    async fn prepare(&amp;self, client: &amp;mut Client, _: &amp;mut StdRng) -&gt; Result&lt;()&gt; {
+</a><a href="#h5-0-368" id="h5-0-368" class="i">+        client.execute(&quot;BEGIN&quot;).await?;
+</a><a href="#h5-0-369" id="h5-0-369" class="i">+        client.execute(r#&quot;DROP TABLE IF EXISTS &quot;write&quot;&quot;#).await?;
+</a><a href="#h5-0-370" id="h5-0-370" class="i">+        client
+</a><a href="#h5-0-371" id="h5-0-371" class="i">+            .execute(r#&quot;CREATE TABLE &quot;write&quot; (id INT PRIMARY KEY, value STRING NOT NULL)&quot;#)
+</a><a href="#h5-0-372" id="h5-0-372" class="i">+            .await?;
+</a><a href="#h5-0-373" id="h5-0-373" class="i">+        client.execute(&quot;COMMIT&quot;).await?;
+</a><a href="#h5-0-374" id="h5-0-374" class="i">+        Ok(())
+</a><a href="#h5-0-375" id="h5-0-375" class="i">+    }
+</a><a href="#h5-0-376" id="h5-0-376" class="i">+
+</a><a href="#h5-0-377" id="h5-0-377" class="i">+    fn generate(&amp;self, rng: StdRng) -&gt; impl Iterator&lt;Item = Self::Item&gt; + &#39;static {
+</a><a href="#h5-0-378" id="h5-0-378" class="i">+        WriteGenerator { next_id: 1, size: self.size, batch: self.batch, rng }
+</a><a href="#h5-0-379" id="h5-0-379" class="i">+    }
+</a><a href="#h5-0-380" id="h5-0-380" class="i">+
+</a><a href="#h5-0-381" id="h5-0-381" class="i">+    async fn execute(client: &amp;mut Client, item: &amp;Self::Item) -&gt; Result&lt;()&gt; {
+</a><a href="#h5-0-382" id="h5-0-382" class="i">+        let batch_size = item.len();
+</a><a href="#h5-0-383" id="h5-0-383" class="i">+        let query = format!(
+</a><a href="#h5-0-384" id="h5-0-384" class="i">+            r#&quot;INSERT INTO &quot;write&quot; (id, value) VALUES {}&quot;#,
+</a><a href="#h5-0-385" id="h5-0-385" class="i">+            item.iter().map(|(id, value)| format!(&quot;({}, &#39;{}&#39;)&quot;, id, value)).join(&quot;, &quot;)
+</a><a href="#h5-0-386" id="h5-0-386" class="i">+        );
+</a><a href="#h5-0-387" id="h5-0-387" class="i">+        if let ResultSet::Create { count } = client.execute(&amp;query).await? {
+</a><a href="#h5-0-388" id="h5-0-388" class="i">+            assert_eq!(count as usize, batch_size, &quot;Unexpected row count&quot;);
+</a><a href="#h5-0-389" id="h5-0-389" class="i">+        } else {
+</a><a href="#h5-0-390" id="h5-0-390" class="i">+            panic!(&quot;Unexpected result&quot;)
+</a><a href="#h5-0-391" id="h5-0-391" class="i">+        }
+</a><a href="#h5-0-392" id="h5-0-392" class="i">+        Ok(())
+</a><a href="#h5-0-393" id="h5-0-393" class="i">+    }
+</a><a href="#h5-0-394" id="h5-0-394" class="i">+
+</a><a href="#h5-0-395" id="h5-0-395" class="i">+    async fn verify(&amp;self, client: &amp;mut Client, txns: usize) -&gt; Result&lt;()&gt; {
+</a><a href="#h5-0-396" id="h5-0-396" class="i">+        let count =
+</a><a href="#h5-0-397" id="h5-0-397" class="i">+            client.execute(r#&quot;SELECT COUNT(*) FROM &quot;write&quot;&quot;#).await?.into_value()?.integer()?;
+</a><a href="#h5-0-398" id="h5-0-398" class="i">+        assert_eq!(count as usize, txns * self.batch, &quot;Unexpected row count&quot;);
+</a><a href="#h5-0-399" id="h5-0-399" class="i">+        Ok(())
+</a><a href="#h5-0-400" id="h5-0-400" class="i">+    }
+</a><a href="#h5-0-401" id="h5-0-401" class="i">+}
+</a><a href="#h5-0-402" id="h5-0-402" class="i">+
+</a><a href="#h5-0-403" id="h5-0-403" class="i">+/// A Write workload generator, yielding batches of sequential primary keys and
+</a><a href="#h5-0-404" id="h5-0-404" class="i">+/// random rows.
+</a><a href="#h5-0-405" id="h5-0-405" class="i">+struct WriteGenerator {
+</a><a href="#h5-0-406" id="h5-0-406" class="i">+    next_id: u64,
+</a><a href="#h5-0-407" id="h5-0-407" class="i">+    size: usize,
+</a><a href="#h5-0-408" id="h5-0-408" class="i">+    batch: usize,
+</a><a href="#h5-0-409" id="h5-0-409" class="i">+    rng: StdRng,
+</a><a href="#h5-0-410" id="h5-0-410" class="i">+}
+</a><a href="#h5-0-411" id="h5-0-411" class="i">+
+</a><a href="#h5-0-412" id="h5-0-412" class="i">+impl Iterator for WriteGenerator {
+</a><a href="#h5-0-413" id="h5-0-413" class="i">+    type Item = &lt;Write as Workload&gt;::Item;
+</a><a href="#h5-0-414" id="h5-0-414" class="i">+
+</a><a href="#h5-0-415" id="h5-0-415" class="i">+    fn next(&amp;mut self) -&gt; Option&lt;Self::Item&gt; {
+</a><a href="#h5-0-416" id="h5-0-416" class="i">+        let chars =
+</a><a href="#h5-0-417" id="h5-0-417" class="i">+            &amp;mut rand::distributions::Alphanumeric.sample_iter(&amp;mut self.rng).map(|b| b as char);
+</a><a href="#h5-0-418" id="h5-0-418" class="i">+        let mut rows = Vec::with_capacity(self.batch);
+</a><a href="#h5-0-419" id="h5-0-419" class="i">+        while rows.len() &lt; self.batch {
+</a><a href="#h5-0-420" id="h5-0-420" class="i">+            rows.push((self.next_id, chars.take(self.size).collect()));
+</a><a href="#h5-0-421" id="h5-0-421" class="i">+            self.next_id += 1;
+</a><a href="#h5-0-422" id="h5-0-422" class="i">+        }
+</a><a href="#h5-0-423" id="h5-0-423" class="i">+        Some(rows)
+</a><a href="#h5-0-424" id="h5-0-424" class="i">+    }
+</a><a href="#h5-0-425" id="h5-0-425" class="i">+}
+</a><a href="#h5-0-426" id="h5-0-426" class="i">+
+</a><a href="#h5-0-427" id="h5-0-427" class="i">+/// A bank workload. Creates a set of customers and accounts, and makes random
+</a><a href="#h5-0-428" id="h5-0-428" class="i">+/// transfers between them. Specifically, it picks two random customers A and B,
+</a><a href="#h5-0-429" id="h5-0-429" class="i">+/// and then finds A&#39;s highest-balance account and B&#39;s lowest-balance account,
+</a><a href="#h5-0-430" id="h5-0-430" class="i">+/// and transfers a random amount without overdrawing the account. This
+</a><a href="#h5-0-431" id="h5-0-431" class="i">+/// somewhat convoluted scheme is used to make the workload slightly less
+</a><a href="#h5-0-432" id="h5-0-432" class="i">+/// trivial, including joins, ordering, and secondary indexes.
+</a><a href="#h5-0-433" id="h5-0-433" class="i">+#[derive(clap::Args, Clone)]
+</a><a href="#h5-0-434" id="h5-0-434" class="i">+#[command(about = &quot;A bank workload, making transfers between customer accounts&quot;)]
+</a><a href="#h5-0-435" id="h5-0-435" class="i">+struct Bank {
+</a><a href="#h5-0-436" id="h5-0-436" class="i">+    /// Number of customers.
+</a><a href="#h5-0-437" id="h5-0-437" class="i">+    #[arg(short, long, default_value = &quot;100&quot;)]
+</a><a href="#h5-0-438" id="h5-0-438" class="i">+    customers: u64,
+</a><a href="#h5-0-439" id="h5-0-439" class="i">+
+</a><a href="#h5-0-440" id="h5-0-440" class="i">+    /// Number of accounts per customer.
+</a><a href="#h5-0-441" id="h5-0-441" class="i">+    #[arg(short, long, default_value = &quot;10&quot;)]
+</a><a href="#h5-0-442" id="h5-0-442" class="i">+    accounts: u64,
+</a><a href="#h5-0-443" id="h5-0-443" class="i">+
+</a><a href="#h5-0-444" id="h5-0-444" class="i">+    /// Initial account balance.
+</a><a href="#h5-0-445" id="h5-0-445" class="i">+    #[arg(short, long, default_value = &quot;100&quot;)]
+</a><a href="#h5-0-446" id="h5-0-446" class="i">+    balance: u64,
+</a><a href="#h5-0-447" id="h5-0-447" class="i">+
+</a><a href="#h5-0-448" id="h5-0-448" class="i">+    /// Max amount to transfer.
+</a><a href="#h5-0-449" id="h5-0-449" class="i">+    #[arg(short, long, default_value = &quot;50&quot;)]
+</a><a href="#h5-0-450" id="h5-0-450" class="i">+    max_transfer: u64,
+</a><a href="#h5-0-451" id="h5-0-451" class="i">+}
+</a><a href="#h5-0-452" id="h5-0-452" class="i">+
+</a><a href="#h5-0-453" id="h5-0-453" class="i">+impl std::fmt::Display for Bank {
+</a><a href="#h5-0-454" id="h5-0-454" class="i">+    fn fmt(&amp;self, f: &amp;mut std::fmt::Formatter&lt;&#39;_&gt;) -&gt; std::fmt::Result {
+</a><a href="#h5-0-455" id="h5-0-455" class="i">+        write!(f, &quot;bank (customers={} accounts={})&quot;, self.customers, self.accounts)
+</a><a href="#h5-0-456" id="h5-0-456" class="i">+    }
+</a><a href="#h5-0-457" id="h5-0-457" class="i">+}
+</a><a href="#h5-0-458" id="h5-0-458" class="i">+
+</a><a href="#h5-0-459" id="h5-0-459" class="i">+impl Workload for Bank {
+</a><a href="#h5-0-460" id="h5-0-460" class="i">+    type Item = (u64, u64, u64); // from,to,amount
+</a><a href="#h5-0-461" id="h5-0-461" class="i">+
+</a><a href="#h5-0-462" id="h5-0-462" class="i">+    async fn prepare(&amp;self, client: &amp;mut Client, rng: &amp;mut StdRng) -&gt; Result&lt;()&gt; {
+</a><a href="#h5-0-463" id="h5-0-463" class="i">+        let petnames = petname::Petnames::default();
+</a><a href="#h5-0-464" id="h5-0-464" class="i">+        client.execute(&quot;BEGIN&quot;).await?;
+</a><a href="#h5-0-465" id="h5-0-465" class="i">+        client.execute(&quot;DROP TABLE IF EXISTS account&quot;).await?;
+</a><a href="#h5-0-466" id="h5-0-466" class="i">+        client.execute(&quot;DROP TABLE IF EXISTS customer&quot;).await?;
+</a><a href="#h5-0-467" id="h5-0-467" class="i">+        client
+</a><a href="#h5-0-468" id="h5-0-468" class="i">+            .execute(
+</a><a href="#h5-0-469" id="h5-0-469" class="i">+                &quot;CREATE TABLE customer (
+</a><a href="#h5-0-470" id="h5-0-470" class="i">+                    id INTEGER PRIMARY KEY,
+</a><a href="#h5-0-471" id="h5-0-471" class="i">+                    name STRING NOT NULL
+</a><a href="#h5-0-472" id="h5-0-472" class="i">+                )&quot;,
+</a><a href="#h5-0-473" id="h5-0-473" class="i">+            )
+</a><a href="#h5-0-474" id="h5-0-474" class="i">+            .await?;
+</a><a href="#h5-0-475" id="h5-0-475" class="i">+        client
+</a><a href="#h5-0-476" id="h5-0-476" class="i">+            .execute(
+</a><a href="#h5-0-477" id="h5-0-477" class="i">+                &quot;CREATE TABLE account (
+</a><a href="#h5-0-478" id="h5-0-478" class="i">+                    id INTEGER PRIMARY KEY,
+</a><a href="#h5-0-479" id="h5-0-479" class="i">+                    customer_id INTEGER NOT NULL INDEX REFERENCES customer,
+</a><a href="#h5-0-480" id="h5-0-480" class="i">+                    balance INTEGER NOT NULL
+</a><a href="#h5-0-481" id="h5-0-481" class="i">+                )&quot;,
+</a><a href="#h5-0-482" id="h5-0-482" class="i">+            )
+</a><a href="#h5-0-483" id="h5-0-483" class="i">+            .await?;
+</a><a href="#h5-0-484" id="h5-0-484" class="i">+        client
+</a><a href="#h5-0-485" id="h5-0-485" class="i">+            .execute(&amp;format!(
+</a><a href="#h5-0-486" id="h5-0-486" class="i">+                &quot;INSERT INTO customer VALUES {}&quot;,
+</a><a href="#h5-0-487" id="h5-0-487" class="i">+                (1..=self.customers)
+</a><a href="#h5-0-488" id="h5-0-488" class="i">+                    .zip(petnames.iter(rng, 3, &quot; &quot;))
+</a><a href="#h5-0-489" id="h5-0-489" class="i">+                    .map(|(id, name)| format!(&quot;({}, &#39;{}&#39;)&quot;, id, name))
+</a><a href="#h5-0-490" id="h5-0-490" class="i">+                    .join(&quot;, &quot;)
+</a><a href="#h5-0-491" id="h5-0-491" class="i">+            ))
+</a><a href="#h5-0-492" id="h5-0-492" class="i">+            .await?;
+</a><a href="#h5-0-493" id="h5-0-493" class="i">+        client
+</a><a href="#h5-0-494" id="h5-0-494" class="i">+            .execute(&amp;format!(
+</a><a href="#h5-0-495" id="h5-0-495" class="i">+                &quot;INSERT INTO account VALUES {}&quot;,
+</a><a href="#h5-0-496" id="h5-0-496" class="i">+                (1..=self.customers)
+</a><a href="#h5-0-497" id="h5-0-497" class="i">+                    .flat_map(|c| (1..=self.accounts).map(move |a| (c, (c-1)*self.accounts + a)))
+</a><a href="#h5-0-498" id="h5-0-498" class="i">+                    .map(|(c, a)| (format!(&quot;({}, {}, {})&quot;, a, c, self.balance)))
+</a><a href="#h5-0-499" id="h5-0-499" class="i">+                    .join(&quot;, &quot;)
+</a><a href="#h5-0-500" id="h5-0-500" class="i">+            ))
+</a><a href="#h5-0-501" id="h5-0-501" class="i">+            .await?;
+</a><a href="#h5-0-502" id="h5-0-502" class="i">+        client.execute(&quot;COMMIT&quot;).await?;
+</a><a href="#h5-0-503" id="h5-0-503" class="i">+        Ok(())
+</a><a href="#h5-0-504" id="h5-0-504" class="i">+    }
+</a><a href="#h5-0-505" id="h5-0-505" class="i">+
+</a><a href="#h5-0-506" id="h5-0-506" class="i">+    fn generate(&amp;self, rng: StdRng) -&gt; impl Iterator&lt;Item = Self::Item&gt; + &#39;static {
+</a><a href="#h5-0-507" id="h5-0-507" class="i">+        let customers = self.customers;
+</a><a href="#h5-0-508" id="h5-0-508" class="i">+        let max_transfer = self.max_transfer;
+</a><a href="#h5-0-509" id="h5-0-509" class="i">+        // Generate random u64s, then pick random from,to,amount as the
+</a><a href="#h5-0-510" id="h5-0-510" class="i">+        // remainder of the max customer and amount.
+</a><a href="#h5-0-511" id="h5-0-511" class="i">+        rand::distributions::Uniform::new_inclusive(0, u64::MAX)
+</a><a href="#h5-0-512" id="h5-0-512" class="i">+            .sample_iter(rng)
+</a><a href="#h5-0-513" id="h5-0-513" class="i">+            .tuples()
+</a><a href="#h5-0-514" id="h5-0-514" class="i">+            .map(move |(a, b, c)| (a % customers + 1, b % customers + 1, c % max_transfer + 1))
+</a><a href="#h5-0-515" id="h5-0-515" class="i">+            .filter(|(from, to, _)| from != to)
+</a><a href="#h5-0-516" id="h5-0-516" class="i">+    }
+</a><a href="#h5-0-517" id="h5-0-517" class="i">+
+</a><a href="#h5-0-518" id="h5-0-518" class="i">+    async fn execute(client: &amp;mut Client, item: &amp;Self::Item) -&gt; Result&lt;()&gt; {
+</a><a href="#h5-0-519" id="h5-0-519" class="i">+        let (from, to, mut amount) = item;
+</a><a href="#h5-0-520" id="h5-0-520" class="i">+
+</a><a href="#h5-0-521" id="h5-0-521" class="i">+        client.execute(&quot;BEGIN&quot;).await?;
+</a><a href="#h5-0-522" id="h5-0-522" class="i">+
+</a><a href="#h5-0-523" id="h5-0-523" class="i">+        let mut row = client
+</a><a href="#h5-0-524" id="h5-0-524" class="i">+            .execute(&amp;format!(
+</a><a href="#h5-0-525" id="h5-0-525" class="i">+                &quot;SELECT a.id, a.balance
+</a><a href="#h5-0-526" id="h5-0-526" class="i">+                        FROM account a JOIN customer c ON a.customer_id = c.id
+</a><a href="#h5-0-527" id="h5-0-527" class="i">+                        WHERE c.id = {}
+</a><a href="#h5-0-528" id="h5-0-528" class="i">+                        ORDER BY a.balance DESC
+</a><a href="#h5-0-529" id="h5-0-529" class="i">+                        LIMIT 1&quot;,
+</a><a href="#h5-0-530" id="h5-0-530" class="i">+                from
+</a><a href="#h5-0-531" id="h5-0-531" class="i">+            ))
+</a><a href="#h5-0-532" id="h5-0-532" class="i">+            .await?
+</a><a href="#h5-0-533" id="h5-0-533" class="i">+            .into_row()?;
+</a><a href="#h5-0-534" id="h5-0-534" class="i">+        let from_balance = row.pop().unwrap().integer()?;
+</a><a href="#h5-0-535" id="h5-0-535" class="i">+        let from_account = row.pop().unwrap().integer()?;
+</a><a href="#h5-0-536" id="h5-0-536" class="i">+        amount = std::cmp::min(amount, from_balance as u64);
+</a><a href="#h5-0-537" id="h5-0-537" class="i">+
+</a><a href="#h5-0-538" id="h5-0-538" class="i">+        let to_account = client
+</a><a href="#h5-0-539" id="h5-0-539" class="i">+            .execute(&amp;format!(
+</a><a href="#h5-0-540" id="h5-0-540" class="i">+                &quot;SELECT a.id, a.balance
+</a><a href="#h5-0-541" id="h5-0-541" class="i">+                        FROM account a JOIN customer c ON a.customer_id = c.id
+</a><a href="#h5-0-542" id="h5-0-542" class="i">+                        WHERE c.id = {}
+</a><a href="#h5-0-543" id="h5-0-543" class="i">+                        ORDER BY a.balance ASC
+</a><a href="#h5-0-544" id="h5-0-544" class="i">+                        LIMIT 1&quot;,
+</a><a href="#h5-0-545" id="h5-0-545" class="i">+                to
+</a><a href="#h5-0-546" id="h5-0-546" class="i">+            ))
+</a><a href="#h5-0-547" id="h5-0-547" class="i">+            .await?
+</a><a href="#h5-0-548" id="h5-0-548" class="i">+            .into_value()?
+</a><a href="#h5-0-549" id="h5-0-549" class="i">+            .integer()?;
+</a><a href="#h5-0-550" id="h5-0-550" class="i">+
+</a><a href="#h5-0-551" id="h5-0-551" class="i">+        client
+</a><a href="#h5-0-552" id="h5-0-552" class="i">+            .execute(&amp;format!(
+</a><a href="#h5-0-553" id="h5-0-553" class="i">+                &quot;UPDATE account SET balance = balance - {} WHERE id = {}&quot;,
+</a><a href="#h5-0-554" id="h5-0-554" class="i">+                amount, from_account,
+</a><a href="#h5-0-555" id="h5-0-555" class="i">+            ))
+</a><a href="#h5-0-556" id="h5-0-556" class="i">+            .await?;
+</a><a href="#h5-0-557" id="h5-0-557" class="i">+        client
+</a><a href="#h5-0-558" id="h5-0-558" class="i">+            .execute(&amp;format!(
+</a><a href="#h5-0-559" id="h5-0-559" class="i">+                &quot;UPDATE account SET balance = balance + {} WHERE id = {}&quot;,
+</a><a href="#h5-0-560" id="h5-0-560" class="i">+                amount, to_account,
+</a><a href="#h5-0-561" id="h5-0-561" class="i">+            ))
+</a><a href="#h5-0-562" id="h5-0-562" class="i">+            .await?;
+</a><a href="#h5-0-563" id="h5-0-563" class="i">+
+</a><a href="#h5-0-564" id="h5-0-564" class="i">+        client.execute(&quot;COMMIT&quot;).await?;
+</a><a href="#h5-0-565" id="h5-0-565" class="i">+
+</a><a href="#h5-0-566" id="h5-0-566" class="i">+        Ok(())
+</a><a href="#h5-0-567" id="h5-0-567" class="i">+    }
+</a><a href="#h5-0-568" id="h5-0-568" class="i">+
+</a><a href="#h5-0-569" id="h5-0-569" class="i">+    async fn verify(&amp;self, client: &amp;mut Client, _: usize) -&gt; Result&lt;()&gt; {
+</a><a href="#h5-0-570" id="h5-0-570" class="i">+        let balance =
+</a><a href="#h5-0-571" id="h5-0-571" class="i">+            client.execute(&quot;SELECT SUM(balance) FROM account&quot;).await?.into_value()?.integer()?;
+</a><a href="#h5-0-572" id="h5-0-572" class="i">+        assert_eq!(balance as u64, self.customers * self.accounts * self.balance);
+</a><a href="#h5-0-573" id="h5-0-573" class="i">+        let negative = client
+</a><a href="#h5-0-574" id="h5-0-574" class="i">+            .execute(&quot;SELECT COUNT(*) FROM account WHERE balance &lt; 0&quot;)
+</a><a href="#h5-0-575" id="h5-0-575" class="i">+            .await?
+</a><a href="#h5-0-576" id="h5-0-576" class="i">+            .into_value()?
+</a><a href="#h5-0-577" id="h5-0-577" class="i">+            .integer()?;
+</a><a href="#h5-0-578" id="h5-0-578" class="i">+        assert_eq!(negative, 0);
+</a><a href="#h5-0-579" id="h5-0-579" class="i">+        Ok(())
+</a><a href="#h5-0-580" id="h5-0-580" class="i">+    }
+</a><a href="#h5-0-581" id="h5-0-581" class="i">+}
+</a><b>diff --git a/<a id="h6" href="../file/src/client.rs.html">src/client.rs</a> b/<a href="../file/src/client.rs.html">src/client.rs</a></b>
+<a href="#h6-0" id="h6-0" class="h">@@ -4,16 +4,9 @@ use crate::sql::engine::Status;
+</a> use crate::sql::execution::ResultSet;
+ use crate::sql::schema::Table;
+ 
+<a href="#h6-0-3" id="h6-0-3" class="d">-use futures::future::FutureExt as _;
+</a> use futures::sink::SinkExt as _;
+ use futures::stream::TryStreamExt as _;
+<a href="#h6-0-6" id="h6-0-6" class="d">-use rand::Rng as _;
+</a><a href="#h6-0-7" id="h6-0-7" class="d">-use std::cell::Cell;
+</a><a href="#h6-0-8" id="h6-0-8" class="d">-use std::future::Future;
+</a><a href="#h6-0-9" id="h6-0-9" class="d">-use std::ops::{Deref, Drop};
+</a><a href="#h6-0-10" id="h6-0-10" class="d">-use std::sync::Arc;
+</a> use tokio::net::{TcpStream, ToSocketAddrs};
+<a href="#h6-0-12" id="h6-0-12" class="d">-use tokio::sync::{Mutex, MutexGuard};
+</a> use tokio_util::codec::{Framed, LengthDelimitedCodec};
+ 
+ type Connection = tokio_serde::Framed&lt;
+<a href="#h6-1" id="h6-1" class="h">@@ -23,59 +16,43 @@ type Connection = tokio_serde::Framed&lt;
+</a>     tokio_serde::formats::Bincode&lt;Result&lt;Response&gt;, Request&gt;,
+ &gt;;
+ 
+<a href="#h6-1-3" id="h6-1-3" class="d">-/// Number of serialization retries in with_txn()
+</a><a href="#h6-1-4" id="h6-1-4" class="d">-const WITH_TXN_RETRIES: u8 = 8;
+</a><a href="#h6-1-5" id="h6-1-5" class="d">-
+</a> /// A toyDB client
+<a href="#h6-1-7" id="h6-1-7" class="d">-#[derive(Clone)]
+</a> pub struct Client {
+<a href="#h6-1-9" id="h6-1-9" class="d">-    conn: Arc&lt;Mutex&lt;Connection&gt;&gt;,
+</a><a href="#h6-1-10" id="h6-1-10" class="d">-    txn: Cell&lt;Option&lt;(u64, bool)&gt;&gt;,
+</a><a href="#h6-1-11" id="h6-1-11" class="i">+    conn: Connection,
+</a><a href="#h6-1-12" id="h6-1-12" class="i">+    txn: Option&lt;(u64, bool)&gt;,
+</a> }
+ 
+ impl Client {
+     /// Creates a new client
+     pub async fn new&lt;A: ToSocketAddrs&gt;(addr: A) -&gt; Result&lt;Self&gt; {
+         Ok(Self {
+<a href="#h6-1-19" id="h6-1-19" class="d">-            conn: Arc::new(Mutex::new(tokio_serde::Framed::new(
+</a><a href="#h6-1-20" id="h6-1-20" class="i">+            conn: tokio_serde::Framed::new(
+</a>                 Framed::new(TcpStream::connect(addr).await?, LengthDelimitedCodec::new()),
+                 tokio_serde::formats::Bincode::default(),
+<a href="#h6-1-23" id="h6-1-23" class="d">-            ))),
+</a><a href="#h6-1-24" id="h6-1-24" class="d">-            txn: Cell::new(None),
+</a><a href="#h6-1-25" id="h6-1-25" class="i">+            ),
+</a><a href="#h6-1-26" id="h6-1-26" class="i">+            txn: None,
+</a>         })
+     }
+ 
+     /// Call a server method
+<a href="#h6-1-31" id="h6-1-31" class="d">-    async fn call(&amp;self, request: Request) -&gt; Result&lt;Response&gt; {
+</a><a href="#h6-1-32" id="h6-1-32" class="d">-        let mut conn = self.conn.lock().await;
+</a><a href="#h6-1-33" id="h6-1-33" class="d">-        self.call_locked(&amp;mut conn, request).await
+</a><a href="#h6-1-34" id="h6-1-34" class="d">-    }
+</a><a href="#h6-1-35" id="h6-1-35" class="d">-
+</a><a href="#h6-1-36" id="h6-1-36" class="d">-    /// Call a server method while holding the mutex lock
+</a><a href="#h6-1-37" id="h6-1-37" class="d">-    async fn call_locked(
+</a><a href="#h6-1-38" id="h6-1-38" class="d">-        &amp;self,
+</a><a href="#h6-1-39" id="h6-1-39" class="d">-        conn: &amp;mut MutexGuard&lt;&#39;_, Connection&gt;,
+</a><a href="#h6-1-40" id="h6-1-40" class="d">-        request: Request,
+</a><a href="#h6-1-41" id="h6-1-41" class="d">-    ) -&gt; Result&lt;Response&gt; {
+</a><a href="#h6-1-42" id="h6-1-42" class="d">-        conn.send(request).await?;
+</a><a href="#h6-1-43" id="h6-1-43" class="d">-        match conn.try_next().await? {
+</a><a href="#h6-1-44" id="h6-1-44" class="i">+    async fn call(&amp;mut self, request: Request) -&gt; Result&lt;Response&gt; {
+</a><a href="#h6-1-45" id="h6-1-45" class="i">+        self.conn.send(request).await?;
+</a><a href="#h6-1-46" id="h6-1-46" class="i">+        match self.conn.try_next().await? {
+</a>             Some(result) =&gt; result,
+             None =&gt; Err(Error::Internal(&quot;Server disconnected&quot;.into())),
+         }
+     }
+ 
+     /// Executes a query
+<a href="#h6-1-53" id="h6-1-53" class="d">-    pub async fn execute(&amp;self, query: &amp;str) -&gt; Result&lt;ResultSet&gt; {
+</a><a href="#h6-1-54" id="h6-1-54" class="d">-        let mut conn = self.conn.lock().await;
+</a><a href="#h6-1-55" id="h6-1-55" class="d">-        let mut resultset =
+</a><a href="#h6-1-56" id="h6-1-56" class="d">-            match self.call_locked(&amp;mut conn, Request::Execute(query.into())).await? {
+</a><a href="#h6-1-57" id="h6-1-57" class="d">-                Response::Execute(rs) =&gt; rs,
+</a><a href="#h6-1-58" id="h6-1-58" class="d">-                resp =&gt; return Err(Error::Internal(format!(&quot;Unexpected response {:?}&quot;, resp))),
+</a><a href="#h6-1-59" id="h6-1-59" class="d">-            };
+</a><a href="#h6-1-60" id="h6-1-60" class="i">+    pub async fn execute(&amp;mut self, query: &amp;str) -&gt; Result&lt;ResultSet&gt; {
+</a><a href="#h6-1-61" id="h6-1-61" class="i">+        let mut resultset = match self.call(Request::Execute(query.into())).await? {
+</a><a href="#h6-1-62" id="h6-1-62" class="i">+            Response::Execute(rs) =&gt; rs,
+</a><a href="#h6-1-63" id="h6-1-63" class="i">+            resp =&gt; return Err(Error::Internal(format!(&quot;Unexpected response {:?}&quot;, resp))),
+</a><a href="#h6-1-64" id="h6-1-64" class="i">+        };
+</a>         if let ResultSet::Query { columns, .. } = resultset {
+             // FIXME We buffer rows for now to avoid lifetime hassles
+             let mut rows = Vec::new();
+<a href="#h6-1-68" id="h6-1-68" class="d">-            while let Some(result) = conn.try_next().await? {
+</a><a href="#h6-1-69" id="h6-1-69" class="i">+            while let Some(result) = self.conn.try_next().await? {
+</a>                 match result? {
+                     Response::Row(Some(row)) =&gt; rows.push(row),
+                     Response::Row(None) =&gt; break,
+<a href="#h6-2" id="h6-2" class="h">@@ -87,16 +64,16 @@ impl Client {
+</a>             resultset = ResultSet::Query { columns, rows: Box::new(rows.into_iter().map(Ok)) }
+         };
+         match &amp;resultset {
+<a href="#h6-2-3" id="h6-2-3" class="d">-            ResultSet::Begin { version, read_only } =&gt; self.txn.set(Some((*version, *read_only))),
+</a><a href="#h6-2-4" id="h6-2-4" class="d">-            ResultSet::Commit { .. } =&gt; self.txn.set(None),
+</a><a href="#h6-2-5" id="h6-2-5" class="d">-            ResultSet::Rollback { .. } =&gt; self.txn.set(None),
+</a><a href="#h6-2-6" id="h6-2-6" class="i">+            ResultSet::Begin { version, read_only } =&gt; self.txn = Some((*version, *read_only)),
+</a><a href="#h6-2-7" id="h6-2-7" class="i">+            ResultSet::Commit { .. } =&gt; self.txn = None,
+</a><a href="#h6-2-8" id="h6-2-8" class="i">+            ResultSet::Rollback { .. } =&gt; self.txn = None,
+</a>             _ =&gt; {}
+         }
+         Ok(resultset)
+     }
+ 
+     /// Fetches the table schema as SQL
+<a href="#h6-2-15" id="h6-2-15" class="d">-    pub async fn get_table(&amp;self, table: &amp;str) -&gt; Result&lt;Table&gt; {
+</a><a href="#h6-2-16" id="h6-2-16" class="i">+    pub async fn get_table(&amp;mut self, table: &amp;str) -&gt; Result&lt;Table&gt; {
+</a>         match self.call(Request::GetTable(table.into())).await? {
+             Response::GetTable(t) =&gt; Ok(t),
+             resp =&gt; Err(Error::Value(format!(&quot;Unexpected response: {:?}&quot;, resp))),
+<a href="#h6-3" id="h6-3" class="h">@@ -104,7 +81,7 @@ impl Client {
+</a>     }
+ 
+     /// Lists database tables
+<a href="#h6-3-3" id="h6-3-3" class="d">-    pub async fn list_tables(&amp;self) -&gt; Result&lt;Vec&lt;String&gt;&gt; {
+</a><a href="#h6-3-4" id="h6-3-4" class="i">+    pub async fn list_tables(&amp;mut self) -&gt; Result&lt;Vec&lt;String&gt;&gt; {
+</a>         match self.call(Request::ListTables).await? {
+             Response::ListTables(t) =&gt; Ok(t),
+             resp =&gt; Err(Error::Value(format!(&quot;Unexpected response: {:?}&quot;, resp))),
+<a href="#h6-4" id="h6-4" class="h">@@ -112,7 +89,7 @@ impl Client {
+</a>     }
+ 
+     /// Checks server status
+<a href="#h6-4-3" id="h6-4-3" class="d">-    pub async fn status(&amp;self) -&gt; Result&lt;Status&gt; {
+</a><a href="#h6-4-4" id="h6-4-4" class="i">+    pub async fn status(&amp;mut self) -&gt; Result&lt;Status&gt; {
+</a>         match self.call(Request::Status).await? {
+             Response::Status(s) =&gt; Ok(s),
+             resp =&gt; Err(Error::Value(format!(&quot;Unexpected response: {:?}&quot;, resp))),
+<a href="#h6-5" id="h6-5" class="h">@@ -121,106 +98,6 @@ impl Client {
+</a> 
+     /// Returns the version and read-only state of the txn
+     pub fn txn(&amp;self) -&gt; Option&lt;(u64, bool)&gt; {
+<a href="#h6-5-3" id="h6-5-3" class="d">-        self.txn.get()
+</a><a href="#h6-5-4" id="h6-5-4" class="d">-    }
+</a><a href="#h6-5-5" id="h6-5-5" class="d">-
+</a><a href="#h6-5-6" id="h6-5-6" class="d">-    /// Runs a query in a transaction, automatically retrying serialization failures with
+</a><a href="#h6-5-7" id="h6-5-7" class="d">-    /// exponential backoff.
+</a><a href="#h6-5-8" id="h6-5-8" class="d">-    pub async fn with_txn&lt;W, F, R&gt;(&amp;self, mut with: W) -&gt; Result&lt;R&gt;
+</a><a href="#h6-5-9" id="h6-5-9" class="d">-    where
+</a><a href="#h6-5-10" id="h6-5-10" class="d">-        W: FnMut(Client) -&gt; F,
+</a><a href="#h6-5-11" id="h6-5-11" class="d">-        F: Future&lt;Output = Result&lt;R&gt;&gt;,
+</a><a href="#h6-5-12" id="h6-5-12" class="d">-    {
+</a><a href="#h6-5-13" id="h6-5-13" class="d">-        for i in 0..WITH_TXN_RETRIES {
+</a><a href="#h6-5-14" id="h6-5-14" class="d">-            if i &gt; 0 {
+</a><a href="#h6-5-15" id="h6-5-15" class="d">-                tokio::time::sleep(std::time::Duration::from_millis(
+</a><a href="#h6-5-16" id="h6-5-16" class="d">-                    2_u64.pow(i as u32 - 1) * rand::thread_rng().gen_range(25..=75),
+</a><a href="#h6-5-17" id="h6-5-17" class="d">-                ))
+</a><a href="#h6-5-18" id="h6-5-18" class="d">-                .await;
+</a><a href="#h6-5-19" id="h6-5-19" class="d">-            }
+</a><a href="#h6-5-20" id="h6-5-20" class="d">-            let result = async {
+</a><a href="#h6-5-21" id="h6-5-21" class="d">-                self.execute(&quot;BEGIN&quot;).await?;
+</a><a href="#h6-5-22" id="h6-5-22" class="d">-                let result = with(self.clone()).await?;
+</a><a href="#h6-5-23" id="h6-5-23" class="d">-                self.execute(&quot;COMMIT&quot;).await?;
+</a><a href="#h6-5-24" id="h6-5-24" class="d">-                Ok(result)
+</a><a href="#h6-5-25" id="h6-5-25" class="d">-            }
+</a><a href="#h6-5-26" id="h6-5-26" class="d">-            .await;
+</a><a href="#h6-5-27" id="h6-5-27" class="d">-            if result.is_err() {
+</a><a href="#h6-5-28" id="h6-5-28" class="d">-                self.execute(&quot;ROLLBACK&quot;).await.ok();
+</a><a href="#h6-5-29" id="h6-5-29" class="d">-                if matches!(result, Err(Error::Serialization) | Err(Error::Abort)) {
+</a><a href="#h6-5-30" id="h6-5-30" class="d">-                    continue;
+</a><a href="#h6-5-31" id="h6-5-31" class="d">-                }
+</a><a href="#h6-5-32" id="h6-5-32" class="d">-            }
+</a><a href="#h6-5-33" id="h6-5-33" class="d">-            return result;
+</a><a href="#h6-5-34" id="h6-5-34" class="d">-        }
+</a><a href="#h6-5-35" id="h6-5-35" class="d">-        Err(Error::Serialization)
+</a><a href="#h6-5-36" id="h6-5-36" class="d">-    }
+</a><a href="#h6-5-37" id="h6-5-37" class="d">-}
+</a><a href="#h6-5-38" id="h6-5-38" class="d">-
+</a><a href="#h6-5-39" id="h6-5-39" class="d">-/// A toyDB client pool
+</a><a href="#h6-5-40" id="h6-5-40" class="d">-pub struct Pool {
+</a><a href="#h6-5-41" id="h6-5-41" class="d">-    clients: Vec&lt;Mutex&lt;Client&gt;&gt;,
+</a><a href="#h6-5-42" id="h6-5-42" class="d">-}
+</a><a href="#h6-5-43" id="h6-5-43" class="d">-
+</a><a href="#h6-5-44" id="h6-5-44" class="d">-impl Pool {
+</a><a href="#h6-5-45" id="h6-5-45" class="d">-    /// Creates a new connection pool for the given servers, eagerly connecting clients.
+</a><a href="#h6-5-46" id="h6-5-46" class="d">-    pub async fn new&lt;A: ToSocketAddrs + Clone&gt;(addrs: Vec&lt;A&gt;, size: u64) -&gt; Result&lt;Self&gt; {
+</a><a href="#h6-5-47" id="h6-5-47" class="d">-        let mut addrs = addrs.into_iter().cycle();
+</a><a href="#h6-5-48" id="h6-5-48" class="d">-        let clients = futures::future::try_join_all(
+</a><a href="#h6-5-49" id="h6-5-49" class="d">-            std::iter::from_fn(|| {
+</a><a href="#h6-5-50" id="h6-5-50" class="d">-                Some(Client::new(addrs.next().unwrap()).map(|r| r.map(Mutex::new)))
+</a><a href="#h6-5-51" id="h6-5-51" class="d">-            })
+</a><a href="#h6-5-52" id="h6-5-52" class="d">-            .take(size as usize),
+</a><a href="#h6-5-53" id="h6-5-53" class="d">-        )
+</a><a href="#h6-5-54" id="h6-5-54" class="d">-        .await?;
+</a><a href="#h6-5-55" id="h6-5-55" class="d">-        Ok(Self { clients })
+</a><a href="#h6-5-56" id="h6-5-56" class="d">-    }
+</a><a href="#h6-5-57" id="h6-5-57" class="d">-
+</a><a href="#h6-5-58" id="h6-5-58" class="d">-    /// Fetches a client from the pool. It is reset (i.e. any open txns are rolled back) and
+</a><a href="#h6-5-59" id="h6-5-59" class="d">-    /// returned when it goes out of scope.
+</a><a href="#h6-5-60" id="h6-5-60" class="d">-    pub async fn get(&amp;self) -&gt; PoolClient&lt;&#39;_&gt; {
+</a><a href="#h6-5-61" id="h6-5-61" class="d">-        let (client, index, _) =
+</a><a href="#h6-5-62" id="h6-5-62" class="d">-            futures::future::select_all(self.clients.iter().map(|m| m.lock().boxed())).await;
+</a><a href="#h6-5-63" id="h6-5-63" class="d">-        PoolClient::new(index, client)
+</a><a href="#h6-5-64" id="h6-5-64" class="d">-    }
+</a><a href="#h6-5-65" id="h6-5-65" class="d">-
+</a><a href="#h6-5-66" id="h6-5-66" class="d">-    /// Returns the size of the pool
+</a><a href="#h6-5-67" id="h6-5-67" class="d">-    pub fn size(&amp;self) -&gt; usize {
+</a><a href="#h6-5-68" id="h6-5-68" class="d">-        self.clients.len()
+</a><a href="#h6-5-69" id="h6-5-69" class="d">-    }
+</a><a href="#h6-5-70" id="h6-5-70" class="d">-}
+</a><a href="#h6-5-71" id="h6-5-71" class="d">-
+</a><a href="#h6-5-72" id="h6-5-72" class="d">-/// A client returned from the pool
+</a><a href="#h6-5-73" id="h6-5-73" class="d">-pub struct PoolClient&lt;&#39;a&gt; {
+</a><a href="#h6-5-74" id="h6-5-74" class="d">-    id: usize,
+</a><a href="#h6-5-75" id="h6-5-75" class="d">-    client: MutexGuard&lt;&#39;a, Client&gt;,
+</a><a href="#h6-5-76" id="h6-5-76" class="d">-}
+</a><a href="#h6-5-77" id="h6-5-77" class="d">-
+</a><a href="#h6-5-78" id="h6-5-78" class="d">-impl&lt;&#39;a&gt; PoolClient&lt;&#39;a&gt; {
+</a><a href="#h6-5-79" id="h6-5-79" class="d">-    /// Creates a new PoolClient
+</a><a href="#h6-5-80" id="h6-5-80" class="d">-    fn new(id: usize, client: MutexGuard&lt;&#39;a, Client&gt;) -&gt; Self {
+</a><a href="#h6-5-81" id="h6-5-81" class="d">-        Self { id, client }
+</a><a href="#h6-5-82" id="h6-5-82" class="d">-    }
+</a><a href="#h6-5-83" id="h6-5-83" class="d">-
+</a><a href="#h6-5-84" id="h6-5-84" class="d">-    /// Returns the ID of the client in the pool
+</a><a href="#h6-5-85" id="h6-5-85" class="d">-    pub fn id(&amp;self) -&gt; usize {
+</a><a href="#h6-5-86" id="h6-5-86" class="d">-        self.id
+</a><a href="#h6-5-87" id="h6-5-87" class="d">-    }
+</a><a href="#h6-5-88" id="h6-5-88" class="d">-}
+</a><a href="#h6-5-89" id="h6-5-89" class="d">-
+</a><a href="#h6-5-90" id="h6-5-90" class="d">-impl&lt;&#39;a&gt; Deref for PoolClient&lt;&#39;a&gt; {
+</a><a href="#h6-5-91" id="h6-5-91" class="d">-    type Target = MutexGuard&lt;&#39;a, Client&gt;;
+</a><a href="#h6-5-92" id="h6-5-92" class="d">-
+</a><a href="#h6-5-93" id="h6-5-93" class="d">-    fn deref(&amp;self) -&gt; &amp;Self::Target {
+</a><a href="#h6-5-94" id="h6-5-94" class="d">-        &amp;self.client
+</a><a href="#h6-5-95" id="h6-5-95" class="d">-    }
+</a><a href="#h6-5-96" id="h6-5-96" class="d">-}
+</a><a href="#h6-5-97" id="h6-5-97" class="d">-
+</a><a href="#h6-5-98" id="h6-5-98" class="d">-impl&lt;&#39;a&gt; Drop for PoolClient&lt;&#39;a&gt; {
+</a><a href="#h6-5-99" id="h6-5-99" class="d">-    fn drop(&amp;mut self) {
+</a><a href="#h6-5-100" id="h6-5-100" class="d">-        if self.txn().is_some() {
+</a><a href="#h6-5-101" id="h6-5-101" class="d">-            // FIXME This should disconnect or destroy the client if it errors.
+</a><a href="#h6-5-102" id="h6-5-102" class="d">-            futures::executor::block_on(self.client.execute(&quot;ROLLBACK&quot;)).ok();
+</a><a href="#h6-5-103" id="h6-5-103" class="d">-        }
+</a><a href="#h6-5-104" id="h6-5-104" class="i">+        self.txn
+</a>     }
+ }
+<b>diff --git a/<a id="h7" href="../file/src/error.rs.html">src/error.rs</a> b/<a href="../file/src/error.rs.html">src/error.rs</a></b>
+<a href="#h7-0" id="h7-0" class="h">@@ -43,6 +43,12 @@ impl serde::de::Error for Error {
+</a>     }
+ }
+ 
+<a href="#h7-0-3" id="h7-0-3" class="i">+impl&lt;T&gt; From&lt;async_channel::SendError&lt;T&gt;&gt; for Error {
+</a><a href="#h7-0-4" id="h7-0-4" class="i">+    fn from(err: async_channel::SendError&lt;T&gt;) -&gt; Self {
+</a><a href="#h7-0-5" id="h7-0-5" class="i">+        Error::Internal(err.to_string())
+</a><a href="#h7-0-6" id="h7-0-6" class="i">+    }
+</a><a href="#h7-0-7" id="h7-0-7" class="i">+}
+</a><a href="#h7-0-8" id="h7-0-8" class="i">+
+</a> impl From&lt;Box&lt;bincode::ErrorKind&gt;&gt; for Error {
+     fn from(err: Box&lt;bincode::ErrorKind&gt;) -&gt; Self {
+         Error::Internal(err.to_string())
+<a href="#h7-1" id="h7-1" class="h">@@ -55,6 +61,18 @@ impl From&lt;config::ConfigError&gt; for Error {
+</a>     }
+ }
+ 
+<a href="#h7-1-3" id="h7-1-3" class="i">+impl From&lt;hdrhistogram::CreationError&gt; for Error {
+</a><a href="#h7-1-4" id="h7-1-4" class="i">+    fn from(err: hdrhistogram::CreationError) -&gt; Self {
+</a><a href="#h7-1-5" id="h7-1-5" class="i">+        Error::Internal(err.to_string())
+</a><a href="#h7-1-6" id="h7-1-6" class="i">+    }
+</a><a href="#h7-1-7" id="h7-1-7" class="i">+}
+</a><a href="#h7-1-8" id="h7-1-8" class="i">+
+</a><a href="#h7-1-9" id="h7-1-9" class="i">+impl From&lt;hdrhistogram::RecordError&gt; for Error {
+</a><a href="#h7-1-10" id="h7-1-10" class="i">+    fn from(err: hdrhistogram::RecordError) -&gt; Self {
+</a><a href="#h7-1-11" id="h7-1-11" class="i">+        Error::Internal(err.to_string())
+</a><a href="#h7-1-12" id="h7-1-12" class="i">+    }
+</a><a href="#h7-1-13" id="h7-1-13" class="i">+}
+</a><a href="#h7-1-14" id="h7-1-14" class="i">+
+</a> impl From&lt;hex::FromHexError&gt; for Error {
+     fn from(err: hex::FromHexError) -&gt; Self {
+         Error::Internal(err.to_string())
+<b>diff --git a/<a id="h8" href="../file/src/lib.rs.html">src/lib.rs</a> b/<a href="../file/src/lib.rs.html">src/lib.rs</a></b>
+<a href="#h8-0" id="h8-0" class="h">@@ -11,3 +11,4 @@ pub mod storage;
+</a> 
+ pub use client::Client;
+ pub use server::Server;
+<a href="#h8-0-3" id="h8-0-3" class="i">+pub use sql::execution::ResultSet;
+</a><b>diff --git a/<a id="h9" href="../file/src/sql/execution/mod.rs.html">src/sql/execution/mod.rs</a> b/<a href="../file/src/sql/execution/mod.rs.html">src/sql/execution/mod.rs</a></b>
+<a href="#h9-0" id="h9-0" class="h">@@ -129,8 +129,14 @@ impl ResultSet {
+</a> 
+     /// Converts the ResultSet into a row, or errors if not a query result with rows.
+     pub fn into_row(self) -&gt; Result&lt;Row&gt; {
+<a href="#h9-0-3" id="h9-0-3" class="d">-        if let ResultSet::Query { mut rows, .. } = self {
+</a><a href="#h9-0-4" id="h9-0-4" class="d">-            rows.next().transpose()?.ok_or_else(|| Error::Value(&quot;No rows returned&quot;.into()))
+</a><a href="#h9-0-5" id="h9-0-5" class="i">+        self.into_rows()?.next().transpose()?.ok_or_else(|| Error::Value(&quot;No rows returned&quot;.into()))
+</a><a href="#h9-0-6" id="h9-0-6" class="i">+    }
+</a><a href="#h9-0-7" id="h9-0-7" class="i">+
+</a><a href="#h9-0-8" id="h9-0-8" class="i">+    /// Converts the ResultSet into a row iterator, or errors if not a query
+</a><a href="#h9-0-9" id="h9-0-9" class="i">+    /// result with rows.
+</a><a href="#h9-0-10" id="h9-0-10" class="i">+    pub fn into_rows(self) -&gt; Result&lt;Rows&gt; {
+</a><a href="#h9-0-11" id="h9-0-11" class="i">+        if let ResultSet::Query { rows, .. } = self {
+</a><a href="#h9-0-12" id="h9-0-12" class="i">+            Ok(rows)
+</a>         } else {
+             Err(Error::Value(format!(&quot;Not a query result: {:?}&quot;, self)))
+         }
+<b>diff --git a/<a id="h10" href="../file/tests/client/mod.rs.html">tests/client/mod.rs</a> b/<a href="../file/tests/client/mod.rs.html">tests/client/mod.rs</a></b>
+<a href="#h10-0" id="h10-0" class="h">@@ -1,5 +1,3 @@
+</a><a href="#h10-0-0" id="h10-0-0" class="d">-mod pool;
+</a><a href="#h10-0-1" id="h10-0-1" class="d">-
+</a> use super::{assert_row, assert_rows, setup};
+ 
+ use toydb::error::{Error, Result};
+<a href="#h10-1" id="h10-1" class="h">@@ -18,7 +16,7 @@ use serial_test::serial;
+</a> #[tokio::test(flavor = &quot;multi_thread&quot;, worker_threads = 2)]
+ #[serial]
+ async fn get_table() -&gt; Result&lt;()&gt; {
+<a href="#h10-1-3" id="h10-1-3" class="d">-    let (c, _teardown) = setup::server_with_client(setup::movies()).await?;
+</a><a href="#h10-1-4" id="h10-1-4" class="i">+    let (mut c, _teardown) = setup::server_with_client(setup::movies()).await?;
+</a> 
+     assert_eq!(
+         c.get_table(&quot;unknown&quot;).await,
+<a href="#h10-2" id="h10-2" class="h">@@ -108,7 +106,7 @@ async fn get_table() -&gt; Result&lt;()&gt; {
+</a> #[tokio::test(flavor = &quot;multi_thread&quot;, worker_threads = 2)]
+ #[serial]
+ async fn list_tables() -&gt; Result&lt;()&gt; {
+<a href="#h10-2-3" id="h10-2-3" class="d">-    let (c, _teardown) = setup::server_with_client(setup::movies()).await?;
+</a><a href="#h10-2-4" id="h10-2-4" class="i">+    let (mut c, _teardown) = setup::server_with_client(setup::movies()).await?;
+</a> 
+     assert_eq!(c.list_tables().await?, vec![&quot;countries&quot;, &quot;genres&quot;, &quot;movies&quot;, &quot;studios&quot;]);
+     Ok(())
+<a href="#h10-3" id="h10-3" class="h">@@ -117,7 +115,7 @@ async fn list_tables() -&gt; Result&lt;()&gt; {
+</a> #[tokio::test(flavor = &quot;multi_thread&quot;, worker_threads = 2)]
+ #[serial]
+ async fn status() -&gt; Result&lt;()&gt; {
+<a href="#h10-3-3" id="h10-3-3" class="d">-    let (c, _teardown) = setup::server_with_client(setup::movies()).await?;
+</a><a href="#h10-3-4" id="h10-3-4" class="i">+    let (mut c, _teardown) = setup::server_with_client(setup::movies()).await?;
+</a> 
+     assert_eq!(
+         c.status().await?,
+<a href="#h10-4" id="h10-4" class="h">@@ -158,7 +156,7 @@ async fn status() -&gt; Result&lt;()&gt; {
+</a> #[tokio::test(flavor = &quot;multi_thread&quot;, worker_threads = 2)]
+ #[serial]
+ async fn execute() -&gt; Result&lt;()&gt; {
+<a href="#h10-4-3" id="h10-4-3" class="d">-    let (c, _teardown) = setup::server_with_client(setup::movies()).await?;
+</a><a href="#h10-4-4" id="h10-4-4" class="i">+    let (mut c, _teardown) = setup::server_with_client(setup::movies()).await?;
+</a> 
+     // SELECT
+     let result = c.execute(&quot;SELECT * FROM genres&quot;).await?;
+<a href="#h10-5" id="h10-5" class="h">@@ -241,7 +239,7 @@ async fn execute() -&gt; Result&lt;()&gt; {
+</a> #[tokio::test(flavor = &quot;multi_thread&quot;, worker_threads = 2)]
+ #[serial]
+ async fn execute_txn() -&gt; Result&lt;()&gt; {
+<a href="#h10-5-3" id="h10-5-3" class="d">-    let (c, _teardown) = setup::server_with_client(setup::movies()).await?;
+</a><a href="#h10-5-4" id="h10-5-4" class="i">+    let (mut c, _teardown) = setup::server_with_client(setup::movies()).await?;
+</a> 
+     assert_eq!(c.txn(), None);
+ 
+<a href="#h10-6" id="h10-6" class="h">@@ -332,8 +330,8 @@ async fn execute_txn() -&gt; Result&lt;()&gt; {
+</a> #[tokio::test(flavor = &quot;multi_thread&quot;, worker_threads = 2)]
+ #[serial]
+ async fn execute_txn_concurrent() -&gt; Result&lt;()&gt; {
+<a href="#h10-6-3" id="h10-6-3" class="d">-    let (a, _teardown) = setup::server_with_client(setup::movies()).await?;
+</a><a href="#h10-6-4" id="h10-6-4" class="d">-    let b = Client::new(&quot;127.0.0.1:9605&quot;).await?;
+</a><a href="#h10-6-5" id="h10-6-5" class="i">+    let (mut a, _teardown) = setup::server_with_client(setup::movies()).await?;
+</a><a href="#h10-6-6" id="h10-6-6" class="i">+    let mut b = Client::new(&quot;127.0.0.1:9605&quot;).await?;
+</a> 
+     // Concurrent updates should throw a serialization failure on conflict.
+     assert_eq!(a.execute(&quot;BEGIN&quot;).await?, ResultSet::Begin { version: 2, read_only: false });
+<b>diff --git a/<a id="h11" href="../file/tests/client/pool.rs.html">tests/client/pool.rs</a> b/<a href="../file/tests/client/pool.rs.html">tests/client/pool.rs</a></b>
+<a href="#h11-0" id="h11-0" class="h">@@ -1,67 +0,0 @@
+</a><a href="#h11-0-0" id="h11-0-0" class="d">-use super::super::{assert_rows, setup};
+</a><a href="#h11-0-1" id="h11-0-1" class="d">-
+</a><a href="#h11-0-2" id="h11-0-2" class="d">-use toydb::error::Result;
+</a><a href="#h11-0-3" id="h11-0-3" class="d">-use toydb::sql::types::Value;
+</a><a href="#h11-0-4" id="h11-0-4" class="d">-
+</a><a href="#h11-0-5" id="h11-0-5" class="d">-use futures::future::FutureExt as _;
+</a><a href="#h11-0-6" id="h11-0-6" class="d">-use pretty_assertions::assert_eq;
+</a><a href="#h11-0-7" id="h11-0-7" class="d">-use serial_test::serial;
+</a><a href="#h11-0-8" id="h11-0-8" class="d">-use std::collections::HashSet;
+</a><a href="#h11-0-9" id="h11-0-9" class="d">-use std::iter::FromIterator as _;
+</a><a href="#h11-0-10" id="h11-0-10" class="d">-
+</a><a href="#h11-0-11" id="h11-0-11" class="d">-#[tokio::test(flavor = &quot;multi_thread&quot;, worker_threads = 4)]
+</a><a href="#h11-0-12" id="h11-0-12" class="d">-#[serial]
+</a><a href="#h11-0-13" id="h11-0-13" class="d">-#[allow(clippy::many_single_char_names)]
+</a><a href="#h11-0-14" id="h11-0-14" class="d">-async fn get() -&gt; Result&lt;()&gt; {
+</a><a href="#h11-0-15" id="h11-0-15" class="d">-    let (pool, _teardown) = setup::cluster_with_pool(3, 5, setup::simple()).await?;
+</a><a href="#h11-0-16" id="h11-0-16" class="d">-
+</a><a href="#h11-0-17" id="h11-0-17" class="d">-    // The clients are allocated to all servers
+</a><a href="#h11-0-18" id="h11-0-18" class="d">-    let a = pool.get().await;
+</a><a href="#h11-0-19" id="h11-0-19" class="d">-    let b = pool.get().await;
+</a><a href="#h11-0-20" id="h11-0-20" class="d">-    let c = pool.get().await;
+</a><a href="#h11-0-21" id="h11-0-21" class="d">-    let d = pool.get().await;
+</a><a href="#h11-0-22" id="h11-0-22" class="d">-    let e = pool.get().await;
+</a><a href="#h11-0-23" id="h11-0-23" class="d">-
+</a><a href="#h11-0-24" id="h11-0-24" class="d">-    let mut servers = HashSet::new();
+</a><a href="#h11-0-25" id="h11-0-25" class="d">-    let mut ids = HashSet::new();
+</a><a href="#h11-0-26" id="h11-0-26" class="d">-    for client in [a, b, c, d, e] {
+</a><a href="#h11-0-27" id="h11-0-27" class="d">-        servers.insert(client.status().await?.raft.server);
+</a><a href="#h11-0-28" id="h11-0-28" class="d">-        ids.insert(client.id());
+</a><a href="#h11-0-29" id="h11-0-29" class="d">-    }
+</a><a href="#h11-0-30" id="h11-0-30" class="d">-    assert_eq!(servers, HashSet::from_iter(vec![1, 2, 3]));
+</a><a href="#h11-0-31" id="h11-0-31" class="d">-    assert_eq!(ids, HashSet::from_iter(vec![0, 1, 2, 3, 4]));
+</a><a href="#h11-0-32" id="h11-0-32" class="d">-
+</a><a href="#h11-0-33" id="h11-0-33" class="d">-    // Further clients won&#39;t be ready
+</a><a href="#h11-0-34" id="h11-0-34" class="d">-    assert!(tokio::spawn(async move { pool.get().await.id() }).now_or_never().is_none());
+</a><a href="#h11-0-35" id="h11-0-35" class="d">-
+</a><a href="#h11-0-36" id="h11-0-36" class="d">-    Ok(())
+</a><a href="#h11-0-37" id="h11-0-37" class="d">-}
+</a><a href="#h11-0-38" id="h11-0-38" class="d">-
+</a><a href="#h11-0-39" id="h11-0-39" class="d">-#[tokio::test(flavor = &quot;multi_thread&quot;, worker_threads = 4)]
+</a><a href="#h11-0-40" id="h11-0-40" class="d">-#[serial]
+</a><a href="#h11-0-41" id="h11-0-41" class="d">-async fn drop_rollback() -&gt; Result&lt;()&gt; {
+</a><a href="#h11-0-42" id="h11-0-42" class="d">-    let (pool, _teardown) = setup::cluster_with_pool(3, 1, setup::simple()).await?;
+</a><a href="#h11-0-43" id="h11-0-43" class="d">-
+</a><a href="#h11-0-44" id="h11-0-44" class="d">-    // Starting a client and dropping it mid-transaction should work.
+</a><a href="#h11-0-45" id="h11-0-45" class="d">-    let a = pool.get().await;
+</a><a href="#h11-0-46" id="h11-0-46" class="d">-    assert_eq!(a.id(), 0);
+</a><a href="#h11-0-47" id="h11-0-47" class="d">-    assert_eq!(a.txn(), None);
+</a><a href="#h11-0-48" id="h11-0-48" class="d">-    a.execute(&quot;BEGIN&quot;).await?;
+</a><a href="#h11-0-49" id="h11-0-49" class="d">-    a.execute(&quot;INSERT INTO test VALUES (1, &#39;a&#39;)&quot;).await?;
+</a><a href="#h11-0-50" id="h11-0-50" class="d">-    assert_rows(
+</a><a href="#h11-0-51" id="h11-0-51" class="d">-        a.execute(&quot;SELECT * FROM test&quot;).await?,
+</a><a href="#h11-0-52" id="h11-0-52" class="d">-        vec![vec![Value::Integer(1), Value::String(&quot;a&quot;.into())]],
+</a><a href="#h11-0-53" id="h11-0-53" class="d">-    );
+</a><a href="#h11-0-54" id="h11-0-54" class="d">-    std::mem::drop(a);
+</a><a href="#h11-0-55" id="h11-0-55" class="d">-
+</a><a href="#h11-0-56" id="h11-0-56" class="d">-    // Fetching the client again from the pool should have reset it.
+</a><a href="#h11-0-57" id="h11-0-57" class="d">-    let a = pool.get().await;
+</a><a href="#h11-0-58" id="h11-0-58" class="d">-    assert_eq!(a.id(), 0);
+</a><a href="#h11-0-59" id="h11-0-59" class="d">-    assert_eq!(a.txn(), None);
+</a><a href="#h11-0-60" id="h11-0-60" class="d">-    assert_rows(a.execute(&quot;SELECT * FROM test&quot;).await?, Vec::new());
+</a><a href="#h11-0-61" id="h11-0-61" class="d">-    a.execute(&quot;BEGIN&quot;).await?;
+</a><a href="#h11-0-62" id="h11-0-62" class="d">-    a.execute(&quot;INSERT INTO test VALUES (1, &#39;a&#39;)&quot;).await?;
+</a><a href="#h11-0-63" id="h11-0-63" class="d">-    a.execute(&quot;COMMIT&quot;).await?;
+</a><a href="#h11-0-64" id="h11-0-64" class="d">-
+</a><a href="#h11-0-65" id="h11-0-65" class="d">-    Ok(())
+</a><a href="#h11-0-66" id="h11-0-66" class="d">-}
+</a><b>diff --git a/<a id="h12" href="../file/tests/cluster/isolation.rs.html">tests/cluster/isolation.rs</a> b/<a href="../file/tests/cluster/isolation.rs.html">tests/cluster/isolation.rs</a></b>
+<a href="#h12-0" id="h12-0" class="h">@@ -9,7 +9,7 @@ use serial_test::serial;
+</a> #[serial]
+ // A dirty write is when b overwrites an uncommitted value written by a.
+ async fn anomaly_dirty_write() -&gt; Result&lt;()&gt; {
+<a href="#h12-0-3" id="h12-0-3" class="d">-    let (a, b, _, _teardown) = setup::cluster_simple().await?;
+</a><a href="#h12-0-4" id="h12-0-4" class="i">+    let (mut a, mut b, _, _teardown) = setup::cluster_simple().await?;
+</a> 
+     a.execute(&quot;BEGIN&quot;).await?;
+     a.execute(&quot;INSERT INTO test VALUES (1, &#39;a&#39;)&quot;).await?;
+<a href="#h12-1" id="h12-1" class="h">@@ -29,7 +29,7 @@ async fn anomaly_dirty_write() -&gt; Result&lt;()&gt; {
+</a> #[serial]
+ // A dirty read is when b can read an uncommitted value set by a.
+ async fn anomaly_dirty_read() -&gt; Result&lt;()&gt; {
+<a href="#h12-1-3" id="h12-1-3" class="d">-    let (a, b, _, _teardown) = setup::cluster_simple().await?;
+</a><a href="#h12-1-4" id="h12-1-4" class="i">+    let (mut a, mut b, _, _teardown) = setup::cluster_simple().await?;
+</a> 
+     a.execute(&quot;BEGIN&quot;).await?;
+     a.execute(&quot;INSERT INTO test VALUES (1, &#39;a&#39;)&quot;).await?;
+<a href="#h12-2" id="h12-2" class="h">@@ -43,7 +43,7 @@ async fn anomaly_dirty_read() -&gt; Result&lt;()&gt; {
+</a> #[serial]
+ // A lost update is when a and b both read a value and update it, where b&#39;s update replaces a.
+ async fn anomaly_lost_update() -&gt; Result&lt;()&gt; {
+<a href="#h12-2-3" id="h12-2-3" class="d">-    let (a, b, c, _teardown) = setup::cluster_simple().await?;
+</a><a href="#h12-2-4" id="h12-2-4" class="i">+    let (mut a, mut b, mut c, _teardown) = setup::cluster_simple().await?;
+</a> 
+     c.execute(&quot;INSERT INTO test VALUES (1, &#39;c&#39;)&quot;).await?;
+ 
+<a href="#h12-3" id="h12-3" class="h">@@ -69,7 +69,7 @@ async fn anomaly_lost_update() -&gt; Result&lt;()&gt; {
+</a> #[serial]
+ // A fuzzy (or unrepeatable) read is when b sees a value change after a updates it.
+ async fn anomaly_fuzzy_read() -&gt; Result&lt;()&gt; {
+<a href="#h12-3-3" id="h12-3-3" class="d">-    let (a, b, c, _teardown) = setup::cluster_simple().await?;
+</a><a href="#h12-3-4" id="h12-3-4" class="i">+    let (mut a, mut b, mut c, _teardown) = setup::cluster_simple().await?;
+</a> 
+     c.execute(&quot;INSERT INTO test VALUES (1, &#39;c&#39;)&quot;).await?;
+ 
+<a href="#h12-4" id="h12-4" class="h">@@ -94,7 +94,7 @@ async fn anomaly_fuzzy_read() -&gt; Result&lt;()&gt; {
+</a> #[serial]
+ // Read skew is when a reads 1 and 2, but b modifies 2 in between the reads.
+ async fn anomaly_read_skew() -&gt; Result&lt;()&gt; {
+<a href="#h12-4-3" id="h12-4-3" class="d">-    let (a, b, c, _teardown) = setup::cluster_simple().await?;
+</a><a href="#h12-4-4" id="h12-4-4" class="i">+    let (mut a, mut b, mut c, _teardown) = setup::cluster_simple().await?;
+</a> 
+     c.execute(&quot;INSERT INTO test VALUES (1, &#39;c&#39;), (2, &#39;c&#39;)&quot;).await?;
+ 
+<a href="#h12-5" id="h12-5" class="h">@@ -120,7 +120,7 @@ async fn anomaly_read_skew() -&gt; Result&lt;()&gt; {
+</a> // A phantom read is when a reads entries matching some predicate, but a modification by
+ // b changes the entries that match the predicate such that a later read by a returns them.
+ async fn anomaly_phantom_read() -&gt; Result&lt;()&gt; {
+<a href="#h12-5-3" id="h12-5-3" class="d">-    let (a, b, c, _teardown) = setup::cluster_simple().await?;
+</a><a href="#h12-5-4" id="h12-5-4" class="i">+    let (mut a, mut b, mut c, _teardown) = setup::cluster_simple().await?;
+</a> 
+     c.execute(&quot;INSERT INTO test VALUES (1, &#39;true&#39;), (2, &#39;false&#39;)&quot;).await?;
+ 
+<b>diff --git a/<a id="h13" href="../file/tests/cluster/recovery.rs.html">tests/cluster/recovery.rs</a> b/<a href="../file/tests/cluster/recovery.rs.html">tests/cluster/recovery.rs</a></b>
+<a href="#h13-0" id="h13-0" class="h">@@ -9,7 +9,7 @@ use serial_test::serial;
+</a> #[serial]
+ // A client disconnect or termination should roll back its transaction.
+ async fn client_disconnect_rollback() -&gt; Result&lt;()&gt; {
+<a href="#h13-0-3" id="h13-0-3" class="d">-    let (a, b, _, _teardown) = setup::cluster_simple().await?;
+</a><a href="#h13-0-4" id="h13-0-4" class="i">+    let (mut a, mut b, _, _teardown) = setup::cluster_simple().await?;
+</a> 
+     a.execute(&quot;BEGIN&quot;).await?;
+     a.execute(&quot;INSERT INTO test VALUES (1, &#39;a&#39;)&quot;).await?;
+<a href="#h13-1" id="h13-1" class="h">@@ -28,7 +28,7 @@ async fn client_disconnect_rollback() -&gt; Result&lt;()&gt; {
+</a> #[tokio::test(flavor = &quot;multi_thread&quot;, worker_threads = 2)]
+ #[serial]
+ async fn client_commit_error() -&gt; Result&lt;()&gt; {
+<a href="#h13-1-3" id="h13-1-3" class="d">-    let (a, b, _, _teardown) = setup::cluster_simple().await?;
+</a><a href="#h13-1-4" id="h13-1-4" class="i">+    let (mut a, mut b, _, _teardown) = setup::cluster_simple().await?;
+</a> 
+     a.execute(&quot;BEGIN&quot;).await?;
+     a.execute(&quot;INSERT INTO test VALUES (1, &#39;a&#39;)&quot;).await?;
+<b>diff --git a/<a id="h14" href="../file/tests/setup.rs.html">tests/setup.rs</a> b/<a href="../file/tests/setup.rs.html">tests/setup.rs</a></b>
+<a href="#h14-0" id="h14-0" class="h">@@ -1,6 +1,6 @@
+</a> #![allow(clippy::implicit_hasher)]
+ 
+<a href="#h14-0-2" id="h14-0-2" class="d">-use toydb::client::{Client, Pool};
+</a><a href="#h14-0-3" id="h14-0-3" class="i">+use toydb::client::Client;
+</a> use toydb::error::Result;
+ use toydb::server::Server;
+ use toydb::{raft, sql, storage};
+<a href="#h14-1" id="h14-1" class="h">@@ -97,7 +97,7 @@ pub async fn server(
+</a> /// Sets up a server with a client
+ pub async fn server_with_client(queries: Vec&lt;&amp;str&gt;) -&gt; Result&lt;(Client, Teardown)&gt; {
+     let teardown = server(1, &quot;127.0.0.1:9605&quot;, &quot;127.0.0.1:9705&quot;, HashMap::new()).await?;
+<a href="#h14-1-3" id="h14-1-3" class="d">-    let client = Client::new(&quot;127.0.0.1:9605&quot;).await?;
+</a><a href="#h14-1-4" id="h14-1-4" class="i">+    let mut client = Client::new(&quot;127.0.0.1:9605&quot;).await?;
+</a>     if !queries.is_empty() {
+         client.execute(&quot;BEGIN&quot;).await?;
+         for query in queries {
+<a href="#h14-2" id="h14-2" class="h">@@ -124,7 +124,7 @@ pub async fn cluster(nodes: HashMap&lt;raft::NodeID, (String, String)&gt;) -&gt; Result&lt;T
+</a>     for (id, (addr_sql, _)) in nodes.iter() {
+         for _ in 0..10 {
+             match Client::new(addr_sql).await {
+<a href="#h14-2-3" id="h14-2-3" class="d">-                Ok(client) =&gt; match client.status().await {
+</a><a href="#h14-2-4" id="h14-2-4" class="i">+                Ok(mut client) =&gt; match client.status().await {
+</a>                     Ok(status) if status.raft.leader &gt; 0 =&gt; break,
+                     Ok(_) =&gt; log::error!(&quot;no leader&quot;),
+                     Err(err) =&gt; log::error!(&quot;Status failed for {}: {}&quot;, id, err),
+<a href="#h14-3" id="h14-3" class="h">@@ -151,7 +151,7 @@ pub async fn cluster_with_clients(size: u8, queries: Vec&lt;&amp;str&gt;) -&gt; Result&lt;(Vec&lt;C
+</a> 
+     let mut clients = Vec::&lt;Client&gt;::new();
+     for (id, (addr_sql, _)) in nodes {
+<a href="#h14-3-3" id="h14-3-3" class="d">-        let client = Client::new(addr_sql).await?;
+</a><a href="#h14-3-4" id="h14-3-4" class="i">+        let mut client = Client::new(addr_sql).await?;
+</a>         assert_eq!(id, client.status().await?.raft.server);
+         clients.push(client);
+     }
+<a href="#h14-4" id="h14-4" class="h">@@ -168,36 +168,6 @@ pub async fn cluster_with_clients(size: u8, queries: Vec&lt;&amp;str&gt;) -&gt; Result&lt;(Vec&lt;C
+</a>     Ok((clients, teardown))
+ }
+ 
+<a href="#h14-4-3" id="h14-4-3" class="d">-/// Sets up a server cluster with a client pool
+</a><a href="#h14-4-4" id="h14-4-4" class="d">-pub async fn cluster_with_pool(
+</a><a href="#h14-4-5" id="h14-4-5" class="d">-    cluster_size: u8,
+</a><a href="#h14-4-6" id="h14-4-6" class="d">-    pool_size: u64,
+</a><a href="#h14-4-7" id="h14-4-7" class="d">-    queries: Vec&lt;&amp;str&gt;,
+</a><a href="#h14-4-8" id="h14-4-8" class="d">-) -&gt; Result&lt;(Pool, Teardown)&gt; {
+</a><a href="#h14-4-9" id="h14-4-9" class="d">-    let mut nodes = HashMap::new();
+</a><a href="#h14-4-10" id="h14-4-10" class="d">-    for i in 1..=cluster_size {
+</a><a href="#h14-4-11" id="h14-4-11" class="d">-        nodes.insert(
+</a><a href="#h14-4-12" id="h14-4-12" class="d">-            i,
+</a><a href="#h14-4-13" id="h14-4-13" class="d">-            (format!(&quot;127.0.0.1:{}&quot;, 9605 + i as u64), format!(&quot;127.0.0.1:{}&quot;, 9705 + i as u64)),
+</a><a href="#h14-4-14" id="h14-4-14" class="d">-        );
+</a><a href="#h14-4-15" id="h14-4-15" class="d">-    }
+</a><a href="#h14-4-16" id="h14-4-16" class="d">-    let teardown = cluster(nodes.clone()).await?;
+</a><a href="#h14-4-17" id="h14-4-17" class="d">-
+</a><a href="#h14-4-18" id="h14-4-18" class="d">-    let pool = Pool::new(nodes.into_iter().map(|(_, (addr, _))| addr).collect(), pool_size).await?;
+</a><a href="#h14-4-19" id="h14-4-19" class="d">-    pool.get().await.status().await?;
+</a><a href="#h14-4-20" id="h14-4-20" class="d">-
+</a><a href="#h14-4-21" id="h14-4-21" class="d">-    if !queries.is_empty() {
+</a><a href="#h14-4-22" id="h14-4-22" class="d">-        let c = pool.get().await;
+</a><a href="#h14-4-23" id="h14-4-23" class="d">-        c.execute(&quot;BEGIN&quot;).await?;
+</a><a href="#h14-4-24" id="h14-4-24" class="d">-        for query in queries {
+</a><a href="#h14-4-25" id="h14-4-25" class="d">-            c.execute(query).await?;
+</a><a href="#h14-4-26" id="h14-4-26" class="d">-        }
+</a><a href="#h14-4-27" id="h14-4-27" class="d">-        c.execute(&quot;COMMIT&quot;).await?;
+</a><a href="#h14-4-28" id="h14-4-28" class="d">-    }
+</a><a href="#h14-4-29" id="h14-4-29" class="d">-
+</a><a href="#h14-4-30" id="h14-4-30" class="d">-    Ok((pool, teardown))
+</a><a href="#h14-4-31" id="h14-4-31" class="d">-}
+</a><a href="#h14-4-32" id="h14-4-32" class="d">-
+</a> /// Sets up a simple cluster with 3 clients and a test table
+ pub async fn cluster_simple() -&gt; Result&lt;(Client, Client, Client, Teardown)&gt; {
+     let (mut clients, teardown) = cluster_with_clients(3, simple()).await?;
+</pre>
+</div>
+</body>
+</html>

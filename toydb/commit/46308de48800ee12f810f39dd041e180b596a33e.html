@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>sql: initial NestedLoopJoin simplifications - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/46308de48800ee12f810f39dd041e180b596a33e.html">46308de48800ee12f810f39dd041e180b596a33e</a>
+<b>parent</b> <a href="../commit/75c60eec8f0e63e10d07247cd1a2d135393dfbb8.html">75c60eec8f0e63e10d07247cd1a2d135393dfbb8</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Thu,  4 Jun 2020 21:56:08 +0200
+
+sql: initial NestedLoopJoin simplifications
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/sql/execution/join.rs</a></td><td> | </td><td class="num">57</td><td><span class="i">++++++++++++++++++++++</span><span class="d">-----------------------------------</span></td></tr>
+</table></pre><pre>1 file changed, 22 insertions(+), 35 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/sql/execution/join.rs.html">src/sql/execution/join.rs</a> b/<a href="../file/src/sql/execution/join.rs.html">src/sql/execution/join.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -1,5 +1,5 @@
+</a> use super::super::engine::Transaction;
+<a href="#h0-0-1" id="h0-0-1" class="d">-use super::super::types::{Columns, Expression, Rows};
+</a><a href="#h0-0-2" id="h0-0-2" class="i">+use super::super::types::{Expression, Rows};
+</a> use super::{Executor, ResultSet, Row, Value};
+ use crate::error::{Error, Result};
+ 
+<a href="#h0-1" id="h0-1" class="h">@@ -25,16 +25,14 @@ impl&lt;T: Transaction&gt; NestedLoopJoin&lt;T&gt; {
+</a> 
+ impl&lt;T: Transaction&gt; Executor&lt;T&gt; for NestedLoopJoin&lt;T&gt; {
+     fn execute(self: Box&lt;Self&gt;, txn: &amp;mut T) -&gt; Result&lt;ResultSet&gt; {
+<a href="#h0-1-3" id="h0-1-3" class="d">-        let result = self.left.execute(txn)?;
+</a><a href="#h0-1-4" id="h0-1-4" class="d">-        let right = self.right.execute(txn)?;
+</a><a href="#h0-1-5" id="h0-1-5" class="d">-        if let ResultSet::Query { mut columns, rows } = result {
+</a><a href="#h0-1-6" id="h0-1-6" class="d">-            if let ResultSet::Query { columns: right_columns, rows: right_rows } = right {
+</a><a href="#h0-1-7" id="h0-1-7" class="d">-                columns.extend(right_columns);
+</a><a href="#h0-1-8" id="h0-1-8" class="i">+        if let ResultSet::Query { mut columns, rows } = self.left.execute(txn)? {
+</a><a href="#h0-1-9" id="h0-1-9" class="i">+            if let ResultSet::Query { columns: rcolumns, rows: rrows } = self.right.execute(txn)? {
+</a><a href="#h0-1-10" id="h0-1-10" class="i">+                columns.extend(rcolumns);
+</a>                 return Ok(ResultSet::Query {
+                     rows: Box::new(NestedLoopRows::new(
+<a href="#h0-1-13" id="h0-1-13" class="d">-                        columns.clone(),
+</a><a href="#h0-1-14" id="h0-1-14" class="i">+                        columns.len(),
+</a>                         rows,
+<a href="#h0-1-16" id="h0-1-16" class="d">-                        right_rows.collect::&lt;Result&lt;Vec&lt;_&gt;&gt;&gt;()?,
+</a><a href="#h0-1-17" id="h0-1-17" class="i">+                        rrows.collect::&lt;Result&lt;Vec&lt;_&gt;&gt;&gt;()?,
+</a>                         self.predicate,
+                         self.outer,
+                     )),
+<a href="#h0-2" id="h0-2" class="h">@@ -47,7 +45,7 @@ impl&lt;T: Transaction&gt; Executor&lt;T&gt; for NestedLoopJoin&lt;T&gt; {
+</a> }
+ 
+ struct NestedLoopRows {
+<a href="#h0-2-3" id="h0-2-3" class="d">-    columns: Columns,
+</a><a href="#h0-2-4" id="h0-2-4" class="i">+    size: usize,
+</a>     predicate: Option&lt;Expression&gt;,
+     left: Rows,
+     left_cur: Option&lt;Result&lt;Row&gt;&gt;,
+<a href="#h0-3" id="h0-3" class="h">@@ -60,14 +58,14 @@ struct NestedLoopRows {
+</a> 
+ impl NestedLoopRows {
+     fn new(
+<a href="#h0-3-3" id="h0-3-3" class="d">-        columns: Columns,
+</a><a href="#h0-3-4" id="h0-3-4" class="i">+        size: usize,
+</a>         mut left: Rows,
+         right: Vec&lt;Row&gt;,
+         predicate: Option&lt;Expression&gt;,
+         right_pad: bool,
+     ) -&gt; Self {
+         Self {
+<a href="#h0-3-11" id="h0-3-11" class="d">-            columns,
+</a><a href="#h0-3-12" id="h0-3-12" class="i">+            size,
+</a>             predicate,
+             left_cur: left.next(),
+             left,
+<a href="#h0-4" id="h0-4" class="h">@@ -79,18 +77,16 @@ impl NestedLoopRows {
+</a>     }
+ 
+     fn next_right(&amp;mut self) -&gt; Result&lt;Option&lt;Row&gt;&gt; {
+<a href="#h0-4-3" id="h0-4-3" class="d">-        let o = match self.left_cur.clone() {
+</a><a href="#h0-4-4" id="h0-4-4" class="d">-            Some(Ok(o)) =&gt; o,
+</a><a href="#h0-4-5" id="h0-4-5" class="d">-            Some(Err(e)) =&gt; return Err(e),
+</a><a href="#h0-4-6" id="h0-4-6" class="i">+        let left_row = match self.left_cur.clone().transpose()? {
+</a><a href="#h0-4-7" id="h0-4-7" class="i">+            Some(r) =&gt; r,
+</a>             None =&gt; return Ok(None),
+         };
+<a href="#h0-4-10" id="h0-4-10" class="d">-        while let Some(i) = self.right.next() {
+</a><a href="#h0-4-11" id="h0-4-11" class="i">+        while let Some(right_row) = self.right.next() {
+</a>             if let Some(predicate) = &amp;self.predicate {
+<a href="#h0-4-13" id="h0-4-13" class="d">-                let mut row = Vec::new();
+</a><a href="#h0-4-14" id="h0-4-14" class="d">-                row.extend(o.clone());
+</a><a href="#h0-4-15" id="h0-4-15" class="d">-                row.extend(i.clone());
+</a><a href="#h0-4-16" id="h0-4-16" class="i">+                let mut row = left_row.clone();
+</a><a href="#h0-4-17" id="h0-4-17" class="i">+                row.extend(right_row.clone());
+</a>                 match predicate.evaluate(Some(&amp;row))? {
+<a href="#h0-4-19" id="h0-4-19" class="d">-                    Value::Boolean(true) =&gt; return Ok(Some(i)),
+</a><a href="#h0-4-20" id="h0-4-20" class="i">+                    Value::Boolean(true) =&gt; return Ok(Some(right_row)),
+</a>                     Value::Boolean(false) =&gt; {}
+                     Value::Null =&gt; {}
+                     value =&gt; {
+<a href="#h0-5" id="h0-5" class="h">@@ -101,7 +97,7 @@ impl NestedLoopRows {
+</a>                     }
+                 }
+             } else {
+<a href="#h0-5-3" id="h0-5-3" class="d">-                return Ok(Some(i));
+</a><a href="#h0-5-4" id="h0-5-4" class="i">+                return Ok(Some(right_row));
+</a>             }
+         }
+         Ok(None)
+<a href="#h0-6" id="h0-6" class="h">@@ -112,11 +108,8 @@ impl Iterator for NestedLoopRows {
+</a>     type Item = Result&lt;Row&gt;;
+ 
+     fn next(&amp;mut self) -&gt; Option&lt;Self::Item&gt; {
+<a href="#h0-6-3" id="h0-6-3" class="d">-        while self.left_cur.is_some() {
+</a><a href="#h0-6-4" id="h0-6-4" class="d">-            if let Some(Err(e)) = &amp;self.left_cur {
+</a><a href="#h0-6-5" id="h0-6-5" class="d">-                return Some(Err(e.clone()));
+</a><a href="#h0-6-6" id="h0-6-6" class="d">-            }
+</a><a href="#h0-6-7" id="h0-6-7" class="d">-            let i = match self.next_right().transpose() {
+</a><a href="#h0-6-8" id="h0-6-8" class="i">+        while let Some(Ok(mut row)) = self.left_cur.clone() {
+</a><a href="#h0-6-9" id="h0-6-9" class="i">+            let right_row = match self.next_right().transpose() {
+</a>                 Some(Ok(i)) =&gt; {
+                     self.right_emitted = true;
+                     i
+<a href="#h0-7" id="h0-7" class="h">@@ -125,8 +118,7 @@ impl Iterator for NestedLoopRows {
+</a>                 None =&gt; {
+                     self.right = Box::new(self.right_orig.clone().into_iter());
+                     if self.right_pad &amp;&amp; !self.right_emitted {
+<a href="#h0-7-3" id="h0-7-3" class="d">-                        let mut row = self.left_cur.clone().unwrap().unwrap();
+</a><a href="#h0-7-4" id="h0-7-4" class="d">-                        while row.len() &lt; self.columns.len() {
+</a><a href="#h0-7-5" id="h0-7-5" class="i">+                        while row.len() &lt; self.size {
+</a>                             row.push(Value::Null)
+                         }
+                         self.left_cur = self.left.next();
+<a href="#h0-8" id="h0-8" class="h">@@ -137,14 +129,9 @@ impl Iterator for NestedLoopRows {
+</a>                     continue;
+                 }
+             };
+<a href="#h0-8-3" id="h0-8-3" class="d">-            let mut o = match self.left_cur.clone() {
+</a><a href="#h0-8-4" id="h0-8-4" class="d">-                Some(Ok(o)) =&gt; o,
+</a><a href="#h0-8-5" id="h0-8-5" class="d">-                Some(Err(e)) =&gt; return Some(Err(e)),
+</a><a href="#h0-8-6" id="h0-8-6" class="d">-                None =&gt; return None,
+</a><a href="#h0-8-7" id="h0-8-7" class="d">-            };
+</a><a href="#h0-8-8" id="h0-8-8" class="d">-            o.extend(i);
+</a><a href="#h0-8-9" id="h0-8-9" class="d">-            return Some(Ok(o));
+</a><a href="#h0-8-10" id="h0-8-10" class="i">+            row.extend(right_row);
+</a><a href="#h0-8-11" id="h0-8-11" class="i">+            return Some(Ok(row));
+</a>         }
+<a href="#h0-8-13" id="h0-8-13" class="d">-        None
+</a><a href="#h0-8-14" id="h0-8-14" class="i">+        self.left_cur.clone()
+</a>     }
+ }
+</pre>
+</div>
+</body>
+</html>

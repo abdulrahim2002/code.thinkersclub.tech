@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>sql: changed engine::Transaction.list_tables() into scan_tables() - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/1ca5e45a126f56d6ee3f189ffe00bdfd26967417.html">1ca5e45a126f56d6ee3f189ffe00bdfd26967417</a>
+<b>parent</b> <a href="../commit/b5f74e4f53efae3ee6d77b4c4bc4be92816f3c9a.html">b5f74e4f53efae3ee6d77b4c4bc4be92816f3c9a</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Sat, 11 Jan 2020 13:16:39 +0100
+
+sql: changed engine::Transaction.list_tables() into scan_tables()
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/server/toydb.rs</a></td><td> | </td><td class="num">7</td><td><span class="i">+++</span><span class="d">----</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/sql/engine/kv.rs</a></td><td> | </td><td class="num">21</td><td><span class="i">+++++++++++</span><span class="d">----------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/sql/engine/mod.rs</a></td><td> | </td><td class="num">4</td><td><span class="i">+++</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">src/sql/engine/raft.rs</a></td><td> | </td><td class="num">19</td><td><span class="i">+++++++++++++</span><span class="d">------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h4">src/sql/tests/schema.rs</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h5">src/sql/tests/sql.rs</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h6">src/sql/types/schema.rs</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+</table></pre><pre>7 files changed, 33 insertions(+), 24 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/server/toydb.rs.html">src/server/toydb.rs</a> b/<a href="../file/src/server/toydb.rs.html">src/server/toydb.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -42,10 +42,9 @@ impl service::ToyDB for ToyDB {
+</a>     ) -&gt; grpc::SingleResponse&lt;service::ListTablesResponse&gt; {
+         let mut resp = service::ListTablesResponse::new();
+         let txn = self.engine.begin().unwrap();
+<a href="#h0-0-3" id="h0-0-3" class="d">-        match txn.list_tables() {
+</a><a href="#h0-0-4" id="h0-0-4" class="d">-            Ok(tables) =&gt; {
+</a><a href="#h0-0-5" id="h0-0-5" class="d">-                resp.name =
+</a><a href="#h0-0-6" id="h0-0-6" class="d">-                    protobuf::RepeatedField::from_vec(tables.into_iter().map(|s| s.name).collect())
+</a><a href="#h0-0-7" id="h0-0-7" class="i">+        match txn.scan_tables() {
+</a><a href="#h0-0-8" id="h0-0-8" class="i">+            Ok(iter) =&gt; {
+</a><a href="#h0-0-9" id="h0-0-9" class="i">+                resp.name = protobuf::RepeatedField::from_vec(iter.map(|s| s.name).collect())
+</a>             }
+             Err(err) =&gt; resp.error = Self::error_to_protobuf(err),
+         };
+<b>diff --git a/<a id="h1" href="../file/src/sql/engine/kv.rs.html">src/sql/engine/kv.rs</a> b/<a href="../file/src/sql/engine/kv.rs.html">src/sql/engine/kv.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -119,7 +119,7 @@ impl&lt;S: kv::storage::Storage&gt; super::Transaction for Transaction&lt;S&gt; {
+</a> 
+         // FIXME We should avoid full table scans here, but let&#39;s wait until we build the
+         // predicate pushdown infrastructure which we can use for this as well.
+<a href="#h1-0-3" id="h1-0-3" class="d">-        for source in self.list_tables()? {
+</a><a href="#h1-0-4" id="h1-0-4" class="i">+        for source in self.scan_tables()? {
+</a>             let refs: Vec&lt;_&gt; = source
+                 .references()
+                 .into_iter()
+<a href="#h1-1" id="h1-1" class="h">@@ -247,18 +247,19 @@ impl&lt;S: kv::storage::Storage&gt; super::Transaction for Transaction&lt;S&gt; {
+</a>         self.txn.delete(&amp;Key::Table(&amp;table.name).encode())
+     }
+ 
+<a href="#h1-1-3" id="h1-1-3" class="d">-    fn list_tables(&amp;self) -&gt; Result&lt;Vec&lt;schema::Table&gt;, Error&gt; {
+</a><a href="#h1-1-4" id="h1-1-4" class="d">-        self.txn
+</a><a href="#h1-1-5" id="h1-1-5" class="d">-            .scan(&amp;Key::TableStart.encode()..&amp;Key::TableEnd.encode())?
+</a><a href="#h1-1-6" id="h1-1-6" class="d">-            .collect::&lt;Result&lt;Vec&lt;_&gt;, Error&gt;&gt;()?
+</a><a href="#h1-1-7" id="h1-1-7" class="d">-            .into_iter()
+</a><a href="#h1-1-8" id="h1-1-8" class="d">-            .map(|(_, v)| deserialize(&amp;v))
+</a><a href="#h1-1-9" id="h1-1-9" class="d">-            .collect()
+</a><a href="#h1-1-10" id="h1-1-10" class="d">-    }
+</a><a href="#h1-1-11" id="h1-1-11" class="d">-
+</a>     fn read_table(&amp;self, table: &amp;str) -&gt; Result&lt;Option&lt;schema::Table&gt;, Error&gt; {
+         self.txn.get(&amp;Key::Table(table).encode())?.map(|v| deserialize(&amp;v)).transpose()
+     }
+<a href="#h1-1-15" id="h1-1-15" class="i">+
+</a><a href="#h1-1-16" id="h1-1-16" class="i">+    fn scan_tables(&amp;self) -&gt; Result&lt;super::TableScan, Error&gt; {
+</a><a href="#h1-1-17" id="h1-1-17" class="i">+        Ok(Box::new(
+</a><a href="#h1-1-18" id="h1-1-18" class="i">+            self.txn
+</a><a href="#h1-1-19" id="h1-1-19" class="i">+                .scan(&amp;Key::TableStart.encode()..&amp;Key::TableEnd.encode())?
+</a><a href="#h1-1-20" id="h1-1-20" class="i">+                .map(|r| r.and_then(|(_, v)| deserialize(&amp;v)))
+</a><a href="#h1-1-21" id="h1-1-21" class="i">+                .collect::&lt;Result&lt;Vec&lt;_&gt;, Error&gt;&gt;()?
+</a><a href="#h1-1-22" id="h1-1-22" class="i">+                .into_iter(),
+</a><a href="#h1-1-23" id="h1-1-23" class="i">+        ))
+</a><a href="#h1-1-24" id="h1-1-24" class="i">+    }
+</a> }
+ 
+ enum Key&lt;&#39;a&gt; {
+<b>diff --git a/<a id="h2" href="../file/src/sql/engine/mod.rs.html">src/sql/engine/mod.rs</a> b/<a href="../file/src/sql/engine/mod.rs.html">src/sql/engine/mod.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -34,9 +34,11 @@ pub trait Transaction {
+</a> 
+     fn create_table(&amp;mut self, table: &amp;schema::Table) -&gt; Result&lt;(), Error&gt;;
+     fn delete_table(&amp;mut self, table: &amp;str) -&gt; Result&lt;(), Error&gt;;
+<a href="#h2-0-3" id="h2-0-3" class="d">-    fn list_tables(&amp;self) -&gt; Result&lt;Vec&lt;schema::Table&gt;, Error&gt;;
+</a>     fn read_table(&amp;self, table: &amp;str) -&gt; Result&lt;Option&lt;schema::Table&gt;, Error&gt;;
+<a href="#h2-0-5" id="h2-0-5" class="i">+    fn scan_tables(&amp;self) -&gt; Result&lt;TableScan, Error&gt;;
+</a> }
+ 
+ pub type Scan =
+     Box&lt;dyn DoubleEndedIterator&lt;Item = Result&lt;types::Row, Error&gt;&gt; + &#39;static + Sync + Send&gt;;
+<a href="#h2-0-10" id="h2-0-10" class="i">+
+</a><a href="#h2-0-11" id="h2-0-11" class="i">+pub type TableScan = Box&lt;dyn DoubleEndedIterator&lt;Item = schema::Table&gt; + &#39;static + Sync + Send&gt;;
+</a><b>diff --git a/<a id="h3" href="../file/src/sql/engine/raft.rs.html">src/sql/engine/raft.rs</a> b/<a href="../file/src/sql/engine/raft.rs.html">src/sql/engine/raft.rs</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -31,7 +31,7 @@ enum Query {
+</a>     Read { txn_id: u64, table: String, id: types::Value },
+     Scan { txn_id: u64, table: String },
+ 
+<a href="#h3-0-3" id="h3-0-3" class="d">-    ListTables { txn_id: u64 },
+</a><a href="#h3-0-4" id="h3-0-4" class="i">+    ScanTables { txn_id: u64 },
+</a>     ReadTable { txn_id: u64, table: String },
+ }
+ 
+<a href="#h3-1" id="h3-1" class="h">@@ -160,10 +160,6 @@ impl super::Transaction for Transaction {
+</a>         )
+     }
+ 
+<a href="#h3-1-3" id="h3-1-3" class="d">-    fn list_tables(&amp;self) -&gt; Result&lt;Vec&lt;schema::Table&gt;, Error&gt; {
+</a><a href="#h3-1-4" id="h3-1-4" class="d">-        deserialize(&amp;self.raft.query(serialize(&amp;Query::ListTables { txn_id: self.id })?)?)
+</a><a href="#h3-1-5" id="h3-1-5" class="d">-    }
+</a><a href="#h3-1-6" id="h3-1-6" class="d">-
+</a>     fn read_table(&amp;self, table: &amp;str) -&gt; Result&lt;Option&lt;schema::Table&gt;, Error&gt; {
+         deserialize(
+             &amp;self
+<a href="#h3-2" id="h3-2" class="h">@@ -171,6 +167,15 @@ impl super::Transaction for Transaction {
+</a>                 .query(serialize(&amp;Query::ReadTable { txn_id: self.id, table: table.into() })?)?,
+         )
+     }
+<a href="#h3-2-3" id="h3-2-3" class="i">+
+</a><a href="#h3-2-4" id="h3-2-4" class="i">+    fn scan_tables(&amp;self) -&gt; Result&lt;super::TableScan, Error&gt; {
+</a><a href="#h3-2-5" id="h3-2-5" class="i">+        Ok(Box::new(
+</a><a href="#h3-2-6" id="h3-2-6" class="i">+            deserialize::&lt;Vec&lt;_&gt;&gt;(
+</a><a href="#h3-2-7" id="h3-2-7" class="i">+                &amp;self.raft.query(serialize(&amp;Query::ScanTables { txn_id: self.id })?)?,
+</a><a href="#h3-2-8" id="h3-2-8" class="i">+            )?
+</a><a href="#h3-2-9" id="h3-2-9" class="i">+            .into_iter(),
+</a><a href="#h3-2-10" id="h3-2-10" class="i">+        ))
+</a><a href="#h3-2-11" id="h3-2-11" class="i">+    }
+</a> }
+ 
+ /// The underlying state machine for the Raft-based engine
+<a href="#h3-3" id="h3-3" class="h">@@ -235,10 +240,12 @@ impl&lt;S: kv::storage::Storage&gt; raft::State for State&lt;S&gt; {
+</a>                     .collect::&lt;Result&lt;Vec&lt;types::Row&gt;, Error&gt;&gt;()?,
+             ),
+ 
+<a href="#h3-3-3" id="h3-3-3" class="d">-            Query::ListTables { txn_id } =&gt; serialize(&amp;self.engine.resume(txn_id)?.list_tables()?),
+</a>             Query::ReadTable { txn_id, table } =&gt; {
+                 serialize(&amp;self.engine.resume(txn_id)?.read_table(&amp;table)?)
+             }
+<a href="#h3-3-7" id="h3-3-7" class="i">+            Query::ScanTables { txn_id } =&gt; {
+</a><a href="#h3-3-8" id="h3-3-8" class="i">+                serialize(&amp;self.engine.resume(txn_id)?.scan_tables()?.collect::&lt;Vec&lt;_&gt;&gt;())
+</a><a href="#h3-3-9" id="h3-3-9" class="i">+            }
+</a>         }
+     }
+ }
+<b>diff --git a/<a id="h4" href="../file/src/sql/tests/schema.rs.html">src/sql/tests/schema.rs</a> b/<a href="../file/src/sql/tests/schema.rs.html">src/sql/tests/schema.rs</a></b>
+<a href="#h4-0" id="h4-0" class="h">@@ -28,7 +28,7 @@ macro_rules! test_schema {
+</a> 
+                 write!(f, &quot;Storage:&quot;)?;
+                 let txn = engine.begin()?;
+<a href="#h4-0-3" id="h4-0-3" class="d">-                for table in &amp;txn.list_tables()? {
+</a><a href="#h4-0-4" id="h4-0-4" class="i">+                for table in txn.scan_tables()? {
+</a>                     write!(f, &quot;\n{}\n&quot;, table.as_sql())?;
+                     for row in txn.scan(&amp;table.name)? {
+                         write!(f, &quot;{:?}\n&quot;, row?)?;
+<b>diff --git a/<a id="h5" href="../file/src/sql/tests/sql.rs.html">src/sql/tests/sql.rs</a> b/<a href="../file/src/sql/tests/sql.rs.html">src/sql/tests/sql.rs</a></b>
+<a href="#h5-0" id="h5-0" class="h">@@ -116,7 +116,7 @@ macro_rules! test_sql {
+</a> 
+             write!(f, &quot;\nStorage:&quot;)?;
+             let txn = engine.begin()?;
+<a href="#h5-0-3" id="h5-0-3" class="d">-            for table in &amp;txn.list_tables()? {
+</a><a href="#h5-0-4" id="h5-0-4" class="i">+            for table in txn.scan_tables()? {
+</a>                 let schema = &amp;txn.read_table(&amp;table.name)?.unwrap();
+                 write!(f, &quot;\n{}\n&quot;, schema.as_sql())?;
+                 for row in txn.scan(&amp;table.name)? {
+<b>diff --git a/<a id="h6" href="../file/src/sql/types/schema.rs.html">src/sql/types/schema.rs</a> b/<a href="../file/src/sql/types/schema.rs.html">src/sql/types/schema.rs</a></b>
+<a href="#h6-0" id="h6-0" class="h">@@ -48,7 +48,7 @@ impl Table {
+</a>     /// Asserts that the table is not referenced by other tables, otherwise returns an error
+     // FIXME Should cache or index the data
+     pub fn assert_unreferenced(&amp;self, txn: &amp;mut dyn Transaction) -&gt; Result&lt;(), Error&gt; {
+<a href="#h6-0-3" id="h6-0-3" class="d">-        for source in txn.list_tables()?.into_iter().filter(|t| t.name != self.name) {
+</a><a href="#h6-0-4" id="h6-0-4" class="i">+        for source in txn.scan_tables()?.filter(|t| t.name != self.name) {
+</a>             if let Some(column) =
+                 source.columns.iter().find(|c| c.references.as_ref() == Some(&amp;self.name))
+             {
+</pre>
+</div>
+</body>
+</html>

@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>sql: tweak Scope column API - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/f4fac4f6b9d6b5a93cf317152a73619c77e9bfa7.html">f4fac4f6b9d6b5a93cf317152a73619c77e9bfa7</a>
+<b>parent</b> <a href="../commit/cd2601a6409a279259fa5cd1cf4481242dcaf889.html">cd2601a6409a279259fa5cd1cf4481242dcaf889</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Sat, 13 Jul 2024 16:19:16 +0200
+
+sql: tweak Scope column API
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/sql/planner/planner.rs</a></td><td> | </td><td class="num">24</td><td><span class="i">++++++++++++</span><span class="d">------------</span></td></tr>
+</table></pre><pre>1 file changed, 12 insertions(+), 12 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/sql/planner/planner.rs.html">src/sql/planner/planner.rs</a> b/<a href="../file/src/sql/planner/planner.rs.html">src/sql/planner/planner.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -126,7 +126,7 @@ impl&lt;&#39;a, C: Catalog&gt; Planner&lt;&#39;a, C&gt; {
+</a>         let filter = r#where.map(|e| Self::build_expression(e, &amp;scope)).transpose()?;
+         let mut expressions = Vec::with_capacity(set.len());
+         for (column, expr) in set {
+<a href="#h0-0-3" id="h0-0-3" class="d">-            let index = scope.get_column_index(None, &amp;column)?;
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+            let index = scope.lookup_column(None, &amp;column)?;
+</a>             let expr = match expr {
+                 Some(expr) =&gt; Self::build_expression(expr, &amp;scope)?,
+                 None =&gt; match &amp;table.columns[index].default {
+<a href="#h0-1" id="h0-1" class="h">@@ -483,13 +483,13 @@ impl&lt;&#39;a, C: Catalog&gt; Planner&lt;&#39;a, C&gt; {
+</a>                 return true;
+             };
+             // If the field already exists post-projection, do nothing.
+<a href="#h0-1-3" id="h0-1-3" class="d">-            if scope.get_column_index(table.as_deref(), name).is_ok() {
+</a><a href="#h0-1-4" id="h0-1-4" class="i">+            if scope.lookup_column(table.as_deref(), name).is_ok() {
+</a>                 return true;
+             }
+             // If the field doesn&#39;t exist in the parent scope either, we simply
+             // don&#39;t build a hidden column for it. The field evaluation will
+             // error when building the downstream node (e.g. ORDER BY).
+<a href="#h0-1-10" id="h0-1-10" class="d">-            let Ok(index) = parent_scope.get_column_index(table.as_deref(), name) else {
+</a><a href="#h0-1-11" id="h0-1-11" class="i">+            let Ok(index) = parent_scope.lookup_column(table.as_deref(), name) else {
+</a>                 return true;
+             };
+             // Add a hidden column to the projection.
+<a href="#h0-2" id="h0-2" class="h">@@ -580,7 +580,7 @@ impl&lt;&#39;a, C: Catalog&gt; Planner&lt;&#39;a, C&gt; {
+</a>             }),
+             ast::Expression::Column(i) =&gt; Field(i, scope.get_column_label(i)?),
+             ast::Expression::Field(table, name) =&gt; Field(
+<a href="#h0-2-3" id="h0-2-3" class="d">-                scope.get_column_index(table.as_deref(), &amp;name)?,
+</a><a href="#h0-2-4" id="h0-2-4" class="i">+                scope.lookup_column(table.as_deref(), &amp;name)?,
+</a>                 Label::maybe_qualified(table, name),
+             ),
+             // All functions are currently aggregate functions, which should be
+<a href="#h0-3" id="h0-3" class="h">@@ -680,14 +680,14 @@ impl Scope {
+</a>             return errinput!(&quot;duplicate table name {label}&quot;);
+         }
+         for column in &amp;table.columns {
+<a href="#h0-3-3" id="h0-3-3" class="d">-            self.add_column(Label::Qualified(label.to_string(), column.name.clone()))
+</a><a href="#h0-3-4" id="h0-3-4" class="i">+            self.add_column(Label::Qualified(label.to_string(), column.name.clone()));
+</a>         }
+         self.tables.insert(label.to_string());
+         Ok(())
+     }
+ 
+<a href="#h0-3-10" id="h0-3-10" class="d">-    /// Adds a column and label to the scope.
+</a><a href="#h0-3-11" id="h0-3-11" class="d">-    fn add_column(&amp;mut self, label: Label) {
+</a><a href="#h0-3-12" id="h0-3-12" class="i">+    /// Adds a column and label to the scope. Returns the column index.
+</a><a href="#h0-3-13" id="h0-3-13" class="i">+    fn add_column(&amp;mut self, label: Label) -&gt; usize {
+</a>         let index = self.len();
+         if let Label::Qualified(table, column) = &amp;label {
+             self.qualified.insert((table.clone(), column.clone()), index);
+<a href="#h0-4" id="h0-4" class="h">@@ -695,11 +695,12 @@ impl Scope {
+</a>         if let Label::Qualified(_, name) | Label::Unqualified(name) = &amp;label {
+             self.unqualified.entry(name.clone()).or_default().push(index)
+         }
+<a href="#h0-4-3" id="h0-4-3" class="d">-        self.columns.push(label)
+</a><a href="#h0-4-4" id="h0-4-4" class="i">+        self.columns.push(label);
+</a><a href="#h0-4-5" id="h0-4-5" class="i">+        index
+</a>     }
+ 
+     /// Looks up a column index by name, if possible.
+<a href="#h0-4-9" id="h0-4-9" class="d">-    fn get_column_index(&amp;self, table: Option&lt;&amp;str&gt;, name: &amp;str) -&gt; Result&lt;usize&gt; {
+</a><a href="#h0-4-10" id="h0-4-10" class="i">+    fn lookup_column(&amp;self, table: Option&lt;&amp;str&gt;, name: &amp;str) -&gt; Result&lt;usize&gt; {
+</a>         if self.columns.is_empty() {
+             let field = table.map(|t| format!(&quot;{t}.{name}&quot;)).unwrap_or(name.to_string());
+             return errinput!(&quot;expression must be constant, found field {field}&quot;);
+<a href="#h0-5" id="h0-5" class="h">@@ -734,7 +735,6 @@ impl Scope {
+</a>         }
+     }
+ 
+<a href="#h0-5-3" id="h0-5-3" class="d">-    /// Resolves a name, optionally qualified by a table name.
+</a>     /// Number of columns currently in the scope.
+     fn len(&amp;self) -&gt; usize {
+         self.columns.len()
+<a href="#h0-6" id="h0-6" class="h">@@ -781,9 +781,9 @@ impl Scope {
+</a>             if label.is_some() {
+                 new.add_column(label.clone()); // explicit label
+             } else if let Some(f) = field_map.get(&amp;i) {
+<a href="#h0-6-3" id="h0-6-3" class="d">-                new.add_column(self.columns[*f].clone()) // field reference
+</a><a href="#h0-6-4" id="h0-6-4" class="i">+                new.add_column(self.columns[*f].clone()); // field reference
+</a>             } else {
+<a href="#h0-6-6" id="h0-6-6" class="d">-                new.add_column(Label::None) // unlabeled expression
+</a><a href="#h0-6-7" id="h0-6-7" class="i">+                new.add_column(Label::None); // unlabeled expression
+</a>             }
+         }
+         Ok(new)
+</pre>
+</div>
+</body>
+</html>

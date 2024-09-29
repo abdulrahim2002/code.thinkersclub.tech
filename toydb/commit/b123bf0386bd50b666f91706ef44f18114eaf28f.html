@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>sql: remove `HashJoin::left_label` and `right_label` - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/b123bf0386bd50b666f91706ef44f18114eaf28f.html">b123bf0386bd50b666f91706ef44f18114eaf28f</a>
+<b>parent</b> <a href="../commit/daa32609cae37dc579d715b39c58370aec023959.html">daa32609cae37dc579d715b39c58370aec023959</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Tue, 16 Jul 2024 18:33:21 +0200
+
+sql: remove `HashJoin::left_label` and `right_label`
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/sql/execution/execute.rs</a></td><td> | </td><td class="num">10</td><td><span class="i">+</span><span class="d">---------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/sql/planner/optimizer.rs</a></td><td> | </td><td class="num">16</td><td><span class="i">++</span><span class="d">--------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/sql/planner/plan.rs</a></td><td> | </td><td class="num">29</td><td><span class="i">++++</span><span class="d">-------------------------</span></td></tr>
+</table></pre><pre>3 files changed, 7 insertions(+), 48 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/sql/execution/execute.rs.html">src/sql/execution/execute.rs</a> b/<a href="../file/src/sql/execution/execute.rs.html">src/sql/execution/execute.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -69,15 +69,7 @@ pub fn execute(node: Node, txn: &amp;impl Transaction) -&gt; Result&lt;Rows&gt; {
+</a>             Ok(transform::filter(source, predicate))
+         }
+ 
+<a href="#h0-0-3" id="h0-0-3" class="d">-        Node::HashJoin {
+</a><a href="#h0-0-4" id="h0-0-4" class="d">-            left,
+</a><a href="#h0-0-5" id="h0-0-5" class="d">-            left_field,
+</a><a href="#h0-0-6" id="h0-0-6" class="d">-            left_label: _,
+</a><a href="#h0-0-7" id="h0-0-7" class="d">-            right,
+</a><a href="#h0-0-8" id="h0-0-8" class="d">-            right_field,
+</a><a href="#h0-0-9" id="h0-0-9" class="d">-            right_label: _,
+</a><a href="#h0-0-10" id="h0-0-10" class="d">-            outer,
+</a><a href="#h0-0-11" id="h0-0-11" class="d">-        } =&gt; {
+</a><a href="#h0-0-12" id="h0-0-12" class="i">+        Node::HashJoin { left, left_field, right, right_field, outer } =&gt; {
+</a>             let right_size = right.size();
+             let left = execute(*left, txn)?;
+             let right = execute(*right, txn)?;
+<b>diff --git a/<a id="h1" href="../file/src/sql/planner/optimizer.rs.html">src/sql/planner/optimizer.rs</a> b/<a href="../file/src/sql/planner/optimizer.rs.html">src/sql/planner/optimizer.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -260,28 +260,16 @@ pub(super) fn join_type(node: Node) -&gt; Result&lt;Node&gt; {
+</a>             predicate: Some(Expression::Equal(lhs, rhs)),
+             outer,
+         } =&gt; match (*lhs, *rhs) {
+<a href="#h1-0-3" id="h1-0-3" class="d">-            (
+</a><a href="#h1-0-4" id="h1-0-4" class="d">-                Expression::Field(mut left_field, mut left_label),
+</a><a href="#h1-0-5" id="h1-0-5" class="d">-                Expression::Field(mut right_field, mut right_label),
+</a><a href="#h1-0-6" id="h1-0-6" class="d">-            ) =&gt; {
+</a><a href="#h1-0-7" id="h1-0-7" class="i">+            (Expression::Field(mut left_field, _), Expression::Field(mut right_field, _)) =&gt; {
+</a>                 // The LHS field may be a field in the right table; swap them.
+                 if right_field &lt; left_field {
+                     (left_field, right_field) = (right_field, left_field);
+<a href="#h1-0-11" id="h1-0-11" class="d">-                    (left_label, right_label) = (right_label, left_label);
+</a>                 }
+                 // The NestedLoopJoin predicate uses field indexes in the joined
+                 // row, while the HashJoin uses field indexes for each table
+                 // individually. Adjust the RHS field reference.
+                 right_field -= left.size();
+<a href="#h1-0-17" id="h1-0-17" class="d">-                Node::HashJoin {
+</a><a href="#h1-0-18" id="h1-0-18" class="d">-                    left,
+</a><a href="#h1-0-19" id="h1-0-19" class="d">-                    left_field,
+</a><a href="#h1-0-20" id="h1-0-20" class="d">-                    left_label,
+</a><a href="#h1-0-21" id="h1-0-21" class="d">-                    right,
+</a><a href="#h1-0-22" id="h1-0-22" class="d">-                    right_field,
+</a><a href="#h1-0-23" id="h1-0-23" class="d">-                    right_label,
+</a><a href="#h1-0-24" id="h1-0-24" class="d">-                    outer,
+</a><a href="#h1-0-25" id="h1-0-25" class="d">-                }
+</a><a href="#h1-0-26" id="h1-0-26" class="i">+                Node::HashJoin { left, left_field, right, right_field, outer }
+</a>             }
+             (lhs, rhs) =&gt; {
+                 let predicate = Some(Expression::Equal(lhs.into(), rhs.into()));
+<b>diff --git a/<a id="h2" href="../file/src/sql/planner/plan.rs.html">src/sql/planner/plan.rs</a> b/<a href="../file/src/sql/planner/plan.rs.html">src/sql/planner/plan.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -92,10 +92,8 @@ pub enum Node {
+</a>     HashJoin {
+         left: Box&lt;Node&gt;,
+         left_field: usize,
+<a href="#h2-0-3" id="h2-0-3" class="d">-        left_label: Label,
+</a>         right: Box&lt;Node&gt;,
+         right_field: usize,
+<a href="#h2-0-6" id="h2-0-6" class="d">-        right_label: Label,
+</a>         outer: bool,
+     },
+     /// Looks up the given values in a secondary index and emits matching rows.
+<a href="#h2-1" id="h2-1" class="h">@@ -153,21 +151,11 @@ impl Node {
+</a>             Self::Filter { source, predicate } =&gt; {
+                 Self::Filter { source: transform(source)?, predicate }
+             }
+<a href="#h2-1-3" id="h2-1-3" class="d">-            Self::HashJoin {
+</a><a href="#h2-1-4" id="h2-1-4" class="d">-                left,
+</a><a href="#h2-1-5" id="h2-1-5" class="d">-                left_field,
+</a><a href="#h2-1-6" id="h2-1-6" class="d">-                left_label,
+</a><a href="#h2-1-7" id="h2-1-7" class="d">-                right,
+</a><a href="#h2-1-8" id="h2-1-8" class="d">-                right_field,
+</a><a href="#h2-1-9" id="h2-1-9" class="d">-                right_label,
+</a><a href="#h2-1-10" id="h2-1-10" class="d">-                outer,
+</a><a href="#h2-1-11" id="h2-1-11" class="d">-            } =&gt; Self::HashJoin {
+</a><a href="#h2-1-12" id="h2-1-12" class="i">+            Self::HashJoin { left, left_field, right, right_field, outer } =&gt; Self::HashJoin {
+</a>                 left: transform(left)?,
+                 left_field,
+<a href="#h2-1-15" id="h2-1-15" class="d">-                left_label,
+</a>                 right: transform(right)?,
+                 right_field,
+<a href="#h2-1-18" id="h2-1-18" class="d">-                right_label,
+</a>                 outer,
+             },
+             Self::Limit { source, limit } =&gt; Self::Limit { source: transform(source)?, limit },
+<a href="#h2-2" id="h2-2" class="h">@@ -441,22 +429,13 @@ impl Node {
+</a>                 write!(f, &quot;Filter: {predicate}&quot;)?;
+                 source.format(f, prefix, false, true)?;
+             }
+<a href="#h2-2-3" id="h2-2-3" class="d">-            Self::HashJoin {
+</a><a href="#h2-2-4" id="h2-2-4" class="d">-                left,
+</a><a href="#h2-2-5" id="h2-2-5" class="d">-                left_field,
+</a><a href="#h2-2-6" id="h2-2-6" class="d">-                left_label,
+</a><a href="#h2-2-7" id="h2-2-7" class="d">-                right,
+</a><a href="#h2-2-8" id="h2-2-8" class="d">-                right_field,
+</a><a href="#h2-2-9" id="h2-2-9" class="d">-                right_label,
+</a><a href="#h2-2-10" id="h2-2-10" class="d">-                outer,
+</a><a href="#h2-2-11" id="h2-2-11" class="d">-                ..
+</a><a href="#h2-2-12" id="h2-2-12" class="d">-            } =&gt; {
+</a><a href="#h2-2-13" id="h2-2-13" class="i">+            Self::HashJoin { left, left_field, right, right_field, outer } =&gt; {
+</a>                 let kind = if *outer { &quot;outer&quot; } else { &quot;inner&quot; };
+<a href="#h2-2-15" id="h2-2-15" class="d">-                let left_label = match left_label {
+</a><a href="#h2-2-16" id="h2-2-16" class="i">+                let left_label = match left.column_label(*left_field) {
+</a>                     Label::None =&gt; format!(&quot;left #{left_field}&quot;),
+                     label =&gt; format!(&quot;{label}&quot;),
+                 };
+<a href="#h2-2-20" id="h2-2-20" class="d">-                let right_label = match right_label {
+</a><a href="#h2-2-21" id="h2-2-21" class="i">+                let right_label = match right.column_label(*right_field) {
+</a>                     Label::None =&gt; format!(&quot;right #{right_field}&quot;),
+                     label =&gt; format!(&quot;{label}&quot;),
+                 };
+</pre>
+</div>
+</body>
+</html>

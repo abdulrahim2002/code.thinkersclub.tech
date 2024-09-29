@@ -1,0 +1,1682 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>sql: use simple functions for execution module - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/9e6ace8c3d97f9033b36457f92e538b0d19b48a3.html">9e6ace8c3d97f9033b36457f92e538b0d19b48a3</a>
+<b>parent</b> <a href="../commit/fb3a6e7822127c5462c8209d40a975c17e8e6b14.html">fb3a6e7822127c5462c8209d40a975c17e8e6b14</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Tue, 18 Jun 2024 00:57:47 +0200
+
+sql: use simple functions for execution module
+
+<b>Diffstat:</b>
+<table><tr><td class="A">A</td><td><a href="#h0">src/sql/execution/aggregate.rs</a></td><td> | </td><td class="num">220</td><td><span class="i">+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d"></span></td></tr>
+<tr><td class="D">D</td><td><a href="#h1">src/sql/execution/aggregation.rs</a></td><td> | </td><td class="num">229</td><td><span class="i"></span><span class="d">-------------------------------------------------------------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/sql/execution/execute.rs</a></td><td> | </td><td class="num">140</td><td><span class="i">+++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d">--------------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">src/sql/execution/join.rs</a></td><td> | </td><td class="num">132</td><td><span class="i">+++++++++++++++++++++++++++++++</span><span class="d">------------------------------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h4">src/sql/execution/mod.rs</a></td><td> | </td><td class="num">6</td><td><span class="i">+++</span><span class="d">---</span></td></tr>
+<tr><td class="D">D</td><td><a href="#h5">src/sql/execution/mutation.rs</a></td><td> | </td><td class="num">141</td><td><span class="i"></span><span class="d">-------------------------------------------------------------------------------</span></td></tr>
+<tr><td class="D">D</td><td><a href="#h6">src/sql/execution/query.rs</a></td><td> | </td><td class="num">157</td><td><span class="i"></span><span class="d">-------------------------------------------------------------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h7">src/sql/execution/schema.rs</a></td><td> | </td><td class="num">41</td><td><span class="i">++++++++++</span><span class="d">-------------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h8">src/sql/execution/source.rs</a></td><td> | </td><td class="num">133</td><td><span class="i">+++++++++++++++++++++++++++++++++</span><span class="d">----------------------------------------------</span></td></tr>
+<tr><td class="A">A</td><td><a href="#h9">src/sql/execution/transform.rs</a></td><td> | </td><td class="num">98</td><td><span class="i">+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d"></span></td></tr>
+<tr><td class="A">A</td><td><a href="#h10">src/sql/execution/write.rs</a></td><td> | </td><td class="num">119</td><td><span class="i">+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h11">src/sql/types/value.rs</a></td><td> | </td><td class="num">50</td><td><span class="i">++++++++++++++++++++++++++++++++++</span><span class="d">----------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h12">tests/sql/expression.rs</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+</table></pre><pre>13 files changed, 676 insertions(+), 791 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/sql/execution/aggregate.rs.html">src/sql/execution/aggregate.rs</a> b/<a href="../file/src/sql/execution/aggregate.rs.html">src/sql/execution/aggregate.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -0,0 +1,220 @@
+</a><a href="#h0-0-0" id="h0-0-0" class="i">+use super::QueryIterator;
+</a><a href="#h0-0-1" id="h0-0-1" class="i">+use crate::error::Result;
+</a><a href="#h0-0-2" id="h0-0-2" class="i">+use crate::sql::plan::Aggregate;
+</a><a href="#h0-0-3" id="h0-0-3" class="i">+use crate::sql::types::{Column, Value};
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+
+</a><a href="#h0-0-5" id="h0-0-5" class="i">+use std::cmp::Ordering;
+</a><a href="#h0-0-6" id="h0-0-6" class="i">+use std::collections::HashMap;
+</a><a href="#h0-0-7" id="h0-0-7" class="i">+
+</a><a href="#h0-0-8" id="h0-0-8" class="i">+/// Aggregates rows (i.e. GROUP BY).
+</a><a href="#h0-0-9" id="h0-0-9" class="i">+///
+</a><a href="#h0-0-10" id="h0-0-10" class="i">+/// TODO: revisit this and clean it up.
+</a><a href="#h0-0-11" id="h0-0-11" class="i">+pub(super) fn aggregate(
+</a><a href="#h0-0-12" id="h0-0-12" class="i">+    mut source: QueryIterator,
+</a><a href="#h0-0-13" id="h0-0-13" class="i">+    aggregates: Vec&lt;Aggregate&gt;,
+</a><a href="#h0-0-14" id="h0-0-14" class="i">+) -&gt; Result&lt;QueryIterator&gt; {
+</a><a href="#h0-0-15" id="h0-0-15" class="i">+    let mut accumulators: HashMap&lt;Vec&lt;Value&gt;, Vec&lt;Box&lt;dyn Accumulator&gt;&gt;&gt; = HashMap::new();
+</a><a href="#h0-0-16" id="h0-0-16" class="i">+    let agg_count = aggregates.len();
+</a><a href="#h0-0-17" id="h0-0-17" class="i">+    while let Some(mut row) = source.next().transpose()? {
+</a><a href="#h0-0-18" id="h0-0-18" class="i">+        accumulators
+</a><a href="#h0-0-19" id="h0-0-19" class="i">+            .entry(row.split_off(aggregates.len()))
+</a><a href="#h0-0-20" id="h0-0-20" class="i">+            .or_insert(aggregates.iter().map(&lt;dyn Accumulator&gt;::from).collect())
+</a><a href="#h0-0-21" id="h0-0-21" class="i">+            .iter_mut()
+</a><a href="#h0-0-22" id="h0-0-22" class="i">+            .zip(row)
+</a><a href="#h0-0-23" id="h0-0-23" class="i">+            .try_for_each(|(acc, value)| acc.accumulate(&amp;value))?
+</a><a href="#h0-0-24" id="h0-0-24" class="i">+    }
+</a><a href="#h0-0-25" id="h0-0-25" class="i">+    // If there were no rows and no group-by columns, return a row of empty accumulators:
+</a><a href="#h0-0-26" id="h0-0-26" class="i">+    // SELECT COUNT(*) FROM t WHERE FALSE
+</a><a href="#h0-0-27" id="h0-0-27" class="i">+    if accumulators.is_empty() &amp;&amp; aggregates.len() == source.columns.len() {
+</a><a href="#h0-0-28" id="h0-0-28" class="i">+        accumulators.insert(Vec::new(), aggregates.iter().map(&lt;dyn Accumulator&gt;::from).collect());
+</a><a href="#h0-0-29" id="h0-0-29" class="i">+    }
+</a><a href="#h0-0-30" id="h0-0-30" class="i">+    Ok(QueryIterator {
+</a><a href="#h0-0-31" id="h0-0-31" class="i">+        columns: source
+</a><a href="#h0-0-32" id="h0-0-32" class="i">+            .columns
+</a><a href="#h0-0-33" id="h0-0-33" class="i">+            .into_iter()
+</a><a href="#h0-0-34" id="h0-0-34" class="i">+            .enumerate()
+</a><a href="#h0-0-35" id="h0-0-35" class="i">+            .map(|(i, c)| if i &lt; agg_count { Column { name: None } } else { c })
+</a><a href="#h0-0-36" id="h0-0-36" class="i">+            .collect(),
+</a><a href="#h0-0-37" id="h0-0-37" class="i">+        rows: Box::new(accumulators.into_iter().map(|(bucket, accs)| {
+</a><a href="#h0-0-38" id="h0-0-38" class="i">+            Ok(accs.into_iter().map(|acc| acc.aggregate()).chain(bucket).collect())
+</a><a href="#h0-0-39" id="h0-0-39" class="i">+        })),
+</a><a href="#h0-0-40" id="h0-0-40" class="i">+    })
+</a><a href="#h0-0-41" id="h0-0-41" class="i">+}
+</a><a href="#h0-0-42" id="h0-0-42" class="i">+
+</a><a href="#h0-0-43" id="h0-0-43" class="i">+// An accumulator
+</a><a href="#h0-0-44" id="h0-0-44" class="i">+pub trait Accumulator: std::fmt::Debug + Send {
+</a><a href="#h0-0-45" id="h0-0-45" class="i">+    // Accumulates a value
+</a><a href="#h0-0-46" id="h0-0-46" class="i">+    fn accumulate(&amp;mut self, value: &amp;Value) -&gt; Result&lt;()&gt;;
+</a><a href="#h0-0-47" id="h0-0-47" class="i">+
+</a><a href="#h0-0-48" id="h0-0-48" class="i">+    // Calculates a final aggregate
+</a><a href="#h0-0-49" id="h0-0-49" class="i">+    fn aggregate(&amp;self) -&gt; Value;
+</a><a href="#h0-0-50" id="h0-0-50" class="i">+}
+</a><a href="#h0-0-51" id="h0-0-51" class="i">+
+</a><a href="#h0-0-52" id="h0-0-52" class="i">+impl dyn Accumulator {
+</a><a href="#h0-0-53" id="h0-0-53" class="i">+    fn from(aggregate: &amp;Aggregate) -&gt; Box&lt;dyn Accumulator&gt; {
+</a><a href="#h0-0-54" id="h0-0-54" class="i">+        match aggregate {
+</a><a href="#h0-0-55" id="h0-0-55" class="i">+            Aggregate::Average =&gt; Box::new(Average::new()),
+</a><a href="#h0-0-56" id="h0-0-56" class="i">+            Aggregate::Count =&gt; Box::new(Count::new()),
+</a><a href="#h0-0-57" id="h0-0-57" class="i">+            Aggregate::Max =&gt; Box::new(Max::new()),
+</a><a href="#h0-0-58" id="h0-0-58" class="i">+            Aggregate::Min =&gt; Box::new(Min::new()),
+</a><a href="#h0-0-59" id="h0-0-59" class="i">+            Aggregate::Sum =&gt; Box::new(Sum::new()),
+</a><a href="#h0-0-60" id="h0-0-60" class="i">+        }
+</a><a href="#h0-0-61" id="h0-0-61" class="i">+    }
+</a><a href="#h0-0-62" id="h0-0-62" class="i">+}
+</a><a href="#h0-0-63" id="h0-0-63" class="i">+
+</a><a href="#h0-0-64" id="h0-0-64" class="i">+// Count non-null values
+</a><a href="#h0-0-65" id="h0-0-65" class="i">+#[derive(Debug)]
+</a><a href="#h0-0-66" id="h0-0-66" class="i">+pub struct Count {
+</a><a href="#h0-0-67" id="h0-0-67" class="i">+    count: u64,
+</a><a href="#h0-0-68" id="h0-0-68" class="i">+}
+</a><a href="#h0-0-69" id="h0-0-69" class="i">+
+</a><a href="#h0-0-70" id="h0-0-70" class="i">+impl Count {
+</a><a href="#h0-0-71" id="h0-0-71" class="i">+    pub fn new() -&gt; Self {
+</a><a href="#h0-0-72" id="h0-0-72" class="i">+        Self { count: 0 }
+</a><a href="#h0-0-73" id="h0-0-73" class="i">+    }
+</a><a href="#h0-0-74" id="h0-0-74" class="i">+}
+</a><a href="#h0-0-75" id="h0-0-75" class="i">+
+</a><a href="#h0-0-76" id="h0-0-76" class="i">+impl Accumulator for Count {
+</a><a href="#h0-0-77" id="h0-0-77" class="i">+    fn accumulate(&amp;mut self, value: &amp;Value) -&gt; Result&lt;()&gt; {
+</a><a href="#h0-0-78" id="h0-0-78" class="i">+        match value {
+</a><a href="#h0-0-79" id="h0-0-79" class="i">+            Value::Null =&gt; {}
+</a><a href="#h0-0-80" id="h0-0-80" class="i">+            _ =&gt; self.count += 1,
+</a><a href="#h0-0-81" id="h0-0-81" class="i">+        }
+</a><a href="#h0-0-82" id="h0-0-82" class="i">+        Ok(())
+</a><a href="#h0-0-83" id="h0-0-83" class="i">+    }
+</a><a href="#h0-0-84" id="h0-0-84" class="i">+
+</a><a href="#h0-0-85" id="h0-0-85" class="i">+    fn aggregate(&amp;self) -&gt; Value {
+</a><a href="#h0-0-86" id="h0-0-86" class="i">+        Value::Integer(self.count as i64)
+</a><a href="#h0-0-87" id="h0-0-87" class="i">+    }
+</a><a href="#h0-0-88" id="h0-0-88" class="i">+}
+</a><a href="#h0-0-89" id="h0-0-89" class="i">+
+</a><a href="#h0-0-90" id="h0-0-90" class="i">+// Average value
+</a><a href="#h0-0-91" id="h0-0-91" class="i">+#[derive(Debug)]
+</a><a href="#h0-0-92" id="h0-0-92" class="i">+pub struct Average {
+</a><a href="#h0-0-93" id="h0-0-93" class="i">+    count: Count,
+</a><a href="#h0-0-94" id="h0-0-94" class="i">+    sum: Sum,
+</a><a href="#h0-0-95" id="h0-0-95" class="i">+}
+</a><a href="#h0-0-96" id="h0-0-96" class="i">+
+</a><a href="#h0-0-97" id="h0-0-97" class="i">+impl Average {
+</a><a href="#h0-0-98" id="h0-0-98" class="i">+    pub fn new() -&gt; Self {
+</a><a href="#h0-0-99" id="h0-0-99" class="i">+        Self { count: Count::new(), sum: Sum::new() }
+</a><a href="#h0-0-100" id="h0-0-100" class="i">+    }
+</a><a href="#h0-0-101" id="h0-0-101" class="i">+}
+</a><a href="#h0-0-102" id="h0-0-102" class="i">+
+</a><a href="#h0-0-103" id="h0-0-103" class="i">+impl Accumulator for Average {
+</a><a href="#h0-0-104" id="h0-0-104" class="i">+    fn accumulate(&amp;mut self, value: &amp;Value) -&gt; Result&lt;()&gt; {
+</a><a href="#h0-0-105" id="h0-0-105" class="i">+        self.count.accumulate(value)?;
+</a><a href="#h0-0-106" id="h0-0-106" class="i">+        self.sum.accumulate(value)?;
+</a><a href="#h0-0-107" id="h0-0-107" class="i">+        Ok(())
+</a><a href="#h0-0-108" id="h0-0-108" class="i">+    }
+</a><a href="#h0-0-109" id="h0-0-109" class="i">+
+</a><a href="#h0-0-110" id="h0-0-110" class="i">+    fn aggregate(&amp;self) -&gt; Value {
+</a><a href="#h0-0-111" id="h0-0-111" class="i">+        match (self.sum.aggregate(), self.count.aggregate()) {
+</a><a href="#h0-0-112" id="h0-0-112" class="i">+            (Value::Integer(s), Value::Integer(c)) =&gt; Value::Integer(s / c),
+</a><a href="#h0-0-113" id="h0-0-113" class="i">+            (Value::Float(s), Value::Integer(c)) =&gt; Value::Float(s / c as f64),
+</a><a href="#h0-0-114" id="h0-0-114" class="i">+            _ =&gt; Value::Null,
+</a><a href="#h0-0-115" id="h0-0-115" class="i">+        }
+</a><a href="#h0-0-116" id="h0-0-116" class="i">+    }
+</a><a href="#h0-0-117" id="h0-0-117" class="i">+}
+</a><a href="#h0-0-118" id="h0-0-118" class="i">+
+</a><a href="#h0-0-119" id="h0-0-119" class="i">+// Maximum value
+</a><a href="#h0-0-120" id="h0-0-120" class="i">+#[derive(Debug)]
+</a><a href="#h0-0-121" id="h0-0-121" class="i">+pub struct Max {
+</a><a href="#h0-0-122" id="h0-0-122" class="i">+    max: Option&lt;Value&gt;,
+</a><a href="#h0-0-123" id="h0-0-123" class="i">+}
+</a><a href="#h0-0-124" id="h0-0-124" class="i">+
+</a><a href="#h0-0-125" id="h0-0-125" class="i">+impl Max {
+</a><a href="#h0-0-126" id="h0-0-126" class="i">+    pub fn new() -&gt; Self {
+</a><a href="#h0-0-127" id="h0-0-127" class="i">+        Self { max: None }
+</a><a href="#h0-0-128" id="h0-0-128" class="i">+    }
+</a><a href="#h0-0-129" id="h0-0-129" class="i">+}
+</a><a href="#h0-0-130" id="h0-0-130" class="i">+
+</a><a href="#h0-0-131" id="h0-0-131" class="i">+impl Accumulator for Max {
+</a><a href="#h0-0-132" id="h0-0-132" class="i">+    fn accumulate(&amp;mut self, value: &amp;Value) -&gt; Result&lt;()&gt; {
+</a><a href="#h0-0-133" id="h0-0-133" class="i">+        if let Some(max) = &amp;mut self.max {
+</a><a href="#h0-0-134" id="h0-0-134" class="i">+            match value.partial_cmp(max) {
+</a><a href="#h0-0-135" id="h0-0-135" class="i">+                _ if max.datatype() != value.datatype() =&gt; *max = Value::Null,
+</a><a href="#h0-0-136" id="h0-0-136" class="i">+                None =&gt; *max = Value::Null,
+</a><a href="#h0-0-137" id="h0-0-137" class="i">+                Some(Ordering::Greater) =&gt; *max = value.clone(),
+</a><a href="#h0-0-138" id="h0-0-138" class="i">+                Some(Ordering::Equal) | Some(Ordering::Less) =&gt; {}
+</a><a href="#h0-0-139" id="h0-0-139" class="i">+            };
+</a><a href="#h0-0-140" id="h0-0-140" class="i">+        } else {
+</a><a href="#h0-0-141" id="h0-0-141" class="i">+            self.max = Some(value.clone())
+</a><a href="#h0-0-142" id="h0-0-142" class="i">+        }
+</a><a href="#h0-0-143" id="h0-0-143" class="i">+        Ok(())
+</a><a href="#h0-0-144" id="h0-0-144" class="i">+    }
+</a><a href="#h0-0-145" id="h0-0-145" class="i">+
+</a><a href="#h0-0-146" id="h0-0-146" class="i">+    fn aggregate(&amp;self) -&gt; Value {
+</a><a href="#h0-0-147" id="h0-0-147" class="i">+        match &amp;self.max {
+</a><a href="#h0-0-148" id="h0-0-148" class="i">+            Some(value) =&gt; value.clone(),
+</a><a href="#h0-0-149" id="h0-0-149" class="i">+            None =&gt; Value::Null,
+</a><a href="#h0-0-150" id="h0-0-150" class="i">+        }
+</a><a href="#h0-0-151" id="h0-0-151" class="i">+    }
+</a><a href="#h0-0-152" id="h0-0-152" class="i">+}
+</a><a href="#h0-0-153" id="h0-0-153" class="i">+
+</a><a href="#h0-0-154" id="h0-0-154" class="i">+// Minimum value
+</a><a href="#h0-0-155" id="h0-0-155" class="i">+#[derive(Debug)]
+</a><a href="#h0-0-156" id="h0-0-156" class="i">+pub struct Min {
+</a><a href="#h0-0-157" id="h0-0-157" class="i">+    min: Option&lt;Value&gt;,
+</a><a href="#h0-0-158" id="h0-0-158" class="i">+}
+</a><a href="#h0-0-159" id="h0-0-159" class="i">+
+</a><a href="#h0-0-160" id="h0-0-160" class="i">+impl Min {
+</a><a href="#h0-0-161" id="h0-0-161" class="i">+    pub fn new() -&gt; Self {
+</a><a href="#h0-0-162" id="h0-0-162" class="i">+        Self { min: None }
+</a><a href="#h0-0-163" id="h0-0-163" class="i">+    }
+</a><a href="#h0-0-164" id="h0-0-164" class="i">+}
+</a><a href="#h0-0-165" id="h0-0-165" class="i">+
+</a><a href="#h0-0-166" id="h0-0-166" class="i">+impl Accumulator for Min {
+</a><a href="#h0-0-167" id="h0-0-167" class="i">+    fn accumulate(&amp;mut self, value: &amp;Value) -&gt; Result&lt;()&gt; {
+</a><a href="#h0-0-168" id="h0-0-168" class="i">+        if let Some(min) = &amp;mut self.min {
+</a><a href="#h0-0-169" id="h0-0-169" class="i">+            match value.partial_cmp(min) {
+</a><a href="#h0-0-170" id="h0-0-170" class="i">+                _ if min.datatype() != value.datatype() =&gt; *min = Value::Null,
+</a><a href="#h0-0-171" id="h0-0-171" class="i">+                None =&gt; *min = Value::Null,
+</a><a href="#h0-0-172" id="h0-0-172" class="i">+                Some(Ordering::Less) =&gt; *min = value.clone(),
+</a><a href="#h0-0-173" id="h0-0-173" class="i">+                Some(Ordering::Equal) | Some(Ordering::Greater) =&gt; {}
+</a><a href="#h0-0-174" id="h0-0-174" class="i">+            };
+</a><a href="#h0-0-175" id="h0-0-175" class="i">+        } else {
+</a><a href="#h0-0-176" id="h0-0-176" class="i">+            self.min = Some(value.clone())
+</a><a href="#h0-0-177" id="h0-0-177" class="i">+        }
+</a><a href="#h0-0-178" id="h0-0-178" class="i">+        Ok(())
+</a><a href="#h0-0-179" id="h0-0-179" class="i">+    }
+</a><a href="#h0-0-180" id="h0-0-180" class="i">+
+</a><a href="#h0-0-181" id="h0-0-181" class="i">+    fn aggregate(&amp;self) -&gt; Value {
+</a><a href="#h0-0-182" id="h0-0-182" class="i">+        match &amp;self.min {
+</a><a href="#h0-0-183" id="h0-0-183" class="i">+            Some(value) =&gt; value.clone(),
+</a><a href="#h0-0-184" id="h0-0-184" class="i">+            None =&gt; Value::Null,
+</a><a href="#h0-0-185" id="h0-0-185" class="i">+        }
+</a><a href="#h0-0-186" id="h0-0-186" class="i">+    }
+</a><a href="#h0-0-187" id="h0-0-187" class="i">+}
+</a><a href="#h0-0-188" id="h0-0-188" class="i">+
+</a><a href="#h0-0-189" id="h0-0-189" class="i">+// Sum of values
+</a><a href="#h0-0-190" id="h0-0-190" class="i">+#[derive(Debug)]
+</a><a href="#h0-0-191" id="h0-0-191" class="i">+pub struct Sum {
+</a><a href="#h0-0-192" id="h0-0-192" class="i">+    sum: Option&lt;Value&gt;,
+</a><a href="#h0-0-193" id="h0-0-193" class="i">+}
+</a><a href="#h0-0-194" id="h0-0-194" class="i">+
+</a><a href="#h0-0-195" id="h0-0-195" class="i">+impl Sum {
+</a><a href="#h0-0-196" id="h0-0-196" class="i">+    pub fn new() -&gt; Self {
+</a><a href="#h0-0-197" id="h0-0-197" class="i">+        Self { sum: None }
+</a><a href="#h0-0-198" id="h0-0-198" class="i">+    }
+</a><a href="#h0-0-199" id="h0-0-199" class="i">+}
+</a><a href="#h0-0-200" id="h0-0-200" class="i">+
+</a><a href="#h0-0-201" id="h0-0-201" class="i">+impl Accumulator for Sum {
+</a><a href="#h0-0-202" id="h0-0-202" class="i">+    fn accumulate(&amp;mut self, value: &amp;Value) -&gt; Result&lt;()&gt; {
+</a><a href="#h0-0-203" id="h0-0-203" class="i">+        self.sum = match (&amp;self.sum, value) {
+</a><a href="#h0-0-204" id="h0-0-204" class="i">+            (Some(Value::Integer(s)), Value::Integer(i)) =&gt; Some(Value::Integer(s + i)),
+</a><a href="#h0-0-205" id="h0-0-205" class="i">+            (Some(Value::Float(s)), Value::Float(f)) =&gt; Some(Value::Float(s + f)),
+</a><a href="#h0-0-206" id="h0-0-206" class="i">+            (None, Value::Integer(i)) =&gt; Some(Value::Integer(*i)),
+</a><a href="#h0-0-207" id="h0-0-207" class="i">+            (None, Value::Float(f)) =&gt; Some(Value::Float(*f)),
+</a><a href="#h0-0-208" id="h0-0-208" class="i">+            _ =&gt; Some(Value::Null),
+</a><a href="#h0-0-209" id="h0-0-209" class="i">+        };
+</a><a href="#h0-0-210" id="h0-0-210" class="i">+        Ok(())
+</a><a href="#h0-0-211" id="h0-0-211" class="i">+    }
+</a><a href="#h0-0-212" id="h0-0-212" class="i">+
+</a><a href="#h0-0-213" id="h0-0-213" class="i">+    fn aggregate(&amp;self) -&gt; Value {
+</a><a href="#h0-0-214" id="h0-0-214" class="i">+        match &amp;self.sum {
+</a><a href="#h0-0-215" id="h0-0-215" class="i">+            Some(value) =&gt; value.clone(),
+</a><a href="#h0-0-216" id="h0-0-216" class="i">+            None =&gt; Value::Null,
+</a><a href="#h0-0-217" id="h0-0-217" class="i">+        }
+</a><a href="#h0-0-218" id="h0-0-218" class="i">+    }
+</a><a href="#h0-0-219" id="h0-0-219" class="i">+}
+</a><b>diff --git a/<a id="h1" href="../file/src/sql/execution/aggregation.rs.html">src/sql/execution/aggregation.rs</a> b/<a href="../file/src/sql/execution/aggregation.rs.html">src/sql/execution/aggregation.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -1,229 +0,0 @@
+</a><a href="#h1-0-0" id="h1-0-0" class="d">-use super::QueryIterator;
+</a><a href="#h1-0-1" id="h1-0-1" class="d">-use crate::error::Result;
+</a><a href="#h1-0-2" id="h1-0-2" class="d">-use crate::sql::plan::Aggregate;
+</a><a href="#h1-0-3" id="h1-0-3" class="d">-use crate::sql::types::{Column, Value};
+</a><a href="#h1-0-4" id="h1-0-4" class="d">-
+</a><a href="#h1-0-5" id="h1-0-5" class="d">-use std::cmp::Ordering;
+</a><a href="#h1-0-6" id="h1-0-6" class="d">-use std::collections::HashMap;
+</a><a href="#h1-0-7" id="h1-0-7" class="d">-
+</a><a href="#h1-0-8" id="h1-0-8" class="d">-/// An aggregation executor
+</a><a href="#h1-0-9" id="h1-0-9" class="d">-pub struct Aggregation {
+</a><a href="#h1-0-10" id="h1-0-10" class="d">-    source: QueryIterator,
+</a><a href="#h1-0-11" id="h1-0-11" class="d">-    aggregates: Vec&lt;Aggregate&gt;,
+</a><a href="#h1-0-12" id="h1-0-12" class="d">-    accumulators: HashMap&lt;Vec&lt;Value&gt;, Vec&lt;Box&lt;dyn Accumulator&gt;&gt;&gt;,
+</a><a href="#h1-0-13" id="h1-0-13" class="d">-}
+</a><a href="#h1-0-14" id="h1-0-14" class="d">-
+</a><a href="#h1-0-15" id="h1-0-15" class="d">-impl Aggregation {
+</a><a href="#h1-0-16" id="h1-0-16" class="d">-    pub fn new(source: QueryIterator, aggregates: Vec&lt;Aggregate&gt;) -&gt; Self {
+</a><a href="#h1-0-17" id="h1-0-17" class="d">-        Self { source, aggregates, accumulators: HashMap::new() }
+</a><a href="#h1-0-18" id="h1-0-18" class="d">-    }
+</a><a href="#h1-0-19" id="h1-0-19" class="d">-
+</a><a href="#h1-0-20" id="h1-0-20" class="d">-    #[allow(clippy::or_fun_call)]
+</a><a href="#h1-0-21" id="h1-0-21" class="d">-    pub fn execute(mut self) -&gt; Result&lt;QueryIterator&gt; {
+</a><a href="#h1-0-22" id="h1-0-22" class="d">-        let agg_count = self.aggregates.len();
+</a><a href="#h1-0-23" id="h1-0-23" class="d">-        while let Some(mut row) = self.source.next().transpose()? {
+</a><a href="#h1-0-24" id="h1-0-24" class="d">-            self.accumulators
+</a><a href="#h1-0-25" id="h1-0-25" class="d">-                .entry(row.split_off(self.aggregates.len()))
+</a><a href="#h1-0-26" id="h1-0-26" class="d">-                .or_insert(self.aggregates.iter().map(&lt;dyn Accumulator&gt;::from).collect())
+</a><a href="#h1-0-27" id="h1-0-27" class="d">-                .iter_mut()
+</a><a href="#h1-0-28" id="h1-0-28" class="d">-                .zip(row)
+</a><a href="#h1-0-29" id="h1-0-29" class="d">-                .try_for_each(|(acc, value)| acc.accumulate(&amp;value))?
+</a><a href="#h1-0-30" id="h1-0-30" class="d">-        }
+</a><a href="#h1-0-31" id="h1-0-31" class="d">-        // If there were no rows and no group-by columns, return a row of empty accumulators:
+</a><a href="#h1-0-32" id="h1-0-32" class="d">-        // SELECT COUNT(*) FROM t WHERE FALSE
+</a><a href="#h1-0-33" id="h1-0-33" class="d">-        if self.accumulators.is_empty() &amp;&amp; self.aggregates.len() == self.source.columns.len() {
+</a><a href="#h1-0-34" id="h1-0-34" class="d">-            self.accumulators
+</a><a href="#h1-0-35" id="h1-0-35" class="d">-                .insert(Vec::new(), self.aggregates.iter().map(&lt;dyn Accumulator&gt;::from).collect());
+</a><a href="#h1-0-36" id="h1-0-36" class="d">-        }
+</a><a href="#h1-0-37" id="h1-0-37" class="d">-        Ok(QueryIterator {
+</a><a href="#h1-0-38" id="h1-0-38" class="d">-            columns: self
+</a><a href="#h1-0-39" id="h1-0-39" class="d">-                .source
+</a><a href="#h1-0-40" id="h1-0-40" class="d">-                .columns
+</a><a href="#h1-0-41" id="h1-0-41" class="d">-                .into_iter()
+</a><a href="#h1-0-42" id="h1-0-42" class="d">-                .enumerate()
+</a><a href="#h1-0-43" id="h1-0-43" class="d">-                .map(|(i, c)| if i &lt; agg_count { Column { name: None } } else { c })
+</a><a href="#h1-0-44" id="h1-0-44" class="d">-                .collect(),
+</a><a href="#h1-0-45" id="h1-0-45" class="d">-            rows: Box::new(self.accumulators.into_iter().map(|(bucket, accs)| {
+</a><a href="#h1-0-46" id="h1-0-46" class="d">-                Ok(accs.into_iter().map(|acc| acc.aggregate()).chain(bucket).collect())
+</a><a href="#h1-0-47" id="h1-0-47" class="d">-            })),
+</a><a href="#h1-0-48" id="h1-0-48" class="d">-        })
+</a><a href="#h1-0-49" id="h1-0-49" class="d">-    }
+</a><a href="#h1-0-50" id="h1-0-50" class="d">-}
+</a><a href="#h1-0-51" id="h1-0-51" class="d">-
+</a><a href="#h1-0-52" id="h1-0-52" class="d">-// An accumulator
+</a><a href="#h1-0-53" id="h1-0-53" class="d">-pub trait Accumulator: std::fmt::Debug + Send {
+</a><a href="#h1-0-54" id="h1-0-54" class="d">-    // Accumulates a value
+</a><a href="#h1-0-55" id="h1-0-55" class="d">-    fn accumulate(&amp;mut self, value: &amp;Value) -&gt; Result&lt;()&gt;;
+</a><a href="#h1-0-56" id="h1-0-56" class="d">-
+</a><a href="#h1-0-57" id="h1-0-57" class="d">-    // Calculates a final aggregate
+</a><a href="#h1-0-58" id="h1-0-58" class="d">-    fn aggregate(&amp;self) -&gt; Value;
+</a><a href="#h1-0-59" id="h1-0-59" class="d">-}
+</a><a href="#h1-0-60" id="h1-0-60" class="d">-
+</a><a href="#h1-0-61" id="h1-0-61" class="d">-impl dyn Accumulator {
+</a><a href="#h1-0-62" id="h1-0-62" class="d">-    fn from(aggregate: &amp;Aggregate) -&gt; Box&lt;dyn Accumulator&gt; {
+</a><a href="#h1-0-63" id="h1-0-63" class="d">-        match aggregate {
+</a><a href="#h1-0-64" id="h1-0-64" class="d">-            Aggregate::Average =&gt; Box::new(Average::new()),
+</a><a href="#h1-0-65" id="h1-0-65" class="d">-            Aggregate::Count =&gt; Box::new(Count::new()),
+</a><a href="#h1-0-66" id="h1-0-66" class="d">-            Aggregate::Max =&gt; Box::new(Max::new()),
+</a><a href="#h1-0-67" id="h1-0-67" class="d">-            Aggregate::Min =&gt; Box::new(Min::new()),
+</a><a href="#h1-0-68" id="h1-0-68" class="d">-            Aggregate::Sum =&gt; Box::new(Sum::new()),
+</a><a href="#h1-0-69" id="h1-0-69" class="d">-        }
+</a><a href="#h1-0-70" id="h1-0-70" class="d">-    }
+</a><a href="#h1-0-71" id="h1-0-71" class="d">-}
+</a><a href="#h1-0-72" id="h1-0-72" class="d">-
+</a><a href="#h1-0-73" id="h1-0-73" class="d">-// Count non-null values
+</a><a href="#h1-0-74" id="h1-0-74" class="d">-#[derive(Debug)]
+</a><a href="#h1-0-75" id="h1-0-75" class="d">-pub struct Count {
+</a><a href="#h1-0-76" id="h1-0-76" class="d">-    count: u64,
+</a><a href="#h1-0-77" id="h1-0-77" class="d">-}
+</a><a href="#h1-0-78" id="h1-0-78" class="d">-
+</a><a href="#h1-0-79" id="h1-0-79" class="d">-impl Count {
+</a><a href="#h1-0-80" id="h1-0-80" class="d">-    pub fn new() -&gt; Self {
+</a><a href="#h1-0-81" id="h1-0-81" class="d">-        Self { count: 0 }
+</a><a href="#h1-0-82" id="h1-0-82" class="d">-    }
+</a><a href="#h1-0-83" id="h1-0-83" class="d">-}
+</a><a href="#h1-0-84" id="h1-0-84" class="d">-
+</a><a href="#h1-0-85" id="h1-0-85" class="d">-impl Accumulator for Count {
+</a><a href="#h1-0-86" id="h1-0-86" class="d">-    fn accumulate(&amp;mut self, value: &amp;Value) -&gt; Result&lt;()&gt; {
+</a><a href="#h1-0-87" id="h1-0-87" class="d">-        match value {
+</a><a href="#h1-0-88" id="h1-0-88" class="d">-            Value::Null =&gt; {}
+</a><a href="#h1-0-89" id="h1-0-89" class="d">-            _ =&gt; self.count += 1,
+</a><a href="#h1-0-90" id="h1-0-90" class="d">-        }
+</a><a href="#h1-0-91" id="h1-0-91" class="d">-        Ok(())
+</a><a href="#h1-0-92" id="h1-0-92" class="d">-    }
+</a><a href="#h1-0-93" id="h1-0-93" class="d">-
+</a><a href="#h1-0-94" id="h1-0-94" class="d">-    fn aggregate(&amp;self) -&gt; Value {
+</a><a href="#h1-0-95" id="h1-0-95" class="d">-        Value::Integer(self.count as i64)
+</a><a href="#h1-0-96" id="h1-0-96" class="d">-    }
+</a><a href="#h1-0-97" id="h1-0-97" class="d">-}
+</a><a href="#h1-0-98" id="h1-0-98" class="d">-
+</a><a href="#h1-0-99" id="h1-0-99" class="d">-// Average value
+</a><a href="#h1-0-100" id="h1-0-100" class="d">-#[derive(Debug)]
+</a><a href="#h1-0-101" id="h1-0-101" class="d">-pub struct Average {
+</a><a href="#h1-0-102" id="h1-0-102" class="d">-    count: Count,
+</a><a href="#h1-0-103" id="h1-0-103" class="d">-    sum: Sum,
+</a><a href="#h1-0-104" id="h1-0-104" class="d">-}
+</a><a href="#h1-0-105" id="h1-0-105" class="d">-
+</a><a href="#h1-0-106" id="h1-0-106" class="d">-impl Average {
+</a><a href="#h1-0-107" id="h1-0-107" class="d">-    pub fn new() -&gt; Self {
+</a><a href="#h1-0-108" id="h1-0-108" class="d">-        Self { count: Count::new(), sum: Sum::new() }
+</a><a href="#h1-0-109" id="h1-0-109" class="d">-    }
+</a><a href="#h1-0-110" id="h1-0-110" class="d">-}
+</a><a href="#h1-0-111" id="h1-0-111" class="d">-
+</a><a href="#h1-0-112" id="h1-0-112" class="d">-impl Accumulator for Average {
+</a><a href="#h1-0-113" id="h1-0-113" class="d">-    fn accumulate(&amp;mut self, value: &amp;Value) -&gt; Result&lt;()&gt; {
+</a><a href="#h1-0-114" id="h1-0-114" class="d">-        self.count.accumulate(value)?;
+</a><a href="#h1-0-115" id="h1-0-115" class="d">-        self.sum.accumulate(value)?;
+</a><a href="#h1-0-116" id="h1-0-116" class="d">-        Ok(())
+</a><a href="#h1-0-117" id="h1-0-117" class="d">-    }
+</a><a href="#h1-0-118" id="h1-0-118" class="d">-
+</a><a href="#h1-0-119" id="h1-0-119" class="d">-    fn aggregate(&amp;self) -&gt; Value {
+</a><a href="#h1-0-120" id="h1-0-120" class="d">-        match (self.sum.aggregate(), self.count.aggregate()) {
+</a><a href="#h1-0-121" id="h1-0-121" class="d">-            (Value::Integer(s), Value::Integer(c)) =&gt; Value::Integer(s / c),
+</a><a href="#h1-0-122" id="h1-0-122" class="d">-            (Value::Float(s), Value::Integer(c)) =&gt; Value::Float(s / c as f64),
+</a><a href="#h1-0-123" id="h1-0-123" class="d">-            _ =&gt; Value::Null,
+</a><a href="#h1-0-124" id="h1-0-124" class="d">-        }
+</a><a href="#h1-0-125" id="h1-0-125" class="d">-    }
+</a><a href="#h1-0-126" id="h1-0-126" class="d">-}
+</a><a href="#h1-0-127" id="h1-0-127" class="d">-
+</a><a href="#h1-0-128" id="h1-0-128" class="d">-// Maximum value
+</a><a href="#h1-0-129" id="h1-0-129" class="d">-#[derive(Debug)]
+</a><a href="#h1-0-130" id="h1-0-130" class="d">-pub struct Max {
+</a><a href="#h1-0-131" id="h1-0-131" class="d">-    max: Option&lt;Value&gt;,
+</a><a href="#h1-0-132" id="h1-0-132" class="d">-}
+</a><a href="#h1-0-133" id="h1-0-133" class="d">-
+</a><a href="#h1-0-134" id="h1-0-134" class="d">-impl Max {
+</a><a href="#h1-0-135" id="h1-0-135" class="d">-    pub fn new() -&gt; Self {
+</a><a href="#h1-0-136" id="h1-0-136" class="d">-        Self { max: None }
+</a><a href="#h1-0-137" id="h1-0-137" class="d">-    }
+</a><a href="#h1-0-138" id="h1-0-138" class="d">-}
+</a><a href="#h1-0-139" id="h1-0-139" class="d">-
+</a><a href="#h1-0-140" id="h1-0-140" class="d">-impl Accumulator for Max {
+</a><a href="#h1-0-141" id="h1-0-141" class="d">-    fn accumulate(&amp;mut self, value: &amp;Value) -&gt; Result&lt;()&gt; {
+</a><a href="#h1-0-142" id="h1-0-142" class="d">-        if let Some(max) = &amp;mut self.max {
+</a><a href="#h1-0-143" id="h1-0-143" class="d">-            match value.partial_cmp(max) {
+</a><a href="#h1-0-144" id="h1-0-144" class="d">-                _ if max.datatype() != value.datatype() =&gt; *max = Value::Null,
+</a><a href="#h1-0-145" id="h1-0-145" class="d">-                None =&gt; *max = Value::Null,
+</a><a href="#h1-0-146" id="h1-0-146" class="d">-                Some(Ordering::Greater) =&gt; *max = value.clone(),
+</a><a href="#h1-0-147" id="h1-0-147" class="d">-                Some(Ordering::Equal) | Some(Ordering::Less) =&gt; {}
+</a><a href="#h1-0-148" id="h1-0-148" class="d">-            };
+</a><a href="#h1-0-149" id="h1-0-149" class="d">-        } else {
+</a><a href="#h1-0-150" id="h1-0-150" class="d">-            self.max = Some(value.clone())
+</a><a href="#h1-0-151" id="h1-0-151" class="d">-        }
+</a><a href="#h1-0-152" id="h1-0-152" class="d">-        Ok(())
+</a><a href="#h1-0-153" id="h1-0-153" class="d">-    }
+</a><a href="#h1-0-154" id="h1-0-154" class="d">-
+</a><a href="#h1-0-155" id="h1-0-155" class="d">-    fn aggregate(&amp;self) -&gt; Value {
+</a><a href="#h1-0-156" id="h1-0-156" class="d">-        match &amp;self.max {
+</a><a href="#h1-0-157" id="h1-0-157" class="d">-            Some(value) =&gt; value.clone(),
+</a><a href="#h1-0-158" id="h1-0-158" class="d">-            None =&gt; Value::Null,
+</a><a href="#h1-0-159" id="h1-0-159" class="d">-        }
+</a><a href="#h1-0-160" id="h1-0-160" class="d">-    }
+</a><a href="#h1-0-161" id="h1-0-161" class="d">-}
+</a><a href="#h1-0-162" id="h1-0-162" class="d">-
+</a><a href="#h1-0-163" id="h1-0-163" class="d">-// Minimum value
+</a><a href="#h1-0-164" id="h1-0-164" class="d">-#[derive(Debug)]
+</a><a href="#h1-0-165" id="h1-0-165" class="d">-pub struct Min {
+</a><a href="#h1-0-166" id="h1-0-166" class="d">-    min: Option&lt;Value&gt;,
+</a><a href="#h1-0-167" id="h1-0-167" class="d">-}
+</a><a href="#h1-0-168" id="h1-0-168" class="d">-
+</a><a href="#h1-0-169" id="h1-0-169" class="d">-impl Min {
+</a><a href="#h1-0-170" id="h1-0-170" class="d">-    pub fn new() -&gt; Self {
+</a><a href="#h1-0-171" id="h1-0-171" class="d">-        Self { min: None }
+</a><a href="#h1-0-172" id="h1-0-172" class="d">-    }
+</a><a href="#h1-0-173" id="h1-0-173" class="d">-}
+</a><a href="#h1-0-174" id="h1-0-174" class="d">-
+</a><a href="#h1-0-175" id="h1-0-175" class="d">-impl Accumulator for Min {
+</a><a href="#h1-0-176" id="h1-0-176" class="d">-    fn accumulate(&amp;mut self, value: &amp;Value) -&gt; Result&lt;()&gt; {
+</a><a href="#h1-0-177" id="h1-0-177" class="d">-        if let Some(min) = &amp;mut self.min {
+</a><a href="#h1-0-178" id="h1-0-178" class="d">-            match value.partial_cmp(min) {
+</a><a href="#h1-0-179" id="h1-0-179" class="d">-                _ if min.datatype() != value.datatype() =&gt; *min = Value::Null,
+</a><a href="#h1-0-180" id="h1-0-180" class="d">-                None =&gt; *min = Value::Null,
+</a><a href="#h1-0-181" id="h1-0-181" class="d">-                Some(Ordering::Less) =&gt; *min = value.clone(),
+</a><a href="#h1-0-182" id="h1-0-182" class="d">-                Some(Ordering::Equal) | Some(Ordering::Greater) =&gt; {}
+</a><a href="#h1-0-183" id="h1-0-183" class="d">-            };
+</a><a href="#h1-0-184" id="h1-0-184" class="d">-        } else {
+</a><a href="#h1-0-185" id="h1-0-185" class="d">-            self.min = Some(value.clone())
+</a><a href="#h1-0-186" id="h1-0-186" class="d">-        }
+</a><a href="#h1-0-187" id="h1-0-187" class="d">-        Ok(())
+</a><a href="#h1-0-188" id="h1-0-188" class="d">-    }
+</a><a href="#h1-0-189" id="h1-0-189" class="d">-
+</a><a href="#h1-0-190" id="h1-0-190" class="d">-    fn aggregate(&amp;self) -&gt; Value {
+</a><a href="#h1-0-191" id="h1-0-191" class="d">-        match &amp;self.min {
+</a><a href="#h1-0-192" id="h1-0-192" class="d">-            Some(value) =&gt; value.clone(),
+</a><a href="#h1-0-193" id="h1-0-193" class="d">-            None =&gt; Value::Null,
+</a><a href="#h1-0-194" id="h1-0-194" class="d">-        }
+</a><a href="#h1-0-195" id="h1-0-195" class="d">-    }
+</a><a href="#h1-0-196" id="h1-0-196" class="d">-}
+</a><a href="#h1-0-197" id="h1-0-197" class="d">-
+</a><a href="#h1-0-198" id="h1-0-198" class="d">-// Sum of values
+</a><a href="#h1-0-199" id="h1-0-199" class="d">-#[derive(Debug)]
+</a><a href="#h1-0-200" id="h1-0-200" class="d">-pub struct Sum {
+</a><a href="#h1-0-201" id="h1-0-201" class="d">-    sum: Option&lt;Value&gt;,
+</a><a href="#h1-0-202" id="h1-0-202" class="d">-}
+</a><a href="#h1-0-203" id="h1-0-203" class="d">-
+</a><a href="#h1-0-204" id="h1-0-204" class="d">-impl Sum {
+</a><a href="#h1-0-205" id="h1-0-205" class="d">-    pub fn new() -&gt; Self {
+</a><a href="#h1-0-206" id="h1-0-206" class="d">-        Self { sum: None }
+</a><a href="#h1-0-207" id="h1-0-207" class="d">-    }
+</a><a href="#h1-0-208" id="h1-0-208" class="d">-}
+</a><a href="#h1-0-209" id="h1-0-209" class="d">-
+</a><a href="#h1-0-210" id="h1-0-210" class="d">-impl Accumulator for Sum {
+</a><a href="#h1-0-211" id="h1-0-211" class="d">-    fn accumulate(&amp;mut self, value: &amp;Value) -&gt; Result&lt;()&gt; {
+</a><a href="#h1-0-212" id="h1-0-212" class="d">-        self.sum = match (&amp;self.sum, value) {
+</a><a href="#h1-0-213" id="h1-0-213" class="d">-            (Some(Value::Integer(s)), Value::Integer(i)) =&gt; Some(Value::Integer(s + i)),
+</a><a href="#h1-0-214" id="h1-0-214" class="d">-            (Some(Value::Float(s)), Value::Float(f)) =&gt; Some(Value::Float(s + f)),
+</a><a href="#h1-0-215" id="h1-0-215" class="d">-            (None, Value::Integer(i)) =&gt; Some(Value::Integer(*i)),
+</a><a href="#h1-0-216" id="h1-0-216" class="d">-            (None, Value::Float(f)) =&gt; Some(Value::Float(*f)),
+</a><a href="#h1-0-217" id="h1-0-217" class="d">-            _ =&gt; Some(Value::Null),
+</a><a href="#h1-0-218" id="h1-0-218" class="d">-        };
+</a><a href="#h1-0-219" id="h1-0-219" class="d">-        Ok(())
+</a><a href="#h1-0-220" id="h1-0-220" class="d">-    }
+</a><a href="#h1-0-221" id="h1-0-221" class="d">-
+</a><a href="#h1-0-222" id="h1-0-222" class="d">-    fn aggregate(&amp;self) -&gt; Value {
+</a><a href="#h1-0-223" id="h1-0-223" class="d">-        match &amp;self.sum {
+</a><a href="#h1-0-224" id="h1-0-224" class="d">-            Some(value) =&gt; value.clone(),
+</a><a href="#h1-0-225" id="h1-0-225" class="d">-            None =&gt; Value::Null,
+</a><a href="#h1-0-226" id="h1-0-226" class="d">-        }
+</a><a href="#h1-0-227" id="h1-0-227" class="d">-    }
+</a><a href="#h1-0-228" id="h1-0-228" class="d">-}
+</a><b>diff --git a/<a id="h2" href="../file/src/sql/execution/execute.rs.html">src/sql/execution/execute.rs</a> b/<a href="../file/src/sql/execution/execute.rs.html">src/sql/execution/execute.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -1,80 +1,51 @@
+</a><a href="#h2-0-0" id="h2-0-0" class="d">-use super::aggregation::Aggregation;
+</a><a href="#h2-0-1" id="h2-0-1" class="d">-use super::join::{HashJoin, NestedLoopJoin};
+</a><a href="#h2-0-2" id="h2-0-2" class="d">-use super::mutation::{Delete, Insert, Update};
+</a><a href="#h2-0-3" id="h2-0-3" class="d">-use super::query::{Filter, Limit, Offset, Order, Projection};
+</a><a href="#h2-0-4" id="h2-0-4" class="d">-use super::schema::{CreateTable, DropTable};
+</a><a href="#h2-0-5" id="h2-0-5" class="d">-use super::source::{IndexLookup, KeyLookup, Nothing, Scan};
+</a><a href="#h2-0-6" id="h2-0-6" class="i">+use super::aggregate;
+</a><a href="#h2-0-7" id="h2-0-7" class="i">+use super::join;
+</a><a href="#h2-0-8" id="h2-0-8" class="i">+use super::schema;
+</a><a href="#h2-0-9" id="h2-0-9" class="i">+use super::source;
+</a><a href="#h2-0-10" id="h2-0-10" class="i">+use super::transform;
+</a><a href="#h2-0-11" id="h2-0-11" class="i">+use super::write;
+</a> use crate::error::Result;
+ use crate::sql::engine::Transaction;
+ use crate::sql::plan::{Node, Plan};
+ use crate::sql::types::{Columns, Row, Rows};
+ 
+<a href="#h2-0-17" id="h2-0-17" class="d">-/// A plan execution result.
+</a><a href="#h2-0-18" id="h2-0-18" class="d">-pub enum ExecutionResult {
+</a><a href="#h2-0-19" id="h2-0-19" class="d">-    CreateTable { name: String },
+</a><a href="#h2-0-20" id="h2-0-20" class="d">-    DropTable { name: String, existed: bool },
+</a><a href="#h2-0-21" id="h2-0-21" class="d">-    Delete { count: u64 },
+</a><a href="#h2-0-22" id="h2-0-22" class="d">-    Insert { count: u64 },
+</a><a href="#h2-0-23" id="h2-0-23" class="d">-    Update { count: u64 },
+</a><a href="#h2-0-24" id="h2-0-24" class="d">-    Select { iter: QueryIterator },
+</a><a href="#h2-0-25" id="h2-0-25" class="d">-}
+</a><a href="#h2-0-26" id="h2-0-26" class="d">-
+</a><a href="#h2-0-27" id="h2-0-27" class="d">-/// A query result iterator, containins the columns and row iterator.
+</a><a href="#h2-0-28" id="h2-0-28" class="d">-pub struct QueryIterator {
+</a><a href="#h2-0-29" id="h2-0-29" class="d">-    // TODO: use a different type here.
+</a><a href="#h2-0-30" id="h2-0-30" class="d">-    pub columns: Columns,
+</a><a href="#h2-0-31" id="h2-0-31" class="d">-    pub rows: Rows,
+</a><a href="#h2-0-32" id="h2-0-32" class="d">-}
+</a><a href="#h2-0-33" id="h2-0-33" class="d">-
+</a><a href="#h2-0-34" id="h2-0-34" class="d">-impl Iterator for QueryIterator {
+</a><a href="#h2-0-35" id="h2-0-35" class="d">-    type Item = Result&lt;Row&gt;;
+</a><a href="#h2-0-36" id="h2-0-36" class="d">-
+</a><a href="#h2-0-37" id="h2-0-37" class="d">-    fn next(&amp;mut self) -&gt; Option&lt;Self::Item&gt; {
+</a><a href="#h2-0-38" id="h2-0-38" class="d">-        self.rows.next()
+</a><a href="#h2-0-39" id="h2-0-39" class="d">-    }
+</a><a href="#h2-0-40" id="h2-0-40" class="d">-}
+</a><a href="#h2-0-41" id="h2-0-41" class="d">-
+</a> /// Executes a plan, returning an execution result.
+ pub fn execute_plan(plan: Plan, txn: &amp;mut impl Transaction) -&gt; Result&lt;ExecutionResult&gt; {
+     Ok(match plan {
+<a href="#h2-0-45" id="h2-0-45" class="d">-        Plan::Select(node) =&gt; ExecutionResult::Select { iter: execute(node, txn)? },
+</a><a href="#h2-0-46" id="h2-0-46" class="d">-
+</a>         Plan::CreateTable { schema } =&gt; {
+             let name = schema.name.clone();
+<a href="#h2-0-49" id="h2-0-49" class="d">-            CreateTable::new(schema).execute(txn)?;
+</a><a href="#h2-0-50" id="h2-0-50" class="i">+            schema::create_table(txn, schema)?;
+</a>             ExecutionResult::CreateTable { name }
+         }
+ 
+         Plan::DropTable { table, if_exists } =&gt; {
+<a href="#h2-0-55" id="h2-0-55" class="d">-            let name = table.clone();
+</a><a href="#h2-0-56" id="h2-0-56" class="d">-            let existed = DropTable::new(table, if_exists).execute(txn)?;
+</a><a href="#h2-0-57" id="h2-0-57" class="d">-            ExecutionResult::DropTable { name, existed }
+</a><a href="#h2-0-58" id="h2-0-58" class="i">+            let existed = schema::drop_table(txn, &amp;table, if_exists)?;
+</a><a href="#h2-0-59" id="h2-0-59" class="i">+            ExecutionResult::DropTable { name: table, existed }
+</a>         }
+ 
+         Plan::Delete { table, source } =&gt; {
+             let source = execute(source, txn)?;
+<a href="#h2-0-64" id="h2-0-64" class="d">-            let count = Delete::new(table, source).execute(txn)?;
+</a><a href="#h2-0-65" id="h2-0-65" class="i">+            let count = write::delete(txn, &amp;table, source)?;
+</a>             ExecutionResult::Delete { count }
+         }
+ 
+         Plan::Insert { table, columns, expressions } =&gt; {
+<a href="#h2-0-70" id="h2-0-70" class="d">-            let count = Insert::new(table, columns, expressions).execute(txn)?;
+</a><a href="#h2-0-71" id="h2-0-71" class="i">+            let count = write::insert(txn, &amp;table, columns, expressions)?;
+</a>             ExecutionResult::Insert { count }
+         }
+ 
+<a href="#h2-0-75" id="h2-0-75" class="i">+        Plan::Select(node) =&gt; ExecutionResult::Select { iter: execute(node, txn)? },
+</a><a href="#h2-0-76" id="h2-0-76" class="i">+
+</a>         Plan::Update { table, source, expressions } =&gt; {
+             let source = execute(source, txn)?;
+             let expressions = expressions.into_iter().map(|(i, _, expr)| (i, expr)).collect();
+<a href="#h2-0-80" id="h2-0-80" class="d">-            let count = Update::new(table, source, expressions).execute(txn)?;
+</a><a href="#h2-0-81" id="h2-0-81" class="i">+            let count = write::update(txn, &amp;table, source, expressions)?;
+</a>             ExecutionResult::Update { count }
+         }
+     })
+ }
+ 
+<a href="#h2-0-87" id="h2-0-87" class="d">-/// Recursively executes a query plan node, returning a row iterator.
+</a><a href="#h2-0-88" id="h2-0-88" class="d">-///
+</a><a href="#h2-0-89" id="h2-0-89" class="d">-/// TODO: flatten the executor structs into functions where appropriate. Same
+</a><a href="#h2-0-90" id="h2-0-90" class="d">-/// goes for all other execute functions.
+</a><a href="#h2-0-91" id="h2-0-91" class="i">+/// Recursively executes a query plan node, returning a query iterator.
+</a> ///
+ /// TODO: since iterators are lazy, make this infallible and move all catalog
+ /// lookups to planning.
+<a href="#h2-1" id="h2-1" class="h">@@ -82,54 +53,111 @@ pub fn execute(node: Node, txn: &amp;mut impl Transaction) -&gt; Result&lt;QueryIterator&gt; 
+</a>     match node {
+         Node::Aggregation { source, aggregates } =&gt; {
+             let source = execute(*source, txn)?;
+<a href="#h2-1-3" id="h2-1-3" class="d">-            Aggregation::new(source, aggregates).execute()
+</a><a href="#h2-1-4" id="h2-1-4" class="i">+            aggregate::aggregate(source, aggregates)
+</a>         }
+ 
+         Node::Filter { source, predicate } =&gt; {
+             let source = execute(*source, txn)?;
+<a href="#h2-1-9" id="h2-1-9" class="d">-            Ok(Filter::new(source, predicate).execute())
+</a><a href="#h2-1-10" id="h2-1-10" class="i">+            Ok(transform::filter(source, predicate))
+</a>         }
+ 
+         Node::HashJoin { left, left_field, right, right_field, outer } =&gt; {
+             let left = execute(*left, txn)?;
+             let right = execute(*right, txn)?;
+<a href="#h2-1-16" id="h2-1-16" class="d">-            HashJoin::new(left, left_field.0, right, right_field.0, outer).execute()
+</a><a href="#h2-1-17" id="h2-1-17" class="i">+            join::hash(left, left_field.0, right, right_field.0, outer)
+</a>         }
+ 
+         Node::IndexLookup { table, alias: _, column, values } =&gt; {
+<a href="#h2-1-21" id="h2-1-21" class="d">-            IndexLookup::new(table, column, values).execute(txn)
+</a><a href="#h2-1-22" id="h2-1-22" class="i">+            source::lookup_index(txn, &amp;table, &amp;column, values)
+</a>         }
+ 
+<a href="#h2-1-25" id="h2-1-25" class="d">-        Node::KeyLookup { table, alias: _, keys } =&gt; KeyLookup::new(table, keys).execute(txn),
+</a><a href="#h2-1-26" id="h2-1-26" class="i">+        Node::KeyLookup { table, alias: _, keys } =&gt; source::lookup_key(txn, &amp;table, keys),
+</a> 
+         Node::Limit { source, limit } =&gt; {
+             let source = execute(*source, txn)?;
+<a href="#h2-1-30" id="h2-1-30" class="d">-            Ok(Limit::new(source, limit).execute())
+</a><a href="#h2-1-31" id="h2-1-31" class="i">+            Ok(transform::limit(source, limit))
+</a>         }
+ 
+         Node::NestedLoopJoin { left, left_size: _, right, predicate, outer } =&gt; {
+             let left = execute(*left, txn)?;
+             let right = execute(*right, txn)?;
+<a href="#h2-1-37" id="h2-1-37" class="d">-            NestedLoopJoin::new(left, right, predicate, outer).execute()
+</a><a href="#h2-1-38" id="h2-1-38" class="i">+            join::nested_loop(left, right, predicate, outer)
+</a>         }
+ 
+<a href="#h2-1-41" id="h2-1-41" class="d">-        Node::Nothing =&gt; Ok(Nothing.execute()),
+</a><a href="#h2-1-42" id="h2-1-42" class="i">+        Node::Nothing =&gt; Ok(source::nothing()),
+</a> 
+         Node::Offset { source, offset } =&gt; {
+             let source = execute(*source, txn)?;
+<a href="#h2-1-46" id="h2-1-46" class="d">-            Ok(Offset::new(source, offset).execute())
+</a><a href="#h2-1-47" id="h2-1-47" class="i">+            Ok(transform::offset(source, offset))
+</a>         }
+ 
+         Node::Order { source, orders } =&gt; {
+             let source = execute(*source, txn)?;
+<a href="#h2-1-52" id="h2-1-52" class="d">-            Order::new(source, orders).execute()
+</a><a href="#h2-1-53" id="h2-1-53" class="i">+            Ok(transform::order(source, orders))
+</a>         }
+ 
+         Node::Projection { source, expressions } =&gt; {
+             let source = execute(*source, txn)?;
+<a href="#h2-1-58" id="h2-1-58" class="d">-            Ok(Projection::new(source, expressions).execute())
+</a><a href="#h2-1-59" id="h2-1-59" class="i">+            Ok(transform::project(source, expressions))
+</a>         }
+ 
+<a href="#h2-1-62" id="h2-1-62" class="d">-        Node::Scan { table, alias: _, filter } =&gt; Scan::new(table, filter).execute(txn),
+</a><a href="#h2-1-63" id="h2-1-63" class="i">+        Node::Scan { table, alias: _, filter } =&gt; source::scan(txn, &amp;table, filter),
+</a><a href="#h2-1-64" id="h2-1-64" class="i">+    }
+</a><a href="#h2-1-65" id="h2-1-65" class="i">+}
+</a><a href="#h2-1-66" id="h2-1-66" class="i">+
+</a><a href="#h2-1-67" id="h2-1-67" class="i">+/// A plan execution result.
+</a><a href="#h2-1-68" id="h2-1-68" class="i">+pub enum ExecutionResult {
+</a><a href="#h2-1-69" id="h2-1-69" class="i">+    CreateTable { name: String },
+</a><a href="#h2-1-70" id="h2-1-70" class="i">+    DropTable { name: String, existed: bool },
+</a><a href="#h2-1-71" id="h2-1-71" class="i">+    Delete { count: u64 },
+</a><a href="#h2-1-72" id="h2-1-72" class="i">+    Insert { count: u64 },
+</a><a href="#h2-1-73" id="h2-1-73" class="i">+    Update { count: u64 },
+</a><a href="#h2-1-74" id="h2-1-74" class="i">+    Select { iter: QueryIterator },
+</a><a href="#h2-1-75" id="h2-1-75" class="i">+}
+</a><a href="#h2-1-76" id="h2-1-76" class="i">+
+</a><a href="#h2-1-77" id="h2-1-77" class="i">+/// A query result iterator, containing the columns and row iterator.
+</a><a href="#h2-1-78" id="h2-1-78" class="i">+pub struct QueryIterator {
+</a><a href="#h2-1-79" id="h2-1-79" class="i">+    // TODO: use a different type here.
+</a><a href="#h2-1-80" id="h2-1-80" class="i">+    pub columns: Columns,
+</a><a href="#h2-1-81" id="h2-1-81" class="i">+    pub rows: Rows,
+</a><a href="#h2-1-82" id="h2-1-82" class="i">+}
+</a><a href="#h2-1-83" id="h2-1-83" class="i">+
+</a><a href="#h2-1-84" id="h2-1-84" class="i">+impl Iterator for QueryIterator {
+</a><a href="#h2-1-85" id="h2-1-85" class="i">+    type Item = Result&lt;Row&gt;;
+</a><a href="#h2-1-86" id="h2-1-86" class="i">+
+</a><a href="#h2-1-87" id="h2-1-87" class="i">+    fn next(&amp;mut self) -&gt; Option&lt;Self::Item&gt; {
+</a><a href="#h2-1-88" id="h2-1-88" class="i">+        self.rows.next()
+</a><a href="#h2-1-89" id="h2-1-89" class="i">+    }
+</a><a href="#h2-1-90" id="h2-1-90" class="i">+}
+</a><a href="#h2-1-91" id="h2-1-91" class="i">+
+</a><a href="#h2-1-92" id="h2-1-92" class="i">+impl QueryIterator {
+</a><a href="#h2-1-93" id="h2-1-93" class="i">+    /// Replaces the columns with the result of the closure.
+</a><a href="#h2-1-94" id="h2-1-94" class="i">+    pub fn map_columns(mut self, f: impl FnOnce(Columns) -&gt; Columns) -&gt; Self {
+</a><a href="#h2-1-95" id="h2-1-95" class="i">+        self.columns = f(self.columns);
+</a><a href="#h2-1-96" id="h2-1-96" class="i">+        self
+</a><a href="#h2-1-97" id="h2-1-97" class="i">+    }
+</a><a href="#h2-1-98" id="h2-1-98" class="i">+
+</a><a href="#h2-1-99" id="h2-1-99" class="i">+    /// Replaces the rows iterator with the result of the closure.
+</a><a href="#h2-1-100" id="h2-1-100" class="i">+    pub fn map_rows&lt;F, I&gt;(mut self, f: F) -&gt; Self
+</a><a href="#h2-1-101" id="h2-1-101" class="i">+    where
+</a><a href="#h2-1-102" id="h2-1-102" class="i">+        I: Iterator&lt;Item = Result&lt;Row&gt;&gt; + &#39;static,
+</a><a href="#h2-1-103" id="h2-1-103" class="i">+        F: FnOnce(Rows) -&gt; I,
+</a><a href="#h2-1-104" id="h2-1-104" class="i">+    {
+</a><a href="#h2-1-105" id="h2-1-105" class="i">+        self.rows = Box::new(f(self.rows));
+</a><a href="#h2-1-106" id="h2-1-106" class="i">+        self
+</a><a href="#h2-1-107" id="h2-1-107" class="i">+    }
+</a><a href="#h2-1-108" id="h2-1-108" class="i">+
+</a><a href="#h2-1-109" id="h2-1-109" class="i">+    /// Like map_rows, but if the closure errors the row iterator will yield a
+</a><a href="#h2-1-110" id="h2-1-110" class="i">+    /// single error item.
+</a><a href="#h2-1-111" id="h2-1-111" class="i">+    pub fn try_map_rows&lt;F, I&gt;(mut self, f: F) -&gt; Self
+</a><a href="#h2-1-112" id="h2-1-112" class="i">+    where
+</a><a href="#h2-1-113" id="h2-1-113" class="i">+        I: Iterator&lt;Item = Result&lt;Row&gt;&gt; + &#39;static,
+</a><a href="#h2-1-114" id="h2-1-114" class="i">+        F: FnOnce(Rows) -&gt; Result&lt;I&gt;,
+</a><a href="#h2-1-115" id="h2-1-115" class="i">+    {
+</a><a href="#h2-1-116" id="h2-1-116" class="i">+        self.rows = match f(self.rows) {
+</a><a href="#h2-1-117" id="h2-1-117" class="i">+            Ok(rows) =&gt; Box::new(rows),
+</a><a href="#h2-1-118" id="h2-1-118" class="i">+            Err(e) =&gt; Box::new(std::iter::once(Err(e))),
+</a><a href="#h2-1-119" id="h2-1-119" class="i">+        };
+</a><a href="#h2-1-120" id="h2-1-120" class="i">+        self
+</a>     }
+ }
+<b>diff --git a/<a id="h3" href="../file/src/sql/execution/join.rs.html">src/sql/execution/join.rs</a> b/<a href="../file/src/sql/execution/join.rs.html">src/sql/execution/join.rs</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -5,45 +5,29 @@ use crate::sql::types::{Expression, Row, Rows, Value};
+</a> 
+ use std::collections::HashMap;
+ 
+<a href="#h3-0-3" id="h3-0-3" class="d">-/// A nested loop join executor, which checks each row in the left source against every row in
+</a><a href="#h3-0-4" id="h3-0-4" class="d">-/// the right source using the given predicate.
+</a><a href="#h3-0-5" id="h3-0-5" class="d">-pub struct NestedLoopJoin {
+</a><a href="#h3-0-6" id="h3-0-6" class="i">+/// A nested loop join. Iterates over the right result for every row in the left
+</a><a href="#h3-0-7" id="h3-0-7" class="i">+/// result, optionally filtering on the join predicate.
+</a><a href="#h3-0-8" id="h3-0-8" class="i">+///
+</a><a href="#h3-0-9" id="h3-0-9" class="i">+/// TODO: revisit this and clean it up.
+</a><a href="#h3-0-10" id="h3-0-10" class="i">+pub(super) fn nested_loop(
+</a>     left: QueryIterator,
+     right: QueryIterator,
+     predicate: Option&lt;Expression&gt;,
+     outer: bool,
+<a href="#h3-0-15" id="h3-0-15" class="d">-}
+</a><a href="#h3-0-16" id="h3-0-16" class="d">-
+</a><a href="#h3-0-17" id="h3-0-17" class="d">-impl NestedLoopJoin {
+</a><a href="#h3-0-18" id="h3-0-18" class="d">-    pub fn new(
+</a><a href="#h3-0-19" id="h3-0-19" class="d">-        left: QueryIterator,
+</a><a href="#h3-0-20" id="h3-0-20" class="d">-        right: QueryIterator,
+</a><a href="#h3-0-21" id="h3-0-21" class="d">-        predicate: Option&lt;Expression&gt;,
+</a><a href="#h3-0-22" id="h3-0-22" class="d">-        outer: bool,
+</a><a href="#h3-0-23" id="h3-0-23" class="d">-    ) -&gt; Self {
+</a><a href="#h3-0-24" id="h3-0-24" class="d">-        Self { left, right, predicate, outer }
+</a><a href="#h3-0-25" id="h3-0-25" class="d">-    }
+</a><a href="#h3-0-26" id="h3-0-26" class="d">-
+</a><a href="#h3-0-27" id="h3-0-27" class="d">-    pub fn execute(self) -&gt; Result&lt;QueryIterator&gt; {
+</a><a href="#h3-0-28" id="h3-0-28" class="d">-        let QueryIterator { mut columns, rows } = self.left;
+</a><a href="#h3-0-29" id="h3-0-29" class="d">-        let QueryIterator { columns: rcolumns, rows: rrows } = self.right;
+</a><a href="#h3-0-30" id="h3-0-30" class="d">-        let right_width = rcolumns.len();
+</a><a href="#h3-0-31" id="h3-0-31" class="d">-
+</a><a href="#h3-0-32" id="h3-0-32" class="d">-        columns.extend(rcolumns);
+</a><a href="#h3-0-33" id="h3-0-33" class="d">-        // FIXME Since making the iterators or sources clonable is non-trivial (requiring
+</a><a href="#h3-0-34" id="h3-0-34" class="d">-        // either avoiding Rust standard iterators or making sources generic), we simply
+</a><a href="#h3-0-35" id="h3-0-35" class="d">-        // fetch the entire right result as a vector.
+</a><a href="#h3-0-36" id="h3-0-36" class="d">-        Ok(QueryIterator {
+</a><a href="#h3-0-37" id="h3-0-37" class="d">-            rows: Box::new(NestedLoopRows::new(
+</a><a href="#h3-0-38" id="h3-0-38" class="d">-                rows,
+</a><a href="#h3-0-39" id="h3-0-39" class="d">-                rrows.collect::&lt;Result&lt;Vec&lt;_&gt;&gt;&gt;()?,
+</a><a href="#h3-0-40" id="h3-0-40" class="d">-                right_width,
+</a><a href="#h3-0-41" id="h3-0-41" class="d">-                self.predicate,
+</a><a href="#h3-0-42" id="h3-0-42" class="d">-                self.outer,
+</a><a href="#h3-0-43" id="h3-0-43" class="d">-            )),
+</a><a href="#h3-0-44" id="h3-0-44" class="d">-            columns,
+</a><a href="#h3-0-45" id="h3-0-45" class="d">-        })
+</a><a href="#h3-0-46" id="h3-0-46" class="d">-    }
+</a><a href="#h3-0-47" id="h3-0-47" class="i">+) -&gt; Result&lt;QueryIterator&gt; {
+</a><a href="#h3-0-48" id="h3-0-48" class="i">+    // TODO Since making the iterators or sources clonable is non-trivial (requiring
+</a><a href="#h3-0-49" id="h3-0-49" class="i">+    // either avoiding Rust standard iterators or making sources generic), we simply
+</a><a href="#h3-0-50" id="h3-0-50" class="i">+    // fetch the entire right result as a vector.
+</a><a href="#h3-0-51" id="h3-0-51" class="i">+    let rows = Box::new(NestedLoopRows::new(
+</a><a href="#h3-0-52" id="h3-0-52" class="i">+        left.rows,
+</a><a href="#h3-0-53" id="h3-0-53" class="i">+        right.rows.collect::&lt;Result&lt;Vec&lt;_&gt;&gt;&gt;()?,
+</a><a href="#h3-0-54" id="h3-0-54" class="i">+        right.columns.len(),
+</a><a href="#h3-0-55" id="h3-0-55" class="i">+        predicate,
+</a><a href="#h3-0-56" id="h3-0-56" class="i">+        outer,
+</a><a href="#h3-0-57" id="h3-0-57" class="i">+    ));
+</a><a href="#h3-0-58" id="h3-0-58" class="i">+    let mut columns = left.columns;
+</a><a href="#h3-0-59" id="h3-0-59" class="i">+    columns.extend(right.columns);
+</a><a href="#h3-0-60" id="h3-0-60" class="i">+    Ok(QueryIterator { rows, columns })
+</a> }
+ 
+ struct NestedLoopRows {
+<a href="#h3-1" id="h3-1" class="h">@@ -131,54 +115,42 @@ impl Iterator for NestedLoopRows {
+</a>     }
+ }
+ 
+<a href="#h3-1-3" id="h3-1-3" class="d">-/// A hash join executor
+</a><a href="#h3-1-4" id="h3-1-4" class="d">-pub struct HashJoin {
+</a><a href="#h3-1-5" id="h3-1-5" class="i">+/// Executes a hash join.
+</a><a href="#h3-1-6" id="h3-1-6" class="i">+///
+</a><a href="#h3-1-7" id="h3-1-7" class="i">+/// TODO: clean this up.
+</a><a href="#h3-1-8" id="h3-1-8" class="i">+pub(super) fn hash(
+</a>     left: QueryIterator,
+     left_field: usize,
+     right: QueryIterator,
+     right_field: usize,
+     outer: bool,
+<a href="#h3-1-14" id="h3-1-14" class="d">-}
+</a><a href="#h3-1-15" id="h3-1-15" class="d">-
+</a><a href="#h3-1-16" id="h3-1-16" class="d">-impl HashJoin {
+</a><a href="#h3-1-17" id="h3-1-17" class="d">-    pub fn new(
+</a><a href="#h3-1-18" id="h3-1-18" class="d">-        left: QueryIterator,
+</a><a href="#h3-1-19" id="h3-1-19" class="d">-        left_field: usize,
+</a><a href="#h3-1-20" id="h3-1-20" class="d">-        right: QueryIterator,
+</a><a href="#h3-1-21" id="h3-1-21" class="d">-        right_field: usize,
+</a><a href="#h3-1-22" id="h3-1-22" class="d">-        outer: bool,
+</a><a href="#h3-1-23" id="h3-1-23" class="d">-    ) -&gt; Self {
+</a><a href="#h3-1-24" id="h3-1-24" class="d">-        Self { left, left_field, right, right_field, outer }
+</a><a href="#h3-1-25" id="h3-1-25" class="d">-    }
+</a><a href="#h3-1-26" id="h3-1-26" class="d">-
+</a><a href="#h3-1-27" id="h3-1-27" class="d">-    pub fn execute(self) -&gt; Result&lt;QueryIterator&gt; {
+</a><a href="#h3-1-28" id="h3-1-28" class="d">-        let QueryIterator { mut columns, rows } = self.left;
+</a><a href="#h3-1-29" id="h3-1-29" class="d">-        let QueryIterator { columns: rcolumns, rows: rrows } = self.right;
+</a><a href="#h3-1-30" id="h3-1-30" class="d">-        let (l, r, outer) = (self.left_field, self.right_field, self.outer);
+</a><a href="#h3-1-31" id="h3-1-31" class="d">-        let right: HashMap&lt;Value, Row&gt; = rrows
+</a><a href="#h3-1-32" id="h3-1-32" class="d">-            .map(|res| match res {
+</a><a href="#h3-1-33" id="h3-1-33" class="d">-                Ok(row) if row.len() &lt;= r =&gt; errdata!(&quot;right index {r} out of bounds&quot;),
+</a><a href="#h3-1-34" id="h3-1-34" class="d">-                Ok(row) =&gt; Ok((row[r].clone(), row)),
+</a><a href="#h3-1-35" id="h3-1-35" class="d">-                Err(err) =&gt; Err(err),
+</a><a href="#h3-1-36" id="h3-1-36" class="d">-            })
+</a><a href="#h3-1-37" id="h3-1-37" class="d">-            .collect::&lt;Result&lt;_&gt;&gt;()?;
+</a><a href="#h3-1-38" id="h3-1-38" class="d">-        let empty = std::iter::repeat(Value::Null).take(rcolumns.len());
+</a><a href="#h3-1-39" id="h3-1-39" class="d">-        columns.extend(rcolumns);
+</a><a href="#h3-1-40" id="h3-1-40" class="d">-        let rows = Box::new(rows.filter_map(move |res| match res {
+</a><a href="#h3-1-41" id="h3-1-41" class="d">-            Ok(row) if row.len() &lt;= l =&gt; Some(errdata!(&quot;left index {l} out of bounds&quot;)),
+</a><a href="#h3-1-42" id="h3-1-42" class="d">-            Ok(mut row) =&gt; match right.get(&amp;row[l]) {
+</a><a href="#h3-1-43" id="h3-1-43" class="d">-                Some(hit) =&gt; {
+</a><a href="#h3-1-44" id="h3-1-44" class="d">-                    row.extend(hit.clone());
+</a><a href="#h3-1-45" id="h3-1-45" class="d">-                    Some(Ok(row))
+</a><a href="#h3-1-46" id="h3-1-46" class="d">-                }
+</a><a href="#h3-1-47" id="h3-1-47" class="d">-                None if outer =&gt; {
+</a><a href="#h3-1-48" id="h3-1-48" class="d">-                    row.extend(empty.clone());
+</a><a href="#h3-1-49" id="h3-1-49" class="d">-                    Some(Ok(row))
+</a><a href="#h3-1-50" id="h3-1-50" class="d">-                }
+</a><a href="#h3-1-51" id="h3-1-51" class="d">-                None =&gt; None,
+</a><a href="#h3-1-52" id="h3-1-52" class="d">-            },
+</a><a href="#h3-1-53" id="h3-1-53" class="d">-            Err(err) =&gt; Some(Err(err)),
+</a><a href="#h3-1-54" id="h3-1-54" class="d">-        }));
+</a><a href="#h3-1-55" id="h3-1-55" class="d">-        Ok(QueryIterator { columns, rows })
+</a><a href="#h3-1-56" id="h3-1-56" class="d">-    }
+</a><a href="#h3-1-57" id="h3-1-57" class="i">+) -&gt; Result&lt;QueryIterator&gt; {
+</a><a href="#h3-1-58" id="h3-1-58" class="i">+    let QueryIterator { mut columns, rows } = left;
+</a><a href="#h3-1-59" id="h3-1-59" class="i">+    let QueryIterator { columns: rcolumns, rows: rrows } = right;
+</a><a href="#h3-1-60" id="h3-1-60" class="i">+    let (l, r, outer) = (left_field, right_field, outer);
+</a><a href="#h3-1-61" id="h3-1-61" class="i">+    let right: HashMap&lt;Value, Row&gt; = rrows
+</a><a href="#h3-1-62" id="h3-1-62" class="i">+        .map(|res| match res {
+</a><a href="#h3-1-63" id="h3-1-63" class="i">+            Ok(row) if row.len() &lt;= r =&gt; errdata!(&quot;right index {r} out of bounds&quot;),
+</a><a href="#h3-1-64" id="h3-1-64" class="i">+            Ok(row) =&gt; Ok((row[r].clone(), row)),
+</a><a href="#h3-1-65" id="h3-1-65" class="i">+            Err(err) =&gt; Err(err),
+</a><a href="#h3-1-66" id="h3-1-66" class="i">+        })
+</a><a href="#h3-1-67" id="h3-1-67" class="i">+        .collect::&lt;Result&lt;_&gt;&gt;()?;
+</a><a href="#h3-1-68" id="h3-1-68" class="i">+    let empty = std::iter::repeat(Value::Null).take(rcolumns.len());
+</a><a href="#h3-1-69" id="h3-1-69" class="i">+    columns.extend(rcolumns);
+</a><a href="#h3-1-70" id="h3-1-70" class="i">+    let rows = Box::new(rows.filter_map(move |res| match res {
+</a><a href="#h3-1-71" id="h3-1-71" class="i">+        Ok(row) if row.len() &lt;= l =&gt; Some(errdata!(&quot;left index {l} out of bounds&quot;)),
+</a><a href="#h3-1-72" id="h3-1-72" class="i">+        Ok(mut row) =&gt; match right.get(&amp;row[l]) {
+</a><a href="#h3-1-73" id="h3-1-73" class="i">+            Some(hit) =&gt; {
+</a><a href="#h3-1-74" id="h3-1-74" class="i">+                row.extend(hit.clone());
+</a><a href="#h3-1-75" id="h3-1-75" class="i">+                Some(Ok(row))
+</a><a href="#h3-1-76" id="h3-1-76" class="i">+            }
+</a><a href="#h3-1-77" id="h3-1-77" class="i">+            None if outer =&gt; {
+</a><a href="#h3-1-78" id="h3-1-78" class="i">+                row.extend(empty.clone());
+</a><a href="#h3-1-79" id="h3-1-79" class="i">+                Some(Ok(row))
+</a><a href="#h3-1-80" id="h3-1-80" class="i">+            }
+</a><a href="#h3-1-81" id="h3-1-81" class="i">+            None =&gt; None,
+</a><a href="#h3-1-82" id="h3-1-82" class="i">+        },
+</a><a href="#h3-1-83" id="h3-1-83" class="i">+        Err(err) =&gt; Some(Err(err)),
+</a><a href="#h3-1-84" id="h3-1-84" class="i">+    }));
+</a><a href="#h3-1-85" id="h3-1-85" class="i">+    Ok(QueryIterator { columns, rows })
+</a> }
+<b>diff --git a/<a id="h4" href="../file/src/sql/execution/mod.rs.html">src/sql/execution/mod.rs</a> b/<a href="../file/src/sql/execution/mod.rs.html">src/sql/execution/mod.rs</a></b>
+<a href="#h4-0" id="h4-0" class="h">@@ -1,9 +1,9 @@
+</a><a href="#h4-0-0" id="h4-0-0" class="d">-mod aggregation;
+</a><a href="#h4-0-1" id="h4-0-1" class="i">+mod aggregate;
+</a> mod execute;
+ mod join;
+<a href="#h4-0-4" id="h4-0-4" class="d">-mod mutation;
+</a><a href="#h4-0-5" id="h4-0-5" class="d">-mod query;
+</a> mod schema;
+ mod source;
+<a href="#h4-0-8" id="h4-0-8" class="i">+mod transform;
+</a><a href="#h4-0-9" id="h4-0-9" class="i">+mod write;
+</a> 
+ pub use execute::{execute_plan, ExecutionResult, QueryIterator};
+<b>diff --git a/<a id="h5" href="../file/src/sql/execution/mutation.rs.html">src/sql/execution/mutation.rs</a> b/<a href="../file/src/sql/execution/mutation.rs.html">src/sql/execution/mutation.rs</a></b>
+<a href="#h5-0" id="h5-0" class="h">@@ -1,141 +0,0 @@
+</a><a href="#h5-0-0" id="h5-0-0" class="d">-use super::QueryIterator;
+</a><a href="#h5-0-1" id="h5-0-1" class="d">-use crate::errinput;
+</a><a href="#h5-0-2" id="h5-0-2" class="d">-use crate::error::Result;
+</a><a href="#h5-0-3" id="h5-0-3" class="d">-use crate::sql::engine::Transaction;
+</a><a href="#h5-0-4" id="h5-0-4" class="d">-use crate::sql::types::schema::Table;
+</a><a href="#h5-0-5" id="h5-0-5" class="d">-use crate::sql::types::{Expression, Row, Value};
+</a><a href="#h5-0-6" id="h5-0-6" class="d">-
+</a><a href="#h5-0-7" id="h5-0-7" class="d">-use std::collections::{HashMap, HashSet};
+</a><a href="#h5-0-8" id="h5-0-8" class="d">-
+</a><a href="#h5-0-9" id="h5-0-9" class="d">-/// An INSERT executor
+</a><a href="#h5-0-10" id="h5-0-10" class="d">-pub struct Insert {
+</a><a href="#h5-0-11" id="h5-0-11" class="d">-    table: String,
+</a><a href="#h5-0-12" id="h5-0-12" class="d">-    columns: Vec&lt;String&gt;,
+</a><a href="#h5-0-13" id="h5-0-13" class="d">-    rows: Vec&lt;Vec&lt;Expression&gt;&gt;,
+</a><a href="#h5-0-14" id="h5-0-14" class="d">-}
+</a><a href="#h5-0-15" id="h5-0-15" class="d">-
+</a><a href="#h5-0-16" id="h5-0-16" class="d">-impl Insert {
+</a><a href="#h5-0-17" id="h5-0-17" class="d">-    pub fn new(table: String, columns: Vec&lt;String&gt;, rows: Vec&lt;Vec&lt;Expression&gt;&gt;) -&gt; Self {
+</a><a href="#h5-0-18" id="h5-0-18" class="d">-        Self { table, columns, rows }
+</a><a href="#h5-0-19" id="h5-0-19" class="d">-    }
+</a><a href="#h5-0-20" id="h5-0-20" class="d">-
+</a><a href="#h5-0-21" id="h5-0-21" class="d">-    pub fn execute(self, txn: &amp;mut impl Transaction) -&gt; Result&lt;u64&gt; {
+</a><a href="#h5-0-22" id="h5-0-22" class="d">-        let table = txn.must_get_table(&amp;self.table)?;
+</a><a href="#h5-0-23" id="h5-0-23" class="d">-        let mut count = 0;
+</a><a href="#h5-0-24" id="h5-0-24" class="d">-        for expressions in self.rows {
+</a><a href="#h5-0-25" id="h5-0-25" class="d">-            let mut row =
+</a><a href="#h5-0-26" id="h5-0-26" class="d">-                expressions.into_iter().map(|expr| expr.evaluate(None)).collect::&lt;Result&lt;_&gt;&gt;()?;
+</a><a href="#h5-0-27" id="h5-0-27" class="d">-            if self.columns.is_empty() {
+</a><a href="#h5-0-28" id="h5-0-28" class="d">-                row = Self::pad_row(&amp;table, row)?;
+</a><a href="#h5-0-29" id="h5-0-29" class="d">-            } else {
+</a><a href="#h5-0-30" id="h5-0-30" class="d">-                row = Self::make_row(&amp;table, &amp;self.columns, row)?;
+</a><a href="#h5-0-31" id="h5-0-31" class="d">-            }
+</a><a href="#h5-0-32" id="h5-0-32" class="d">-            txn.insert(&amp;table.name, row)?;
+</a><a href="#h5-0-33" id="h5-0-33" class="d">-            count += 1;
+</a><a href="#h5-0-34" id="h5-0-34" class="d">-        }
+</a><a href="#h5-0-35" id="h5-0-35" class="d">-        Ok(count)
+</a><a href="#h5-0-36" id="h5-0-36" class="d">-    }
+</a><a href="#h5-0-37" id="h5-0-37" class="d">-
+</a><a href="#h5-0-38" id="h5-0-38" class="d">-    // Builds a row from a set of column names and values, padding it with default values.
+</a><a href="#h5-0-39" id="h5-0-39" class="d">-    pub fn make_row(table: &amp;Table, columns: &amp;[String], values: Vec&lt;Value&gt;) -&gt; Result&lt;Row&gt; {
+</a><a href="#h5-0-40" id="h5-0-40" class="d">-        if columns.len() != values.len() {
+</a><a href="#h5-0-41" id="h5-0-41" class="d">-            return errinput!(&quot;column and value counts do not match&quot;);
+</a><a href="#h5-0-42" id="h5-0-42" class="d">-        }
+</a><a href="#h5-0-43" id="h5-0-43" class="d">-        let mut inputs = HashMap::new();
+</a><a href="#h5-0-44" id="h5-0-44" class="d">-        for (c, v) in columns.iter().zip(values.into_iter()) {
+</a><a href="#h5-0-45" id="h5-0-45" class="d">-            table.get_column(c)?;
+</a><a href="#h5-0-46" id="h5-0-46" class="d">-            if inputs.insert(c.clone(), v).is_some() {
+</a><a href="#h5-0-47" id="h5-0-47" class="d">-                return errinput!(&quot;column {c} given multiple times&quot;);
+</a><a href="#h5-0-48" id="h5-0-48" class="d">-            }
+</a><a href="#h5-0-49" id="h5-0-49" class="d">-        }
+</a><a href="#h5-0-50" id="h5-0-50" class="d">-        let mut row = Row::new();
+</a><a href="#h5-0-51" id="h5-0-51" class="d">-        for column in table.columns.iter() {
+</a><a href="#h5-0-52" id="h5-0-52" class="d">-            if let Some(value) = inputs.get(&amp;column.name) {
+</a><a href="#h5-0-53" id="h5-0-53" class="d">-                row.push(value.clone())
+</a><a href="#h5-0-54" id="h5-0-54" class="d">-            } else if let Some(value) = &amp;column.default {
+</a><a href="#h5-0-55" id="h5-0-55" class="d">-                row.push(value.clone())
+</a><a href="#h5-0-56" id="h5-0-56" class="d">-            } else {
+</a><a href="#h5-0-57" id="h5-0-57" class="d">-                return errinput!(&quot;no value given for column {}&quot;, column.name);
+</a><a href="#h5-0-58" id="h5-0-58" class="d">-            }
+</a><a href="#h5-0-59" id="h5-0-59" class="d">-        }
+</a><a href="#h5-0-60" id="h5-0-60" class="d">-        Ok(row)
+</a><a href="#h5-0-61" id="h5-0-61" class="d">-    }
+</a><a href="#h5-0-62" id="h5-0-62" class="d">-
+</a><a href="#h5-0-63" id="h5-0-63" class="d">-    /// Pads a row with default values where possible.
+</a><a href="#h5-0-64" id="h5-0-64" class="d">-    fn pad_row(table: &amp;Table, mut row: Row) -&gt; Result&lt;Row&gt; {
+</a><a href="#h5-0-65" id="h5-0-65" class="d">-        for column in table.columns.iter().skip(row.len()) {
+</a><a href="#h5-0-66" id="h5-0-66" class="d">-            if let Some(default) = &amp;column.default {
+</a><a href="#h5-0-67" id="h5-0-67" class="d">-                row.push(default.clone())
+</a><a href="#h5-0-68" id="h5-0-68" class="d">-            } else {
+</a><a href="#h5-0-69" id="h5-0-69" class="d">-                return errinput!(&quot;no default value for column {}&quot;, column.name);
+</a><a href="#h5-0-70" id="h5-0-70" class="d">-            }
+</a><a href="#h5-0-71" id="h5-0-71" class="d">-        }
+</a><a href="#h5-0-72" id="h5-0-72" class="d">-        Ok(row)
+</a><a href="#h5-0-73" id="h5-0-73" class="d">-    }
+</a><a href="#h5-0-74" id="h5-0-74" class="d">-}
+</a><a href="#h5-0-75" id="h5-0-75" class="d">-
+</a><a href="#h5-0-76" id="h5-0-76" class="d">-/// An UPDATE executor
+</a><a href="#h5-0-77" id="h5-0-77" class="d">-pub struct Update {
+</a><a href="#h5-0-78" id="h5-0-78" class="d">-    table: String,
+</a><a href="#h5-0-79" id="h5-0-79" class="d">-    source: QueryIterator,
+</a><a href="#h5-0-80" id="h5-0-80" class="d">-    expressions: Vec&lt;(usize, Expression)&gt;,
+</a><a href="#h5-0-81" id="h5-0-81" class="d">-}
+</a><a href="#h5-0-82" id="h5-0-82" class="d">-
+</a><a href="#h5-0-83" id="h5-0-83" class="d">-impl Update {
+</a><a href="#h5-0-84" id="h5-0-84" class="d">-    pub fn new(
+</a><a href="#h5-0-85" id="h5-0-85" class="d">-        table: String,
+</a><a href="#h5-0-86" id="h5-0-86" class="d">-        source: QueryIterator,
+</a><a href="#h5-0-87" id="h5-0-87" class="d">-        expressions: Vec&lt;(usize, Expression)&gt;,
+</a><a href="#h5-0-88" id="h5-0-88" class="d">-    ) -&gt; Self {
+</a><a href="#h5-0-89" id="h5-0-89" class="d">-        Self { table, source, expressions }
+</a><a href="#h5-0-90" id="h5-0-90" class="d">-    }
+</a><a href="#h5-0-91" id="h5-0-91" class="d">-
+</a><a href="#h5-0-92" id="h5-0-92" class="d">-    pub fn execute(mut self, txn: &amp;mut impl Transaction) -&gt; Result&lt;u64&gt; {
+</a><a href="#h5-0-93" id="h5-0-93" class="d">-        let table = txn.must_get_table(&amp;self.table)?;
+</a><a href="#h5-0-94" id="h5-0-94" class="d">-        // The iterator will see our changes, such that the same item may be
+</a><a href="#h5-0-95" id="h5-0-95" class="d">-        // iterated over multiple times. We keep track of the primary keys here
+</a><a href="#h5-0-96" id="h5-0-96" class="d">-        // to avoid that, althought it may cause ballooning memory usage for
+</a><a href="#h5-0-97" id="h5-0-97" class="d">-        // large updates.
+</a><a href="#h5-0-98" id="h5-0-98" class="d">-        //
+</a><a href="#h5-0-99" id="h5-0-99" class="d">-        // FIXME This is not safe for primary key updates, which may still be
+</a><a href="#h5-0-100" id="h5-0-100" class="d">-        // processed multiple times - it should be possible to come up with a
+</a><a href="#h5-0-101" id="h5-0-101" class="d">-        // pathological case that loops forever (e.g. UPDATE test SET id = id +
+</a><a href="#h5-0-102" id="h5-0-102" class="d">-        // 1).
+</a><a href="#h5-0-103" id="h5-0-103" class="d">-        let mut updated = HashSet::new();
+</a><a href="#h5-0-104" id="h5-0-104" class="d">-        while let Some(row) = self.source.next().transpose()? {
+</a><a href="#h5-0-105" id="h5-0-105" class="d">-            let id = table.get_row_key(&amp;row)?;
+</a><a href="#h5-0-106" id="h5-0-106" class="d">-            if updated.contains(&amp;id) {
+</a><a href="#h5-0-107" id="h5-0-107" class="d">-                continue;
+</a><a href="#h5-0-108" id="h5-0-108" class="d">-            }
+</a><a href="#h5-0-109" id="h5-0-109" class="d">-            let mut new = row.clone();
+</a><a href="#h5-0-110" id="h5-0-110" class="d">-            for (field, expr) in &amp;self.expressions {
+</a><a href="#h5-0-111" id="h5-0-111" class="d">-                new[*field] = expr.evaluate(Some(&amp;row))?;
+</a><a href="#h5-0-112" id="h5-0-112" class="d">-            }
+</a><a href="#h5-0-113" id="h5-0-113" class="d">-            txn.update(&amp;table.name, &amp;id, new)?;
+</a><a href="#h5-0-114" id="h5-0-114" class="d">-            updated.insert(id);
+</a><a href="#h5-0-115" id="h5-0-115" class="d">-        }
+</a><a href="#h5-0-116" id="h5-0-116" class="d">-        Ok(updated.len() as u64)
+</a><a href="#h5-0-117" id="h5-0-117" class="d">-    }
+</a><a href="#h5-0-118" id="h5-0-118" class="d">-}
+</a><a href="#h5-0-119" id="h5-0-119" class="d">-
+</a><a href="#h5-0-120" id="h5-0-120" class="d">-/// A DELETE executor
+</a><a href="#h5-0-121" id="h5-0-121" class="d">-pub struct Delete {
+</a><a href="#h5-0-122" id="h5-0-122" class="d">-    table: String,
+</a><a href="#h5-0-123" id="h5-0-123" class="d">-    source: QueryIterator,
+</a><a href="#h5-0-124" id="h5-0-124" class="d">-}
+</a><a href="#h5-0-125" id="h5-0-125" class="d">-
+</a><a href="#h5-0-126" id="h5-0-126" class="d">-impl Delete {
+</a><a href="#h5-0-127" id="h5-0-127" class="d">-    pub fn new(table: String, source: QueryIterator) -&gt; Self {
+</a><a href="#h5-0-128" id="h5-0-128" class="d">-        Self { table, source }
+</a><a href="#h5-0-129" id="h5-0-129" class="d">-    }
+</a><a href="#h5-0-130" id="h5-0-130" class="d">-
+</a><a href="#h5-0-131" id="h5-0-131" class="d">-    pub fn execute(mut self, txn: &amp;mut impl Transaction) -&gt; Result&lt;u64&gt; {
+</a><a href="#h5-0-132" id="h5-0-132" class="d">-        let table = txn.must_get_table(&amp;self.table)?;
+</a><a href="#h5-0-133" id="h5-0-133" class="d">-        let mut count = 0;
+</a><a href="#h5-0-134" id="h5-0-134" class="d">-        while let Some(row) = self.source.next().transpose()? {
+</a><a href="#h5-0-135" id="h5-0-135" class="d">-            txn.delete(&amp;table.name, &amp;table.get_row_key(&amp;row)?)?;
+</a><a href="#h5-0-136" id="h5-0-136" class="d">-            count += 1
+</a><a href="#h5-0-137" id="h5-0-137" class="d">-        }
+</a><a href="#h5-0-138" id="h5-0-138" class="d">-        Ok(count)
+</a><a href="#h5-0-139" id="h5-0-139" class="d">-    }
+</a><a href="#h5-0-140" id="h5-0-140" class="d">-}
+</a><b>diff --git a/<a id="h6" href="../file/src/sql/execution/query.rs.html">src/sql/execution/query.rs</a> b/<a href="../file/src/sql/execution/query.rs.html">src/sql/execution/query.rs</a></b>
+<a href="#h6-0" id="h6-0" class="h">@@ -1,157 +0,0 @@
+</a><a href="#h6-0-0" id="h6-0-0" class="d">-use super::QueryIterator;
+</a><a href="#h6-0-1" id="h6-0-1" class="d">-use crate::errinput;
+</a><a href="#h6-0-2" id="h6-0-2" class="d">-use crate::error::Result;
+</a><a href="#h6-0-3" id="h6-0-3" class="d">-use crate::sql::plan::Direction;
+</a><a href="#h6-0-4" id="h6-0-4" class="d">-use crate::sql::types::{Column, Expression, Row, Value};
+</a><a href="#h6-0-5" id="h6-0-5" class="d">-
+</a><a href="#h6-0-6" id="h6-0-6" class="d">-/// A filter executor
+</a><a href="#h6-0-7" id="h6-0-7" class="d">-pub struct Filter {
+</a><a href="#h6-0-8" id="h6-0-8" class="d">-    source: QueryIterator,
+</a><a href="#h6-0-9" id="h6-0-9" class="d">-    predicate: Expression,
+</a><a href="#h6-0-10" id="h6-0-10" class="d">-}
+</a><a href="#h6-0-11" id="h6-0-11" class="d">-
+</a><a href="#h6-0-12" id="h6-0-12" class="d">-impl Filter {
+</a><a href="#h6-0-13" id="h6-0-13" class="d">-    pub fn new(source: QueryIterator, predicate: Expression) -&gt; Self {
+</a><a href="#h6-0-14" id="h6-0-14" class="d">-        Self { source, predicate }
+</a><a href="#h6-0-15" id="h6-0-15" class="d">-    }
+</a><a href="#h6-0-16" id="h6-0-16" class="d">-
+</a><a href="#h6-0-17" id="h6-0-17" class="d">-    pub fn execute(self) -&gt; QueryIterator {
+</a><a href="#h6-0-18" id="h6-0-18" class="d">-        QueryIterator {
+</a><a href="#h6-0-19" id="h6-0-19" class="d">-            columns: self.source.columns,
+</a><a href="#h6-0-20" id="h6-0-20" class="d">-            rows: Box::new(self.source.rows.filter_map(move |r| {
+</a><a href="#h6-0-21" id="h6-0-21" class="d">-                r.and_then(|row| match self.predicate.evaluate(Some(&amp;row))? {
+</a><a href="#h6-0-22" id="h6-0-22" class="d">-                    Value::Boolean(true) =&gt; Ok(Some(row)),
+</a><a href="#h6-0-23" id="h6-0-23" class="d">-                    Value::Boolean(false) =&gt; Ok(None),
+</a><a href="#h6-0-24" id="h6-0-24" class="d">-                    Value::Null =&gt; Ok(None),
+</a><a href="#h6-0-25" id="h6-0-25" class="d">-                    value =&gt; errinput!(&quot;filter returned {value}, expected boolean&quot;,),
+</a><a href="#h6-0-26" id="h6-0-26" class="d">-                })
+</a><a href="#h6-0-27" id="h6-0-27" class="d">-                .transpose()
+</a><a href="#h6-0-28" id="h6-0-28" class="d">-            })),
+</a><a href="#h6-0-29" id="h6-0-29" class="d">-        }
+</a><a href="#h6-0-30" id="h6-0-30" class="d">-    }
+</a><a href="#h6-0-31" id="h6-0-31" class="d">-}
+</a><a href="#h6-0-32" id="h6-0-32" class="d">-
+</a><a href="#h6-0-33" id="h6-0-33" class="d">-/// A projection executor
+</a><a href="#h6-0-34" id="h6-0-34" class="d">-pub struct Projection {
+</a><a href="#h6-0-35" id="h6-0-35" class="d">-    source: QueryIterator,
+</a><a href="#h6-0-36" id="h6-0-36" class="d">-    expressions: Vec&lt;(Expression, Option&lt;String&gt;)&gt;,
+</a><a href="#h6-0-37" id="h6-0-37" class="d">-}
+</a><a href="#h6-0-38" id="h6-0-38" class="d">-
+</a><a href="#h6-0-39" id="h6-0-39" class="d">-impl Projection {
+</a><a href="#h6-0-40" id="h6-0-40" class="d">-    pub fn new(source: QueryIterator, expressions: Vec&lt;(Expression, Option&lt;String&gt;)&gt;) -&gt; Self {
+</a><a href="#h6-0-41" id="h6-0-41" class="d">-        Self { source, expressions }
+</a><a href="#h6-0-42" id="h6-0-42" class="d">-    }
+</a><a href="#h6-0-43" id="h6-0-43" class="d">-
+</a><a href="#h6-0-44" id="h6-0-44" class="d">-    pub fn execute(self) -&gt; QueryIterator {
+</a><a href="#h6-0-45" id="h6-0-45" class="d">-        let (expressions, labels): (Vec&lt;Expression&gt;, Vec&lt;Option&lt;String&gt;&gt;) =
+</a><a href="#h6-0-46" id="h6-0-46" class="d">-            self.expressions.into_iter().unzip();
+</a><a href="#h6-0-47" id="h6-0-47" class="d">-        let columns = expressions
+</a><a href="#h6-0-48" id="h6-0-48" class="d">-            .iter()
+</a><a href="#h6-0-49" id="h6-0-49" class="d">-            .enumerate()
+</a><a href="#h6-0-50" id="h6-0-50" class="d">-            .map(|(i, e)| {
+</a><a href="#h6-0-51" id="h6-0-51" class="d">-                if let Some(Some(label)) = labels.get(i) {
+</a><a href="#h6-0-52" id="h6-0-52" class="d">-                    Column { name: Some(label.clone()) }
+</a><a href="#h6-0-53" id="h6-0-53" class="d">-                } else if let Expression::Field(i, _) = e {
+</a><a href="#h6-0-54" id="h6-0-54" class="d">-                    self.source.columns.get(*i).cloned().unwrap_or(Column { name: None })
+</a><a href="#h6-0-55" id="h6-0-55" class="d">-                } else {
+</a><a href="#h6-0-56" id="h6-0-56" class="d">-                    Column { name: None }
+</a><a href="#h6-0-57" id="h6-0-57" class="d">-                }
+</a><a href="#h6-0-58" id="h6-0-58" class="d">-            })
+</a><a href="#h6-0-59" id="h6-0-59" class="d">-            .collect();
+</a><a href="#h6-0-60" id="h6-0-60" class="d">-        let rows = Box::new(self.source.rows.map(move |r| {
+</a><a href="#h6-0-61" id="h6-0-61" class="d">-            r.and_then(|row| {
+</a><a href="#h6-0-62" id="h6-0-62" class="d">-                expressions.iter().map(|e| e.evaluate(Some(&amp;row))).collect::&lt;Result&lt;_&gt;&gt;()
+</a><a href="#h6-0-63" id="h6-0-63" class="d">-            })
+</a><a href="#h6-0-64" id="h6-0-64" class="d">-        }));
+</a><a href="#h6-0-65" id="h6-0-65" class="d">-        QueryIterator { columns, rows }
+</a><a href="#h6-0-66" id="h6-0-66" class="d">-    }
+</a><a href="#h6-0-67" id="h6-0-67" class="d">-}
+</a><a href="#h6-0-68" id="h6-0-68" class="d">-
+</a><a href="#h6-0-69" id="h6-0-69" class="d">-/// An ORDER BY executor
+</a><a href="#h6-0-70" id="h6-0-70" class="d">-pub struct Order {
+</a><a href="#h6-0-71" id="h6-0-71" class="d">-    source: QueryIterator,
+</a><a href="#h6-0-72" id="h6-0-72" class="d">-    order: Vec&lt;(Expression, Direction)&gt;,
+</a><a href="#h6-0-73" id="h6-0-73" class="d">-}
+</a><a href="#h6-0-74" id="h6-0-74" class="d">-
+</a><a href="#h6-0-75" id="h6-0-75" class="d">-impl Order {
+</a><a href="#h6-0-76" id="h6-0-76" class="d">-    pub fn new(source: QueryIterator, order: Vec&lt;(Expression, Direction)&gt;) -&gt; Self {
+</a><a href="#h6-0-77" id="h6-0-77" class="d">-        Self { source, order }
+</a><a href="#h6-0-78" id="h6-0-78" class="d">-    }
+</a><a href="#h6-0-79" id="h6-0-79" class="d">-
+</a><a href="#h6-0-80" id="h6-0-80" class="d">-    pub fn execute(mut self) -&gt; Result&lt;QueryIterator&gt; {
+</a><a href="#h6-0-81" id="h6-0-81" class="d">-        // FIXME Since we can&#39;t return errors from the sort_by closure, we have
+</a><a href="#h6-0-82" id="h6-0-82" class="d">-        // to pre-evaluate all values. This means that we can&#39;t short-circuit
+</a><a href="#h6-0-83" id="h6-0-83" class="d">-        // evaluation, and have to temporarily store evaluated values, which is
+</a><a href="#h6-0-84" id="h6-0-84" class="d">-        // bad for performance and memory usage respectively
+</a><a href="#h6-0-85" id="h6-0-85" class="d">-        struct Item {
+</a><a href="#h6-0-86" id="h6-0-86" class="d">-            row: Row,
+</a><a href="#h6-0-87" id="h6-0-87" class="d">-            values: Vec&lt;Value&gt;,
+</a><a href="#h6-0-88" id="h6-0-88" class="d">-        }
+</a><a href="#h6-0-89" id="h6-0-89" class="d">-
+</a><a href="#h6-0-90" id="h6-0-90" class="d">-        let mut items = Vec::new();
+</a><a href="#h6-0-91" id="h6-0-91" class="d">-        while let Some(row) = self.source.next().transpose()? {
+</a><a href="#h6-0-92" id="h6-0-92" class="d">-            let mut values = Vec::new();
+</a><a href="#h6-0-93" id="h6-0-93" class="d">-            for (expr, _) in self.order.iter() {
+</a><a href="#h6-0-94" id="h6-0-94" class="d">-                values.push(expr.evaluate(Some(&amp;row))?);
+</a><a href="#h6-0-95" id="h6-0-95" class="d">-            }
+</a><a href="#h6-0-96" id="h6-0-96" class="d">-            items.push(Item { row, values })
+</a><a href="#h6-0-97" id="h6-0-97" class="d">-        }
+</a><a href="#h6-0-98" id="h6-0-98" class="d">-
+</a><a href="#h6-0-99" id="h6-0-99" class="d">-        let order = &amp;self.order;
+</a><a href="#h6-0-100" id="h6-0-100" class="d">-        items.sort_by(|a, b| {
+</a><a href="#h6-0-101" id="h6-0-101" class="d">-            for (i, (_, order)) in order.iter().enumerate() {
+</a><a href="#h6-0-102" id="h6-0-102" class="d">-                let value_a = &amp;a.values[i];
+</a><a href="#h6-0-103" id="h6-0-103" class="d">-                let value_b = &amp;b.values[i];
+</a><a href="#h6-0-104" id="h6-0-104" class="d">-                match value_a.partial_cmp(value_b) {
+</a><a href="#h6-0-105" id="h6-0-105" class="d">-                    Some(std::cmp::Ordering::Equal) =&gt; {}
+</a><a href="#h6-0-106" id="h6-0-106" class="d">-                    Some(o) =&gt; return if *order == Direction::Ascending { o } else { o.reverse() },
+</a><a href="#h6-0-107" id="h6-0-107" class="d">-                    None =&gt; {}
+</a><a href="#h6-0-108" id="h6-0-108" class="d">-                }
+</a><a href="#h6-0-109" id="h6-0-109" class="d">-            }
+</a><a href="#h6-0-110" id="h6-0-110" class="d">-            std::cmp::Ordering::Equal
+</a><a href="#h6-0-111" id="h6-0-111" class="d">-        });
+</a><a href="#h6-0-112" id="h6-0-112" class="d">-
+</a><a href="#h6-0-113" id="h6-0-113" class="d">-        Ok(QueryIterator {
+</a><a href="#h6-0-114" id="h6-0-114" class="d">-            columns: self.source.columns,
+</a><a href="#h6-0-115" id="h6-0-115" class="d">-            rows: Box::new(items.into_iter().map(|i| Ok(i.row))),
+</a><a href="#h6-0-116" id="h6-0-116" class="d">-        })
+</a><a href="#h6-0-117" id="h6-0-117" class="d">-    }
+</a><a href="#h6-0-118" id="h6-0-118" class="d">-}
+</a><a href="#h6-0-119" id="h6-0-119" class="d">-
+</a><a href="#h6-0-120" id="h6-0-120" class="d">-/// A LIMIT executor
+</a><a href="#h6-0-121" id="h6-0-121" class="d">-pub struct Limit {
+</a><a href="#h6-0-122" id="h6-0-122" class="d">-    source: QueryIterator,
+</a><a href="#h6-0-123" id="h6-0-123" class="d">-    limit: u64,
+</a><a href="#h6-0-124" id="h6-0-124" class="d">-}
+</a><a href="#h6-0-125" id="h6-0-125" class="d">-
+</a><a href="#h6-0-126" id="h6-0-126" class="d">-impl Limit {
+</a><a href="#h6-0-127" id="h6-0-127" class="d">-    pub fn new(source: QueryIterator, limit: u64) -&gt; Self {
+</a><a href="#h6-0-128" id="h6-0-128" class="d">-        Self { source, limit }
+</a><a href="#h6-0-129" id="h6-0-129" class="d">-    }
+</a><a href="#h6-0-130" id="h6-0-130" class="d">-
+</a><a href="#h6-0-131" id="h6-0-131" class="d">-    pub fn execute(self) -&gt; QueryIterator {
+</a><a href="#h6-0-132" id="h6-0-132" class="d">-        QueryIterator {
+</a><a href="#h6-0-133" id="h6-0-133" class="d">-            columns: self.source.columns,
+</a><a href="#h6-0-134" id="h6-0-134" class="d">-            rows: Box::new(self.source.rows.take(self.limit as usize)),
+</a><a href="#h6-0-135" id="h6-0-135" class="d">-        }
+</a><a href="#h6-0-136" id="h6-0-136" class="d">-    }
+</a><a href="#h6-0-137" id="h6-0-137" class="d">-}
+</a><a href="#h6-0-138" id="h6-0-138" class="d">-
+</a><a href="#h6-0-139" id="h6-0-139" class="d">-/// An OFFSET executor
+</a><a href="#h6-0-140" id="h6-0-140" class="d">-pub struct Offset {
+</a><a href="#h6-0-141" id="h6-0-141" class="d">-    source: QueryIterator,
+</a><a href="#h6-0-142" id="h6-0-142" class="d">-    offset: u64,
+</a><a href="#h6-0-143" id="h6-0-143" class="d">-}
+</a><a href="#h6-0-144" id="h6-0-144" class="d">-
+</a><a href="#h6-0-145" id="h6-0-145" class="d">-impl Offset {
+</a><a href="#h6-0-146" id="h6-0-146" class="d">-    pub fn new(source: QueryIterator, offset: u64) -&gt; Self {
+</a><a href="#h6-0-147" id="h6-0-147" class="d">-        Self { source, offset }
+</a><a href="#h6-0-148" id="h6-0-148" class="d">-    }
+</a><a href="#h6-0-149" id="h6-0-149" class="d">-
+</a><a href="#h6-0-150" id="h6-0-150" class="d">-    pub fn execute(self) -&gt; QueryIterator {
+</a><a href="#h6-0-151" id="h6-0-151" class="d">-        QueryIterator {
+</a><a href="#h6-0-152" id="h6-0-152" class="d">-            columns: self.source.columns,
+</a><a href="#h6-0-153" id="h6-0-153" class="d">-            rows: Box::new(self.source.rows.skip(self.offset as usize)),
+</a><a href="#h6-0-154" id="h6-0-154" class="d">-        }
+</a><a href="#h6-0-155" id="h6-0-155" class="d">-    }
+</a><a href="#h6-0-156" id="h6-0-156" class="d">-}
+</a><b>diff --git a/<a id="h7" href="../file/src/sql/execution/schema.rs.html">src/sql/execution/schema.rs</a> b/<a href="../file/src/sql/execution/schema.rs.html">src/sql/execution/schema.rs</a></b>
+<a href="#h7-0" id="h7-0" class="h">@@ -2,38 +2,17 @@ use crate::error::Result;
+</a> use crate::sql::engine::Transaction;
+ use crate::sql::types::schema::Table;
+ 
+<a href="#h7-0-3" id="h7-0-3" class="d">-/// A CREATE TABLE executor
+</a><a href="#h7-0-4" id="h7-0-4" class="d">-pub struct CreateTable {
+</a><a href="#h7-0-5" id="h7-0-5" class="d">-    table: Table,
+</a><a href="#h7-0-6" id="h7-0-6" class="i">+// Creates a table (i.e. CREATE TABLE).
+</a><a href="#h7-0-7" id="h7-0-7" class="i">+pub(super) fn create_table(txn: &amp;mut impl Transaction, schema: Table) -&gt; Result&lt;()&gt; {
+</a><a href="#h7-0-8" id="h7-0-8" class="i">+    txn.create_table(schema)
+</a> }
+ 
+<a href="#h7-0-11" id="h7-0-11" class="d">-impl CreateTable {
+</a><a href="#h7-0-12" id="h7-0-12" class="d">-    pub fn new(table: Table) -&gt; Self {
+</a><a href="#h7-0-13" id="h7-0-13" class="d">-        Self { table }
+</a><a href="#h7-0-14" id="h7-0-14" class="d">-    }
+</a><a href="#h7-0-15" id="h7-0-15" class="d">-
+</a><a href="#h7-0-16" id="h7-0-16" class="d">-    pub fn execute(self, txn: &amp;mut impl Transaction) -&gt; Result&lt;()&gt; {
+</a><a href="#h7-0-17" id="h7-0-17" class="d">-        txn.create_table(self.table)
+</a><a href="#h7-0-18" id="h7-0-18" class="d">-    }
+</a><a href="#h7-0-19" id="h7-0-19" class="d">-}
+</a><a href="#h7-0-20" id="h7-0-20" class="d">-
+</a><a href="#h7-0-21" id="h7-0-21" class="d">-/// A DROP TABLE executor
+</a><a href="#h7-0-22" id="h7-0-22" class="d">-pub struct DropTable {
+</a><a href="#h7-0-23" id="h7-0-23" class="d">-    table: String,
+</a><a href="#h7-0-24" id="h7-0-24" class="d">-    if_exists: bool,
+</a><a href="#h7-0-25" id="h7-0-25" class="d">-}
+</a><a href="#h7-0-26" id="h7-0-26" class="d">-
+</a><a href="#h7-0-27" id="h7-0-27" class="d">-impl DropTable {
+</a><a href="#h7-0-28" id="h7-0-28" class="d">-    pub fn new(table: String, if_exists: bool) -&gt; Self {
+</a><a href="#h7-0-29" id="h7-0-29" class="d">-        Self { table, if_exists }
+</a><a href="#h7-0-30" id="h7-0-30" class="d">-    }
+</a><a href="#h7-0-31" id="h7-0-31" class="d">-
+</a><a href="#h7-0-32" id="h7-0-32" class="d">-    pub fn execute(self, txn: &amp;mut impl Transaction) -&gt; Result&lt;bool&gt; {
+</a><a href="#h7-0-33" id="h7-0-33" class="d">-        // TODO the planner should deal with this.
+</a><a href="#h7-0-34" id="h7-0-34" class="d">-        if self.if_exists &amp;&amp; txn.get_table(&amp;self.table)?.is_none() {
+</a><a href="#h7-0-35" id="h7-0-35" class="d">-            return Ok(false);
+</a><a href="#h7-0-36" id="h7-0-36" class="d">-        }
+</a><a href="#h7-0-37" id="h7-0-37" class="d">-        txn.drop_table(&amp;self.table)?;
+</a><a href="#h7-0-38" id="h7-0-38" class="d">-        Ok(true)
+</a><a href="#h7-0-39" id="h7-0-39" class="i">+/// Deletes a table (i.e. DROP TABLE). Returns true if the table existed.
+</a><a href="#h7-0-40" id="h7-0-40" class="i">+pub(super) fn drop_table(txn: &amp;mut impl Transaction, table: &amp;str, if_exists: bool) -&gt; Result&lt;bool&gt; {
+</a><a href="#h7-0-41" id="h7-0-41" class="i">+    // TODO the planner should deal with this.
+</a><a href="#h7-0-42" id="h7-0-42" class="i">+    if if_exists &amp;&amp; txn.get_table(table)?.is_none() {
+</a><a href="#h7-0-43" id="h7-0-43" class="i">+        return Ok(false);
+</a>     }
+<a href="#h7-0-45" id="h7-0-45" class="i">+    txn.drop_table(table)?;
+</a><a href="#h7-0-46" id="h7-0-46" class="i">+    Ok(true)
+</a> }
+<b>diff --git a/<a id="h8" href="../file/src/sql/execution/source.rs.html">src/sql/execution/source.rs</a> b/<a href="../file/src/sql/execution/source.rs.html">src/sql/execution/source.rs</a></b>
+<a href="#h8-0" id="h8-0" class="h">@@ -3,94 +3,71 @@ use crate::error::Result;
+</a> use crate::sql::engine::Transaction;
+ use crate::sql::types::{Column, Expression, Row, Value};
+ 
+<a href="#h8-0-3" id="h8-0-3" class="d">-use std::collections::HashSet;
+</a><a href="#h8-0-4" id="h8-0-4" class="d">-
+</a><a href="#h8-0-5" id="h8-0-5" class="d">-/// A table scan executor
+</a><a href="#h8-0-6" id="h8-0-6" class="d">-pub struct Scan {
+</a><a href="#h8-0-7" id="h8-0-7" class="d">-    table: String,
+</a><a href="#h8-0-8" id="h8-0-8" class="i">+/// A table scan source.
+</a><a href="#h8-0-9" id="h8-0-9" class="i">+pub(super) fn scan(
+</a><a href="#h8-0-10" id="h8-0-10" class="i">+    txn: &amp;mut impl Transaction,
+</a><a href="#h8-0-11" id="h8-0-11" class="i">+    table: &amp;str,
+</a>     filter: Option&lt;Expression&gt;,
+<a href="#h8-0-13" id="h8-0-13" class="i">+) -&gt; Result&lt;QueryIterator&gt; {
+</a><a href="#h8-0-14" id="h8-0-14" class="i">+    // TODO: this should not be fallible. Pass the schema in the plan node.
+</a><a href="#h8-0-15" id="h8-0-15" class="i">+    let table = txn.must_get_table(table)?;
+</a><a href="#h8-0-16" id="h8-0-16" class="i">+    Ok(QueryIterator {
+</a><a href="#h8-0-17" id="h8-0-17" class="i">+        columns: table.columns.into_iter().map(|c| Column { name: Some(c.name) }).collect(),
+</a><a href="#h8-0-18" id="h8-0-18" class="i">+        rows: Box::new(txn.scan(&amp;table.name, filter)?),
+</a><a href="#h8-0-19" id="h8-0-19" class="i">+    })
+</a> }
+ 
+<a href="#h8-0-22" id="h8-0-22" class="d">-impl Scan {
+</a><a href="#h8-0-23" id="h8-0-23" class="d">-    pub fn new(table: String, filter: Option&lt;Expression&gt;) -&gt; Self {
+</a><a href="#h8-0-24" id="h8-0-24" class="d">-        Self { table, filter }
+</a><a href="#h8-0-25" id="h8-0-25" class="d">-    }
+</a><a href="#h8-0-26" id="h8-0-26" class="d">-
+</a><a href="#h8-0-27" id="h8-0-27" class="d">-    pub fn execute(self, txn: &amp;mut impl Transaction) -&gt; Result&lt;QueryIterator&gt; {
+</a><a href="#h8-0-28" id="h8-0-28" class="d">-        let table = txn.must_get_table(&amp;self.table)?;
+</a><a href="#h8-0-29" id="h8-0-29" class="d">-        Ok(QueryIterator {
+</a><a href="#h8-0-30" id="h8-0-30" class="d">-            columns: table.columns.iter().map(|c| Column { name: Some(c.name.clone()) }).collect(),
+</a><a href="#h8-0-31" id="h8-0-31" class="d">-            rows: Box::new(txn.scan(&amp;table.name, self.filter)?),
+</a><a href="#h8-0-32" id="h8-0-32" class="d">-        })
+</a><a href="#h8-0-33" id="h8-0-33" class="d">-    }
+</a><a href="#h8-0-34" id="h8-0-34" class="d">-}
+</a><a href="#h8-0-35" id="h8-0-35" class="d">-
+</a><a href="#h8-0-36" id="h8-0-36" class="d">-/// A primary key lookup executor
+</a><a href="#h8-0-37" id="h8-0-37" class="d">-pub struct KeyLookup {
+</a><a href="#h8-0-38" id="h8-0-38" class="d">-    table: String,
+</a><a href="#h8-0-39" id="h8-0-39" class="i">+/// A primary key lookup source.
+</a><a href="#h8-0-40" id="h8-0-40" class="i">+pub(super) fn lookup_key(
+</a><a href="#h8-0-41" id="h8-0-41" class="i">+    txn: &amp;mut impl Transaction,
+</a><a href="#h8-0-42" id="h8-0-42" class="i">+    table: &amp;str,
+</a>     keys: Vec&lt;Value&gt;,
+<a href="#h8-0-44" id="h8-0-44" class="i">+) -&gt; Result&lt;QueryIterator&gt; {
+</a><a href="#h8-0-45" id="h8-0-45" class="i">+    // TODO: move catalog lookup elsewhere and make this infallible.
+</a><a href="#h8-0-46" id="h8-0-46" class="i">+    let table = txn.must_get_table(table)?;
+</a><a href="#h8-0-47" id="h8-0-47" class="i">+
+</a><a href="#h8-0-48" id="h8-0-48" class="i">+    // TODO: don&#39;t collect into vec, requires shared txn borrow.
+</a><a href="#h8-0-49" id="h8-0-49" class="i">+    let rows = keys
+</a><a href="#h8-0-50" id="h8-0-50" class="i">+        .into_iter()
+</a><a href="#h8-0-51" id="h8-0-51" class="i">+        .filter_map(|key| txn.get(&amp;table.name, &amp;key).transpose())
+</a><a href="#h8-0-52" id="h8-0-52" class="i">+        .collect::&lt;Result&lt;Vec&lt;Row&gt;&gt;&gt;()?;
+</a><a href="#h8-0-53" id="h8-0-53" class="i">+
+</a><a href="#h8-0-54" id="h8-0-54" class="i">+    Ok(QueryIterator {
+</a><a href="#h8-0-55" id="h8-0-55" class="i">+        columns: table.columns.iter().map(|c| Column { name: Some(c.name.clone()) }).collect(),
+</a><a href="#h8-0-56" id="h8-0-56" class="i">+        rows: Box::new(rows.into_iter().map(Ok)),
+</a><a href="#h8-0-57" id="h8-0-57" class="i">+    })
+</a> }
+ 
+<a href="#h8-0-60" id="h8-0-60" class="d">-impl KeyLookup {
+</a><a href="#h8-0-61" id="h8-0-61" class="d">-    pub fn new(table: String, keys: Vec&lt;Value&gt;) -&gt; Self {
+</a><a href="#h8-0-62" id="h8-0-62" class="d">-        Self { table, keys }
+</a><a href="#h8-0-63" id="h8-0-63" class="d">-    }
+</a><a href="#h8-0-64" id="h8-0-64" class="d">-
+</a><a href="#h8-0-65" id="h8-0-65" class="d">-    pub fn execute(self, txn: &amp;mut impl Transaction) -&gt; Result&lt;QueryIterator&gt; {
+</a><a href="#h8-0-66" id="h8-0-66" class="d">-        let table = txn.must_get_table(&amp;self.table)?;
+</a><a href="#h8-0-67" id="h8-0-67" class="d">-
+</a><a href="#h8-0-68" id="h8-0-68" class="d">-        // FIXME Is there a way to pass the txn into an iterator closure instead?
+</a><a href="#h8-0-69" id="h8-0-69" class="d">-        let rows = self
+</a><a href="#h8-0-70" id="h8-0-70" class="d">-            .keys
+</a><a href="#h8-0-71" id="h8-0-71" class="d">-            .into_iter()
+</a><a href="#h8-0-72" id="h8-0-72" class="d">-            .filter_map(|key| txn.get(&amp;table.name, &amp;key).transpose())
+</a><a href="#h8-0-73" id="h8-0-73" class="d">-            .collect::&lt;Result&lt;Vec&lt;Row&gt;&gt;&gt;()?;
+</a><a href="#h8-0-74" id="h8-0-74" class="d">-
+</a><a href="#h8-0-75" id="h8-0-75" class="d">-        Ok(QueryIterator {
+</a><a href="#h8-0-76" id="h8-0-76" class="d">-            columns: table.columns.iter().map(|c| Column { name: Some(c.name.clone()) }).collect(),
+</a><a href="#h8-0-77" id="h8-0-77" class="d">-            rows: Box::new(rows.into_iter().map(Ok)),
+</a><a href="#h8-0-78" id="h8-0-78" class="d">-        })
+</a><a href="#h8-0-79" id="h8-0-79" class="d">-    }
+</a><a href="#h8-0-80" id="h8-0-80" class="d">-}
+</a><a href="#h8-0-81" id="h8-0-81" class="d">-
+</a><a href="#h8-0-82" id="h8-0-82" class="d">-/// An index value lookup executor
+</a><a href="#h8-0-83" id="h8-0-83" class="d">-pub struct IndexLookup {
+</a><a href="#h8-0-84" id="h8-0-84" class="d">-    table: String,
+</a><a href="#h8-0-85" id="h8-0-85" class="d">-    column: String,
+</a><a href="#h8-0-86" id="h8-0-86" class="i">+/// An index lookup source.
+</a><a href="#h8-0-87" id="h8-0-87" class="i">+pub(super) fn lookup_index(
+</a><a href="#h8-0-88" id="h8-0-88" class="i">+    txn: &amp;mut impl Transaction,
+</a><a href="#h8-0-89" id="h8-0-89" class="i">+    table: &amp;str,
+</a><a href="#h8-0-90" id="h8-0-90" class="i">+    column: &amp;str,
+</a>     values: Vec&lt;Value&gt;,
+<a href="#h8-0-92" id="h8-0-92" class="d">-}
+</a><a href="#h8-0-93" id="h8-0-93" class="d">-
+</a><a href="#h8-0-94" id="h8-0-94" class="d">-impl IndexLookup {
+</a><a href="#h8-0-95" id="h8-0-95" class="d">-    pub fn new(table: String, column: String, values: Vec&lt;Value&gt;) -&gt; Self {
+</a><a href="#h8-0-96" id="h8-0-96" class="d">-        Self { table, column, values }
+</a><a href="#h8-0-97" id="h8-0-97" class="i">+) -&gt; Result&lt;QueryIterator&gt; {
+</a><a href="#h8-0-98" id="h8-0-98" class="i">+    // TODO: pass in from planner.
+</a><a href="#h8-0-99" id="h8-0-99" class="i">+    let table = txn.must_get_table(table)?;
+</a><a href="#h8-0-100" id="h8-0-100" class="i">+
+</a><a href="#h8-0-101" id="h8-0-101" class="i">+    // TODO: consider cleaning up.
+</a><a href="#h8-0-102" id="h8-0-102" class="i">+    let mut pks = std::collections::HashSet::new();
+</a><a href="#h8-0-103" id="h8-0-103" class="i">+    for value in values {
+</a><a href="#h8-0-104" id="h8-0-104" class="i">+        pks.extend(txn.lookup_index(&amp;table.name, column, &amp;value)?);
+</a>     }
+ 
+<a href="#h8-0-107" id="h8-0-107" class="d">-    pub fn execute(self, txn: &amp;mut impl Transaction) -&gt; Result&lt;QueryIterator&gt; {
+</a><a href="#h8-0-108" id="h8-0-108" class="d">-        let table = txn.must_get_table(&amp;self.table)?;
+</a><a href="#h8-0-109" id="h8-0-109" class="i">+    // TODO: use a shared txn borrow instead.
+</a><a href="#h8-0-110" id="h8-0-110" class="i">+    let rows = pks
+</a><a href="#h8-0-111" id="h8-0-111" class="i">+        .into_iter()
+</a><a href="#h8-0-112" id="h8-0-112" class="i">+        .filter_map(|pk| txn.get(&amp;table.name, &amp;pk).transpose())
+</a><a href="#h8-0-113" id="h8-0-113" class="i">+        .collect::&lt;Result&lt;Vec&lt;Row&gt;&gt;&gt;()?;
+</a> 
+<a href="#h8-0-115" id="h8-0-115" class="d">-        let mut pks: HashSet&lt;Value&gt; = HashSet::new();
+</a><a href="#h8-0-116" id="h8-0-116" class="d">-        for value in self.values {
+</a><a href="#h8-0-117" id="h8-0-117" class="d">-            pks.extend(txn.lookup_index(&amp;self.table, &amp;self.column, &amp;value)?);
+</a><a href="#h8-0-118" id="h8-0-118" class="d">-        }
+</a><a href="#h8-0-119" id="h8-0-119" class="d">-
+</a><a href="#h8-0-120" id="h8-0-120" class="d">-        // FIXME Is there a way to pass the txn into an iterator closure instead?
+</a><a href="#h8-0-121" id="h8-0-121" class="d">-        let rows = pks
+</a><a href="#h8-0-122" id="h8-0-122" class="d">-            .into_iter()
+</a><a href="#h8-0-123" id="h8-0-123" class="d">-            .filter_map(|pk| txn.get(&amp;table.name, &amp;pk).transpose())
+</a><a href="#h8-0-124" id="h8-0-124" class="d">-            .collect::&lt;Result&lt;Vec&lt;Row&gt;&gt;&gt;()?;
+</a><a href="#h8-0-125" id="h8-0-125" class="d">-
+</a><a href="#h8-0-126" id="h8-0-126" class="d">-        Ok(QueryIterator {
+</a><a href="#h8-0-127" id="h8-0-127" class="d">-            columns: table.columns.iter().map(|c| Column { name: Some(c.name.clone()) }).collect(),
+</a><a href="#h8-0-128" id="h8-0-128" class="d">-            rows: Box::new(rows.into_iter().map(Ok)),
+</a><a href="#h8-0-129" id="h8-0-129" class="d">-        })
+</a><a href="#h8-0-130" id="h8-0-130" class="d">-    }
+</a><a href="#h8-0-131" id="h8-0-131" class="i">+    Ok(QueryIterator {
+</a><a href="#h8-0-132" id="h8-0-132" class="i">+        columns: table.columns.iter().map(|c| Column { name: Some(c.name.clone()) }).collect(),
+</a><a href="#h8-0-133" id="h8-0-133" class="i">+        rows: Box::new(rows.into_iter().map(Ok)),
+</a><a href="#h8-0-134" id="h8-0-134" class="i">+    })
+</a> }
+ 
+<a href="#h8-0-137" id="h8-0-137" class="d">-/// An executor that produces a single empty row
+</a><a href="#h8-0-138" id="h8-0-138" class="d">-pub struct Nothing;
+</a><a href="#h8-0-139" id="h8-0-139" class="d">-
+</a><a href="#h8-0-140" id="h8-0-140" class="d">-impl Nothing {
+</a><a href="#h8-0-141" id="h8-0-141" class="d">-    pub fn execute(self) -&gt; QueryIterator {
+</a><a href="#h8-0-142" id="h8-0-142" class="d">-        QueryIterator { columns: Vec::new(), rows: Box::new(std::iter::once(Ok(Row::new()))) }
+</a><a href="#h8-0-143" id="h8-0-143" class="d">-    }
+</a><a href="#h8-0-144" id="h8-0-144" class="i">+/// Produces a single empty row. Used for queries without a FROM clause, e.g.
+</a><a href="#h8-0-145" id="h8-0-145" class="i">+/// SELECT 1+1, in order to have something to project against.
+</a><a href="#h8-0-146" id="h8-0-146" class="i">+pub(super) fn nothing() -&gt; QueryIterator {
+</a><a href="#h8-0-147" id="h8-0-147" class="i">+    QueryIterator { columns: Vec::new(), rows: Box::new(std::iter::once(Ok(Row::new()))) }
+</a> }
+<b>diff --git a/<a id="h9" href="../file/src/sql/execution/transform.rs.html">src/sql/execution/transform.rs</a> b/<a href="../file/src/sql/execution/transform.rs.html">src/sql/execution/transform.rs</a></b>
+<a href="#h9-0" id="h9-0" class="h">@@ -0,0 +1,98 @@
+</a><a href="#h9-0-0" id="h9-0-0" class="i">+use itertools::izip;
+</a><a href="#h9-0-1" id="h9-0-1" class="i">+
+</a><a href="#h9-0-2" id="h9-0-2" class="i">+use super::QueryIterator;
+</a><a href="#h9-0-3" id="h9-0-3" class="i">+use crate::errinput;
+</a><a href="#h9-0-4" id="h9-0-4" class="i">+use crate::error::Result;
+</a><a href="#h9-0-5" id="h9-0-5" class="i">+use crate::sql::plan::Direction;
+</a><a href="#h9-0-6" id="h9-0-6" class="i">+use crate::sql::types::{Column, Expression, Value};
+</a><a href="#h9-0-7" id="h9-0-7" class="i">+
+</a><a href="#h9-0-8" id="h9-0-8" class="i">+/// Filters the input rows (i.e. WHERE).
+</a><a href="#h9-0-9" id="h9-0-9" class="i">+pub(super) fn filter(source: QueryIterator, predicate: Expression) -&gt; QueryIterator {
+</a><a href="#h9-0-10" id="h9-0-10" class="i">+    source.map_rows(|rows| {
+</a><a href="#h9-0-11" id="h9-0-11" class="i">+        rows.filter_map(move |r| {
+</a><a href="#h9-0-12" id="h9-0-12" class="i">+            r.and_then(|row| match predicate.evaluate(Some(&amp;row))? {
+</a><a href="#h9-0-13" id="h9-0-13" class="i">+                Value::Boolean(true) =&gt; Ok(Some(row)),
+</a><a href="#h9-0-14" id="h9-0-14" class="i">+                Value::Boolean(false) =&gt; Ok(None),
+</a><a href="#h9-0-15" id="h9-0-15" class="i">+                Value::Null =&gt; Ok(None),
+</a><a href="#h9-0-16" id="h9-0-16" class="i">+                value =&gt; errinput!(&quot;filter returned {value}, expected boolean&quot;,),
+</a><a href="#h9-0-17" id="h9-0-17" class="i">+            })
+</a><a href="#h9-0-18" id="h9-0-18" class="i">+            .transpose()
+</a><a href="#h9-0-19" id="h9-0-19" class="i">+        })
+</a><a href="#h9-0-20" id="h9-0-20" class="i">+    })
+</a><a href="#h9-0-21" id="h9-0-21" class="i">+}
+</a><a href="#h9-0-22" id="h9-0-22" class="i">+
+</a><a href="#h9-0-23" id="h9-0-23" class="i">+/// Limits the result to the given number of rows (i.e. LIMIT).
+</a><a href="#h9-0-24" id="h9-0-24" class="i">+pub(super) fn limit(source: QueryIterator, limit: u64) -&gt; QueryIterator {
+</a><a href="#h9-0-25" id="h9-0-25" class="i">+    source.map_rows(|rows| rows.take(limit as usize))
+</a><a href="#h9-0-26" id="h9-0-26" class="i">+}
+</a><a href="#h9-0-27" id="h9-0-27" class="i">+
+</a><a href="#h9-0-28" id="h9-0-28" class="i">+/// Skips the given number of rows (i.e. OFFSET).
+</a><a href="#h9-0-29" id="h9-0-29" class="i">+pub(super) fn offset(source: QueryIterator, offset: u64) -&gt; QueryIterator {
+</a><a href="#h9-0-30" id="h9-0-30" class="i">+    source.map_rows(|rows| rows.skip(offset as usize))
+</a><a href="#h9-0-31" id="h9-0-31" class="i">+}
+</a><a href="#h9-0-32" id="h9-0-32" class="i">+
+</a><a href="#h9-0-33" id="h9-0-33" class="i">+/// Sorts the rows (i.e. ORDER BY).
+</a><a href="#h9-0-34" id="h9-0-34" class="i">+pub(super) fn order(source: QueryIterator, order: Vec&lt;(Expression, Direction)&gt;) -&gt; QueryIterator {
+</a><a href="#h9-0-35" id="h9-0-35" class="i">+    source.try_map_rows(move |rows| {
+</a><a href="#h9-0-36" id="h9-0-36" class="i">+        // We can&#39;t use sort_by_cached_key(), since expression evaluation is
+</a><a href="#h9-0-37" id="h9-0-37" class="i">+        // fallible, and since we may have to vary the sort direction of each
+</a><a href="#h9-0-38" id="h9-0-38" class="i">+        // expression. Precompute the sort values instead, and map them based on
+</a><a href="#h9-0-39" id="h9-0-39" class="i">+        // the row index.
+</a><a href="#h9-0-40" id="h9-0-40" class="i">+        let mut irows: Vec&lt;_&gt; =
+</a><a href="#h9-0-41" id="h9-0-41" class="i">+            rows.enumerate().map(|(i, r)| r.map(|row| (i, row))).collect::&lt;Result&lt;_&gt;&gt;()?;
+</a><a href="#h9-0-42" id="h9-0-42" class="i">+
+</a><a href="#h9-0-43" id="h9-0-43" class="i">+        let mut sort_values = Vec::with_capacity(irows.len());
+</a><a href="#h9-0-44" id="h9-0-44" class="i">+        for (_, row) in &amp;irows {
+</a><a href="#h9-0-45" id="h9-0-45" class="i">+            let values: Vec&lt;_&gt; =
+</a><a href="#h9-0-46" id="h9-0-46" class="i">+                order.iter().map(|(e, _)| e.evaluate(Some(row))).collect::&lt;Result&lt;_&gt;&gt;()?;
+</a><a href="#h9-0-47" id="h9-0-47" class="i">+            sort_values.push(values)
+</a><a href="#h9-0-48" id="h9-0-48" class="i">+        }
+</a><a href="#h9-0-49" id="h9-0-49" class="i">+
+</a><a href="#h9-0-50" id="h9-0-50" class="i">+        irows.sort_by(|&amp;(a, _), &amp;(b, _)| {
+</a><a href="#h9-0-51" id="h9-0-51" class="i">+            let dirs = order.iter().map(|(_, dir)| dir);
+</a><a href="#h9-0-52" id="h9-0-52" class="i">+            for (a, b, dir) in izip!(&amp;sort_values[a], &amp;sort_values[b], dirs) {
+</a><a href="#h9-0-53" id="h9-0-53" class="i">+                match a.cmp(b) {
+</a><a href="#h9-0-54" id="h9-0-54" class="i">+                    std::cmp::Ordering::Equal =&gt; {}
+</a><a href="#h9-0-55" id="h9-0-55" class="i">+                    order if *dir == Direction::Descending =&gt; return order.reverse(),
+</a><a href="#h9-0-56" id="h9-0-56" class="i">+                    order =&gt; return order,
+</a><a href="#h9-0-57" id="h9-0-57" class="i">+                }
+</a><a href="#h9-0-58" id="h9-0-58" class="i">+            }
+</a><a href="#h9-0-59" id="h9-0-59" class="i">+            std::cmp::Ordering::Equal
+</a><a href="#h9-0-60" id="h9-0-60" class="i">+        });
+</a><a href="#h9-0-61" id="h9-0-61" class="i">+
+</a><a href="#h9-0-62" id="h9-0-62" class="i">+        Ok(irows.into_iter().map(|(_, row)| Ok(row)))
+</a><a href="#h9-0-63" id="h9-0-63" class="i">+    })
+</a><a href="#h9-0-64" id="h9-0-64" class="i">+}
+</a><a href="#h9-0-65" id="h9-0-65" class="i">+
+</a><a href="#h9-0-66" id="h9-0-66" class="i">+/// Projects the rows using the given expressions and labels (i.e. SELECT).
+</a><a href="#h9-0-67" id="h9-0-67" class="i">+pub(super) fn project(
+</a><a href="#h9-0-68" id="h9-0-68" class="i">+    source: QueryIterator,
+</a><a href="#h9-0-69" id="h9-0-69" class="i">+    expressions: Vec&lt;(Expression, Option&lt;String&gt;)&gt;,
+</a><a href="#h9-0-70" id="h9-0-70" class="i">+) -&gt; QueryIterator {
+</a><a href="#h9-0-71" id="h9-0-71" class="i">+    // TODO: pass expressions and labels separately.
+</a><a href="#h9-0-72" id="h9-0-72" class="i">+    let (expressions, labels): (Vec&lt;_&gt;, Vec&lt;_&gt;) = expressions.into_iter().unzip();
+</a><a href="#h9-0-73" id="h9-0-73" class="i">+
+</a><a href="#h9-0-74" id="h9-0-74" class="i">+    // Use explicit column label if given, or pass through the source column
+</a><a href="#h9-0-75" id="h9-0-75" class="i">+    // label if referenced (e.g. SELECT a, b, a FROM table).
+</a><a href="#h9-0-76" id="h9-0-76" class="i">+    source
+</a><a href="#h9-0-77" id="h9-0-77" class="i">+        .map_columns(|columns| {
+</a><a href="#h9-0-78" id="h9-0-78" class="i">+            labels
+</a><a href="#h9-0-79" id="h9-0-79" class="i">+                .into_iter()
+</a><a href="#h9-0-80" id="h9-0-80" class="i">+                .enumerate()
+</a><a href="#h9-0-81" id="h9-0-81" class="i">+                .map(|(i, label)| {
+</a><a href="#h9-0-82" id="h9-0-82" class="i">+                    if let Some(label) = label {
+</a><a href="#h9-0-83" id="h9-0-83" class="i">+                        Column { name: Some(label) }
+</a><a href="#h9-0-84" id="h9-0-84" class="i">+                    } else if let Expression::Field(f, _) = &amp;expressions[i] {
+</a><a href="#h9-0-85" id="h9-0-85" class="i">+                        columns.get(*f).cloned().expect(&quot;invalid field reference&quot;)
+</a><a href="#h9-0-86" id="h9-0-86" class="i">+                    } else {
+</a><a href="#h9-0-87" id="h9-0-87" class="i">+                        Column { name: None }
+</a><a href="#h9-0-88" id="h9-0-88" class="i">+                    }
+</a><a href="#h9-0-89" id="h9-0-89" class="i">+                })
+</a><a href="#h9-0-90" id="h9-0-90" class="i">+                .collect()
+</a><a href="#h9-0-91" id="h9-0-91" class="i">+        })
+</a><a href="#h9-0-92" id="h9-0-92" class="i">+        .map_rows(|rows| {
+</a><a href="#h9-0-93" id="h9-0-93" class="i">+            rows.map(move |r| {
+</a><a href="#h9-0-94" id="h9-0-94" class="i">+                r.and_then(|row| expressions.iter().map(|e| e.evaluate(Some(&amp;row))).collect())
+</a><a href="#h9-0-95" id="h9-0-95" class="i">+            })
+</a><a href="#h9-0-96" id="h9-0-96" class="i">+        })
+</a><a href="#h9-0-97" id="h9-0-97" class="i">+}
+</a><b>diff --git a/<a id="h10" href="../file/src/sql/execution/write.rs.html">src/sql/execution/write.rs</a> b/<a href="../file/src/sql/execution/write.rs.html">src/sql/execution/write.rs</a></b>
+<a href="#h10-0" id="h10-0" class="h">@@ -0,0 +1,119 @@
+</a><a href="#h10-0-0" id="h10-0-0" class="i">+use super::QueryIterator;
+</a><a href="#h10-0-1" id="h10-0-1" class="i">+use crate::errinput;
+</a><a href="#h10-0-2" id="h10-0-2" class="i">+use crate::error::Result;
+</a><a href="#h10-0-3" id="h10-0-3" class="i">+use crate::sql::engine::Transaction;
+</a><a href="#h10-0-4" id="h10-0-4" class="i">+use crate::sql::types::schema::Table;
+</a><a href="#h10-0-5" id="h10-0-5" class="i">+use crate::sql::types::{Expression, Row, Value};
+</a><a href="#h10-0-6" id="h10-0-6" class="i">+
+</a><a href="#h10-0-7" id="h10-0-7" class="i">+/// Deletes rows, taking primary keys from the source (i.e. DELETE).
+</a><a href="#h10-0-8" id="h10-0-8" class="i">+/// Returns the number of rows deleted.
+</a><a href="#h10-0-9" id="h10-0-9" class="i">+pub(super) fn delete(
+</a><a href="#h10-0-10" id="h10-0-10" class="i">+    txn: &amp;mut impl Transaction,
+</a><a href="#h10-0-11" id="h10-0-11" class="i">+    table: &amp;str,
+</a><a href="#h10-0-12" id="h10-0-12" class="i">+    mut source: QueryIterator,
+</a><a href="#h10-0-13" id="h10-0-13" class="i">+) -&gt; Result&lt;u64&gt; {
+</a><a href="#h10-0-14" id="h10-0-14" class="i">+    // TODO: should be prepared by planner.
+</a><a href="#h10-0-15" id="h10-0-15" class="i">+    let table = txn.must_get_table(table)?;
+</a><a href="#h10-0-16" id="h10-0-16" class="i">+    let mut count = 0;
+</a><a href="#h10-0-17" id="h10-0-17" class="i">+    while let Some(row) = source.next().transpose()? {
+</a><a href="#h10-0-18" id="h10-0-18" class="i">+        txn.delete(&amp;table.name, &amp;table.get_row_key(&amp;row)?)?;
+</a><a href="#h10-0-19" id="h10-0-19" class="i">+        count += 1
+</a><a href="#h10-0-20" id="h10-0-20" class="i">+    }
+</a><a href="#h10-0-21" id="h10-0-21" class="i">+    Ok(count)
+</a><a href="#h10-0-22" id="h10-0-22" class="i">+}
+</a><a href="#h10-0-23" id="h10-0-23" class="i">+
+</a><a href="#h10-0-24" id="h10-0-24" class="i">+/// Inserts rows into a table (i.e. INSERT).
+</a><a href="#h10-0-25" id="h10-0-25" class="i">+///
+</a><a href="#h10-0-26" id="h10-0-26" class="i">+/// TODO: this should take rows from a values source.
+</a><a href="#h10-0-27" id="h10-0-27" class="i">+pub(super) fn insert(
+</a><a href="#h10-0-28" id="h10-0-28" class="i">+    txn: &amp;mut impl Transaction,
+</a><a href="#h10-0-29" id="h10-0-29" class="i">+    table: &amp;str,
+</a><a href="#h10-0-30" id="h10-0-30" class="i">+    columns: Vec&lt;String&gt;,
+</a><a href="#h10-0-31" id="h10-0-31" class="i">+    values: Vec&lt;Vec&lt;Expression&gt;&gt;,
+</a><a href="#h10-0-32" id="h10-0-32" class="i">+) -&gt; Result&lt;u64&gt; {
+</a><a href="#h10-0-33" id="h10-0-33" class="i">+    let table = txn.must_get_table(table)?;
+</a><a href="#h10-0-34" id="h10-0-34" class="i">+    let mut count = 0;
+</a><a href="#h10-0-35" id="h10-0-35" class="i">+    for expressions in values {
+</a><a href="#h10-0-36" id="h10-0-36" class="i">+        let mut row =
+</a><a href="#h10-0-37" id="h10-0-37" class="i">+            expressions.into_iter().map(|expr| expr.evaluate(None)).collect::&lt;Result&lt;_&gt;&gt;()?;
+</a><a href="#h10-0-38" id="h10-0-38" class="i">+        if columns.is_empty() {
+</a><a href="#h10-0-39" id="h10-0-39" class="i">+            row = pad_row(&amp;table, row)?;
+</a><a href="#h10-0-40" id="h10-0-40" class="i">+        } else {
+</a><a href="#h10-0-41" id="h10-0-41" class="i">+            row = make_row(&amp;table, &amp;columns, row)?;
+</a><a href="#h10-0-42" id="h10-0-42" class="i">+        }
+</a><a href="#h10-0-43" id="h10-0-43" class="i">+        txn.insert(&amp;table.name, row)?;
+</a><a href="#h10-0-44" id="h10-0-44" class="i">+        count += 1;
+</a><a href="#h10-0-45" id="h10-0-45" class="i">+    }
+</a><a href="#h10-0-46" id="h10-0-46" class="i">+    Ok(count)
+</a><a href="#h10-0-47" id="h10-0-47" class="i">+}
+</a><a href="#h10-0-48" id="h10-0-48" class="i">+
+</a><a href="#h10-0-49" id="h10-0-49" class="i">+/// Updates rows passed in from the source (i.e. UPDATE). Returns the number of
+</a><a href="#h10-0-50" id="h10-0-50" class="i">+/// rows updated.
+</a><a href="#h10-0-51" id="h10-0-51" class="i">+pub(super) fn update(
+</a><a href="#h10-0-52" id="h10-0-52" class="i">+    txn: &amp;mut impl Transaction,
+</a><a href="#h10-0-53" id="h10-0-53" class="i">+    table: &amp;str,
+</a><a href="#h10-0-54" id="h10-0-54" class="i">+    mut source: QueryIterator,
+</a><a href="#h10-0-55" id="h10-0-55" class="i">+    expressions: Vec&lt;(usize, Expression)&gt;,
+</a><a href="#h10-0-56" id="h10-0-56" class="i">+) -&gt; Result&lt;u64&gt; {
+</a><a href="#h10-0-57" id="h10-0-57" class="i">+    let table = txn.must_get_table(table)?;
+</a><a href="#h10-0-58" id="h10-0-58" class="i">+    // The iterator will see our changes, such that the same item may be
+</a><a href="#h10-0-59" id="h10-0-59" class="i">+    // iterated over multiple times. We keep track of the primary keys here
+</a><a href="#h10-0-60" id="h10-0-60" class="i">+    // to avoid that, althought it may cause ballooning memory usage for
+</a><a href="#h10-0-61" id="h10-0-61" class="i">+    // large updates.
+</a><a href="#h10-0-62" id="h10-0-62" class="i">+    //
+</a><a href="#h10-0-63" id="h10-0-63" class="i">+    // FIXME This is not safe for primary key updates, which may still be
+</a><a href="#h10-0-64" id="h10-0-64" class="i">+    // processed multiple times - it should be possible to come up with a
+</a><a href="#h10-0-65" id="h10-0-65" class="i">+    // pathological case that loops forever (e.g. UPDATE test SET id = id +
+</a><a href="#h10-0-66" id="h10-0-66" class="i">+    // 1).
+</a><a href="#h10-0-67" id="h10-0-67" class="i">+    let mut updated = std::collections::HashSet::new();
+</a><a href="#h10-0-68" id="h10-0-68" class="i">+    while let Some(row) = source.next().transpose()? {
+</a><a href="#h10-0-69" id="h10-0-69" class="i">+        let id = table.get_row_key(&amp;row)?;
+</a><a href="#h10-0-70" id="h10-0-70" class="i">+        if updated.contains(&amp;id) {
+</a><a href="#h10-0-71" id="h10-0-71" class="i">+            continue;
+</a><a href="#h10-0-72" id="h10-0-72" class="i">+        }
+</a><a href="#h10-0-73" id="h10-0-73" class="i">+        let mut new = row.clone();
+</a><a href="#h10-0-74" id="h10-0-74" class="i">+        for (field, expr) in &amp;expressions {
+</a><a href="#h10-0-75" id="h10-0-75" class="i">+            new[*field] = expr.evaluate(Some(&amp;row))?;
+</a><a href="#h10-0-76" id="h10-0-76" class="i">+        }
+</a><a href="#h10-0-77" id="h10-0-77" class="i">+        txn.update(&amp;table.name, &amp;id, new)?;
+</a><a href="#h10-0-78" id="h10-0-78" class="i">+        updated.insert(id);
+</a><a href="#h10-0-79" id="h10-0-79" class="i">+    }
+</a><a href="#h10-0-80" id="h10-0-80" class="i">+    Ok(updated.len() as u64)
+</a><a href="#h10-0-81" id="h10-0-81" class="i">+}
+</a><a href="#h10-0-82" id="h10-0-82" class="i">+
+</a><a href="#h10-0-83" id="h10-0-83" class="i">+// Builds a row from a set of column names and values, padding it with default values.
+</a><a href="#h10-0-84" id="h10-0-84" class="i">+pub fn make_row(table: &amp;Table, columns: &amp;[String], values: Vec&lt;Value&gt;) -&gt; Result&lt;Row&gt; {
+</a><a href="#h10-0-85" id="h10-0-85" class="i">+    if columns.len() != values.len() {
+</a><a href="#h10-0-86" id="h10-0-86" class="i">+        return errinput!(&quot;column and value counts do not match&quot;);
+</a><a href="#h10-0-87" id="h10-0-87" class="i">+    }
+</a><a href="#h10-0-88" id="h10-0-88" class="i">+    let mut inputs = std::collections::HashMap::new();
+</a><a href="#h10-0-89" id="h10-0-89" class="i">+    for (c, v) in columns.iter().zip(values.into_iter()) {
+</a><a href="#h10-0-90" id="h10-0-90" class="i">+        table.get_column(c)?;
+</a><a href="#h10-0-91" id="h10-0-91" class="i">+        if inputs.insert(c.clone(), v).is_some() {
+</a><a href="#h10-0-92" id="h10-0-92" class="i">+            return errinput!(&quot;column {c} given multiple times&quot;);
+</a><a href="#h10-0-93" id="h10-0-93" class="i">+        }
+</a><a href="#h10-0-94" id="h10-0-94" class="i">+    }
+</a><a href="#h10-0-95" id="h10-0-95" class="i">+    let mut row = Row::new();
+</a><a href="#h10-0-96" id="h10-0-96" class="i">+    for column in table.columns.iter() {
+</a><a href="#h10-0-97" id="h10-0-97" class="i">+        if let Some(value) = inputs.get(&amp;column.name) {
+</a><a href="#h10-0-98" id="h10-0-98" class="i">+            row.push(value.clone())
+</a><a href="#h10-0-99" id="h10-0-99" class="i">+        } else if let Some(value) = &amp;column.default {
+</a><a href="#h10-0-100" id="h10-0-100" class="i">+            row.push(value.clone())
+</a><a href="#h10-0-101" id="h10-0-101" class="i">+        } else {
+</a><a href="#h10-0-102" id="h10-0-102" class="i">+            return errinput!(&quot;no value given for column {}&quot;, column.name);
+</a><a href="#h10-0-103" id="h10-0-103" class="i">+        }
+</a><a href="#h10-0-104" id="h10-0-104" class="i">+    }
+</a><a href="#h10-0-105" id="h10-0-105" class="i">+    Ok(row)
+</a><a href="#h10-0-106" id="h10-0-106" class="i">+}
+</a><a href="#h10-0-107" id="h10-0-107" class="i">+
+</a><a href="#h10-0-108" id="h10-0-108" class="i">+/// Pads a row with default values where possible.
+</a><a href="#h10-0-109" id="h10-0-109" class="i">+fn pad_row(table: &amp;Table, mut row: Row) -&gt; Result&lt;Row&gt; {
+</a><a href="#h10-0-110" id="h10-0-110" class="i">+    for column in table.columns.iter().skip(row.len()) {
+</a><a href="#h10-0-111" id="h10-0-111" class="i">+        if let Some(default) = &amp;column.default {
+</a><a href="#h10-0-112" id="h10-0-112" class="i">+            row.push(default.clone())
+</a><a href="#h10-0-113" id="h10-0-113" class="i">+        } else {
+</a><a href="#h10-0-114" id="h10-0-114" class="i">+            return errinput!(&quot;no default value for column {}&quot;, column.name);
+</a><a href="#h10-0-115" id="h10-0-115" class="i">+        }
+</a><a href="#h10-0-116" id="h10-0-116" class="i">+    }
+</a><a href="#h10-0-117" id="h10-0-117" class="i">+    Ok(row)
+</a><a href="#h10-0-118" id="h10-0-118" class="i">+}
+</a><b>diff --git a/<a id="h11" href="../file/src/sql/types/value.rs.html">src/sql/types/value.rs</a> b/<a href="../file/src/sql/types/value.rs.html">src/sql/types/value.rs</a></b>
+<a href="#h11-0" id="h11-0" class="h">@@ -61,27 +61,45 @@ impl std::hash::Hash for Value {
+</a>     }
+ }
+ 
+<a href="#h11-0-3" id="h11-0-3" class="d">-impl PartialOrd for Value {
+</a><a href="#h11-0-4" id="h11-0-4" class="d">-    fn partial_cmp(&amp;self, other: &amp;Self) -&gt; Option&lt;std::cmp::Ordering&gt; {
+</a><a href="#h11-0-5" id="h11-0-5" class="i">+impl Ord for Value {
+</a><a href="#h11-0-6" id="h11-0-6" class="i">+    fn cmp(&amp;self, other: &amp;Self) -&gt; std::cmp::Ordering {
+</a><a href="#h11-0-7" id="h11-0-7" class="i">+        use std::cmp::Ordering;
+</a>         match (self, other) {
+<a href="#h11-0-9" id="h11-0-9" class="d">-            // For ordering purposes, NULL is ordered first.
+</a><a href="#h11-0-10" id="h11-0-10" class="d">-            //
+</a><a href="#h11-0-11" id="h11-0-11" class="d">-            // TODO: revisit this and make sure the NULL handling is sound and
+</a><a href="#h11-0-12" id="h11-0-12" class="d">-            // consistent with e.g. hash and eq handling.
+</a><a href="#h11-0-13" id="h11-0-13" class="d">-            (Self::Null, Self::Null) =&gt; Some(std::cmp::Ordering::Equal),
+</a><a href="#h11-0-14" id="h11-0-14" class="d">-            (Self::Null, _) =&gt; Some(std::cmp::Ordering::Less),
+</a><a href="#h11-0-15" id="h11-0-15" class="d">-            (_, Self::Null) =&gt; Some(std::cmp::Ordering::Greater),
+</a><a href="#h11-0-16" id="h11-0-16" class="d">-            (Self::Boolean(a), Self::Boolean(b)) =&gt; a.partial_cmp(b),
+</a><a href="#h11-0-17" id="h11-0-17" class="d">-            (Self::Float(a), Self::Float(b)) =&gt; a.partial_cmp(b),
+</a><a href="#h11-0-18" id="h11-0-18" class="d">-            (Self::Float(a), Self::Integer(b)) =&gt; a.partial_cmp(&amp;(*b as f64)),
+</a><a href="#h11-0-19" id="h11-0-19" class="d">-            (Self::Integer(a), Self::Float(b)) =&gt; (*a as f64).partial_cmp(b),
+</a><a href="#h11-0-20" id="h11-0-20" class="d">-            (Self::Integer(a), Self::Integer(b)) =&gt; a.partial_cmp(b),
+</a><a href="#h11-0-21" id="h11-0-21" class="d">-            (Self::String(a), Self::String(b)) =&gt; a.partial_cmp(b),
+</a><a href="#h11-0-22" id="h11-0-22" class="d">-            (_, _) =&gt; None,
+</a><a href="#h11-0-23" id="h11-0-23" class="i">+            // For ordering purposes, we consider e.g. NULL and NaN equal, and
+</a><a href="#h11-0-24" id="h11-0-24" class="i">+            // establish a total order.
+</a><a href="#h11-0-25" id="h11-0-25" class="i">+            (Self::Null, Self::Null) =&gt; Ordering::Equal,
+</a><a href="#h11-0-26" id="h11-0-26" class="i">+            (Self::Boolean(a), Self::Boolean(b)) =&gt; a.cmp(b),
+</a><a href="#h11-0-27" id="h11-0-27" class="i">+            (Self::Integer(a), Self::Integer(b)) =&gt; a.cmp(b),
+</a><a href="#h11-0-28" id="h11-0-28" class="i">+            (Self::Integer(a), Self::Float(b)) =&gt; (*a as f64).total_cmp(b),
+</a><a href="#h11-0-29" id="h11-0-29" class="i">+            (Self::Float(a), Self::Integer(b)) =&gt; a.total_cmp(&amp;(*b as f64)),
+</a><a href="#h11-0-30" id="h11-0-30" class="i">+            (Self::Float(a), Self::Float(b)) =&gt; a.total_cmp(b),
+</a><a href="#h11-0-31" id="h11-0-31" class="i">+            (Self::String(a), Self::String(b)) =&gt; a.cmp(b),
+</a><a href="#h11-0-32" id="h11-0-32" class="i">+
+</a><a href="#h11-0-33" id="h11-0-33" class="i">+            // Mixed types. Should rarely come up, but we may as well establish
+</a><a href="#h11-0-34" id="h11-0-34" class="i">+            // an order, especially since we also implement Eq. We can handle
+</a><a href="#h11-0-35" id="h11-0-35" class="i">+            // any special cases during expression evaluation.
+</a><a href="#h11-0-36" id="h11-0-36" class="i">+            (Self::Null, _) =&gt; Ordering::Less,
+</a><a href="#h11-0-37" id="h11-0-37" class="i">+            (_, Self::Null) =&gt; Ordering::Greater,
+</a><a href="#h11-0-38" id="h11-0-38" class="i">+            (Self::Boolean(_), _) =&gt; Ordering::Less,
+</a><a href="#h11-0-39" id="h11-0-39" class="i">+            (_, Self::Boolean(_)) =&gt; Ordering::Greater,
+</a><a href="#h11-0-40" id="h11-0-40" class="i">+            (Self::Float(_), _) =&gt; Ordering::Less,
+</a><a href="#h11-0-41" id="h11-0-41" class="i">+            (_, Self::Float(_)) =&gt; Ordering::Greater,
+</a><a href="#h11-0-42" id="h11-0-42" class="i">+            (Self::Integer(_), _) =&gt; Ordering::Less,
+</a><a href="#h11-0-43" id="h11-0-43" class="i">+            (_, Self::Integer(_)) =&gt; Ordering::Greater,
+</a><a href="#h11-0-44" id="h11-0-44" class="i">+            #[allow(unreachable_patterns)]
+</a><a href="#h11-0-45" id="h11-0-45" class="i">+            (Self::String(_), _) =&gt; Ordering::Less,
+</a><a href="#h11-0-46" id="h11-0-46" class="i">+            #[allow(unreachable_patterns)]
+</a><a href="#h11-0-47" id="h11-0-47" class="i">+            (_, Self::String(_)) =&gt; Ordering::Greater,
+</a>         }
+     }
+ }
+ 
+<a href="#h11-0-52" id="h11-0-52" class="i">+impl PartialOrd for Value {
+</a><a href="#h11-0-53" id="h11-0-53" class="i">+    fn partial_cmp(&amp;self, other: &amp;Self) -&gt; Option&lt;std::cmp::Ordering&gt; {
+</a><a href="#h11-0-54" id="h11-0-54" class="i">+        Some(self.cmp(other))
+</a><a href="#h11-0-55" id="h11-0-55" class="i">+    }
+</a><a href="#h11-0-56" id="h11-0-56" class="i">+}
+</a><a href="#h11-0-57" id="h11-0-57" class="i">+
+</a> impl Value {
+     /// Returns the value&#39;s datatype, or None for null values.
+     pub fn datatype(&amp;self) -&gt; Option&lt;DataType&gt; {
+<b>diff --git a/<a id="h12" href="../file/tests/sql/expression.rs.html">tests/sql/expression.rs</a> b/<a href="../file/tests/sql/expression.rs.html">tests/sql/expression.rs</a></b>
+<a href="#h12-0" id="h12-0" class="h">@@ -119,6 +119,7 @@ test_expr! {
+</a>     op_eq_float_nan: &quot;NAN = NAN&quot; =&gt; Ok(Boolean(false)),
+     op_eq_float_int: &quot;3.0 = 3&quot; =&gt; Ok(Boolean(true)),
+     op_eq_float_int_not: &quot;3.01 = 3&quot; =&gt; Ok(Boolean(false)),
+<a href="#h12-0-3" id="h12-0-3" class="i">+    op_eq_float_zeroes: &quot;0.0 = -0.0&quot; =&gt; Ok(Boolean(true)),
+</a>     op_eq_int: &quot;1 = 1&quot; =&gt; Ok(Boolean(true)),
+     op_eq_int_not: &quot;1 = 2&quot; =&gt; Ok(Boolean(false)),
+     op_eq_int_float: &quot;3 = 3.0&quot; =&gt; Ok(Boolean(true)),
+</pre>
+</div>
+</body>
+</html>

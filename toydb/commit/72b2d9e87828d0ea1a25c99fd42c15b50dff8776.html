@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>raft: use log to track follower votes - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/72b2d9e87828d0ea1a25c99fd42c15b50dff8776.html">72b2d9e87828d0ea1a25c99fd42c15b50dff8776</a>
+<b>parent</b> <a href="../commit/a5fdfc618e8b3aab514f3c48577650560e5a021e.html">a5fdfc618e8b3aab514f3c48577650560e5a021e</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Sun,  9 Jun 2024 00:09:52 +0200
+
+raft: use log to track follower votes
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/raft/node.rs</a></td><td> | </td><td class="num">32</td><td><span class="i">+++++++++++++</span><span class="d">-------------------</span></td></tr>
+</table></pre><pre>1 file changed, 13 insertions(+), 19 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/raft/node.rs.html">src/raft/node.rs</a> b/<a href="../file/src/raft/node.rs.html">src/raft/node.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -293,8 +293,7 @@ impl RawNode&lt;Candidate&gt; {
+</a>             // We lost the election, follow the winner.
+             assert_eq!(term, self.term, &quot;Can&#39;t follow leader in different term&quot;);
+             info!(&quot;Lost election, following leader {} in term {}&quot;, leader, term);
+<a href="#h0-0-3" id="h0-0-3" class="d">-            let vote = Some(self.id); // by definition
+</a><a href="#h0-0-4" id="h0-0-4" class="d">-            Ok(self.into_role(Follower::new(Some(leader), vote, election_timeout)))
+</a><a href="#h0-0-5" id="h0-0-5" class="i">+            Ok(self.into_role(Follower::new(Some(leader), election_timeout)))
+</a>         } else {
+             // We found a new term, but we don&#39;t necessarily know who the leader
+             // is yet. We&#39;ll find out when we step a message from it.
+<a href="#h0-1" id="h0-1" class="h">@@ -302,7 +301,7 @@ impl RawNode&lt;Candidate&gt; {
+</a>             info!(&quot;Discovered new term {}&quot;, term);
+             self.term = term;
+             self.log.set_term(term, None)?;
+<a href="#h0-1-3" id="h0-1-3" class="d">-            Ok(self.into_role(Follower::new(None, None, election_timeout)))
+</a><a href="#h0-1-4" id="h0-1-4" class="i">+            Ok(self.into_role(Follower::new(None, election_timeout)))
+</a>         }
+     }
+ 
+<a href="#h0-2" id="h0-2" class="h">@@ -416,8 +415,6 @@ pub struct Follower {
+</a>     leader_seen: Ticks,
+     /// The leader_seen timeout before triggering an election.
+     election_timeout: Ticks,
+<a href="#h0-2-3" id="h0-2-3" class="d">-    /// The node we voted for in the current term, if any.
+</a><a href="#h0-2-4" id="h0-2-4" class="d">-    vote: Option&lt;NodeID&gt;,
+</a>     // Local client requests that have been forwarded to the leader. These are
+     // aborted on leader/term changes.
+     forwarded: HashSet&lt;RequestID&gt;,
+<a href="#h0-3" id="h0-3" class="h">@@ -425,8 +422,8 @@ pub struct Follower {
+</a> 
+ impl Follower {
+     /// Creates a new follower role.
+<a href="#h0-3-3" id="h0-3-3" class="d">-    fn new(leader: Option&lt;NodeID&gt;, vote: Option&lt;NodeID&gt;, election_timeout: Ticks) -&gt; Self {
+</a><a href="#h0-3-4" id="h0-3-4" class="d">-        Self { leader, vote, leader_seen: 0, election_timeout, forwarded: HashSet::new() }
+</a><a href="#h0-3-5" id="h0-3-5" class="i">+    fn new(leader: Option&lt;NodeID&gt;, election_timeout: Ticks) -&gt; Self {
+</a><a href="#h0-3-6" id="h0-3-6" class="i">+        Self { leader, leader_seen: 0, election_timeout, forwarded: HashSet::new() }
+</a>     }
+ }
+ 
+<a href="#h0-4" id="h0-4" class="h">@@ -442,8 +439,8 @@ impl RawNode&lt;Follower&gt; {
+</a>         node_tx: crossbeam::channel::Sender&lt;Envelope&gt;,
+         opts: Options,
+     ) -&gt; Result&lt;Self&gt; {
+<a href="#h0-4-3" id="h0-4-3" class="d">-        let (term, vote) = log.get_term_vote();
+</a><a href="#h0-4-4" id="h0-4-4" class="d">-        let role = Follower::new(None, vote, 0);
+</a><a href="#h0-4-5" id="h0-4-5" class="i">+        let term = log.get_term();
+</a><a href="#h0-4-6" id="h0-4-6" class="i">+        let role = Follower::new(None, 0);
+</a>         let mut node = Self { id, peers, term, log, state, node_tx, opts, role };
+         node.role.election_timeout = node.gen_election_timeout();
+         Ok(node)
+<a href="#h0-5" id="h0-5" class="h">@@ -460,14 +457,12 @@ impl RawNode&lt;Follower&gt; {
+</a>         } else {
+             assert!(self.role.forwarded.is_empty(), &quot;Leaderless follower has forwarded requests&quot;);
+         }
+<a href="#h0-5-3" id="h0-5-3" class="i">+        assert!(self.role.leader_seen &lt; self.role.election_timeout, &quot;Election timeout passed&quot;);
+</a> 
+         // NB: We allow vote not in peers, since this can happen when removing
+         // nodes from the cluster via a cold restart. We also allow vote for
+         // self, which can happen if we lose an election.
+ 
+<a href="#h0-5-9" id="h0-5-9" class="d">-        debug_assert_eq!(self.role.vote, self.log.get_term_vote().1, &quot;Vote does not match log&quot;);
+</a><a href="#h0-5-10" id="h0-5-10" class="d">-        assert!(self.role.leader_seen &lt; self.role.election_timeout, &quot;Election timeout passed&quot;);
+</a><a href="#h0-5-11" id="h0-5-11" class="d">-
+</a>         Ok(())
+     }
+ 
+<a href="#h0-6" id="h0-6" class="h">@@ -486,7 +481,7 @@ impl RawNode&lt;Follower&gt; {
+</a>         Ok(node)
+     }
+ 
+<a href="#h0-6-3" id="h0-6-3" class="d">-    /// Transitions the candidate into a follower, either a leaderless follower
+</a><a href="#h0-6-4" id="h0-6-4" class="i">+    /// Transitions the follower into a follower, either a leaderless follower
+</a>     /// in a new term (e.g. if someone holds a new election) or following a
+     /// leader in the current term once someone wins the election.
+     fn into_follower(mut self, leader: Option&lt;NodeID&gt;, term: Term) -&gt; Result&lt;RawNode&lt;Follower&gt;&gt; {
+<a href="#h0-7" id="h0-7" class="h">@@ -500,7 +495,7 @@ impl RawNode&lt;Follower&gt; {
+</a>             assert_eq!(self.role.leader, None, &quot;Already have leader in term&quot;);
+             assert_eq!(term, self.term, &quot;Can&#39;t follow leader in different term&quot;);
+             info!(&quot;Following leader {} in term {}&quot;, leader, term);
+<a href="#h0-7-3" id="h0-7-3" class="d">-            self.role = Follower::new(Some(leader), self.role.vote, self.role.election_timeout);
+</a><a href="#h0-7-4" id="h0-7-4" class="i">+            self.role = Follower::new(Some(leader), self.role.election_timeout);
+</a>         } else {
+             // We found a new term, but we don&#39;t necessarily know who the leader
+             // is yet. We&#39;ll find out when we step a message from it.
+<a href="#h0-8" id="h0-8" class="h">@@ -508,7 +503,7 @@ impl RawNode&lt;Follower&gt; {
+</a>             info!(&quot;Discovered new term {}&quot;, term);
+             self.term = term;
+             self.log.set_term(term, None)?;
+<a href="#h0-8-3" id="h0-8-3" class="d">-            self.role = Follower::new(None, None, self.gen_election_timeout());
+</a><a href="#h0-8-4" id="h0-8-4" class="i">+            self.role = Follower::new(None, self.gen_election_timeout());
+</a>         }
+         Ok(self)
+     }
+<a href="#h0-9" id="h0-9" class="h">@@ -593,7 +588,7 @@ impl RawNode&lt;Follower&gt; {
+</a>             // A candidate in this term is requesting our vote.
+             Message::Campaign { last_index, last_term } =&gt; {
+                 // Don&#39;t vote if we already voted for someone else in this term.
+<a href="#h0-9-3" id="h0-9-3" class="d">-                if let Some(vote) = self.role.vote {
+</a><a href="#h0-9-4" id="h0-9-4" class="i">+                if let (_, Some(vote)) = self.log.get_term_vote() {
+</a>                     if msg.from != vote {
+                         self.send(msg.from, Message::CampaignResponse { vote: false })?;
+                         return Ok(self.into());
+<a href="#h0-10" id="h0-10" class="h">@@ -609,9 +604,8 @@ impl RawNode&lt;Follower&gt; {
+</a> 
+                 // Grant the vote.
+                 info!(&quot;Voting for {} in term {} election&quot;, msg.from, self.term);
+<a href="#h0-10-3" id="h0-10-3" class="d">-                self.send(msg.from, Message::CampaignResponse { vote: true })?;
+</a>                 self.log.set_term(self.term, Some(msg.from))?;
+<a href="#h0-10-5" id="h0-10-5" class="d">-                self.role.vote = Some(msg.from);
+</a><a href="#h0-10-6" id="h0-10-6" class="i">+                self.send(msg.from, Message::CampaignResponse { vote: true })?;
+</a>             }
+ 
+             // We may receive a vote after we lost an election and followed a
+<a href="#h0-11" id="h0-11" class="h">@@ -827,7 +821,7 @@ impl RawNode&lt;Leader&gt; {
+</a>         self.term = term;
+         self.log.set_term(term, None)?;
+         let election_timeout = self.gen_election_timeout();
+<a href="#h0-11-3" id="h0-11-3" class="d">-        Ok(self.into_role(Follower::new(None, None, election_timeout)))
+</a><a href="#h0-11-4" id="h0-11-4" class="i">+        Ok(self.into_role(Follower::new(None, election_timeout)))
+</a>     }
+ 
+     /// Processes a message.
+</pre>
+</div>
+</body>
+</html>

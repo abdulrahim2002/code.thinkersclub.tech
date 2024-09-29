@@ -1,0 +1,845 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>sql: restructured planner module - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/d92f45e3a42f080e6307c35153be7ec4fa7047cd.html">d92f45e3a42f080e6307c35153be7ec4fa7047cd</a>
+<b>parent</b> <a href="../commit/f5cad7555f547785d6c9d4a49231bd7a43468068.html">f5cad7555f547785d6c9d4a49231bd7a43468068</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Wed, 18 Sep 2019 21:07:13 +0200
+
+sql: restructured planner module
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/sql/executor/mod.rs</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/sql/executor/order.rs</a></td><td> | </td><td class="num">6</td><td><span class="i">+++</span><span class="d">---</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/sql/mod.rs</a></td><td> | </td><td class="num">4</td><td><span class="i">++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">src/sql/optimizer/constant_folder.rs</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h4">src/sql/optimizer/mod.rs</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+<tr><td class="D">D</td><td><a href="#h5">src/sql/plan.rs</a></td><td> | </td><td class="num">360</td><td><span class="i"></span><span class="d">-------------------------------------------------------------------------------</span></td></tr>
+<tr><td class="A">A</td><td><a href="#h6">src/sql/planner/mod.rs</a></td><td> | </td><td class="num">208</td><td><span class="i">+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d"></span></td></tr>
+<tr><td class="A">A</td><td><a href="#h7">src/sql/planner/plan.rs</a></td><td> | </td><td class="num">162</td><td><span class="i">+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d"></span></td></tr>
+</table></pre><pre>8 files changed, 378 insertions(+), 368 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/sql/executor/mod.rs.html">src/sql/executor/mod.rs</a> b/<a href="../file/src/sql/executor/mod.rs.html">src/sql/executor/mod.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -24,7 +24,7 @@ use projection::Projection;
+</a> use scan::Scan;
+ use update::Update;
+ 
+<a href="#h0-0-3" id="h0-0-3" class="d">-use super::plan::Node;
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+use super::planner::Node;
+</a> use super::types::Row;
+ use super::Storage;
+ use crate::Error;
+<b>diff --git a/<a id="h1" href="../file/src/sql/executor/order.rs.html">src/sql/executor/order.rs</a> b/<a href="../file/src/sql/executor/order.rs.html">src/sql/executor/order.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -1,5 +1,5 @@
+</a> use super::super::expression::{Environment, Expression};
+<a href="#h1-0-1" id="h1-0-1" class="d">-use super::super::plan;
+</a><a href="#h1-0-2" id="h1-0-2" class="i">+use super::super::planner;
+</a> use super::super::types::{Row, Value};
+ use super::{Context, Executor};
+ use crate::Error;
+<a href="#h1-1" id="h1-1" class="h">@@ -14,7 +14,7 @@ impl Order {
+</a>     pub fn execute(
+         _: &amp;mut Context,
+         mut source: Box&lt;dyn Executor&gt;,
+<a href="#h1-1-3" id="h1-1-3" class="d">-        orders: Vec&lt;(Expression, plan::Order)&gt;,
+</a><a href="#h1-1-4" id="h1-1-4" class="i">+        orders: Vec&lt;(Expression, planner::Order)&gt;,
+</a>     ) -&gt; Result&lt;Box&lt;dyn Executor&gt;, Error&gt; {
+         let columns = source.columns();
+ 
+<a href="#h1-2" id="h1-2" class="h">@@ -43,7 +43,7 @@ impl Order {
+</a>                 match value_a.partial_cmp(value_b) {
+                     Some(std::cmp::Ordering::Equal) =&gt; {}
+                     Some(o) =&gt; {
+<a href="#h1-2-3" id="h1-2-3" class="d">-                        return if *order == plan::Order::Ascending { o } else { o.reverse() }
+</a><a href="#h1-2-4" id="h1-2-4" class="i">+                        return if *order == planner::Order::Ascending { o } else { o.reverse() }
+</a>                     }
+                     None =&gt; {}
+                 }
+<b>diff --git a/<a id="h2" href="../file/src/sql/mod.rs.html">src/sql/mod.rs</a> b/<a href="../file/src/sql/mod.rs.html">src/sql/mod.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -2,7 +2,7 @@ mod executor;
+</a> mod expression;
+ mod optimizer;
+ mod parser;
+<a href="#h2-0-3" id="h2-0-3" class="d">-mod plan;
+</a><a href="#h2-0-4" id="h2-0-4" class="i">+mod planner;
+</a> mod schema;
+ mod storage;
+ #[cfg(test)]
+<a href="#h2-1" id="h2-1" class="h">@@ -12,5 +12,5 @@ pub mod types;
+</a> pub use executor::Context;
+ pub use expression::{Environment, Expression};
+ pub use parser::{ast, lexer, Parser};
+<a href="#h2-1-3" id="h2-1-3" class="d">-pub use plan::Plan;
+</a><a href="#h2-1-4" id="h2-1-4" class="i">+pub use planner::Plan;
+</a> pub use storage::Storage;
+<b>diff --git a/<a id="h3" href="../file/src/sql/optimizer/constant_folder.rs.html">src/sql/optimizer/constant_folder.rs</a> b/<a href="../file/src/sql/optimizer/constant_folder.rs.html">src/sql/optimizer/constant_folder.rs</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -1,4 +1,4 @@
+</a><a href="#h3-0-0" id="h3-0-0" class="d">-use super::super::plan::Node;
+</a><a href="#h3-0-1" id="h3-0-1" class="i">+use super::super::planner::Node;
+</a> use super::super::{Environment, Expression};
+ use super::Optimizer;
+ use crate::Error;
+<b>diff --git a/<a id="h4" href="../file/src/sql/optimizer/mod.rs.html">src/sql/optimizer/mod.rs</a> b/<a href="../file/src/sql/optimizer/mod.rs.html">src/sql/optimizer/mod.rs</a></b>
+<a href="#h4-0" id="h4-0" class="h">@@ -2,7 +2,7 @@ mod constant_folder;
+</a> 
+ pub use constant_folder::ConstantFolder;
+ 
+<a href="#h4-0-3" id="h4-0-3" class="d">-use super::plan::Node;
+</a><a href="#h4-0-4" id="h4-0-4" class="i">+use super::planner::Node;
+</a> use crate::Error;
+ 
+ /// A plan optimizer
+<b>diff --git a/<a id="h5" href="../file/src/sql/plan.rs.html">src/sql/plan.rs</a> b/<a href="../file/src/sql/plan.rs.html">src/sql/plan.rs</a></b>
+<a href="#h5-0" id="h5-0" class="h">@@ -1,360 +0,0 @@
+</a><a href="#h5-0-0" id="h5-0-0" class="d">-use super::executor::{Context, Executor};
+</a><a href="#h5-0-1" id="h5-0-1" class="d">-use super::expression::{Environment, Expression, Expressions};
+</a><a href="#h5-0-2" id="h5-0-2" class="d">-use super::optimizer;
+</a><a href="#h5-0-3" id="h5-0-3" class="d">-use super::optimizer::Optimizer;
+</a><a href="#h5-0-4" id="h5-0-4" class="d">-use super::parser::ast;
+</a><a href="#h5-0-5" id="h5-0-5" class="d">-use super::schema;
+</a><a href="#h5-0-6" id="h5-0-6" class="d">-use super::types::{ResultSet, Value};
+</a><a href="#h5-0-7" id="h5-0-7" class="d">-use crate::Error;
+</a><a href="#h5-0-8" id="h5-0-8" class="d">-use std::collections::BTreeMap;
+</a><a href="#h5-0-9" id="h5-0-9" class="d">-
+</a><a href="#h5-0-10" id="h5-0-10" class="d">-/// A query plan
+</a><a href="#h5-0-11" id="h5-0-11" class="d">-#[derive(Debug)]
+</a><a href="#h5-0-12" id="h5-0-12" class="d">-pub struct Plan {
+</a><a href="#h5-0-13" id="h5-0-13" class="d">-    root: Node,
+</a><a href="#h5-0-14" id="h5-0-14" class="d">-}
+</a><a href="#h5-0-15" id="h5-0-15" class="d">-
+</a><a href="#h5-0-16" id="h5-0-16" class="d">-impl Plan {
+</a><a href="#h5-0-17" id="h5-0-17" class="d">-    /// Builds a plan from an AST statement
+</a><a href="#h5-0-18" id="h5-0-18" class="d">-    pub fn build(statement: ast::Statement) -&gt; Result&lt;Self, Error&gt; {
+</a><a href="#h5-0-19" id="h5-0-19" class="d">-        Planner::new().build(statement)
+</a><a href="#h5-0-20" id="h5-0-20" class="d">-    }
+</a><a href="#h5-0-21" id="h5-0-21" class="d">-
+</a><a href="#h5-0-22" id="h5-0-22" class="d">-    /// Executes the plan, consuming it
+</a><a href="#h5-0-23" id="h5-0-23" class="d">-    pub fn execute(self, mut ctx: Context) -&gt; Result&lt;ResultSet, Error&gt; {
+</a><a href="#h5-0-24" id="h5-0-24" class="d">-        Ok(ResultSet::from_executor(Executor::execute(&amp;mut ctx, self.root)?))
+</a><a href="#h5-0-25" id="h5-0-25" class="d">-    }
+</a><a href="#h5-0-26" id="h5-0-26" class="d">-
+</a><a href="#h5-0-27" id="h5-0-27" class="d">-    /// Optimizes the plan, consuming it
+</a><a href="#h5-0-28" id="h5-0-28" class="d">-    pub fn optimize(mut self) -&gt; Result&lt;Self, Error&gt; {
+</a><a href="#h5-0-29" id="h5-0-29" class="d">-        self.root = optimizer::ConstantFolder.optimize(self.root)?;
+</a><a href="#h5-0-30" id="h5-0-30" class="d">-        Ok(self)
+</a><a href="#h5-0-31" id="h5-0-31" class="d">-    }
+</a><a href="#h5-0-32" id="h5-0-32" class="d">-}
+</a><a href="#h5-0-33" id="h5-0-33" class="d">-
+</a><a href="#h5-0-34" id="h5-0-34" class="d">-/// A plan node
+</a><a href="#h5-0-35" id="h5-0-35" class="d">-#[derive(Debug)]
+</a><a href="#h5-0-36" id="h5-0-36" class="d">-pub enum Node {
+</a><a href="#h5-0-37" id="h5-0-37" class="d">-    CreateTable { schema: schema::Table },
+</a><a href="#h5-0-38" id="h5-0-38" class="d">-    Delete { table: String, source: Box&lt;Self&gt; },
+</a><a href="#h5-0-39" id="h5-0-39" class="d">-    DropTable { name: String },
+</a><a href="#h5-0-40" id="h5-0-40" class="d">-    Filter { source: Box&lt;Self&gt;, predicate: Expression },
+</a><a href="#h5-0-41" id="h5-0-41" class="d">-    Insert { table: String, columns: Vec&lt;String&gt;, expressions: Vec&lt;Expressions&gt; },
+</a><a href="#h5-0-42" id="h5-0-42" class="d">-    Limit { source: Box&lt;Self&gt;, limit: u64 },
+</a><a href="#h5-0-43" id="h5-0-43" class="d">-    Nothing,
+</a><a href="#h5-0-44" id="h5-0-44" class="d">-    Offset { source: Box&lt;Self&gt;, offset: u64 },
+</a><a href="#h5-0-45" id="h5-0-45" class="d">-    Order { source: Box&lt;Self&gt;, orders: Vec&lt;(Expression, Order)&gt; },
+</a><a href="#h5-0-46" id="h5-0-46" class="d">-    Projection { source: Box&lt;Self&gt;, labels: Vec&lt;Option&lt;String&gt;&gt;, expressions: Expressions },
+</a><a href="#h5-0-47" id="h5-0-47" class="d">-    Scan { table: String },
+</a><a href="#h5-0-48" id="h5-0-48" class="d">-    // Uses BTreeMap for test stability
+</a><a href="#h5-0-49" id="h5-0-49" class="d">-    Update { table: String, source: Box&lt;Self&gt;, expressions: BTreeMap&lt;String, Expression&gt; },
+</a><a href="#h5-0-50" id="h5-0-50" class="d">-}
+</a><a href="#h5-0-51" id="h5-0-51" class="d">-
+</a><a href="#h5-0-52" id="h5-0-52" class="d">-impl Node {
+</a><a href="#h5-0-53" id="h5-0-53" class="d">-    /// Recursively transforms nodes by applying functions before and after descending.
+</a><a href="#h5-0-54" id="h5-0-54" class="d">-    pub fn transform&lt;B, A&gt;(mut self, pre: &amp;B, post: &amp;A) -&gt; Result&lt;Self, Error&gt;
+</a><a href="#h5-0-55" id="h5-0-55" class="d">-    where
+</a><a href="#h5-0-56" id="h5-0-56" class="d">-        B: Fn(Self) -&gt; Result&lt;Self, Error&gt;,
+</a><a href="#h5-0-57" id="h5-0-57" class="d">-        A: Fn(Self) -&gt; Result&lt;Self, Error&gt;,
+</a><a href="#h5-0-58" id="h5-0-58" class="d">-    {
+</a><a href="#h5-0-59" id="h5-0-59" class="d">-        self = pre(self)?;
+</a><a href="#h5-0-60" id="h5-0-60" class="d">-        self = match self {
+</a><a href="#h5-0-61" id="h5-0-61" class="d">-            n @ Self::CreateTable { .. } =&gt; n,
+</a><a href="#h5-0-62" id="h5-0-62" class="d">-            n @ Self::DropTable { .. } =&gt; n,
+</a><a href="#h5-0-63" id="h5-0-63" class="d">-            n @ Self::Insert { .. } =&gt; n,
+</a><a href="#h5-0-64" id="h5-0-64" class="d">-            n @ Self::Nothing =&gt; n,
+</a><a href="#h5-0-65" id="h5-0-65" class="d">-            n @ Self::Scan { .. } =&gt; n,
+</a><a href="#h5-0-66" id="h5-0-66" class="d">-            Self::Delete { table, source } =&gt; {
+</a><a href="#h5-0-67" id="h5-0-67" class="d">-                Self::Delete { table, source: source.transform(pre, post)?.into() }
+</a><a href="#h5-0-68" id="h5-0-68" class="d">-            }
+</a><a href="#h5-0-69" id="h5-0-69" class="d">-            Self::Filter { source, predicate } =&gt; {
+</a><a href="#h5-0-70" id="h5-0-70" class="d">-                Self::Filter { source: source.transform(pre, post)?.into(), predicate }
+</a><a href="#h5-0-71" id="h5-0-71" class="d">-            }
+</a><a href="#h5-0-72" id="h5-0-72" class="d">-            Self::Limit { source, limit } =&gt; {
+</a><a href="#h5-0-73" id="h5-0-73" class="d">-                Self::Limit { source: source.transform(pre, post)?.into(), limit }
+</a><a href="#h5-0-74" id="h5-0-74" class="d">-            }
+</a><a href="#h5-0-75" id="h5-0-75" class="d">-            Self::Offset { source, offset } =&gt; {
+</a><a href="#h5-0-76" id="h5-0-76" class="d">-                Self::Offset { source: source.transform(pre, post)?.into(), offset }
+</a><a href="#h5-0-77" id="h5-0-77" class="d">-            }
+</a><a href="#h5-0-78" id="h5-0-78" class="d">-            Self::Order { source, orders } =&gt; {
+</a><a href="#h5-0-79" id="h5-0-79" class="d">-                Self::Order { source: source.transform(pre, post)?.into(), orders }
+</a><a href="#h5-0-80" id="h5-0-80" class="d">-            }
+</a><a href="#h5-0-81" id="h5-0-81" class="d">-            Self::Projection { source, labels, expressions } =&gt; Self::Projection {
+</a><a href="#h5-0-82" id="h5-0-82" class="d">-                source: source.transform(pre, post)?.into(),
+</a><a href="#h5-0-83" id="h5-0-83" class="d">-                labels,
+</a><a href="#h5-0-84" id="h5-0-84" class="d">-                expressions,
+</a><a href="#h5-0-85" id="h5-0-85" class="d">-            },
+</a><a href="#h5-0-86" id="h5-0-86" class="d">-            Self::Update { table, source, expressions } =&gt; {
+</a><a href="#h5-0-87" id="h5-0-87" class="d">-                Self::Update { table, source: source.transform(pre, post)?.into(), expressions }
+</a><a href="#h5-0-88" id="h5-0-88" class="d">-            }
+</a><a href="#h5-0-89" id="h5-0-89" class="d">-        };
+</a><a href="#h5-0-90" id="h5-0-90" class="d">-        post(self)
+</a><a href="#h5-0-91" id="h5-0-91" class="d">-    }
+</a><a href="#h5-0-92" id="h5-0-92" class="d">-
+</a><a href="#h5-0-93" id="h5-0-93" class="d">-    /// Transforms all expressions in a node by calling .transform() on them
+</a><a href="#h5-0-94" id="h5-0-94" class="d">-    /// with the given functions.
+</a><a href="#h5-0-95" id="h5-0-95" class="d">-    pub fn transform_expressions&lt;B, A&gt;(self, pre: &amp;B, post: &amp;A) -&gt; Result&lt;Self, Error&gt;
+</a><a href="#h5-0-96" id="h5-0-96" class="d">-    where
+</a><a href="#h5-0-97" id="h5-0-97" class="d">-        B: Fn(Expression) -&gt; Result&lt;Expression, Error&gt;,
+</a><a href="#h5-0-98" id="h5-0-98" class="d">-        A: Fn(Expression) -&gt; Result&lt;Expression, Error&gt;,
+</a><a href="#h5-0-99" id="h5-0-99" class="d">-    {
+</a><a href="#h5-0-100" id="h5-0-100" class="d">-        Ok(match self {
+</a><a href="#h5-0-101" id="h5-0-101" class="d">-            n @ Self::CreateTable { .. } =&gt; n,
+</a><a href="#h5-0-102" id="h5-0-102" class="d">-            n @ Self::Delete { .. } =&gt; n,
+</a><a href="#h5-0-103" id="h5-0-103" class="d">-            n @ Self::DropTable { .. } =&gt; n,
+</a><a href="#h5-0-104" id="h5-0-104" class="d">-            n @ Self::Limit { .. } =&gt; n,
+</a><a href="#h5-0-105" id="h5-0-105" class="d">-            n @ Self::Nothing =&gt; n,
+</a><a href="#h5-0-106" id="h5-0-106" class="d">-            n @ Self::Offset { .. } =&gt; n,
+</a><a href="#h5-0-107" id="h5-0-107" class="d">-            n @ Self::Scan { .. } =&gt; n,
+</a><a href="#h5-0-108" id="h5-0-108" class="d">-            Self::Filter { source, predicate } =&gt; {
+</a><a href="#h5-0-109" id="h5-0-109" class="d">-                Self::Filter { source, predicate: predicate.transform(pre, post)? }
+</a><a href="#h5-0-110" id="h5-0-110" class="d">-            }
+</a><a href="#h5-0-111" id="h5-0-111" class="d">-            Self::Insert { table, columns, expressions } =&gt; Self::Insert {
+</a><a href="#h5-0-112" id="h5-0-112" class="d">-                table,
+</a><a href="#h5-0-113" id="h5-0-113" class="d">-                columns,
+</a><a href="#h5-0-114" id="h5-0-114" class="d">-                expressions: expressions
+</a><a href="#h5-0-115" id="h5-0-115" class="d">-                    .into_iter()
+</a><a href="#h5-0-116" id="h5-0-116" class="d">-                    .map(|exprs| exprs.into_iter().map(|e| e.transform(pre, post)).collect())
+</a><a href="#h5-0-117" id="h5-0-117" class="d">-                    .collect::&lt;Result&lt;_, Error&gt;&gt;()?,
+</a><a href="#h5-0-118" id="h5-0-118" class="d">-            },
+</a><a href="#h5-0-119" id="h5-0-119" class="d">-            Self::Order { source, orders } =&gt; Self::Order {
+</a><a href="#h5-0-120" id="h5-0-120" class="d">-                source,
+</a><a href="#h5-0-121" id="h5-0-121" class="d">-                orders: orders
+</a><a href="#h5-0-122" id="h5-0-122" class="d">-                    .into_iter()
+</a><a href="#h5-0-123" id="h5-0-123" class="d">-                    .map(|(e, o)| e.transform(pre, post).map(|e| (e, o)))
+</a><a href="#h5-0-124" id="h5-0-124" class="d">-                    .collect::&lt;Result&lt;_, Error&gt;&gt;()?,
+</a><a href="#h5-0-125" id="h5-0-125" class="d">-            },
+</a><a href="#h5-0-126" id="h5-0-126" class="d">-            Self::Projection { source, labels, expressions } =&gt; Self::Projection {
+</a><a href="#h5-0-127" id="h5-0-127" class="d">-                source,
+</a><a href="#h5-0-128" id="h5-0-128" class="d">-                labels,
+</a><a href="#h5-0-129" id="h5-0-129" class="d">-                expressions: expressions
+</a><a href="#h5-0-130" id="h5-0-130" class="d">-                    .into_iter()
+</a><a href="#h5-0-131" id="h5-0-131" class="d">-                    .map(|e| e.transform(pre, post))
+</a><a href="#h5-0-132" id="h5-0-132" class="d">-                    .collect::&lt;Result&lt;_, Error&gt;&gt;()?,
+</a><a href="#h5-0-133" id="h5-0-133" class="d">-            },
+</a><a href="#h5-0-134" id="h5-0-134" class="d">-            Self::Update { table, source, expressions } =&gt; Self::Update {
+</a><a href="#h5-0-135" id="h5-0-135" class="d">-                table,
+</a><a href="#h5-0-136" id="h5-0-136" class="d">-                source,
+</a><a href="#h5-0-137" id="h5-0-137" class="d">-                expressions: expressions
+</a><a href="#h5-0-138" id="h5-0-138" class="d">-                    .into_iter()
+</a><a href="#h5-0-139" id="h5-0-139" class="d">-                    .map(|(k, e)| e.transform(pre, post).map(|e| (k, e)))
+</a><a href="#h5-0-140" id="h5-0-140" class="d">-                    .collect::&lt;Result&lt;_, Error&gt;&gt;()?,
+</a><a href="#h5-0-141" id="h5-0-141" class="d">-            },
+</a><a href="#h5-0-142" id="h5-0-142" class="d">-        })
+</a><a href="#h5-0-143" id="h5-0-143" class="d">-    }
+</a><a href="#h5-0-144" id="h5-0-144" class="d">-}
+</a><a href="#h5-0-145" id="h5-0-145" class="d">-
+</a><a href="#h5-0-146" id="h5-0-146" class="d">-/// A sort order
+</a><a href="#h5-0-147" id="h5-0-147" class="d">-#[derive(Debug, PartialEq)]
+</a><a href="#h5-0-148" id="h5-0-148" class="d">-pub enum Order {
+</a><a href="#h5-0-149" id="h5-0-149" class="d">-    Ascending,
+</a><a href="#h5-0-150" id="h5-0-150" class="d">-    Descending,
+</a><a href="#h5-0-151" id="h5-0-151" class="d">-}
+</a><a href="#h5-0-152" id="h5-0-152" class="d">-
+</a><a href="#h5-0-153" id="h5-0-153" class="d">-impl From&lt;ast::Order&gt; for Order {
+</a><a href="#h5-0-154" id="h5-0-154" class="d">-    fn from(o: ast::Order) -&gt; Self {
+</a><a href="#h5-0-155" id="h5-0-155" class="d">-        match o {
+</a><a href="#h5-0-156" id="h5-0-156" class="d">-            ast::Order::Ascending =&gt; Self::Ascending,
+</a><a href="#h5-0-157" id="h5-0-157" class="d">-            ast::Order::Descending =&gt; Self::Descending,
+</a><a href="#h5-0-158" id="h5-0-158" class="d">-        }
+</a><a href="#h5-0-159" id="h5-0-159" class="d">-    }
+</a><a href="#h5-0-160" id="h5-0-160" class="d">-}
+</a><a href="#h5-0-161" id="h5-0-161" class="d">-
+</a><a href="#h5-0-162" id="h5-0-162" class="d">-/// The plan builder
+</a><a href="#h5-0-163" id="h5-0-163" class="d">-struct Planner {}
+</a><a href="#h5-0-164" id="h5-0-164" class="d">-
+</a><a href="#h5-0-165" id="h5-0-165" class="d">-impl Planner {
+</a><a href="#h5-0-166" id="h5-0-166" class="d">-    /// Creates a new planner
+</a><a href="#h5-0-167" id="h5-0-167" class="d">-    fn new() -&gt; Self {
+</a><a href="#h5-0-168" id="h5-0-168" class="d">-        Self {}
+</a><a href="#h5-0-169" id="h5-0-169" class="d">-    }
+</a><a href="#h5-0-170" id="h5-0-170" class="d">-
+</a><a href="#h5-0-171" id="h5-0-171" class="d">-    /// Builds a plan tree for an AST statement
+</a><a href="#h5-0-172" id="h5-0-172" class="d">-    fn build(&amp;self, statement: ast::Statement) -&gt; Result&lt;Plan, Error&gt; {
+</a><a href="#h5-0-173" id="h5-0-173" class="d">-        Ok(Plan { root: self.build_statement(statement)? })
+</a><a href="#h5-0-174" id="h5-0-174" class="d">-    }
+</a><a href="#h5-0-175" id="h5-0-175" class="d">-
+</a><a href="#h5-0-176" id="h5-0-176" class="d">-    /// Builds a plan node for a statement
+</a><a href="#h5-0-177" id="h5-0-177" class="d">-    fn build_statement(&amp;self, statement: ast::Statement) -&gt; Result&lt;Node, Error&gt; {
+</a><a href="#h5-0-178" id="h5-0-178" class="d">-        Ok(match statement {
+</a><a href="#h5-0-179" id="h5-0-179" class="d">-            ast::Statement::CreateTable { name, columns } =&gt; {
+</a><a href="#h5-0-180" id="h5-0-180" class="d">-                Node::CreateTable { schema: self.build_schema_table(name, columns)? }
+</a><a href="#h5-0-181" id="h5-0-181" class="d">-            }
+</a><a href="#h5-0-182" id="h5-0-182" class="d">-            ast::Statement::Delete { table, r#where } =&gt; {
+</a><a href="#h5-0-183" id="h5-0-183" class="d">-                let mut source = Node::Scan { table: table.clone() };
+</a><a href="#h5-0-184" id="h5-0-184" class="d">-                if let Some(ast::WhereClause(expr)) = r#where {
+</a><a href="#h5-0-185" id="h5-0-185" class="d">-                    source = Node::Filter { source: Box::new(source), predicate: expr.into() };
+</a><a href="#h5-0-186" id="h5-0-186" class="d">-                }
+</a><a href="#h5-0-187" id="h5-0-187" class="d">-                Node::Delete { table, source: Box::new(source) }
+</a><a href="#h5-0-188" id="h5-0-188" class="d">-            }
+</a><a href="#h5-0-189" id="h5-0-189" class="d">-            ast::Statement::DropTable(name) =&gt; Node::DropTable { name },
+</a><a href="#h5-0-190" id="h5-0-190" class="d">-            ast::Statement::Insert { table, columns, values } =&gt; Node::Insert {
+</a><a href="#h5-0-191" id="h5-0-191" class="d">-                table,
+</a><a href="#h5-0-192" id="h5-0-192" class="d">-                columns: columns.unwrap_or_else(Vec::new),
+</a><a href="#h5-0-193" id="h5-0-193" class="d">-                expressions: values
+</a><a href="#h5-0-194" id="h5-0-194" class="d">-                    .into_iter()
+</a><a href="#h5-0-195" id="h5-0-195" class="d">-                    .map(|exprs| exprs.into_iter().map(|expr| expr.into()).collect())
+</a><a href="#h5-0-196" id="h5-0-196" class="d">-                    .collect(),
+</a><a href="#h5-0-197" id="h5-0-197" class="d">-            },
+</a><a href="#h5-0-198" id="h5-0-198" class="d">-            ast::Statement::Select { select, from, r#where, order, limit, offset } =&gt; {
+</a><a href="#h5-0-199" id="h5-0-199" class="d">-                let mut n: Node = match from {
+</a><a href="#h5-0-200" id="h5-0-200" class="d">-                    // FIXME Handle multiple FROM tables
+</a><a href="#h5-0-201" id="h5-0-201" class="d">-                    Some(from) =&gt; Node::Scan { table: from.tables[0].clone() },
+</a><a href="#h5-0-202" id="h5-0-202" class="d">-                    None if select.expressions.is_empty() =&gt; {
+</a><a href="#h5-0-203" id="h5-0-203" class="d">-                        return Err(Error::Value(&quot;Can&#39;t select * without a table&quot;.into()))
+</a><a href="#h5-0-204" id="h5-0-204" class="d">-                    }
+</a><a href="#h5-0-205" id="h5-0-205" class="d">-                    None =&gt; Node::Nothing,
+</a><a href="#h5-0-206" id="h5-0-206" class="d">-                };
+</a><a href="#h5-0-207" id="h5-0-207" class="d">-                if let Some(ast::WhereClause(expr)) = r#where {
+</a><a href="#h5-0-208" id="h5-0-208" class="d">-                    n = Node::Filter { source: Box::new(n), predicate: expr.into() };
+</a><a href="#h5-0-209" id="h5-0-209" class="d">-                };
+</a><a href="#h5-0-210" id="h5-0-210" class="d">-                if !select.expressions.is_empty() {
+</a><a href="#h5-0-211" id="h5-0-211" class="d">-                    n = Node::Projection {
+</a><a href="#h5-0-212" id="h5-0-212" class="d">-                        source: Box::new(n),
+</a><a href="#h5-0-213" id="h5-0-213" class="d">-                        labels: select.labels,
+</a><a href="#h5-0-214" id="h5-0-214" class="d">-                        expressions: self.build_expressions(select.expressions)?,
+</a><a href="#h5-0-215" id="h5-0-215" class="d">-                    };
+</a><a href="#h5-0-216" id="h5-0-216" class="d">-                };
+</a><a href="#h5-0-217" id="h5-0-217" class="d">-                // FIXME Because the projection doesn&#39;t retain original table values, we can&#39;t
+</a><a href="#h5-0-218" id="h5-0-218" class="d">-                // order by fields which are not in the result set.
+</a><a href="#h5-0-219" id="h5-0-219" class="d">-                if !order.is_empty() {
+</a><a href="#h5-0-220" id="h5-0-220" class="d">-                    n = Node::Order {
+</a><a href="#h5-0-221" id="h5-0-221" class="d">-                        source: Box::new(n),
+</a><a href="#h5-0-222" id="h5-0-222" class="d">-                        orders: order.into_iter().map(|(e, o)| (e.into(), o.into())).collect(),
+</a><a href="#h5-0-223" id="h5-0-223" class="d">-                    };
+</a><a href="#h5-0-224" id="h5-0-224" class="d">-                }
+</a><a href="#h5-0-225" id="h5-0-225" class="d">-                // FIXME Limit and offset need to check that the expression is constant
+</a><a href="#h5-0-226" id="h5-0-226" class="d">-                if let Some(expr) = offset {
+</a><a href="#h5-0-227" id="h5-0-227" class="d">-                    n = Node::Offset {
+</a><a href="#h5-0-228" id="h5-0-228" class="d">-                        source: Box::new(n),
+</a><a href="#h5-0-229" id="h5-0-229" class="d">-                        offset: match Expression::from(expr).evaluate(&amp;Environment::empty())? {
+</a><a href="#h5-0-230" id="h5-0-230" class="d">-                            Value::Integer(i) =&gt; i as u64,
+</a><a href="#h5-0-231" id="h5-0-231" class="d">-                            v =&gt; {
+</a><a href="#h5-0-232" id="h5-0-232" class="d">-                                return Err(Error::Value(format!(&quot;Invalid value {} for offset&quot;, v)))
+</a><a href="#h5-0-233" id="h5-0-233" class="d">-                            }
+</a><a href="#h5-0-234" id="h5-0-234" class="d">-                        },
+</a><a href="#h5-0-235" id="h5-0-235" class="d">-                    }
+</a><a href="#h5-0-236" id="h5-0-236" class="d">-                }
+</a><a href="#h5-0-237" id="h5-0-237" class="d">-                if let Some(expr) = limit {
+</a><a href="#h5-0-238" id="h5-0-238" class="d">-                    n = Node::Limit {
+</a><a href="#h5-0-239" id="h5-0-239" class="d">-                        source: Box::new(n),
+</a><a href="#h5-0-240" id="h5-0-240" class="d">-                        limit: match Expression::from(expr).evaluate(&amp;Environment::empty())? {
+</a><a href="#h5-0-241" id="h5-0-241" class="d">-                            Value::Integer(i) =&gt; i as u64,
+</a><a href="#h5-0-242" id="h5-0-242" class="d">-                            v =&gt; {
+</a><a href="#h5-0-243" id="h5-0-243" class="d">-                                return Err(Error::Value(format!(&quot;Invalid value {} for limit&quot;, v)))
+</a><a href="#h5-0-244" id="h5-0-244" class="d">-                            }
+</a><a href="#h5-0-245" id="h5-0-245" class="d">-                        },
+</a><a href="#h5-0-246" id="h5-0-246" class="d">-                    }
+</a><a href="#h5-0-247" id="h5-0-247" class="d">-                }
+</a><a href="#h5-0-248" id="h5-0-248" class="d">-                n
+</a><a href="#h5-0-249" id="h5-0-249" class="d">-            }
+</a><a href="#h5-0-250" id="h5-0-250" class="d">-            ast::Statement::Update { table, set, r#where } =&gt; {
+</a><a href="#h5-0-251" id="h5-0-251" class="d">-                let mut source = Node::Scan { table: table.clone() };
+</a><a href="#h5-0-252" id="h5-0-252" class="d">-                if let Some(ast::WhereClause(expr)) = r#where {
+</a><a href="#h5-0-253" id="h5-0-253" class="d">-                    source = Node::Filter { source: Box::new(source), predicate: expr.into() };
+</a><a href="#h5-0-254" id="h5-0-254" class="d">-                }
+</a><a href="#h5-0-255" id="h5-0-255" class="d">-                Node::Update {
+</a><a href="#h5-0-256" id="h5-0-256" class="d">-                    table,
+</a><a href="#h5-0-257" id="h5-0-257" class="d">-                    source: Box::new(source),
+</a><a href="#h5-0-258" id="h5-0-258" class="d">-                    expressions: set.into_iter().map(|(c, e)| (c, e.into())).collect(),
+</a><a href="#h5-0-259" id="h5-0-259" class="d">-                }
+</a><a href="#h5-0-260" id="h5-0-260" class="d">-            }
+</a><a href="#h5-0-261" id="h5-0-261" class="d">-        })
+</a><a href="#h5-0-262" id="h5-0-262" class="d">-    }
+</a><a href="#h5-0-263" id="h5-0-263" class="d">-
+</a><a href="#h5-0-264" id="h5-0-264" class="d">-    /// Builds a plan expression from an AST expression
+</a><a href="#h5-0-265" id="h5-0-265" class="d">-    fn build_expression(&amp;self, expr: ast::Expression) -&gt; Result&lt;Expression, Error&gt; {
+</a><a href="#h5-0-266" id="h5-0-266" class="d">-        Ok(expr.into())
+</a><a href="#h5-0-267" id="h5-0-267" class="d">-    }
+</a><a href="#h5-0-268" id="h5-0-268" class="d">-
+</a><a href="#h5-0-269" id="h5-0-269" class="d">-    /// Builds an array of plan expressions from AST expressions
+</a><a href="#h5-0-270" id="h5-0-270" class="d">-    fn build_expressions(&amp;self, exprs: Vec&lt;ast::Expression&gt;) -&gt; Result&lt;Vec&lt;Expression&gt;, Error&gt; {
+</a><a href="#h5-0-271" id="h5-0-271" class="d">-        exprs.into_iter().map(|e| self.build_expression(e)).collect()
+</a><a href="#h5-0-272" id="h5-0-272" class="d">-    }
+</a><a href="#h5-0-273" id="h5-0-273" class="d">-
+</a><a href="#h5-0-274" id="h5-0-274" class="d">-    /// Builds a table schema from an AST CreateTable node
+</a><a href="#h5-0-275" id="h5-0-275" class="d">-    fn build_schema_table(
+</a><a href="#h5-0-276" id="h5-0-276" class="d">-        &amp;self,
+</a><a href="#h5-0-277" id="h5-0-277" class="d">-        name: String,
+</a><a href="#h5-0-278" id="h5-0-278" class="d">-        cols: Vec&lt;ast::ColumnSpec&gt;,
+</a><a href="#h5-0-279" id="h5-0-279" class="d">-    ) -&gt; Result&lt;schema::Table, Error&gt; {
+</a><a href="#h5-0-280" id="h5-0-280" class="d">-        match cols.iter().filter(|c| c.primary_key).count() {
+</a><a href="#h5-0-281" id="h5-0-281" class="d">-            0 =&gt; return Err(Error::Value(format!(&quot;No primary key defined for table {}&quot;, name))),
+</a><a href="#h5-0-282" id="h5-0-282" class="d">-            n if n &gt; 1 =&gt; {
+</a><a href="#h5-0-283" id="h5-0-283" class="d">-                return Err(Error::Value(format!(
+</a><a href="#h5-0-284" id="h5-0-284" class="d">-                    &quot;{} primary keys defined for table {}, must set exactly 1&quot;,
+</a><a href="#h5-0-285" id="h5-0-285" class="d">-                    n, name
+</a><a href="#h5-0-286" id="h5-0-286" class="d">-                )))
+</a><a href="#h5-0-287" id="h5-0-287" class="d">-            }
+</a><a href="#h5-0-288" id="h5-0-288" class="d">-            _ =&gt; {}
+</a><a href="#h5-0-289" id="h5-0-289" class="d">-        };
+</a><a href="#h5-0-290" id="h5-0-290" class="d">-        let table = schema::Table {
+</a><a href="#h5-0-291" id="h5-0-291" class="d">-            name,
+</a><a href="#h5-0-292" id="h5-0-292" class="d">-            primary_key: cols.iter().position(|c| c.primary_key).unwrap_or(0),
+</a><a href="#h5-0-293" id="h5-0-293" class="d">-            columns: cols
+</a><a href="#h5-0-294" id="h5-0-294" class="d">-                .into_iter()
+</a><a href="#h5-0-295" id="h5-0-295" class="d">-                .map(|spec| schema::Column {
+</a><a href="#h5-0-296" id="h5-0-296" class="d">-                    name: spec.name,
+</a><a href="#h5-0-297" id="h5-0-297" class="d">-                    datatype: spec.datatype,
+</a><a href="#h5-0-298" id="h5-0-298" class="d">-                    nullable: spec.nullable.unwrap_or(!spec.primary_key),
+</a><a href="#h5-0-299" id="h5-0-299" class="d">-                })
+</a><a href="#h5-0-300" id="h5-0-300" class="d">-                .collect(),
+</a><a href="#h5-0-301" id="h5-0-301" class="d">-        };
+</a><a href="#h5-0-302" id="h5-0-302" class="d">-        table.validate()?;
+</a><a href="#h5-0-303" id="h5-0-303" class="d">-        Ok(table)
+</a><a href="#h5-0-304" id="h5-0-304" class="d">-    }
+</a><a href="#h5-0-305" id="h5-0-305" class="d">-}
+</a><a href="#h5-0-306" id="h5-0-306" class="d">-
+</a><a href="#h5-0-307" id="h5-0-307" class="d">-/// Helpers to convert AST expressions into plan expressions
+</a><a href="#h5-0-308" id="h5-0-308" class="d">-impl From&lt;ast::Expression&gt; for Expression {
+</a><a href="#h5-0-309" id="h5-0-309" class="d">-    fn from(expr: ast::Expression) -&gt; Self {
+</a><a href="#h5-0-310" id="h5-0-310" class="d">-        match expr {
+</a><a href="#h5-0-311" id="h5-0-311" class="d">-            ast::Expression::Literal(l) =&gt; Expression::Constant(l.into()),
+</a><a href="#h5-0-312" id="h5-0-312" class="d">-            ast::Expression::Field(name) =&gt; Expression::Field(name),
+</a><a href="#h5-0-313" id="h5-0-313" class="d">-            ast::Expression::Operation(op) =&gt; match op {
+</a><a href="#h5-0-314" id="h5-0-314" class="d">-                // Logical operators
+</a><a href="#h5-0-315" id="h5-0-315" class="d">-                ast::Operation::And(lhs, rhs) =&gt; Self::And(lhs.into(), rhs.into()),
+</a><a href="#h5-0-316" id="h5-0-316" class="d">-                ast::Operation::Not(expr) =&gt; Self::Not(expr.into()),
+</a><a href="#h5-0-317" id="h5-0-317" class="d">-                ast::Operation::Or(lhs, rhs) =&gt; Self::Or(lhs.into(), rhs.into()),
+</a><a href="#h5-0-318" id="h5-0-318" class="d">-
+</a><a href="#h5-0-319" id="h5-0-319" class="d">-                // Comparison operators
+</a><a href="#h5-0-320" id="h5-0-320" class="d">-                ast::Operation::CompareEQ(lhs, rhs) =&gt; Self::CompareEQ(lhs.into(), rhs.into()),
+</a><a href="#h5-0-321" id="h5-0-321" class="d">-                ast::Operation::CompareGT(lhs, rhs) =&gt; Self::CompareGT(lhs.into(), rhs.into()),
+</a><a href="#h5-0-322" id="h5-0-322" class="d">-                ast::Operation::CompareGTE(lhs, rhs) =&gt; Self::CompareGTE(lhs.into(), rhs.into()),
+</a><a href="#h5-0-323" id="h5-0-323" class="d">-                ast::Operation::CompareLT(lhs, rhs) =&gt; Self::CompareLT(lhs.into(), rhs.into()),
+</a><a href="#h5-0-324" id="h5-0-324" class="d">-                ast::Operation::CompareLTE(lhs, rhs) =&gt; Self::CompareLTE(lhs.into(), rhs.into()),
+</a><a href="#h5-0-325" id="h5-0-325" class="d">-                ast::Operation::CompareNE(lhs, rhs) =&gt; Self::CompareNE(lhs.into(), rhs.into()),
+</a><a href="#h5-0-326" id="h5-0-326" class="d">-
+</a><a href="#h5-0-327" id="h5-0-327" class="d">-                // Mathematical operators
+</a><a href="#h5-0-328" id="h5-0-328" class="d">-                ast::Operation::Add(lhs, rhs) =&gt; Self::Add(lhs.into(), rhs.into()),
+</a><a href="#h5-0-329" id="h5-0-329" class="d">-                ast::Operation::Divide(lhs, rhs) =&gt; Self::Divide(lhs.into(), rhs.into()),
+</a><a href="#h5-0-330" id="h5-0-330" class="d">-                ast::Operation::Exponentiate(lhs, rhs) =&gt; {
+</a><a href="#h5-0-331" id="h5-0-331" class="d">-                    Self::Exponentiate(lhs.into(), rhs.into())
+</a><a href="#h5-0-332" id="h5-0-332" class="d">-                }
+</a><a href="#h5-0-333" id="h5-0-333" class="d">-                ast::Operation::Factorial(expr) =&gt; Self::Factorial(expr.into()),
+</a><a href="#h5-0-334" id="h5-0-334" class="d">-                ast::Operation::Modulo(lhs, rhs) =&gt; Self::Modulo(lhs.into(), rhs.into()),
+</a><a href="#h5-0-335" id="h5-0-335" class="d">-                ast::Operation::Multiply(lhs, rhs) =&gt; Self::Multiply(lhs.into(), rhs.into()),
+</a><a href="#h5-0-336" id="h5-0-336" class="d">-                ast::Operation::Negate(expr) =&gt; Self::Negate(expr.into()),
+</a><a href="#h5-0-337" id="h5-0-337" class="d">-                ast::Operation::Subtract(lhs, rhs) =&gt; Self::Subtract(lhs.into(), rhs.into()),
+</a><a href="#h5-0-338" id="h5-0-338" class="d">-            },
+</a><a href="#h5-0-339" id="h5-0-339" class="d">-        }
+</a><a href="#h5-0-340" id="h5-0-340" class="d">-    }
+</a><a href="#h5-0-341" id="h5-0-341" class="d">-}
+</a><a href="#h5-0-342" id="h5-0-342" class="d">-
+</a><a href="#h5-0-343" id="h5-0-343" class="d">-impl From&lt;Box&lt;ast::Expression&gt;&gt; for Box&lt;Expression&gt; {
+</a><a href="#h5-0-344" id="h5-0-344" class="d">-    fn from(expr: Box&lt;ast::Expression&gt;) -&gt; Self {
+</a><a href="#h5-0-345" id="h5-0-345" class="d">-        Box::new((*expr).into())
+</a><a href="#h5-0-346" id="h5-0-346" class="d">-    }
+</a><a href="#h5-0-347" id="h5-0-347" class="d">-}
+</a><a href="#h5-0-348" id="h5-0-348" class="d">-
+</a><a href="#h5-0-349" id="h5-0-349" class="d">-impl From&lt;ast::Literal&gt; for Value {
+</a><a href="#h5-0-350" id="h5-0-350" class="d">-    fn from(literal: ast::Literal) -&gt; Self {
+</a><a href="#h5-0-351" id="h5-0-351" class="d">-        match literal {
+</a><a href="#h5-0-352" id="h5-0-352" class="d">-            ast::Literal::Null =&gt; Value::Null,
+</a><a href="#h5-0-353" id="h5-0-353" class="d">-            ast::Literal::Boolean(b) =&gt; b.into(),
+</a><a href="#h5-0-354" id="h5-0-354" class="d">-            ast::Literal::Float(f) =&gt; f.into(),
+</a><a href="#h5-0-355" id="h5-0-355" class="d">-            ast::Literal::Integer(i) =&gt; i.into(),
+</a><a href="#h5-0-356" id="h5-0-356" class="d">-            ast::Literal::String(s) =&gt; s.into(),
+</a><a href="#h5-0-357" id="h5-0-357" class="d">-        }
+</a><a href="#h5-0-358" id="h5-0-358" class="d">-    }
+</a><a href="#h5-0-359" id="h5-0-359" class="d">-}
+</a><b>diff --git a/<a id="h6" href="../file/src/sql/planner/mod.rs.html">src/sql/planner/mod.rs</a> b/<a href="../file/src/sql/planner/mod.rs.html">src/sql/planner/mod.rs</a></b>
+<a href="#h6-0" id="h6-0" class="h">@@ -0,0 +1,208 @@
+</a><a href="#h6-0-0" id="h6-0-0" class="i">+mod plan;
+</a><a href="#h6-0-1" id="h6-0-1" class="i">+
+</a><a href="#h6-0-2" id="h6-0-2" class="i">+pub use plan::{Node, Plan, Order};
+</a><a href="#h6-0-3" id="h6-0-3" class="i">+
+</a><a href="#h6-0-4" id="h6-0-4" class="i">+use super::expression::{Environment, Expression};
+</a><a href="#h6-0-5" id="h6-0-5" class="i">+use super::parser::ast;
+</a><a href="#h6-0-6" id="h6-0-6" class="i">+use super::schema;
+</a><a href="#h6-0-7" id="h6-0-7" class="i">+use super::types::Value;
+</a><a href="#h6-0-8" id="h6-0-8" class="i">+use crate::Error;
+</a><a href="#h6-0-9" id="h6-0-9" class="i">+
+</a><a href="#h6-0-10" id="h6-0-10" class="i">+/// The plan builder
+</a><a href="#h6-0-11" id="h6-0-11" class="i">+struct Planner {}
+</a><a href="#h6-0-12" id="h6-0-12" class="i">+
+</a><a href="#h6-0-13" id="h6-0-13" class="i">+impl Planner {
+</a><a href="#h6-0-14" id="h6-0-14" class="i">+    /// Creates a new planner
+</a><a href="#h6-0-15" id="h6-0-15" class="i">+    fn new() -&gt; Self {
+</a><a href="#h6-0-16" id="h6-0-16" class="i">+        Self {}
+</a><a href="#h6-0-17" id="h6-0-17" class="i">+    }
+</a><a href="#h6-0-18" id="h6-0-18" class="i">+
+</a><a href="#h6-0-19" id="h6-0-19" class="i">+    /// Builds a plan tree for an AST statement
+</a><a href="#h6-0-20" id="h6-0-20" class="i">+    fn build(&amp;self, statement: ast::Statement) -&gt; Result&lt;Plan, Error&gt; {
+</a><a href="#h6-0-21" id="h6-0-21" class="i">+        Ok(Plan { root: self.build_statement(statement)? })
+</a><a href="#h6-0-22" id="h6-0-22" class="i">+    }
+</a><a href="#h6-0-23" id="h6-0-23" class="i">+
+</a><a href="#h6-0-24" id="h6-0-24" class="i">+    /// Builds a plan node for a statement
+</a><a href="#h6-0-25" id="h6-0-25" class="i">+    fn build_statement(&amp;self, statement: ast::Statement) -&gt; Result&lt;Node, Error&gt; {
+</a><a href="#h6-0-26" id="h6-0-26" class="i">+        Ok(match statement {
+</a><a href="#h6-0-27" id="h6-0-27" class="i">+            ast::Statement::CreateTable { name, columns } =&gt; {
+</a><a href="#h6-0-28" id="h6-0-28" class="i">+                Node::CreateTable { schema: self.build_schema_table(name, columns)? }
+</a><a href="#h6-0-29" id="h6-0-29" class="i">+            }
+</a><a href="#h6-0-30" id="h6-0-30" class="i">+            ast::Statement::Delete { table, r#where } =&gt; {
+</a><a href="#h6-0-31" id="h6-0-31" class="i">+                let mut source = Node::Scan { table: table.clone() };
+</a><a href="#h6-0-32" id="h6-0-32" class="i">+                if let Some(ast::WhereClause(expr)) = r#where {
+</a><a href="#h6-0-33" id="h6-0-33" class="i">+                    source = Node::Filter { source: Box::new(source), predicate: expr.into() };
+</a><a href="#h6-0-34" id="h6-0-34" class="i">+                }
+</a><a href="#h6-0-35" id="h6-0-35" class="i">+                Node::Delete { table, source: Box::new(source) }
+</a><a href="#h6-0-36" id="h6-0-36" class="i">+            }
+</a><a href="#h6-0-37" id="h6-0-37" class="i">+            ast::Statement::DropTable(name) =&gt; Node::DropTable { name },
+</a><a href="#h6-0-38" id="h6-0-38" class="i">+            ast::Statement::Insert { table, columns, values } =&gt; Node::Insert {
+</a><a href="#h6-0-39" id="h6-0-39" class="i">+                table,
+</a><a href="#h6-0-40" id="h6-0-40" class="i">+                columns: columns.unwrap_or_else(Vec::new),
+</a><a href="#h6-0-41" id="h6-0-41" class="i">+                expressions: values
+</a><a href="#h6-0-42" id="h6-0-42" class="i">+                    .into_iter()
+</a><a href="#h6-0-43" id="h6-0-43" class="i">+                    .map(|exprs| exprs.into_iter().map(|expr| expr.into()).collect())
+</a><a href="#h6-0-44" id="h6-0-44" class="i">+                    .collect(),
+</a><a href="#h6-0-45" id="h6-0-45" class="i">+            },
+</a><a href="#h6-0-46" id="h6-0-46" class="i">+            ast::Statement::Select { select, from, r#where, order, limit, offset } =&gt; {
+</a><a href="#h6-0-47" id="h6-0-47" class="i">+                let mut n: Node = match from {
+</a><a href="#h6-0-48" id="h6-0-48" class="i">+                    // FIXME Handle multiple FROM tables
+</a><a href="#h6-0-49" id="h6-0-49" class="i">+                    Some(from) =&gt; Node::Scan { table: from.tables[0].clone() },
+</a><a href="#h6-0-50" id="h6-0-50" class="i">+                    None if select.expressions.is_empty() =&gt; {
+</a><a href="#h6-0-51" id="h6-0-51" class="i">+                        return Err(Error::Value(&quot;Can&#39;t select * without a table&quot;.into()))
+</a><a href="#h6-0-52" id="h6-0-52" class="i">+                    }
+</a><a href="#h6-0-53" id="h6-0-53" class="i">+                    None =&gt; Node::Nothing,
+</a><a href="#h6-0-54" id="h6-0-54" class="i">+                };
+</a><a href="#h6-0-55" id="h6-0-55" class="i">+                if let Some(ast::WhereClause(expr)) = r#where {
+</a><a href="#h6-0-56" id="h6-0-56" class="i">+                    n = Node::Filter { source: Box::new(n), predicate: expr.into() };
+</a><a href="#h6-0-57" id="h6-0-57" class="i">+                };
+</a><a href="#h6-0-58" id="h6-0-58" class="i">+                if !select.expressions.is_empty() {
+</a><a href="#h6-0-59" id="h6-0-59" class="i">+                    n = Node::Projection {
+</a><a href="#h6-0-60" id="h6-0-60" class="i">+                        source: Box::new(n),
+</a><a href="#h6-0-61" id="h6-0-61" class="i">+                        labels: select.labels,
+</a><a href="#h6-0-62" id="h6-0-62" class="i">+                        expressions: self.build_expressions(select.expressions)?,
+</a><a href="#h6-0-63" id="h6-0-63" class="i">+                    };
+</a><a href="#h6-0-64" id="h6-0-64" class="i">+                };
+</a><a href="#h6-0-65" id="h6-0-65" class="i">+                // FIXME Because the projection doesn&#39;t retain original table values, we can&#39;t
+</a><a href="#h6-0-66" id="h6-0-66" class="i">+                // order by fields which are not in the result set.
+</a><a href="#h6-0-67" id="h6-0-67" class="i">+                if !order.is_empty() {
+</a><a href="#h6-0-68" id="h6-0-68" class="i">+                    n = Node::Order {
+</a><a href="#h6-0-69" id="h6-0-69" class="i">+                        source: Box::new(n),
+</a><a href="#h6-0-70" id="h6-0-70" class="i">+                        orders: order.into_iter().map(|(e, o)| (e.into(), o.into())).collect(),
+</a><a href="#h6-0-71" id="h6-0-71" class="i">+                    };
+</a><a href="#h6-0-72" id="h6-0-72" class="i">+                }
+</a><a href="#h6-0-73" id="h6-0-73" class="i">+                // FIXME Limit and offset need to check that the expression is constant
+</a><a href="#h6-0-74" id="h6-0-74" class="i">+                if let Some(expr) = offset {
+</a><a href="#h6-0-75" id="h6-0-75" class="i">+                    n = Node::Offset {
+</a><a href="#h6-0-76" id="h6-0-76" class="i">+                        source: Box::new(n),
+</a><a href="#h6-0-77" id="h6-0-77" class="i">+                        offset: match Expression::from(expr).evaluate(&amp;Environment::empty())? {
+</a><a href="#h6-0-78" id="h6-0-78" class="i">+                            Value::Integer(i) =&gt; i as u64,
+</a><a href="#h6-0-79" id="h6-0-79" class="i">+                            v =&gt; {
+</a><a href="#h6-0-80" id="h6-0-80" class="i">+                                return Err(Error::Value(format!(&quot;Invalid value {} for offset&quot;, v)))
+</a><a href="#h6-0-81" id="h6-0-81" class="i">+                            }
+</a><a href="#h6-0-82" id="h6-0-82" class="i">+                        },
+</a><a href="#h6-0-83" id="h6-0-83" class="i">+                    }
+</a><a href="#h6-0-84" id="h6-0-84" class="i">+                }
+</a><a href="#h6-0-85" id="h6-0-85" class="i">+                if let Some(expr) = limit {
+</a><a href="#h6-0-86" id="h6-0-86" class="i">+                    n = Node::Limit {
+</a><a href="#h6-0-87" id="h6-0-87" class="i">+                        source: Box::new(n),
+</a><a href="#h6-0-88" id="h6-0-88" class="i">+                        limit: match Expression::from(expr).evaluate(&amp;Environment::empty())? {
+</a><a href="#h6-0-89" id="h6-0-89" class="i">+                            Value::Integer(i) =&gt; i as u64,
+</a><a href="#h6-0-90" id="h6-0-90" class="i">+                            v =&gt; {
+</a><a href="#h6-0-91" id="h6-0-91" class="i">+                                return Err(Error::Value(format!(&quot;Invalid value {} for limit&quot;, v)))
+</a><a href="#h6-0-92" id="h6-0-92" class="i">+                            }
+</a><a href="#h6-0-93" id="h6-0-93" class="i">+                        },
+</a><a href="#h6-0-94" id="h6-0-94" class="i">+                    }
+</a><a href="#h6-0-95" id="h6-0-95" class="i">+                }
+</a><a href="#h6-0-96" id="h6-0-96" class="i">+                n
+</a><a href="#h6-0-97" id="h6-0-97" class="i">+            }
+</a><a href="#h6-0-98" id="h6-0-98" class="i">+            ast::Statement::Update { table, set, r#where } =&gt; {
+</a><a href="#h6-0-99" id="h6-0-99" class="i">+                let mut source = Node::Scan { table: table.clone() };
+</a><a href="#h6-0-100" id="h6-0-100" class="i">+                if let Some(ast::WhereClause(expr)) = r#where {
+</a><a href="#h6-0-101" id="h6-0-101" class="i">+                    source = Node::Filter { source: Box::new(source), predicate: expr.into() };
+</a><a href="#h6-0-102" id="h6-0-102" class="i">+                }
+</a><a href="#h6-0-103" id="h6-0-103" class="i">+                Node::Update {
+</a><a href="#h6-0-104" id="h6-0-104" class="i">+                    table,
+</a><a href="#h6-0-105" id="h6-0-105" class="i">+                    source: Box::new(source),
+</a><a href="#h6-0-106" id="h6-0-106" class="i">+                    expressions: set.into_iter().map(|(c, e)| (c, e.into())).collect(),
+</a><a href="#h6-0-107" id="h6-0-107" class="i">+                }
+</a><a href="#h6-0-108" id="h6-0-108" class="i">+            }
+</a><a href="#h6-0-109" id="h6-0-109" class="i">+        })
+</a><a href="#h6-0-110" id="h6-0-110" class="i">+    }
+</a><a href="#h6-0-111" id="h6-0-111" class="i">+
+</a><a href="#h6-0-112" id="h6-0-112" class="i">+    /// Builds a plan expression from an AST expression
+</a><a href="#h6-0-113" id="h6-0-113" class="i">+    fn build_expression(&amp;self, expr: ast::Expression) -&gt; Result&lt;Expression, Error&gt; {
+</a><a href="#h6-0-114" id="h6-0-114" class="i">+        Ok(expr.into())
+</a><a href="#h6-0-115" id="h6-0-115" class="i">+    }
+</a><a href="#h6-0-116" id="h6-0-116" class="i">+
+</a><a href="#h6-0-117" id="h6-0-117" class="i">+    /// Builds an array of plan expressions from AST expressions
+</a><a href="#h6-0-118" id="h6-0-118" class="i">+    fn build_expressions(&amp;self, exprs: Vec&lt;ast::Expression&gt;) -&gt; Result&lt;Vec&lt;Expression&gt;, Error&gt; {
+</a><a href="#h6-0-119" id="h6-0-119" class="i">+        exprs.into_iter().map(|e| self.build_expression(e)).collect()
+</a><a href="#h6-0-120" id="h6-0-120" class="i">+    }
+</a><a href="#h6-0-121" id="h6-0-121" class="i">+
+</a><a href="#h6-0-122" id="h6-0-122" class="i">+    /// Builds a table schema from an AST CreateTable node
+</a><a href="#h6-0-123" id="h6-0-123" class="i">+    fn build_schema_table(
+</a><a href="#h6-0-124" id="h6-0-124" class="i">+        &amp;self,
+</a><a href="#h6-0-125" id="h6-0-125" class="i">+        name: String,
+</a><a href="#h6-0-126" id="h6-0-126" class="i">+        cols: Vec&lt;ast::ColumnSpec&gt;,
+</a><a href="#h6-0-127" id="h6-0-127" class="i">+    ) -&gt; Result&lt;schema::Table, Error&gt; {
+</a><a href="#h6-0-128" id="h6-0-128" class="i">+        match cols.iter().filter(|c| c.primary_key).count() {
+</a><a href="#h6-0-129" id="h6-0-129" class="i">+            0 =&gt; return Err(Error::Value(format!(&quot;No primary key defined for table {}&quot;, name))),
+</a><a href="#h6-0-130" id="h6-0-130" class="i">+            n if n &gt; 1 =&gt; {
+</a><a href="#h6-0-131" id="h6-0-131" class="i">+                return Err(Error::Value(format!(
+</a><a href="#h6-0-132" id="h6-0-132" class="i">+                    &quot;{} primary keys defined for table {}, must set exactly 1&quot;,
+</a><a href="#h6-0-133" id="h6-0-133" class="i">+                    n, name
+</a><a href="#h6-0-134" id="h6-0-134" class="i">+                )))
+</a><a href="#h6-0-135" id="h6-0-135" class="i">+            }
+</a><a href="#h6-0-136" id="h6-0-136" class="i">+            _ =&gt; {}
+</a><a href="#h6-0-137" id="h6-0-137" class="i">+        };
+</a><a href="#h6-0-138" id="h6-0-138" class="i">+        let table = schema::Table {
+</a><a href="#h6-0-139" id="h6-0-139" class="i">+            name,
+</a><a href="#h6-0-140" id="h6-0-140" class="i">+            primary_key: cols.iter().position(|c| c.primary_key).unwrap_or(0),
+</a><a href="#h6-0-141" id="h6-0-141" class="i">+            columns: cols
+</a><a href="#h6-0-142" id="h6-0-142" class="i">+                .into_iter()
+</a><a href="#h6-0-143" id="h6-0-143" class="i">+                .map(|spec| schema::Column {
+</a><a href="#h6-0-144" id="h6-0-144" class="i">+                    name: spec.name,
+</a><a href="#h6-0-145" id="h6-0-145" class="i">+                    datatype: spec.datatype,
+</a><a href="#h6-0-146" id="h6-0-146" class="i">+                    nullable: spec.nullable.unwrap_or(!spec.primary_key),
+</a><a href="#h6-0-147" id="h6-0-147" class="i">+                })
+</a><a href="#h6-0-148" id="h6-0-148" class="i">+                .collect(),
+</a><a href="#h6-0-149" id="h6-0-149" class="i">+        };
+</a><a href="#h6-0-150" id="h6-0-150" class="i">+        table.validate()?;
+</a><a href="#h6-0-151" id="h6-0-151" class="i">+        Ok(table)
+</a><a href="#h6-0-152" id="h6-0-152" class="i">+    }
+</a><a href="#h6-0-153" id="h6-0-153" class="i">+}
+</a><a href="#h6-0-154" id="h6-0-154" class="i">+
+</a><a href="#h6-0-155" id="h6-0-155" class="i">+/// Helpers to convert AST expressions into plan expressions
+</a><a href="#h6-0-156" id="h6-0-156" class="i">+impl From&lt;ast::Expression&gt; for Expression {
+</a><a href="#h6-0-157" id="h6-0-157" class="i">+    fn from(expr: ast::Expression) -&gt; Self {
+</a><a href="#h6-0-158" id="h6-0-158" class="i">+        match expr {
+</a><a href="#h6-0-159" id="h6-0-159" class="i">+            ast::Expression::Literal(l) =&gt; Expression::Constant(l.into()),
+</a><a href="#h6-0-160" id="h6-0-160" class="i">+            ast::Expression::Field(name) =&gt; Expression::Field(name),
+</a><a href="#h6-0-161" id="h6-0-161" class="i">+            ast::Expression::Operation(op) =&gt; match op {
+</a><a href="#h6-0-162" id="h6-0-162" class="i">+                // Logical operators
+</a><a href="#h6-0-163" id="h6-0-163" class="i">+                ast::Operation::And(lhs, rhs) =&gt; Self::And(lhs.into(), rhs.into()),
+</a><a href="#h6-0-164" id="h6-0-164" class="i">+                ast::Operation::Not(expr) =&gt; Self::Not(expr.into()),
+</a><a href="#h6-0-165" id="h6-0-165" class="i">+                ast::Operation::Or(lhs, rhs) =&gt; Self::Or(lhs.into(), rhs.into()),
+</a><a href="#h6-0-166" id="h6-0-166" class="i">+
+</a><a href="#h6-0-167" id="h6-0-167" class="i">+                // Comparison operators
+</a><a href="#h6-0-168" id="h6-0-168" class="i">+                ast::Operation::CompareEQ(lhs, rhs) =&gt; Self::CompareEQ(lhs.into(), rhs.into()),
+</a><a href="#h6-0-169" id="h6-0-169" class="i">+                ast::Operation::CompareGT(lhs, rhs) =&gt; Self::CompareGT(lhs.into(), rhs.into()),
+</a><a href="#h6-0-170" id="h6-0-170" class="i">+                ast::Operation::CompareGTE(lhs, rhs) =&gt; Self::CompareGTE(lhs.into(), rhs.into()),
+</a><a href="#h6-0-171" id="h6-0-171" class="i">+                ast::Operation::CompareLT(lhs, rhs) =&gt; Self::CompareLT(lhs.into(), rhs.into()),
+</a><a href="#h6-0-172" id="h6-0-172" class="i">+                ast::Operation::CompareLTE(lhs, rhs) =&gt; Self::CompareLTE(lhs.into(), rhs.into()),
+</a><a href="#h6-0-173" id="h6-0-173" class="i">+                ast::Operation::CompareNE(lhs, rhs) =&gt; Self::CompareNE(lhs.into(), rhs.into()),
+</a><a href="#h6-0-174" id="h6-0-174" class="i">+
+</a><a href="#h6-0-175" id="h6-0-175" class="i">+                // Mathematical operators
+</a><a href="#h6-0-176" id="h6-0-176" class="i">+                ast::Operation::Add(lhs, rhs) =&gt; Self::Add(lhs.into(), rhs.into()),
+</a><a href="#h6-0-177" id="h6-0-177" class="i">+                ast::Operation::Divide(lhs, rhs) =&gt; Self::Divide(lhs.into(), rhs.into()),
+</a><a href="#h6-0-178" id="h6-0-178" class="i">+                ast::Operation::Exponentiate(lhs, rhs) =&gt; {
+</a><a href="#h6-0-179" id="h6-0-179" class="i">+                    Self::Exponentiate(lhs.into(), rhs.into())
+</a><a href="#h6-0-180" id="h6-0-180" class="i">+                }
+</a><a href="#h6-0-181" id="h6-0-181" class="i">+                ast::Operation::Factorial(expr) =&gt; Self::Factorial(expr.into()),
+</a><a href="#h6-0-182" id="h6-0-182" class="i">+                ast::Operation::Modulo(lhs, rhs) =&gt; Self::Modulo(lhs.into(), rhs.into()),
+</a><a href="#h6-0-183" id="h6-0-183" class="i">+                ast::Operation::Multiply(lhs, rhs) =&gt; Self::Multiply(lhs.into(), rhs.into()),
+</a><a href="#h6-0-184" id="h6-0-184" class="i">+                ast::Operation::Negate(expr) =&gt; Self::Negate(expr.into()),
+</a><a href="#h6-0-185" id="h6-0-185" class="i">+                ast::Operation::Subtract(lhs, rhs) =&gt; Self::Subtract(lhs.into(), rhs.into()),
+</a><a href="#h6-0-186" id="h6-0-186" class="i">+            },
+</a><a href="#h6-0-187" id="h6-0-187" class="i">+        }
+</a><a href="#h6-0-188" id="h6-0-188" class="i">+    }
+</a><a href="#h6-0-189" id="h6-0-189" class="i">+}
+</a><a href="#h6-0-190" id="h6-0-190" class="i">+
+</a><a href="#h6-0-191" id="h6-0-191" class="i">+impl From&lt;Box&lt;ast::Expression&gt;&gt; for Box&lt;Expression&gt; {
+</a><a href="#h6-0-192" id="h6-0-192" class="i">+    fn from(expr: Box&lt;ast::Expression&gt;) -&gt; Self {
+</a><a href="#h6-0-193" id="h6-0-193" class="i">+        Box::new((*expr).into())
+</a><a href="#h6-0-194" id="h6-0-194" class="i">+    }
+</a><a href="#h6-0-195" id="h6-0-195" class="i">+}
+</a><a href="#h6-0-196" id="h6-0-196" class="i">+
+</a><a href="#h6-0-197" id="h6-0-197" class="i">+impl From&lt;ast::Literal&gt; for Value {
+</a><a href="#h6-0-198" id="h6-0-198" class="i">+    fn from(literal: ast::Literal) -&gt; Self {
+</a><a href="#h6-0-199" id="h6-0-199" class="i">+        match literal {
+</a><a href="#h6-0-200" id="h6-0-200" class="i">+            ast::Literal::Null =&gt; Value::Null,
+</a><a href="#h6-0-201" id="h6-0-201" class="i">+            ast::Literal::Boolean(b) =&gt; b.into(),
+</a><a href="#h6-0-202" id="h6-0-202" class="i">+            ast::Literal::Float(f) =&gt; f.into(),
+</a><a href="#h6-0-203" id="h6-0-203" class="i">+            ast::Literal::Integer(i) =&gt; i.into(),
+</a><a href="#h6-0-204" id="h6-0-204" class="i">+            ast::Literal::String(s) =&gt; s.into(),
+</a><a href="#h6-0-205" id="h6-0-205" class="i">+        }
+</a><a href="#h6-0-206" id="h6-0-206" class="i">+    }
+</a><a href="#h6-0-207" id="h6-0-207" class="i">+}
+</a><b>diff --git a/<a id="h7" href="../file/src/sql/planner/plan.rs.html">src/sql/planner/plan.rs</a> b/<a href="../file/src/sql/planner/plan.rs.html">src/sql/planner/plan.rs</a></b>
+<a href="#h7-0" id="h7-0" class="h">@@ -0,0 +1,162 @@
+</a><a href="#h7-0-0" id="h7-0-0" class="i">+use super::super::executor::{Context, Executor};
+</a><a href="#h7-0-1" id="h7-0-1" class="i">+use super::super::expression::{Expression, Expressions};
+</a><a href="#h7-0-2" id="h7-0-2" class="i">+use super::super::optimizer;
+</a><a href="#h7-0-3" id="h7-0-3" class="i">+use super::super::optimizer::Optimizer;
+</a><a href="#h7-0-4" id="h7-0-4" class="i">+use super::super::parser::ast;
+</a><a href="#h7-0-5" id="h7-0-5" class="i">+use super::super::schema;
+</a><a href="#h7-0-6" id="h7-0-6" class="i">+use super::super::types::ResultSet;
+</a><a href="#h7-0-7" id="h7-0-7" class="i">+use super::Planner;
+</a><a href="#h7-0-8" id="h7-0-8" class="i">+use crate::Error;
+</a><a href="#h7-0-9" id="h7-0-9" class="i">+use std::collections::BTreeMap;
+</a><a href="#h7-0-10" id="h7-0-10" class="i">+
+</a><a href="#h7-0-11" id="h7-0-11" class="i">+/// A query plan
+</a><a href="#h7-0-12" id="h7-0-12" class="i">+#[derive(Debug)]
+</a><a href="#h7-0-13" id="h7-0-13" class="i">+pub struct Plan {
+</a><a href="#h7-0-14" id="h7-0-14" class="i">+    pub root: Node,
+</a><a href="#h7-0-15" id="h7-0-15" class="i">+}
+</a><a href="#h7-0-16" id="h7-0-16" class="i">+
+</a><a href="#h7-0-17" id="h7-0-17" class="i">+impl Plan {
+</a><a href="#h7-0-18" id="h7-0-18" class="i">+    /// Builds a plan from an AST statement
+</a><a href="#h7-0-19" id="h7-0-19" class="i">+    pub fn build(statement: ast::Statement) -&gt; Result&lt;Self, Error&gt; {
+</a><a href="#h7-0-20" id="h7-0-20" class="i">+        Planner::new().build(statement)
+</a><a href="#h7-0-21" id="h7-0-21" class="i">+    }
+</a><a href="#h7-0-22" id="h7-0-22" class="i">+
+</a><a href="#h7-0-23" id="h7-0-23" class="i">+    /// Executes the plan, consuming it
+</a><a href="#h7-0-24" id="h7-0-24" class="i">+    pub fn execute(self, mut ctx: Context) -&gt; Result&lt;ResultSet, Error&gt; {
+</a><a href="#h7-0-25" id="h7-0-25" class="i">+        Ok(ResultSet::from_executor(Executor::execute(&amp;mut ctx, self.root)?))
+</a><a href="#h7-0-26" id="h7-0-26" class="i">+    }
+</a><a href="#h7-0-27" id="h7-0-27" class="i">+
+</a><a href="#h7-0-28" id="h7-0-28" class="i">+    /// Optimizes the plan, consuming it
+</a><a href="#h7-0-29" id="h7-0-29" class="i">+    pub fn optimize(mut self) -&gt; Result&lt;Self, Error&gt; {
+</a><a href="#h7-0-30" id="h7-0-30" class="i">+        self.root = optimizer::ConstantFolder.optimize(self.root)?;
+</a><a href="#h7-0-31" id="h7-0-31" class="i">+        Ok(self)
+</a><a href="#h7-0-32" id="h7-0-32" class="i">+    }
+</a><a href="#h7-0-33" id="h7-0-33" class="i">+}
+</a><a href="#h7-0-34" id="h7-0-34" class="i">+
+</a><a href="#h7-0-35" id="h7-0-35" class="i">+/// A plan node
+</a><a href="#h7-0-36" id="h7-0-36" class="i">+#[derive(Debug)]
+</a><a href="#h7-0-37" id="h7-0-37" class="i">+pub enum Node {
+</a><a href="#h7-0-38" id="h7-0-38" class="i">+    CreateTable { schema: schema::Table },
+</a><a href="#h7-0-39" id="h7-0-39" class="i">+    Delete { table: String, source: Box&lt;Self&gt; },
+</a><a href="#h7-0-40" id="h7-0-40" class="i">+    DropTable { name: String },
+</a><a href="#h7-0-41" id="h7-0-41" class="i">+    Filter { source: Box&lt;Self&gt;, predicate: Expression },
+</a><a href="#h7-0-42" id="h7-0-42" class="i">+    Insert { table: String, columns: Vec&lt;String&gt;, expressions: Vec&lt;Expressions&gt; },
+</a><a href="#h7-0-43" id="h7-0-43" class="i">+    Limit { source: Box&lt;Self&gt;, limit: u64 },
+</a><a href="#h7-0-44" id="h7-0-44" class="i">+    Nothing,
+</a><a href="#h7-0-45" id="h7-0-45" class="i">+    Offset { source: Box&lt;Self&gt;, offset: u64 },
+</a><a href="#h7-0-46" id="h7-0-46" class="i">+    Order { source: Box&lt;Self&gt;, orders: Vec&lt;(Expression, Order)&gt; },
+</a><a href="#h7-0-47" id="h7-0-47" class="i">+    Projection { source: Box&lt;Self&gt;, labels: Vec&lt;Option&lt;String&gt;&gt;, expressions: Expressions },
+</a><a href="#h7-0-48" id="h7-0-48" class="i">+    Scan { table: String },
+</a><a href="#h7-0-49" id="h7-0-49" class="i">+    // Uses BTreeMap for test stability
+</a><a href="#h7-0-50" id="h7-0-50" class="i">+    Update { table: String, source: Box&lt;Self&gt;, expressions: BTreeMap&lt;String, Expression&gt; },
+</a><a href="#h7-0-51" id="h7-0-51" class="i">+}
+</a><a href="#h7-0-52" id="h7-0-52" class="i">+
+</a><a href="#h7-0-53" id="h7-0-53" class="i">+impl Node {
+</a><a href="#h7-0-54" id="h7-0-54" class="i">+    /// Recursively transforms nodes by applying functions before and after descending.
+</a><a href="#h7-0-55" id="h7-0-55" class="i">+    pub fn transform&lt;B, A&gt;(mut self, pre: &amp;B, post: &amp;A) -&gt; Result&lt;Self, Error&gt;
+</a><a href="#h7-0-56" id="h7-0-56" class="i">+    where
+</a><a href="#h7-0-57" id="h7-0-57" class="i">+        B: Fn(Self) -&gt; Result&lt;Self, Error&gt;,
+</a><a href="#h7-0-58" id="h7-0-58" class="i">+        A: Fn(Self) -&gt; Result&lt;Self, Error&gt;,
+</a><a href="#h7-0-59" id="h7-0-59" class="i">+    {
+</a><a href="#h7-0-60" id="h7-0-60" class="i">+        self = pre(self)?;
+</a><a href="#h7-0-61" id="h7-0-61" class="i">+        self = match self {
+</a><a href="#h7-0-62" id="h7-0-62" class="i">+            n @ Self::CreateTable { .. } =&gt; n,
+</a><a href="#h7-0-63" id="h7-0-63" class="i">+            n @ Self::DropTable { .. } =&gt; n,
+</a><a href="#h7-0-64" id="h7-0-64" class="i">+            n @ Self::Insert { .. } =&gt; n,
+</a><a href="#h7-0-65" id="h7-0-65" class="i">+            n @ Self::Nothing =&gt; n,
+</a><a href="#h7-0-66" id="h7-0-66" class="i">+            n @ Self::Scan { .. } =&gt; n,
+</a><a href="#h7-0-67" id="h7-0-67" class="i">+            Self::Delete { table, source } =&gt; {
+</a><a href="#h7-0-68" id="h7-0-68" class="i">+                Self::Delete { table, source: source.transform(pre, post)?.into() }
+</a><a href="#h7-0-69" id="h7-0-69" class="i">+            }
+</a><a href="#h7-0-70" id="h7-0-70" class="i">+            Self::Filter { source, predicate } =&gt; {
+</a><a href="#h7-0-71" id="h7-0-71" class="i">+                Self::Filter { source: source.transform(pre, post)?.into(), predicate }
+</a><a href="#h7-0-72" id="h7-0-72" class="i">+            }
+</a><a href="#h7-0-73" id="h7-0-73" class="i">+            Self::Limit { source, limit } =&gt; {
+</a><a href="#h7-0-74" id="h7-0-74" class="i">+                Self::Limit { source: source.transform(pre, post)?.into(), limit }
+</a><a href="#h7-0-75" id="h7-0-75" class="i">+            }
+</a><a href="#h7-0-76" id="h7-0-76" class="i">+            Self::Offset { source, offset } =&gt; {
+</a><a href="#h7-0-77" id="h7-0-77" class="i">+                Self::Offset { source: source.transform(pre, post)?.into(), offset }
+</a><a href="#h7-0-78" id="h7-0-78" class="i">+            }
+</a><a href="#h7-0-79" id="h7-0-79" class="i">+            Self::Order { source, orders } =&gt; {
+</a><a href="#h7-0-80" id="h7-0-80" class="i">+                Self::Order { source: source.transform(pre, post)?.into(), orders }
+</a><a href="#h7-0-81" id="h7-0-81" class="i">+            }
+</a><a href="#h7-0-82" id="h7-0-82" class="i">+            Self::Projection { source, labels, expressions } =&gt; Self::Projection {
+</a><a href="#h7-0-83" id="h7-0-83" class="i">+                source: source.transform(pre, post)?.into(),
+</a><a href="#h7-0-84" id="h7-0-84" class="i">+                labels,
+</a><a href="#h7-0-85" id="h7-0-85" class="i">+                expressions,
+</a><a href="#h7-0-86" id="h7-0-86" class="i">+            },
+</a><a href="#h7-0-87" id="h7-0-87" class="i">+            Self::Update { table, source, expressions } =&gt; {
+</a><a href="#h7-0-88" id="h7-0-88" class="i">+                Self::Update { table, source: source.transform(pre, post)?.into(), expressions }
+</a><a href="#h7-0-89" id="h7-0-89" class="i">+            }
+</a><a href="#h7-0-90" id="h7-0-90" class="i">+        };
+</a><a href="#h7-0-91" id="h7-0-91" class="i">+        post(self)
+</a><a href="#h7-0-92" id="h7-0-92" class="i">+    }
+</a><a href="#h7-0-93" id="h7-0-93" class="i">+
+</a><a href="#h7-0-94" id="h7-0-94" class="i">+    /// Transforms all expressions in a node by calling .transform() on them
+</a><a href="#h7-0-95" id="h7-0-95" class="i">+    /// with the given functions.
+</a><a href="#h7-0-96" id="h7-0-96" class="i">+    pub fn transform_expressions&lt;B, A&gt;(self, pre: &amp;B, post: &amp;A) -&gt; Result&lt;Self, Error&gt;
+</a><a href="#h7-0-97" id="h7-0-97" class="i">+    where
+</a><a href="#h7-0-98" id="h7-0-98" class="i">+        B: Fn(Expression) -&gt; Result&lt;Expression, Error&gt;,
+</a><a href="#h7-0-99" id="h7-0-99" class="i">+        A: Fn(Expression) -&gt; Result&lt;Expression, Error&gt;,
+</a><a href="#h7-0-100" id="h7-0-100" class="i">+    {
+</a><a href="#h7-0-101" id="h7-0-101" class="i">+        Ok(match self {
+</a><a href="#h7-0-102" id="h7-0-102" class="i">+            n @ Self::CreateTable { .. } =&gt; n,
+</a><a href="#h7-0-103" id="h7-0-103" class="i">+            n @ Self::Delete { .. } =&gt; n,
+</a><a href="#h7-0-104" id="h7-0-104" class="i">+            n @ Self::DropTable { .. } =&gt; n,
+</a><a href="#h7-0-105" id="h7-0-105" class="i">+            n @ Self::Limit { .. } =&gt; n,
+</a><a href="#h7-0-106" id="h7-0-106" class="i">+            n @ Self::Nothing =&gt; n,
+</a><a href="#h7-0-107" id="h7-0-107" class="i">+            n @ Self::Offset { .. } =&gt; n,
+</a><a href="#h7-0-108" id="h7-0-108" class="i">+            n @ Self::Scan { .. } =&gt; n,
+</a><a href="#h7-0-109" id="h7-0-109" class="i">+            Self::Filter { source, predicate } =&gt; {
+</a><a href="#h7-0-110" id="h7-0-110" class="i">+                Self::Filter { source, predicate: predicate.transform(pre, post)? }
+</a><a href="#h7-0-111" id="h7-0-111" class="i">+            }
+</a><a href="#h7-0-112" id="h7-0-112" class="i">+            Self::Insert { table, columns, expressions } =&gt; Self::Insert {
+</a><a href="#h7-0-113" id="h7-0-113" class="i">+                table,
+</a><a href="#h7-0-114" id="h7-0-114" class="i">+                columns,
+</a><a href="#h7-0-115" id="h7-0-115" class="i">+                expressions: expressions
+</a><a href="#h7-0-116" id="h7-0-116" class="i">+                    .into_iter()
+</a><a href="#h7-0-117" id="h7-0-117" class="i">+                    .map(|exprs| exprs.into_iter().map(|e| e.transform(pre, post)).collect())
+</a><a href="#h7-0-118" id="h7-0-118" class="i">+                    .collect::&lt;Result&lt;_, Error&gt;&gt;()?,
+</a><a href="#h7-0-119" id="h7-0-119" class="i">+            },
+</a><a href="#h7-0-120" id="h7-0-120" class="i">+            Self::Order { source, orders } =&gt; Self::Order {
+</a><a href="#h7-0-121" id="h7-0-121" class="i">+                source,
+</a><a href="#h7-0-122" id="h7-0-122" class="i">+                orders: orders
+</a><a href="#h7-0-123" id="h7-0-123" class="i">+                    .into_iter()
+</a><a href="#h7-0-124" id="h7-0-124" class="i">+                    .map(|(e, o)| e.transform(pre, post).map(|e| (e, o)))
+</a><a href="#h7-0-125" id="h7-0-125" class="i">+                    .collect::&lt;Result&lt;_, Error&gt;&gt;()?,
+</a><a href="#h7-0-126" id="h7-0-126" class="i">+            },
+</a><a href="#h7-0-127" id="h7-0-127" class="i">+            Self::Projection { source, labels, expressions } =&gt; Self::Projection {
+</a><a href="#h7-0-128" id="h7-0-128" class="i">+                source,
+</a><a href="#h7-0-129" id="h7-0-129" class="i">+                labels,
+</a><a href="#h7-0-130" id="h7-0-130" class="i">+                expressions: expressions
+</a><a href="#h7-0-131" id="h7-0-131" class="i">+                    .into_iter()
+</a><a href="#h7-0-132" id="h7-0-132" class="i">+                    .map(|e| e.transform(pre, post))
+</a><a href="#h7-0-133" id="h7-0-133" class="i">+                    .collect::&lt;Result&lt;_, Error&gt;&gt;()?,
+</a><a href="#h7-0-134" id="h7-0-134" class="i">+            },
+</a><a href="#h7-0-135" id="h7-0-135" class="i">+            Self::Update { table, source, expressions } =&gt; Self::Update {
+</a><a href="#h7-0-136" id="h7-0-136" class="i">+                table,
+</a><a href="#h7-0-137" id="h7-0-137" class="i">+                source,
+</a><a href="#h7-0-138" id="h7-0-138" class="i">+                expressions: expressions
+</a><a href="#h7-0-139" id="h7-0-139" class="i">+                    .into_iter()
+</a><a href="#h7-0-140" id="h7-0-140" class="i">+                    .map(|(k, e)| e.transform(pre, post).map(|e| (k, e)))
+</a><a href="#h7-0-141" id="h7-0-141" class="i">+                    .collect::&lt;Result&lt;_, Error&gt;&gt;()?,
+</a><a href="#h7-0-142" id="h7-0-142" class="i">+            },
+</a><a href="#h7-0-143" id="h7-0-143" class="i">+        })
+</a><a href="#h7-0-144" id="h7-0-144" class="i">+    }
+</a><a href="#h7-0-145" id="h7-0-145" class="i">+}
+</a><a href="#h7-0-146" id="h7-0-146" class="i">+
+</a><a href="#h7-0-147" id="h7-0-147" class="i">+/// A sort order
+</a><a href="#h7-0-148" id="h7-0-148" class="i">+#[derive(Debug, PartialEq)]
+</a><a href="#h7-0-149" id="h7-0-149" class="i">+pub enum Order {
+</a><a href="#h7-0-150" id="h7-0-150" class="i">+    Ascending,
+</a><a href="#h7-0-151" id="h7-0-151" class="i">+    Descending,
+</a><a href="#h7-0-152" id="h7-0-152" class="i">+}
+</a><a href="#h7-0-153" id="h7-0-153" class="i">+
+</a><a href="#h7-0-154" id="h7-0-154" class="i">+impl From&lt;ast::Order&gt; for Order {
+</a><a href="#h7-0-155" id="h7-0-155" class="i">+    fn from(o: ast::Order) -&gt; Self {
+</a><a href="#h7-0-156" id="h7-0-156" class="i">+        match o {
+</a><a href="#h7-0-157" id="h7-0-157" class="i">+            ast::Order::Ascending =&gt; Self::Ascending,
+</a><a href="#h7-0-158" id="h7-0-158" class="i">+            ast::Order::Descending =&gt; Self::Descending,
+</a><a href="#h7-0-159" id="h7-0-159" class="i">+        }
+</a><a href="#h7-0-160" id="h7-0-160" class="i">+    }
+</a><a href="#h7-0-161" id="h7-0-161" class="i">+}
+</a></pre>
+</div>
+</body>
+</html>

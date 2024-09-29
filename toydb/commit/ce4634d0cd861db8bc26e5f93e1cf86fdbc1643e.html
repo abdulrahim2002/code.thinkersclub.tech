@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>raft: tweak status and move to messages - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/ce4634d0cd861db8bc26e5f93e1cf86fdbc1643e.html">ce4634d0cd861db8bc26e5f93e1cf86fdbc1643e</a>
+<b>parent</b> <a href="../commit/cc683a41b1ed3081d68a1842ff26db6296f0bfc7.html">cc683a41b1ed3081d68a1842ff26db6296f0bfc7</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Sat, 30 Mar 2024 20:37:57 +0100
+
+raft: tweak status and move to messages
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/bin/toysql.rs</a></td><td> | </td><td class="num">8</td><td><span class="i">++++</span><span class="d">----</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/raft/message.rs</a></td><td> | </td><td class="num">25</td><td><span class="i">++++++++++++++++++++++++</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/raft/mod.rs</a></td><td> | </td><td class="num">4</td><td><span class="i">++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">src/raft/node/leader.rs</a></td><td> | </td><td class="num">20</td><td><span class="i">+++++++++++</span><span class="d">---------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h4">src/raft/node/mod.rs</a></td><td> | </td><td class="num">20</td><td><span class="i">+++</span><span class="d">-----------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h5">tests/client/mod.rs</a></td><td> | </td><td class="num">13</td><td><span class="i">++++++++++</span><span class="d">---</span></td></tr>
+</table></pre><pre>6 files changed, 54 insertions(+), 36 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/bin/toysql.rs.html">src/bin/toysql.rs</a> b/<a href="../file/src/bin/toysql.rs.html">src/bin/toysql.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -119,7 +119,7 @@ The following commands are also available:
+</a>                 let status = self.client.status().await?;
+                 let mut node_logs = status
+                     .raft
+<a href="#h0-0-3" id="h0-0-3" class="d">-                    .node_last_index
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+                    .last_index
+</a>                     .iter()
+                     .map(|(id, index)| format!(&quot;{}:{}&quot;, id, index))
+                     .collect::&lt;Vec&lt;_&gt;&gt;();
+<a href="#h0-1" id="h0-1" class="h">@@ -135,12 +135,12 @@ Storage:   {keys} keys, {logical_size} MB logical, {nodes}x {disk_size} MB disk,
+</a>                     server = status.raft.server,
+                     leader = status.raft.leader,
+                     term = status.raft.term,
+<a href="#h0-1-3" id="h0-1-3" class="d">-                    nodes = status.raft.node_last_index.len(),
+</a><a href="#h0-1-4" id="h0-1-4" class="i">+                    nodes = status.raft.last_index.len(),
+</a>                     committed = status.raft.commit_index,
+                     applied = status.raft.apply_index,
+<a href="#h0-1-7" id="h0-1-7" class="d">-                    raft_storage = status.raft.storage,
+</a><a href="#h0-1-8" id="h0-1-8" class="i">+                    raft_storage = status.raft.storage.name,
+</a>                     raft_size =
+<a href="#h0-1-10" id="h0-1-10" class="d">-                        format_args!(&quot;{:.3}&quot;, status.raft.storage_size as f64 / 1000.0 / 1000.0),
+</a><a href="#h0-1-11" id="h0-1-11" class="i">+                        format_args!(&quot;{:.3}&quot;, status.raft.storage.size as f64 / 1000.0 / 1000.0),
+</a>                     logs = node_logs.join(&quot; &quot;),
+                     versions = status.mvcc.versions,
+                     active_txns = status.mvcc.active_txns,
+<b>diff --git a/<a id="h1" href="../file/src/raft/message.rs.html">src/raft/message.rs</a> b/<a href="../file/src/raft/message.rs.html">src/raft/message.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -1,7 +1,9 @@
+</a><a href="#h1-0-0" id="h1-0-0" class="d">-use super::{Entry, Index, NodeID, Status, Term};
+</a><a href="#h1-0-1" id="h1-0-1" class="i">+use super::{Entry, Index, NodeID, Term};
+</a> use crate::error::Result;
+<a href="#h1-0-3" id="h1-0-3" class="i">+use crate::storage;
+</a> 
+ use serde_derive::{Deserialize, Serialize};
+<a href="#h1-0-6" id="h1-0-6" class="i">+use std::collections::HashMap;
+</a> 
+ /// A message address.
+ #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
+<a href="#h1-1" id="h1-1" class="h">@@ -128,3 +130,24 @@ pub enum Response {
+</a>     Mutate(Vec&lt;u8&gt;),
+     Status(Status),
+ }
+<a href="#h1-1-3" id="h1-1-3" class="i">+
+</a><a href="#h1-1-4" id="h1-1-4" class="i">+/// Raft cluster status.
+</a><a href="#h1-1-5" id="h1-1-5" class="i">+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+</a><a href="#h1-1-6" id="h1-1-6" class="i">+pub struct Status {
+</a><a href="#h1-1-7" id="h1-1-7" class="i">+    /// The server handling this status request.
+</a><a href="#h1-1-8" id="h1-1-8" class="i">+    ///
+</a><a href="#h1-1-9" id="h1-1-9" class="i">+    /// TODO: this should be moved to the RPC server.
+</a><a href="#h1-1-10" id="h1-1-10" class="i">+    pub server: NodeID,
+</a><a href="#h1-1-11" id="h1-1-11" class="i">+    /// The current Raft leader, which generated this status.
+</a><a href="#h1-1-12" id="h1-1-12" class="i">+    pub leader: NodeID,
+</a><a href="#h1-1-13" id="h1-1-13" class="i">+    /// The current Raft term.
+</a><a href="#h1-1-14" id="h1-1-14" class="i">+    pub term: Term,
+</a><a href="#h1-1-15" id="h1-1-15" class="i">+    /// The last log indexes of all nodes.
+</a><a href="#h1-1-16" id="h1-1-16" class="i">+    pub last_index: HashMap&lt;NodeID, Index&gt;,
+</a><a href="#h1-1-17" id="h1-1-17" class="i">+    /// The current commit index.
+</a><a href="#h1-1-18" id="h1-1-18" class="i">+    pub commit_index: Index,
+</a><a href="#h1-1-19" id="h1-1-19" class="i">+    /// The current applied index.
+</a><a href="#h1-1-20" id="h1-1-20" class="i">+    pub apply_index: Index,
+</a><a href="#h1-1-21" id="h1-1-21" class="i">+    /// The log storage engine status.
+</a><a href="#h1-1-22" id="h1-1-22" class="i">+    pub storage: storage::engine::Status,
+</a><a href="#h1-1-23" id="h1-1-23" class="i">+}
+</a><b>diff --git a/<a id="h2" href="../file/src/raft/mod.rs.html">src/raft/mod.rs</a> b/<a href="../file/src/raft/mod.rs.html">src/raft/mod.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -5,7 +5,7 @@ mod server;
+</a> mod state;
+ 
+ pub use self::log::{Entry, Index, Log};
+<a href="#h2-0-3" id="h2-0-3" class="d">-pub use message::{Address, Event, Message, Request, RequestID, Response};
+</a><a href="#h2-0-4" id="h2-0-4" class="d">-pub use node::{Node, NodeID, Status, Term};
+</a><a href="#h2-0-5" id="h2-0-5" class="i">+pub use message::{Address, Event, Message, Request, RequestID, Response, Status};
+</a><a href="#h2-0-6" id="h2-0-6" class="i">+pub use node::{Node, NodeID, Term};
+</a> pub use server::Server;
+ pub use state::{Driver, Instruction, State};
+<b>diff --git a/<a id="h3" href="../file/src/raft/node/leader.rs.html">src/raft/node/leader.rs</a> b/<a href="../file/src/raft/node/leader.rs.html">src/raft/node/leader.rs</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -158,12 +158,11 @@ impl RawNode&lt;Leader&gt; {
+</a>             }
+ 
+             Event::ClientRequest { id, request: Request::Status } =&gt; {
+<a href="#h3-0-3" id="h3-0-3" class="d">-                let engine_status = self.log.status()?;
+</a>                 let status = Box::new(Status {
+                     server: self.id,
+                     leader: self.id,
+                     term: self.term,
+<a href="#h3-0-8" id="h3-0-8" class="d">-                    node_last_index: self
+</a><a href="#h3-0-9" id="h3-0-9" class="i">+                    last_index: self
+</a>                         .role
+                         .progress
+                         .iter()
+<a href="#h3-1" id="h3-1" class="h">@@ -172,8 +171,7 @@ impl RawNode&lt;Leader&gt; {
+</a>                         .collect(),
+                     commit_index: self.log.get_commit_index().0,
+                     apply_index: 0,
+<a href="#h3-1-3" id="h3-1-3" class="d">-                    storage: engine_status.name.clone(),
+</a><a href="#h3-1-4" id="h3-1-4" class="d">-                    storage_size: engine_status.size,
+</a><a href="#h3-1-5" id="h3-1-5" class="i">+                    storage: self.log.status()?,
+</a>                 });
+                 self.state_tx.send(Instruction::Status { id, address: msg.from, status })?
+             }
+<a href="#h3-2" id="h3-2" class="h">@@ -688,13 +686,17 @@ mod tests {
+</a>                     server: 1,
+                     leader: 1,
+                     term: 3,
+<a href="#h3-2-3" id="h3-2-3" class="d">-                    node_last_index: vec![(1, 5), (2, 0), (3, 0), (4, 0), (5, 0)]
+</a><a href="#h3-2-4" id="h3-2-4" class="d">-                        .into_iter()
+</a><a href="#h3-2-5" id="h3-2-5" class="d">-                        .collect(),
+</a><a href="#h3-2-6" id="h3-2-6" class="i">+                    last_index: vec![(1, 5), (2, 0), (3, 0), (4, 0), (5, 0)].into_iter().collect(),
+</a>                     commit_index: 2,
+                     apply_index: 0,
+<a href="#h3-2-9" id="h3-2-9" class="d">-                    storage: &quot;memory&quot;.into(),
+</a><a href="#h3-2-10" id="h3-2-10" class="d">-                    storage_size: 72,
+</a><a href="#h3-2-11" id="h3-2-11" class="i">+                    storage: storage::engine::Status {
+</a><a href="#h3-2-12" id="h3-2-12" class="i">+                        name: &quot;memory&quot;.to_string(),
+</a><a href="#h3-2-13" id="h3-2-13" class="i">+                        keys: 7,
+</a><a href="#h3-2-14" id="h3-2-14" class="i">+                        size: 72,
+</a><a href="#h3-2-15" id="h3-2-15" class="i">+                        total_disk_size: 0,
+</a><a href="#h3-2-16" id="h3-2-16" class="i">+                        live_disk_size: 0,
+</a><a href="#h3-2-17" id="h3-2-17" class="i">+                        garbage_disk_size: 0,
+</a><a href="#h3-2-18" id="h3-2-18" class="i">+                    },
+</a>                 }),
+             }],
+         );
+<b>diff --git a/<a id="h4" href="../file/src/raft/node/mod.rs.html">src/raft/node/mod.rs</a> b/<a href="../file/src/raft/node/mod.rs.html">src/raft/node/mod.rs</a></b>
+<a href="#h4-0" id="h4-0" class="h">@@ -2,7 +2,7 @@ mod candidate;
+</a> mod follower;
+ mod leader;
+ 
+<a href="#h4-0-3" id="h4-0-3" class="d">-use super::{Address, Driver, Event, Index, Instruction, Log, Message, State};
+</a><a href="#h4-0-4" id="h4-0-4" class="i">+use super::{Address, Driver, Event, Instruction, Log, Message, State};
+</a> use crate::error::Result;
+ use candidate::Candidate;
+ use follower::Follower;
+<a href="#h4-1" id="h4-1" class="h">@@ -10,8 +10,7 @@ use leader::Leader;
+</a> 
+ use ::log::debug;
+ use rand::Rng as _;
+<a href="#h4-1-3" id="h4-1-3" class="d">-use serde_derive::{Deserialize, Serialize};
+</a><a href="#h4-1-4" id="h4-1-4" class="d">-use std::collections::{HashMap, HashSet};
+</a><a href="#h4-1-5" id="h4-1-5" class="i">+use std::collections::HashSet;
+</a> use tokio::sync::mpsc;
+ 
+ /// A node ID.
+<a href="#h4-2" id="h4-2" class="h">@@ -35,19 +34,6 @@ fn rand_election_timeout() -&gt; Ticks {
+</a>     rand::thread_rng().gen_range(ELECTION_TIMEOUT_RANGE)
+ }
+ 
+<a href="#h4-2-3" id="h4-2-3" class="d">-/// Node status
+</a><a href="#h4-2-4" id="h4-2-4" class="d">-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+</a><a href="#h4-2-5" id="h4-2-5" class="d">-pub struct Status {
+</a><a href="#h4-2-6" id="h4-2-6" class="d">-    pub server: NodeID,
+</a><a href="#h4-2-7" id="h4-2-7" class="d">-    pub leader: NodeID,
+</a><a href="#h4-2-8" id="h4-2-8" class="d">-    pub term: Term,
+</a><a href="#h4-2-9" id="h4-2-9" class="d">-    pub node_last_index: HashMap&lt;NodeID, Index&gt;,
+</a><a href="#h4-2-10" id="h4-2-10" class="d">-    pub commit_index: Index,
+</a><a href="#h4-2-11" id="h4-2-11" class="d">-    pub apply_index: Index,
+</a><a href="#h4-2-12" id="h4-2-12" class="d">-    pub storage: String,
+</a><a href="#h4-2-13" id="h4-2-13" class="d">-    pub storage_size: u64,
+</a><a href="#h4-2-14" id="h4-2-14" class="d">-}
+</a><a href="#h4-2-15" id="h4-2-15" class="d">-
+</a> /// A Raft node, with a dynamic role. The node is driven synchronously by
+ /// processing inbound messages via step() or by advancing time via tick().
+ /// These methods consume the current node, and return a new one with a possibly
+<a href="#h4-3" id="h4-3" class="h">@@ -246,7 +232,7 @@ fn quorum_value&lt;T: Ord + Copy&gt;(mut values: Vec&lt;T&gt;) -&gt; T {
+</a> #[cfg(test)]
+ mod tests {
+     pub use super::super::state::tests::TestState;
+<a href="#h4-3-3" id="h4-3-3" class="d">-    use super::super::{Entry, RequestID};
+</a><a href="#h4-3-4" id="h4-3-4" class="i">+    use super::super::{Entry, Index, RequestID};
+</a>     use super::follower::tests::{follower_leader, follower_voted_for};
+     use super::*;
+     use crate::storage;
+<b>diff --git a/<a id="h5" href="../file/tests/client/mod.rs.html">tests/client/mod.rs</a> b/<a href="../file/tests/client/mod.rs.html">tests/client/mod.rs</a></b>
+<a href="#h5-0" id="h5-0" class="h">@@ -8,6 +8,7 @@ use toydb::sql::engine::Status;
+</a> use toydb::sql::execution::ResultSet;
+ use toydb::sql::schema;
+ use toydb::sql::types::{Column, DataType, Value};
+<a href="#h5-0-3" id="h5-0-3" class="i">+use toydb::storage;
+</a> use toydb::storage::{engine, mvcc};
+ use toydb::Client;
+ 
+<a href="#h5-1" id="h5-1" class="h">@@ -125,11 +126,17 @@ async fn status() -&gt; Result&lt;()&gt; {
+</a>                 server: 1,
+                 leader: 1,
+                 term: 1,
+<a href="#h5-1-3" id="h5-1-3" class="d">-                node_last_index: [(1, 27)].into(),
+</a><a href="#h5-1-4" id="h5-1-4" class="i">+                last_index: [(1, 27)].into(),
+</a>                 commit_index: 27,
+                 apply_index: 27,
+<a href="#h5-1-7" id="h5-1-7" class="d">-                storage: &quot;bitcask&quot;.into(),
+</a><a href="#h5-1-8" id="h5-1-8" class="d">-                storage_size: 1324,
+</a><a href="#h5-1-9" id="h5-1-9" class="i">+                storage: storage::engine::Status {
+</a><a href="#h5-1-10" id="h5-1-10" class="i">+                    name: &quot;bitcask&quot;.to_string(),
+</a><a href="#h5-1-11" id="h5-1-11" class="i">+                    keys: 29,
+</a><a href="#h5-1-12" id="h5-1-12" class="i">+                    size: 1324,
+</a><a href="#h5-1-13" id="h5-1-13" class="i">+                    total_disk_size: 1831,
+</a><a href="#h5-1-14" id="h5-1-14" class="i">+                    live_disk_size: 1556,
+</a><a href="#h5-1-15" id="h5-1-15" class="i">+                    garbage_disk_size: 275
+</a><a href="#h5-1-16" id="h5-1-16" class="i">+                },
+</a>             },
+             mvcc: mvcc::Status {
+                 versions: 1,
+</pre>
+</div>
+</body>
+</html>

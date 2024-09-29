@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>sql: minor borrow fixes - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/6fc60ae4a3edbb850ff0a176e60f8b4241c033b5.html">6fc60ae4a3edbb850ff0a176e60f8b4241c033b5</a>
+<b>parent</b> <a href="../commit/a292675d9f42ca307fbcdee6953dbee8bef3ecd7.html">a292675d9f42ca307fbcdee6953dbee8bef3ecd7</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Sun, 31 May 2020 11:26:59 +0200
+
+sql: minor borrow fixes
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/sql/plan/planner.rs</a></td><td> | </td><td class="num">22</td><td><span class="i">+++++++++++</span><span class="d">-----------</span></td></tr>
+</table></pre><pre>1 file changed, 11 insertions(+), 11 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/sql/plan/planner.rs.html">src/sql/plan/planner.rs</a> b/<a href="../file/src/sql/plan/planner.rs.html">src/sql/plan/planner.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -24,7 +24,7 @@ impl&lt;&#39;a, C: Catalog&gt; Planner&lt;&#39;a, C&gt; {
+</a>     }
+ 
+     /// Builds a plan node for a statement.
+<a href="#h0-0-3" id="h0-0-3" class="d">-    fn build_statement(&amp;mut self, statement: ast::Statement) -&gt; Result&lt;Node&gt; {
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+    fn build_statement(&amp;self, statement: ast::Statement) -&gt; Result&lt;Node&gt; {
+</a>         Ok(match statement {
+             // Transaction control and explain statements should have been handled by session.
+             ast::Statement::Begin { .. } | ast::Statement::Commit | ast::Statement::Rollback =&gt; {
+<a href="#h0-1" id="h0-1" class="h">@@ -68,7 +68,7 @@ impl&lt;&#39;a, C: Catalog&gt; Planner&lt;&#39;a, C&gt; {
+</a> 
+             ast::Statement::DropTable(table) =&gt; Node::DropTable { table },
+ 
+<a href="#h0-1-3" id="h0-1-3" class="d">-            // Data modification language.
+</a><a href="#h0-1-4" id="h0-1-4" class="i">+            // DML statements (mutations).
+</a>             ast::Statement::Delete { table, r#where } =&gt; {
+                 let scope = &amp;mut Scope::from_table(self.catalog.must_read_table(&amp;table)?)?;
+                 Node::Delete {
+<a href="#h0-2" id="h0-2" class="h">@@ -175,7 +175,7 @@ impl&lt;&#39;a, C: Catalog&gt; Planner&lt;&#39;a, C&gt; {
+</a>                         .into_iter()
+                         .map(|(e, l)| Ok((self.build_expression(scope, e)?, l)))
+                         .collect::&lt;Result&lt;_&gt;&gt;()?;
+<a href="#h0-2-3" id="h0-2-3" class="d">-                    scope.project(expressions.clone())?;
+</a><a href="#h0-2-4" id="h0-2-4" class="i">+                    scope.project(&amp;expressions)?;
+</a>                     node = Node::Projection { source: Box::new(node), expressions };
+                 };
+ 
+<a href="#h0-3" id="h0-3" class="h">@@ -242,7 +242,7 @@ impl&lt;&#39;a, C: Catalog&gt; Planner&lt;&#39;a, C&gt; {
+</a>     /// Builds a FROM clause consisting of several items. Each item is either a single table or a
+     /// join of an arbitrary number of tables. All of the items are joined, since e.g. &#39;SELECT * FROM
+     /// a, b&#39; is an implicit join of a and b.
+<a href="#h0-3-3" id="h0-3-3" class="d">-    fn build_from_clause(&amp;mut self, scope: &amp;mut Scope, from: ast::FromClause) -&gt; Result&lt;Node&gt; {
+</a><a href="#h0-3-4" id="h0-3-4" class="i">+    fn build_from_clause(&amp;self, scope: &amp;mut Scope, from: ast::FromClause) -&gt; Result&lt;Node&gt; {
+</a>         let mut items = from.items.into_iter();
+         let mut node = match items.next() {
+             Some(item) =&gt; self.build_from_item(scope, item)?,
+<a href="#h0-4" id="h0-4" class="h">@@ -264,7 +264,7 @@ impl&lt;&#39;a, C: Catalog&gt; Planner&lt;&#39;a, C&gt; {
+</a>     /// e.g. &#39;SELECT * FROM a LEFT JOIN b ON b.a_id = a.id&#39;. Any tables will be stored in
+     /// self.tables keyed by their query name (i.e. alias if given, otherwise name). The table can
+     /// only be referenced by the query name (so if alias is given, cannot reference by name).
+<a href="#h0-4-3" id="h0-4-3" class="d">-    fn build_from_item(&amp;mut self, scope: &amp;mut Scope, item: ast::FromItem) -&gt; Result&lt;Node&gt; {
+</a><a href="#h0-4-4" id="h0-4-4" class="i">+    fn build_from_item(&amp;self, scope: &amp;mut Scope, item: ast::FromItem) -&gt; Result&lt;Node&gt; {
+</a>         Ok(match item {
+             ast::FromItem::Table { name, alias } =&gt; {
+                 scope.add_table(
+<a href="#h0-5" id="h0-5" class="h">@@ -319,7 +319,7 @@ impl&lt;&#39;a, C: Catalog&gt; Planner&lt;&#39;a, C&gt; {
+</a>         }
+         // FIXME This is probably wrong for the aggregate columns, since we don&#39;t want to inherit
+         // from them if they are simple field references.
+<a href="#h0-5-3" id="h0-5-3" class="d">-        scope.project(expressions.clone())?;
+</a><a href="#h0-5-4" id="h0-5-4" class="i">+        scope.project(&amp;expressions)?;
+</a>         let node = Node::Aggregation {
+             source: Box::new(Node::Projection { source: Box::new(source), expressions }),
+             aggregates,
+<a href="#h0-6" id="h0-6" class="h">@@ -665,7 +665,7 @@ impl Scope {
+</a> 
+     /// Projects the scope. This takes a set of expressions and labels in the current scope,
+     /// and returns a new scope for the projection.
+<a href="#h0-6-3" id="h0-6-3" class="d">-    fn project(&amp;mut self, projection: Vec&lt;(Expression, Option&lt;String&gt;)&gt;) -&gt; Result&lt;()&gt; {
+</a><a href="#h0-6-4" id="h0-6-4" class="i">+    fn project(&amp;mut self, projection: &amp;[(Expression, Option&lt;String&gt;)]) -&gt; Result&lt;()&gt; {
+</a>         if self.constant {
+             return Err(Error::Internal(&quot;Can&#39;t modify constant scope&quot;.into()));
+         }
+<a href="#h0-7" id="h0-7" class="h">@@ -673,18 +673,18 @@ impl Scope {
+</a>         new.tables = self.tables.clone();
+         for (expr, label) in projection {
+             match (expr, label) {
+<a href="#h0-7-3" id="h0-7-3" class="d">-                (_, Some(label)) =&gt; new.add_column(None, Some(label)),
+</a><a href="#h0-7-4" id="h0-7-4" class="i">+                (_, Some(label)) =&gt; new.add_column(None, Some(label.clone())),
+</a>                 (Expression::Field(_, Some((Some(table), name))), _) =&gt; {
+<a href="#h0-7-6" id="h0-7-6" class="d">-                    new.add_column(Some(table), Some(name))
+</a><a href="#h0-7-7" id="h0-7-7" class="i">+                    new.add_column(Some(table.clone()), Some(name.clone()))
+</a>                 }
+                 (Expression::Field(_, Some((None, name))), _) =&gt; {
+<a href="#h0-7-10" id="h0-7-10" class="d">-                    if let Some(i) = self.unqualified.get(&amp;name) {
+</a><a href="#h0-7-11" id="h0-7-11" class="i">+                    if let Some(i) = self.unqualified.get(name) {
+</a>                         let (table, name) = self.columns[*i].clone();
+                         new.add_column(table, name);
+                     }
+                 }
+                 (Expression::Field(i, None), _) =&gt; {
+<a href="#h0-7-17" id="h0-7-17" class="d">-                    let (table, label) = self.columns.get(i).cloned().unwrap_or((None, None));
+</a><a href="#h0-7-18" id="h0-7-18" class="i">+                    let (table, label) = self.columns.get(*i).cloned().unwrap_or((None, None));
+</a>                     new.add_column(table, label)
+                 }
+                 _ =&gt; new.add_column(None, None),
+</pre>
+</div>
+</body>
+</html>

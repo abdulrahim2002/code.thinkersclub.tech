@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>README: add performance benchmarks - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/b16d33cb9b74e9e6393b3877aaedc94aecd8b460.html">b16d33cb9b74e9e6393b3877aaedc94aecd8b460</a>
+<b>parent</b> <a href="../commit/3b6ede7fcf75dc541ea16ac6e35db0f5c902266b.html">3b6ede7fcf75dc541ea16ac6e35db0f5c902266b</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Tue,  9 Jun 2020 23:49:13 +0200
+
+README: add performance benchmarks
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">README.md</a></td><td> | </td><td class="num">67</td><td><span class="i">+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/bin/bank.rs</a></td><td> | </td><td class="num">32</td><td><span class="i">++++++++++++++++++++++</span><span class="d">----------</span></td></tr>
+</table></pre><pre>2 files changed, 89 insertions(+), 10 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/README.md.html">README.md</a> b/<a href="../file/README.md.html">README.md</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -82,6 +82,73 @@ toydb@1&gt; SELECT * FROM movies
+</a> 3|Her
+ ```
+ 
+<a href="#h0-0-3" id="h0-0-3" class="i">+## Performance
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+
+</a><a href="#h0-0-5" id="h0-0-5" class="i">+Performance is not a primary goal of toyDB, but a bank simulation is included as a basic gauge of
+</a><a href="#h0-0-6" id="h0-0-6" class="i">+concurrent transaction throughput and correctness. This creates a set of customers and accounts,
+</a><a href="#h0-0-7" id="h0-0-7" class="i">+and then spawns a set of concurrent workers which makes random transfers between them, retrying
+</a><a href="#h0-0-8" id="h0-0-8" class="i">+serialization failures and verifying invariants (e.g. total balance). Each transaction consists of 
+</a><a href="#h0-0-9" id="h0-0-9" class="i">+six statements:
+</a><a href="#h0-0-10" id="h0-0-10" class="i">+
+</a><a href="#h0-0-11" id="h0-0-11" class="i">+```sql
+</a><a href="#h0-0-12" id="h0-0-12" class="i">+BEGIN;
+</a><a href="#h0-0-13" id="h0-0-13" class="i">+
+</a><a href="#h0-0-14" id="h0-0-14" class="i">+-- Find the sender account with the highest balance
+</a><a href="#h0-0-15" id="h0-0-15" class="i">+SELECT a.id, a.balance
+</a><a href="#h0-0-16" id="h0-0-16" class="i">+FROM account a JOIN customer c ON a.customer_id = c.id
+</a><a href="#h0-0-17" id="h0-0-17" class="i">+WHERE c.id = {sender}
+</a><a href="#h0-0-18" id="h0-0-18" class="i">+ORDER BY a.balance DESC
+</a><a href="#h0-0-19" id="h0-0-19" class="i">+LIMIT 1;
+</a><a href="#h0-0-20" id="h0-0-20" class="i">+
+</a><a href="#h0-0-21" id="h0-0-21" class="i">+-- Find the receiver account with the lowest balance
+</a><a href="#h0-0-22" id="h0-0-22" class="i">+SELECT a.id, a.balance
+</a><a href="#h0-0-23" id="h0-0-23" class="i">+FROM account a JOIN customer c ON a.customer_id = c.id
+</a><a href="#h0-0-24" id="h0-0-24" class="i">+WHERE c.id = {receiver}
+</a><a href="#h0-0-25" id="h0-0-25" class="i">+ORDER BY a.balance ASC
+</a><a href="#h0-0-26" id="h0-0-26" class="i">+LIMIT 1;
+</a><a href="#h0-0-27" id="h0-0-27" class="i">+
+</a><a href="#h0-0-28" id="h0-0-28" class="i">+-- Transfer a random amount within the sender&#39;s balance to the receiver
+</a><a href="#h0-0-29" id="h0-0-29" class="i">+UPDATE account SET balance = balance - {amount} WHERE id = {source};
+</a><a href="#h0-0-30" id="h0-0-30" class="i">+UPDATE account SET balance = balance + {amount} WHERE id = {destination};
+</a><a href="#h0-0-31" id="h0-0-31" class="i">+
+</a><a href="#h0-0-32" id="h0-0-32" class="i">+COMMIT;
+</a><a href="#h0-0-33" id="h0-0-33" class="i">+```
+</a><a href="#h0-0-34" id="h0-0-34" class="i">+
+</a><a href="#h0-0-35" id="h0-0-35" class="i">+A bank simulation with 8 workers, 100 customers, 10 accounts each, and 1000 transactions can be run
+</a><a href="#h0-0-36" id="h0-0-36" class="i">+against a toyDB server on `localhost:9605` as:
+</a><a href="#h0-0-37" id="h0-0-37" class="i">+
+</a><a href="#h0-0-38" id="h0-0-38" class="i">+```sh
+</a><a href="#h0-0-39" id="h0-0-39" class="i">+$ cargo run --release --bin bank -- -c 8 -C 100 -t 1000
+</a><a href="#h0-0-40" id="h0-0-40" class="i">+Created 100 customers (1000 accounts) in 0.123s
+</a><a href="#h0-0-41" id="h0-0-41" class="i">+Verified that total balance is 100000 with no negative balances
+</a><a href="#h0-0-42" id="h0-0-42" class="i">+
+</a><a href="#h0-0-43" id="h0-0-43" class="i">+Thread 0 transferred   18 from  92 (0911) to 100 (0994) in 0.007s (1 attempts)
+</a><a href="#h0-0-44" id="h0-0-44" class="i">+Thread 1 transferred   84 from  61 (0601) to  85 (0843) in 0.007s (1 attempts)
+</a><a href="#h0-0-45" id="h0-0-45" class="i">+Thread 3 transferred   15 from  40 (0393) to  62 (0614) in 0.007s (1 attempts)
+</a><a href="#h0-0-46" id="h0-0-46" class="i">+Thread 5 transferred    5 from  38 (0377) to  93 (0922) in 0.008s (1 attempts)
+</a><a href="#h0-0-47" id="h0-0-47" class="i">+Thread 2 transferred   72 from  78 (0771) to   2 (0011) in 0.008s (1 attempts)
+</a><a href="#h0-0-48" id="h0-0-48" class="i">+[...]
+</a><a href="#h0-0-49" id="h0-0-49" class="i">+Thread 5 transferred   69 from  36 (0356) to  85 (0841) in 0.004s (1 attempts)
+</a><a href="#h0-0-50" id="h0-0-50" class="i">+Thread 6 transferred   48 from  78 (0777) to  52 (0513) in 0.004s (1 attempts)
+</a><a href="#h0-0-51" id="h0-0-51" class="i">+Thread 1 transferred   66 from  42 (0417) to  79 (0783) in 0.076s (2 attempts)
+</a><a href="#h0-0-52" id="h0-0-52" class="i">+Thread 3 transferred   57 from  93 (0921) to  19 (0188) in 0.065s (2 attempts)
+</a><a href="#h0-0-53" id="h0-0-53" class="i">+Thread 4 transferred   70 from  35 (0347) to  49 (0484) in 0.068s (2 attempts)
+</a><a href="#h0-0-54" id="h0-0-54" class="i">+
+</a><a href="#h0-0-55" id="h0-0-55" class="i">+Ran 1000 transactions in 0.937s (1067.691/s)
+</a><a href="#h0-0-56" id="h0-0-56" class="i">+Verified that total balance is 100000 with no negative balances
+</a><a href="#h0-0-57" id="h0-0-57" class="i">+```
+</a><a href="#h0-0-58" id="h0-0-58" class="i">+
+</a><a href="#h0-0-59" id="h0-0-59" class="i">+This shows transaction throughput of over 1000 transactions per second, an order of magnitude
+</a><a href="#h0-0-60" id="h0-0-60" class="i">+larger than the 100 txns/s that was an initial informal target. For a non-optimized
+</a><a href="#h0-0-61" id="h0-0-61" class="i">+implementation, this is certainly &quot;good enough&quot;. However, this is against a single node with
+</a><a href="#h0-0-62" id="h0-0-62" class="i">+fsync disabled - other configurations have the following throughput, showing a clear potential
+</a><a href="#h0-0-63" id="h0-0-63" class="i">+for improvement:
+</a><a href="#h0-0-64" id="h0-0-64" class="i">+
+</a><a href="#h0-0-65" id="h0-0-65" class="i">+|             | `sync: false` | `sync: true` |
+</a><a href="#h0-0-66" id="h0-0-66" class="i">+| ----------- | ------------- | ------------ |
+</a><a href="#h0-0-67" id="h0-0-67" class="i">+| **1 node**  | 1067 txn/s    | 38 txn/s     |
+</a><a href="#h0-0-68" id="h0-0-68" class="i">+| **5 nodes** | 417 txn/s     | 19 txn/s     |
+</a><a href="#h0-0-69" id="h0-0-69" class="i">+
+</a> ## Known Issues
+ 
+ The primary goal is to build a minimally functional yet correct distributed database. Performance, security, reliability, and convenience are non-goals. Below is an incomplete list of known issues preventing this from being a &quot;real&quot; database.
+<b>diff --git a/<a id="h1" href="../file/src/bin/bank.rs.html">src/bin/bank.rs</a> b/<a href="../file/src/bin/bank.rs.html">src/bin/bank.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -1,6 +1,18 @@
+</a> /*
+<a href="#h1-0-1" id="h1-0-1" class="d">- * Simulates a bank, by setting a set of accounts and making transfers between them. Records the
+</a><a href="#h1-0-2" id="h1-0-2" class="d">- * transaction throughput and checks invariants.
+</a><a href="#h1-0-3" id="h1-0-3" class="i">+ * Simulates a bank, by creating a set of accounts and making concurrent transfers between them:
+</a><a href="#h1-0-4" id="h1-0-4" class="i">+ *
+</a><a href="#h1-0-5" id="h1-0-5" class="i">+ * - Connect to the given toyDB hosts (-h default 127.0.0.1:9605, can give multiple)
+</a><a href="#h1-0-6" id="h1-0-6" class="i">+ * - Create C customers (-C default 10)
+</a><a href="#h1-0-7" id="h1-0-7" class="i">+ * - Create a accounts per customer with initial balance 100 (-a default 10)
+</a><a href="#h1-0-8" id="h1-0-8" class="i">+ * - Spawn c concurrent workers (-c default 4)
+</a><a href="#h1-0-9" id="h1-0-9" class="i">+ * - Queue t transactions between two random customers (-t default 100)
+</a><a href="#h1-0-10" id="h1-0-10" class="i">+ *   - Begin a new transaction
+</a><a href="#h1-0-11" id="h1-0-11" class="i">+ *   - Find the sender account with the largest balance
+</a><a href="#h1-0-12" id="h1-0-12" class="i">+ *   - Find the receiver account with the lowest balance
+</a><a href="#h1-0-13" id="h1-0-13" class="i">+ *   - Reduce the sender account by a random amount
+</a><a href="#h1-0-14" id="h1-0-14" class="i">+ *   - Increase the receiver account by the same amount
+</a><a href="#h1-0-15" id="h1-0-15" class="i">+ *   - Commit the transaction, or retry with exponential backoff on serialization errors
+</a><a href="#h1-0-16" id="h1-0-16" class="i">+ * - Check that invariants still hold (same total balance, no negative balances)
+</a>  */
+ 
+ #![warn(clippy::all)]
+<a href="#h1-1" id="h1-1" class="h">@@ -63,7 +75,7 @@ async fn main() -&gt; Result&lt;()&gt; {
+</a>                 .help(&quot;Number of account transfers to execute&quot;)
+                 .takes_value(true)
+                 .required(true)
+<a href="#h1-1-3" id="h1-1-3" class="d">-                .default_value(&quot;20&quot;),
+</a><a href="#h1-1-4" id="h1-1-4" class="i">+                .default_value(&quot;100&quot;),
+</a>         )
+         .get_matches();
+ 
+<a href="#h1-2" id="h1-2" class="h">@@ -87,7 +99,7 @@ struct Bank {
+</a> impl Bank {
+     const INITIAL_BALANCE: u64 = 100;
+ 
+<a href="#h1-2-3" id="h1-2-3" class="d">-    // Creates a new bank simulation
+</a><a href="#h1-2-4" id="h1-2-4" class="i">+    // Creates a new bank simulation.
+</a>     async fn new&lt;A: ToSocketAddrs + Clone&gt;(
+         addrs: Vec&lt;A&gt;,
+         concurrency: u64,
+<a href="#h1-3" id="h1-3" class="h">@@ -101,16 +113,16 @@ impl Bank {
+</a>         })
+     }
+ 
+<a href="#h1-3-3" id="h1-3-3" class="d">-    // Runs the bank simulation
+</a><a href="#h1-3-4" id="h1-3-4" class="i">+    // Runs the bank simulation, making transfers between customer accounts.
+</a>     async fn run(&amp;self, transactions: u64) -&gt; Result&lt;()&gt; {
+         self.setup().await?;
+         self.verify().await?;
+         println!();
+ 
+         let mut rng = rand::thread_rng();
+<a href="#h1-3-11" id="h1-3-11" class="d">-        let custs = rand::distributions::Uniform::from(1..=self.customers as i64);
+</a><a href="#h1-3-12" id="h1-3-12" class="i">+        let customers = rand::distributions::Uniform::from(1..=self.customers as i64);
+</a>         let transfers = futures::stream::iter(
+<a href="#h1-3-14" id="h1-3-14" class="d">-            std::iter::from_fn(|| Some((custs.sample(&amp;mut rng), custs.sample(&amp;mut rng))))
+</a><a href="#h1-3-15" id="h1-3-15" class="i">+            std::iter::from_fn(|| Some((customers.sample(&amp;mut rng), customers.sample(&amp;mut rng))))
+</a>                 .filter(|(from, to)| from != to)
+                 .map(Ok)
+                 .take(transactions as usize),
+<a href="#h1-4" id="h1-4" class="h">@@ -134,7 +146,7 @@ impl Bank {
+</a>         Ok(())
+     }
+ 
+<a href="#h1-4-3" id="h1-4-3" class="d">-    // Sets up the database
+</a><a href="#h1-4-4" id="h1-4-4" class="i">+    // Sets up the database with customers and accounts.
+</a>     async fn setup(&amp;self) -&gt; Result&lt;()&gt; {
+         let client = self.clients.get().await;
+         let start = std::time::Instant::now();
+<a href="#h1-5" id="h1-5" class="h">@@ -188,7 +200,7 @@ impl Bank {
+</a>         Ok(())
+     }
+ 
+<a href="#h1-5-3" id="h1-5-3" class="d">-    /// Verifies that all invariants hold
+</a><a href="#h1-5-4" id="h1-5-4" class="i">+    /// Verifies that all invariants hold (same total balance, no negative balances).
+</a>     async fn verify(&amp;self) -&gt; Result&lt;()&gt; {
+         let client = self.clients.get().await;
+         let expect = self.customers * self.customer_accounts * Self::INITIAL_BALANCE as i64;
+<a href="#h1-6" id="h1-6" class="h">@@ -212,7 +224,7 @@ impl Bank {
+</a>         Ok(())
+     }
+ 
+<a href="#h1-6-3" id="h1-6-3" class="d">-    /// Transfers a random amount between two customers.
+</a><a href="#h1-6-4" id="h1-6-4" class="i">+    /// Transfers a random amount between two customers, retrying serialization failures.
+</a>     async fn transfer(&amp;self, from: i64, to: i64) -&gt; Result&lt;()&gt; {
+         let client = self.clients.get().await;
+         let attempts = Rc::new(Cell::new(0_u8));
+</pre>
+</div>
+</body>
+</html>

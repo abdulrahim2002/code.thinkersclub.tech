@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>sql: get rid of column labels in `Update` plan - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/948dfe6aae71b53337f62e3f1c100e9189ef142d.html">948dfe6aae71b53337f62e3f1c100e9189ef142d</a>
+<b>parent</b> <a href="../commit/f87c33b2d619ed3fdc8ac77e63e6166d76f72d5a.html">f87c33b2d619ed3fdc8ac77e63e6166d76f72d5a</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Tue, 16 Jul 2024 12:03:17 +0200
+
+sql: get rid of column labels in `Update` plan
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">src/sql/execution/execute.rs</a></td><td> | </td><td class="num">3</td><td><span class="i">+</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/sql/planner/plan.rs</a></td><td> | </td><td class="num">17</td><td><span class="i">++++++</span><span class="d">-----------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/sql/planner/planner.rs</a></td><td> | </td><td class="num">4</td><td><span class="i">++</span><span class="d">--</span></td></tr>
+</table></pre><pre>3 files changed, 9 insertions(+), 15 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/sql/execution/execute.rs.html">src/sql/execution/execute.rs</a> b/<a href="../file/src/sql/execution/execute.rs.html">src/sql/execution/execute.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -48,8 +48,7 @@ pub fn execute_plan(
+</a> 
+         Plan::Update { table, primary_key, source, expressions } =&gt; {
+             let source = execute(source, txn)?;
+<a href="#h0-0-3" id="h0-0-3" class="d">-            let expressions = expressions.into_iter().map(|(i, _, expr)| (i, expr)).collect();
+</a><a href="#h0-0-4" id="h0-0-4" class="d">-            let count = write::update(txn, table, primary_key, source, expressions)?;
+</a><a href="#h0-0-5" id="h0-0-5" class="i">+            let count = write::update(txn, table.name, primary_key, source, expressions)?;
+</a>             ExecutionResult::Update { count }
+         }
+     })
+<b>diff --git a/<a id="h1" href="../file/src/sql/planner/plan.rs.html">src/sql/planner/plan.rs</a> b/<a href="../file/src/sql/planner/plan.rs.html">src/sql/planner/plan.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -34,16 +34,7 @@ pub enum Plan {
+</a>     /// to update. The given column/expression pairs specify the row updates to
+     /// be made, and will be evaluated using the old row entry from source. Rows
+     /// in source must be complete, existing rows from the table to update.
+<a href="#h1-0-3" id="h1-0-3" class="d">-    ///
+</a><a href="#h1-0-4" id="h1-0-4" class="d">-    /// TODO: the expressions string is only used when displaying the plan, i.e.
+</a><a href="#h1-0-5" id="h1-0-5" class="d">-    /// &quot;column = expr&quot;. Consider getting rid of it, or combining it with other
+</a><a href="#h1-0-6" id="h1-0-6" class="d">-    /// label/column handling elsewhere.
+</a><a href="#h1-0-7" id="h1-0-7" class="d">-    Update {
+</a><a href="#h1-0-8" id="h1-0-8" class="d">-        table: String,
+</a><a href="#h1-0-9" id="h1-0-9" class="d">-        primary_key: usize,
+</a><a href="#h1-0-10" id="h1-0-10" class="d">-        source: Node,
+</a><a href="#h1-0-11" id="h1-0-11" class="d">-        expressions: Vec&lt;(usize, String, Expression)&gt;,
+</a><a href="#h1-0-12" id="h1-0-12" class="d">-    },
+</a><a href="#h1-0-13" id="h1-0-13" class="i">+    Update { table: Table, primary_key: usize, source: Node, expressions: Vec&lt;(usize, Expression)&gt; },
+</a>     /// A SELECT plan. Recursively executes the query plan tree and returns the
+     /// resulting rows. Also includes the output column labels.
+     Select { root: Node, labels: Vec&lt;Label&gt; },
+<a href="#h1-1" id="h1-1" class="h">@@ -298,7 +289,11 @@ impl std::fmt::Display for Plan {
+</a>                 source.format(f, String::new(), false, true)
+             }
+             Self::Update { table, source, expressions, .. } =&gt; {
+<a href="#h1-1-3" id="h1-1-3" class="d">-                let expressions = expressions.iter().map(|(_, l, e)| format!(&quot;{l}={e}&quot;)).join(&quot;,&quot;);
+</a><a href="#h1-1-4" id="h1-1-4" class="i">+                let expressions = expressions
+</a><a href="#h1-1-5" id="h1-1-5" class="i">+                    .iter()
+</a><a href="#h1-1-6" id="h1-1-6" class="i">+                    .map(|(i, e)| format!(&quot;{}={e}&quot;, table.columns[*i].name))
+</a><a href="#h1-1-7" id="h1-1-7" class="i">+                    .join(&quot;, &quot;);
+</a><a href="#h1-1-8" id="h1-1-8" class="i">+                let table = &amp;table.name;
+</a>                 write!(f, &quot;Update: {table} ({expressions})&quot;)?;
+                 source.format(f, String::new(), false, true)
+             }
+<b>diff --git a/<a id="h2" href="../file/src/sql/planner/planner.rs.html">src/sql/planner/planner.rs</a> b/<a href="../file/src/sql/planner/planner.rs.html">src/sql/planner/planner.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -135,10 +135,10 @@ impl&lt;&#39;a, C: Catalog&gt; Planner&lt;&#39;a, C&gt; {
+</a>                     None =&gt; return errinput!(&quot;column {column} has no default value&quot;),
+                 },
+             };
+<a href="#h2-0-3" id="h2-0-3" class="d">-            expressions.push((index, column, expr));
+</a><a href="#h2-0-4" id="h2-0-4" class="i">+            expressions.push((index, expr));
+</a>         }
+         Ok(Plan::Update {
+<a href="#h2-0-7" id="h2-0-7" class="d">-            table: table.name.clone(),
+</a><a href="#h2-0-8" id="h2-0-8" class="i">+            table: table.clone(),
+</a>             primary_key: table.primary_key,
+             source: Node::Scan { table, alias: None, filter },
+             expressions,
+</pre>
+</div>
+</body>
+</html>

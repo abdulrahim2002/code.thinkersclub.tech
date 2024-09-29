@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Update architecture guide with MVCC changes. - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/7100aed3093e2e0fb27fdaa392394e761e99d6e0.html">7100aed3093e2e0fb27fdaa392394e761e99d6e0</a>
+<b>parent</b> <a href="../commit/7fed556b6b6aabf587ad94acf384d0d273f7d01b.html">7fed556b6b6aabf587ad94acf384d0d273f7d01b</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Sun, 10 Sep 2023 18:05:35 +0200
+
+Update architecture guide with MVCC changes.
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">docs/architecture.md</a></td><td> | </td><td class="num">34</td><td><span class="i">+++++++++++++++</span><span class="d">-------------------</span></td></tr>
+</table></pre><pre>1 file changed, 15 insertions(+), 19 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/docs/architecture.md.html">docs/architecture.md</a> b/<a href="../file/docs/architecture.md.html">docs/architecture.md</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -184,31 +184,31 @@ transaction, which provides the usual key/value operations such as `get`, `set`,
+</a> Additionally, it has a `commit` method which persists the changes and makes them visible to
+ other transactions, and a `rollback` method which discards them.
+ 
+<a href="#h0-0-3" id="h0-0-3" class="d">-When a transaction begins, it fetches the next available transaction ID from `Key::TxnNext` and
+</a><a href="#h0-0-4" id="h0-0-4" class="d">-increments it, then records itself as an active transaction via `Key::TxnActive(id)`. It also
+</a><a href="#h0-0-5" id="h0-0-5" class="d">-takes a `Snapshot`, containing the IDs of all other active transactions as of the transaction start,
+</a><a href="#h0-0-6" id="h0-0-6" class="d">-and saves it as `Key::TxnSnapshot(id)`.
+</a><a href="#h0-0-7" id="h0-0-7" class="i">+When a transaction begins, it fetches the next available version from `Key::NextVersion` and
+</a><a href="#h0-0-8" id="h0-0-8" class="i">+increments it, then records itself as an active transaction via `Key::TxnActive(version)`. It also
+</a><a href="#h0-0-9" id="h0-0-9" class="i">+takes a snapshot of the active set, containing the versions of all other active transactions as of
+</a><a href="#h0-0-10" id="h0-0-10" class="i">+the transaction start, and saves it as `Key::TxnActiveSnapshot(id)`.
+</a> 
+<a href="#h0-0-12" id="h0-0-12" class="d">-Key/value pairs are saved as `Key::Record(key, version)`, where `key` is the user-provided key
+</a><a href="#h0-0-13" id="h0-0-13" class="d">-and `version` is the transaction ID which created the record. The visibility of key/value pairs
+</a><a href="#h0-0-14" id="h0-0-14" class="d">-for a transaction is given as follows:
+</a><a href="#h0-0-15" id="h0-0-15" class="i">+Key/value pairs are saved as `Key::Version(key, version)`, where `key` is the user-provided key
+</a><a href="#h0-0-16" id="h0-0-16" class="i">+and `version` is the transaction&#39;s version. The visibility of key/value pairs for a transaction is 
+</a><a href="#h0-0-17" id="h0-0-17" class="i">+given as follows:
+</a> 
+<a href="#h0-0-19" id="h0-0-19" class="d">-* For a given user key, do a reverse scan of `Key::Record(key, version)` starting at the current 
+</a><a href="#h0-0-20" id="h0-0-20" class="d">-  transaction&#39;s ID.
+</a><a href="#h0-0-21" id="h0-0-21" class="i">+* For a given user key, do a reverse scan of `Key::Version(key, version)` starting at the current 
+</a><a href="#h0-0-22" id="h0-0-22" class="i">+  transaction&#39;s version.
+</a> 
+<a href="#h0-0-24" id="h0-0-24" class="d">-* Skip any records whose version is in the list of active transaction IDs in the `Snapshot`.
+</a><a href="#h0-0-25" id="h0-0-25" class="i">+* Skip any records whose version is in the transaction&#39;s snapshot of the active set.
+</a> 
+ * Return the first matching record, if any. This record may be either a `Some(value)` or a `None`
+   if the key was deleted.
+ 
+ When writing a key/value pair, the transaction first checks for any conflicts by scanning for a
+<a href="#h0-0-31" id="h0-0-31" class="d">-`Key::Record(key, version)` which is not visible to it. If one is found, a serialization error
+</a><a href="#h0-0-32" id="h0-0-32" class="i">+`Key::Version(key, version)` which is not visible to it. If one is found, a serialization error
+</a> is returned and the client must retry the transaction. Otherwise, the transaction writes the new
+<a href="#h0-0-34" id="h0-0-34" class="d">-record and keeps track of the change as `Key::Update(id, key)` in case it must roll back later.
+</a><a href="#h0-0-35" id="h0-0-35" class="i">+record and keeps track of the change as `Key::TxnWrite(version, key)` in case it must roll back.
+</a> 
+ When the transaction commits, it simply deletes its `Txn::Active(id)` record, thus making its
+ changes visible to any subsequent transactions. If the transaction instead rolls back, it
+<a href="#h0-0-39" id="h0-0-39" class="d">-iterates over all `Key::Update(id, key)` entries and removes the written key/value records before
+</a><a href="#h0-0-40" id="h0-0-40" class="i">+iterates over all `Key::TxnWrite(id, key)` entries and removes the written key/value records before
+</a> removing its `Txn::Active(id)` entry.
+ 
+ This simple scheme is sufficient to provide ACID transaction guarantees with snapshot isolation:
+<a href="#h0-1" id="h0-1" class="h">@@ -216,15 +216,11 @@ commits are atomic, a transaction sees a consistent snapshot of the key/value st
+</a> start of the transaction, and any write conflicts result in serialization errors which must be
+ retried.
+ 
+<a href="#h0-1-3" id="h0-1-3" class="d">-To satisfy time travel queries, a read-only transaction simply loads the `Snapshot` entry of a
+</a><a href="#h0-1-4" id="h0-1-4" class="d">-past transaction and applies the same visibility rules as for normal transactions.
+</a><a href="#h0-1-5" id="h0-1-5" class="i">+To satisfy time travel queries, a read-only transaction simply loads the `Key::TxnActiveSnapshot`
+</a><a href="#h0-1-6" id="h0-1-6" class="i">+entry of a past transaction and applies the same visibility rules as for normal transactions.
+</a> 
+ #### MVCC Tradeoffs
+ 
+<a href="#h0-1-10" id="h0-1-10" class="d">-**Read-only transaction IDs:** all transactions, even read-only transactions, are allocated a
+</a><a href="#h0-1-11" id="h0-1-11" class="d">-unique transaction ID. This means that a single standalone `SELECT` query will result in a write
+</a><a href="#h0-1-12" id="h0-1-12" class="d">-operation to increment the transaction ID counter, which can be expensive.
+</a><a href="#h0-1-13" id="h0-1-13" class="d">-
+</a> **Serializability:** snapshot isolation is not fully serializable, since it exhibits
+ [write skew anomalies](http://justinjaffray.com/what-does-write-skew-look-like/). This would
+ require [serializable snapshot isolation](https://courses.cs.washington.edu/courses/cse444/08au/544M/READING-LIST/fekete-sigmod2008.pdf),
+</pre>
+</div>
+</body>
+</html>

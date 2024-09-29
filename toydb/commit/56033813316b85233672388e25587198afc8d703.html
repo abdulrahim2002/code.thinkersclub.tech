@@ -1,0 +1,608 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Added support for read-only transactions - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/56033813316b85233672388e25587198afc8d703.html">56033813316b85233672388e25587198afc8d703</a>
+<b>parent</b> <a href="../commit/37a1d245bbe4ba59d59e1c7c9bcd04402541d618.html">37a1d245bbe4ba59d59e1c7c9bcd04402541d618</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Sun,  1 Dec 2019 19:24:03 +0100
+
+Added support for read-only transactions
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">protobuf/toydb.proto</a></td><td> | </td><td class="num">5</td><td><span class="i">++++</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/bin/toysql.rs</a></td><td> | </td><td class="num">29</td><td><span class="i">++++++++++</span><span class="d">-------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">src/client.rs</a></td><td> | </td><td class="num">56</td><td><span class="i">+++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d">---------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">src/lib.rs</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h4">src/server/toydb.rs</a></td><td> | </td><td class="num">145</td><td><span class="i">++++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d">---------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h5">src/sql/parser/ast.rs</a></td><td> | </td><td class="num">31</td><td><span class="i">+</span><span class="d">------------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h6">src/sql/parser/lexer.rs</a></td><td> | </td><td class="num">12</td><td><span class="i">++++++++++++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h7">src/sql/parser/mod.rs</a></td><td> | </td><td class="num">13</td><td><span class="i">++++++++++++</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h8">src/sql/planner/mod.rs</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h9">src/sql/types.rs</a></td><td> | </td><td class="num">22</td><td><span class="i">++++++</span><span class="d">----------------</span></td></tr>
+</table></pre><pre>10 files changed, 189 insertions(+), 128 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/protobuf/toydb.proto.html">protobuf/toydb.proto</a> b/<a href="../file/protobuf/toydb.proto.html">protobuf/toydb.proto</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -29,7 +29,10 @@ message StatusResponse {
+</a> 
+ message QueryRequest {
+   string query = 1;
+<a href="#h0-0-3" id="h0-0-3" class="d">-  uint64 txn_id = 2;
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+  oneof mode {
+</a><a href="#h0-0-5" id="h0-0-5" class="i">+    uint64 txn_id = 2;
+</a><a href="#h0-0-6" id="h0-0-6" class="i">+    uint64 snapshot_version = 3;
+</a><a href="#h0-0-7" id="h0-0-7" class="i">+  }
+</a> };
+ 
+ message Row {
+<b>diff --git a/<a id="h1" href="../file/src/bin/toysql.rs.html">src/bin/toysql.rs</a> b/<a href="../file/src/bin/toysql.rs.html">src/bin/toysql.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -55,7 +55,6 @@ struct ToySQL {
+</a>     editor: rustyline::Editor&lt;()&gt;,
+     history_path: Option&lt;std::path::PathBuf&gt;,
+     show_headers: bool,
+<a href="#h1-0-3" id="h1-0-3" class="d">-    txn_id: Option&lt;u64&gt;,
+</a> }
+ 
+ impl ToySQL {
+<a href="#h1-1" id="h1-1" class="h">@@ -67,7 +66,6 @@ impl ToySQL {
+</a>             history_path: std::env::var_os(&quot;HOME&quot;)
+                 .map(|home| std::path::Path::new(&amp;home).join(&quot;.toysql.history&quot;)),
+             show_headers: false,
+<a href="#h1-1-3" id="h1-1-3" class="d">-            txn_id: None,
+</a>         })
+     }
+ 
+<a href="#h1-2" id="h1-2" class="h">@@ -147,25 +145,18 @@ Semicolons are not supported. The following !-commands are also available:
+</a> 
+     /// Runs a query and displays the results
+     fn execute_query(&amp;mut self, query: &amp;str) -&gt; Result&lt;(), toydb::Error&gt; {
+<a href="#h1-2-3" id="h1-2-3" class="d">-        let resultset = self.client.query(self.txn_id.clone(), query)?;
+</a><a href="#h1-2-4" id="h1-2-4" class="d">-
+</a><a href="#h1-2-5" id="h1-2-5" class="d">-        match (resultset.txn_id(), self.txn_id) {
+</a><a href="#h1-2-6" id="h1-2-6" class="d">-            (None, None) =&gt; {}
+</a><a href="#h1-2-7" id="h1-2-7" class="d">-            (Some(new_id), Some(current_id)) if new_id == current_id =&gt; {}
+</a><a href="#h1-2-8" id="h1-2-8" class="d">-            (Some(new_id), Some(current_id)) =&gt; {
+</a><a href="#h1-2-9" id="h1-2-9" class="d">-                return Err(toydb::Error::Internal(format!(
+</a><a href="#h1-2-10" id="h1-2-10" class="d">-                    &quot;Unexpected transaction ID {}, current {}&quot;,
+</a><a href="#h1-2-11" id="h1-2-11" class="d">-                    new_id, current_id
+</a><a href="#h1-2-12" id="h1-2-12" class="d">-                )))
+</a><a href="#h1-2-13" id="h1-2-13" class="d">-            }
+</a><a href="#h1-2-14" id="h1-2-14" class="d">-            (Some(new_id), None) =&gt; {
+</a><a href="#h1-2-15" id="h1-2-15" class="d">-                println!(&quot;Began transaction {}&quot;, new_id);
+</a><a href="#h1-2-16" id="h1-2-16" class="d">-                self.txn_id = Some(new_id)
+</a><a href="#h1-2-17" id="h1-2-17" class="i">+        let resultset = self.client.query(query)?;
+</a><a href="#h1-2-18" id="h1-2-18" class="i">+
+</a><a href="#h1-2-19" id="h1-2-19" class="i">+        match resultset.effect() {
+</a><a href="#h1-2-20" id="h1-2-20" class="i">+            Some(toydb::client::Effect::Begin { id, readonly: false }) =&gt; {
+</a><a href="#h1-2-21" id="h1-2-21" class="i">+                println!(&quot;Began transaction {}&quot;, id)
+</a>             }
+<a href="#h1-2-23" id="h1-2-23" class="d">-            (None, Some(current_id)) =&gt; {
+</a><a href="#h1-2-24" id="h1-2-24" class="d">-                println!(&quot;Ended transaction {}&quot;, current_id);
+</a><a href="#h1-2-25" id="h1-2-25" class="d">-                self.txn_id = None
+</a><a href="#h1-2-26" id="h1-2-26" class="i">+            Some(toydb::client::Effect::Begin { id, readonly: true }) =&gt; {
+</a><a href="#h1-2-27" id="h1-2-27" class="i">+                println!(&quot;Began read-only transaction in snapshot of version {}&quot;, id)
+</a>             }
+<a href="#h1-2-29" id="h1-2-29" class="i">+            Some(toydb::client::Effect::Commit(id)) =&gt; println!(&quot;Committed transaction {}&quot;, id),
+</a><a href="#h1-2-30" id="h1-2-30" class="i">+            Some(toydb::client::Effect::Rollback(id)) =&gt; println!(&quot;Rolled back transaction {}&quot;, id),
+</a><a href="#h1-2-31" id="h1-2-31" class="i">+            None =&gt; {}
+</a>         }
+ 
+         if self.show_headers {
+<b>diff --git a/<a id="h2" href="../file/src/client.rs.html">src/client.rs</a> b/<a href="../file/src/client.rs.html">src/client.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -8,12 +8,24 @@ use service::ToyDB;
+</a> /// A ToyDB client
+ pub struct Client {
+     client: service::ToyDBClient,
+<a href="#h2-0-3" id="h2-0-3" class="i">+    mode: Mode,
+</a><a href="#h2-0-4" id="h2-0-4" class="i">+}
+</a><a href="#h2-0-5" id="h2-0-5" class="i">+
+</a><a href="#h2-0-6" id="h2-0-6" class="i">+#[derive(Clone, Debug)]
+</a><a href="#h2-0-7" id="h2-0-7" class="i">+/// A ToyDB client mode.
+</a><a href="#h2-0-8" id="h2-0-8" class="i">+pub enum Mode {
+</a><a href="#h2-0-9" id="h2-0-9" class="i">+    Statement,
+</a><a href="#h2-0-10" id="h2-0-10" class="i">+    Transaction(u64),
+</a><a href="#h2-0-11" id="h2-0-11" class="i">+    Snapshot(u64),
+</a> }
+ 
+ impl Client {
+     /// Creates a new client
+     pub fn new(host: &amp;str, port: u16) -&gt; Result&lt;Self, Error&gt; {
+<a href="#h2-0-17" id="h2-0-17" class="d">-        Ok(Self { client: service::ToyDBClient::new_plain(host, port, grpc::ClientConf::new())? })
+</a><a href="#h2-0-18" id="h2-0-18" class="i">+        Ok(Self {
+</a><a href="#h2-0-19" id="h2-0-19" class="i">+            client: service::ToyDBClient::new_plain(host, port, grpc::ClientConf::new())?,
+</a><a href="#h2-0-20" id="h2-0-20" class="i">+            mode: Mode::Statement,
+</a><a href="#h2-0-21" id="h2-0-21" class="i">+        })
+</a>     }
+ 
+     /// Fetches the table schema as SQL
+<a href="#h2-1" id="h2-1" class="h">@@ -37,20 +49,39 @@ impl Client {
+</a>         Ok(resp.name.to_vec())
+     }
+ 
+<a href="#h2-1-3" id="h2-1-3" class="i">+    /// Returns the client mode
+</a><a href="#h2-1-4" id="h2-1-4" class="i">+    pub fn mode(&amp;self) -&gt; Mode {
+</a><a href="#h2-1-5" id="h2-1-5" class="i">+        self.mode.clone()
+</a><a href="#h2-1-6" id="h2-1-6" class="i">+    }
+</a><a href="#h2-1-7" id="h2-1-7" class="i">+
+</a>     /// Runs a query
+<a href="#h2-1-9" id="h2-1-9" class="d">-    pub fn query(&amp;self, txn_id: Option&lt;u64&gt;, query: &amp;str) -&gt; Result&lt;ResultSet, Error&gt; {
+</a><a href="#h2-1-10" id="h2-1-10" class="i">+    pub fn query(&amp;mut self, query: &amp;str) -&gt; Result&lt;ResultSet, Error&gt; {
+</a>         let (metadata, iter) = self
+             .client
+             .query(
+                 grpc::RequestOptions::new(),
+                 service::QueryRequest {
+                     query: query.to_owned(),
+<a href="#h2-1-17" id="h2-1-17" class="d">-                    txn_id: txn_id.unwrap_or(0),
+</a><a href="#h2-1-18" id="h2-1-18" class="i">+                    mode: match self.mode {
+</a><a href="#h2-1-19" id="h2-1-19" class="i">+                        Mode::Statement =&gt; None,
+</a><a href="#h2-1-20" id="h2-1-20" class="i">+                        Mode::Transaction(id) =&gt; Some(service::QueryRequest_oneof_mode::txn_id(id)),
+</a><a href="#h2-1-21" id="h2-1-21" class="i">+                        Mode::Snapshot(version) =&gt; {
+</a><a href="#h2-1-22" id="h2-1-22" class="i">+                            Some(service::QueryRequest_oneof_mode::snapshot_version(version))
+</a><a href="#h2-1-23" id="h2-1-23" class="i">+                        }
+</a><a href="#h2-1-24" id="h2-1-24" class="i">+                    },
+</a>                     ..Default::default()
+                 },
+             )
+             .wait()?;
+<a href="#h2-1-29" id="h2-1-29" class="d">-        ResultSet::from_grpc(metadata, iter)
+</a><a href="#h2-1-30" id="h2-1-30" class="i">+        let rs = ResultSet::from_grpc(metadata, iter)?;
+</a><a href="#h2-1-31" id="h2-1-31" class="i">+        match rs.effect() {
+</a><a href="#h2-1-32" id="h2-1-32" class="i">+            Some(Effect::Begin { id, readonly: false }) =&gt; self.mode = Mode::Transaction(id),
+</a><a href="#h2-1-33" id="h2-1-33" class="i">+            Some(Effect::Begin { id, readonly: true }) =&gt; self.mode = Mode::Snapshot(id),
+</a><a href="#h2-1-34" id="h2-1-34" class="i">+            Some(Effect::Commit(_)) =&gt; self.mode = Mode::Statement,
+</a><a href="#h2-1-35" id="h2-1-35" class="i">+            Some(Effect::Rollback(_)) =&gt; self.mode = Mode::Statement,
+</a><a href="#h2-1-36" id="h2-1-36" class="i">+            None =&gt; {}
+</a><a href="#h2-1-37" id="h2-1-37" class="i">+        }
+</a><a href="#h2-1-38" id="h2-1-38" class="i">+        Ok(rs)
+</a>     }
+ 
+     /// Checks server status
+<a href="#h2-2" id="h2-2" class="h">@@ -65,11 +96,18 @@ impl Client {
+</a> 
+ /// A query result set
+ pub struct ResultSet {
+<a href="#h2-2-3" id="h2-2-3" class="d">-    txn_id: Option&lt;u64&gt;,
+</a><a href="#h2-2-4" id="h2-2-4" class="i">+    effect: Option&lt;Effect&gt;,
+</a>     columns: Vec&lt;String&gt;,
+     rows: Box&lt;dyn Iterator&lt;Item = Result&lt;service::Row, grpc::Error&gt;&gt;&gt;,
+ }
+ 
+<a href="#h2-2-9" id="h2-2-9" class="i">+#[derive(Clone, Debug, Serialize, Deserialize)]
+</a><a href="#h2-2-10" id="h2-2-10" class="i">+pub enum Effect {
+</a><a href="#h2-2-11" id="h2-2-11" class="i">+    Begin { id: u64, readonly: bool },
+</a><a href="#h2-2-12" id="h2-2-12" class="i">+    Commit(u64),
+</a><a href="#h2-2-13" id="h2-2-13" class="i">+    Rollback(u64),
+</a><a href="#h2-2-14" id="h2-2-14" class="i">+}
+</a><a href="#h2-2-15" id="h2-2-15" class="i">+
+</a> impl Iterator for ResultSet {
+     type Item = Result&lt;Row, Error&gt;;
+ 
+<a href="#h2-3" id="h2-3" class="h">@@ -94,19 +132,19 @@ impl ResultSet {
+</a>         let columns =
+             deserialize(metadata.get(&quot;columns&quot;).map(|c| c.to_vec()).unwrap_or_else(Vec::new))
+                 .unwrap_or_else(|_| Vec::new());
+<a href="#h2-3-3" id="h2-3-3" class="d">-        let txn_id = match metadata.get(&quot;txn_id&quot;) {
+</a><a href="#h2-3-4" id="h2-3-4" class="i">+        let effect = match metadata.get(&quot;effect&quot;) {
+</a>             Some(v) =&gt; deserialize(v.to_vec()).ok(),
+             None =&gt; None,
+         };
+<a href="#h2-3-8" id="h2-3-8" class="d">-        Ok(Self { columns, rows, txn_id })
+</a><a href="#h2-3-9" id="h2-3-9" class="i">+        Ok(Self { effect, columns, rows })
+</a>     }
+ 
+     pub fn columns(&amp;self) -&gt; Vec&lt;String&gt; {
+         self.columns.clone()
+     }
+ 
+<a href="#h2-3-16" id="h2-3-16" class="d">-    pub fn txn_id(&amp;self) -&gt; Option&lt;u64&gt; {
+</a><a href="#h2-3-17" id="h2-3-17" class="d">-        self.txn_id
+</a><a href="#h2-3-18" id="h2-3-18" class="i">+    pub fn effect(&amp;self) -&gt; Option&lt;Effect&gt; {
+</a><a href="#h2-3-19" id="h2-3-19" class="i">+        self.effect.clone()
+</a>     }
+ }
+ 
+<b>diff --git a/<a id="h3" href="../file/src/lib.rs.html">src/lib.rs</a> b/<a href="../file/src/lib.rs.html">src/lib.rs</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -19,7 +19,7 @@ extern crate serde;
+</a> extern crate serde_derive;
+ extern crate uuid;
+ 
+<a href="#h3-0-3" id="h3-0-3" class="d">-mod client;
+</a><a href="#h3-0-4" id="h3-0-4" class="i">+pub mod client;
+</a> mod error;
+ mod kv;
+ mod raft;
+<b>diff --git a/<a id="h4" href="../file/src/server/toydb.rs.html">src/server/toydb.rs</a> b/<a href="../file/src/server/toydb.rs.html">src/server/toydb.rs</a></b>
+<a href="#h4-0" id="h4-0" class="h">@@ -1,3 +1,4 @@
+</a><a href="#h4-0-0" id="h4-0-0" class="i">+use crate::client;
+</a> use crate::raft::Raft;
+ use crate::service;
+ use crate::sql;
+<a href="#h4-1" id="h4-1" class="h">@@ -58,8 +59,14 @@ impl service::ToyDB for ToyDB {
+</a>         _: grpc::RequestOptions,
+         req: service::QueryRequest,
+     ) -&gt; grpc::StreamingResponse&lt;service::Row&gt; {
+<a href="#h4-1-3" id="h4-1-3" class="d">-        let txn_id = if req.txn_id &gt; 0 { Some(req.txn_id) } else { None };
+</a><a href="#h4-1-4" id="h4-1-4" class="d">-        let result = match self.execute(txn_id, &amp;req.query) {
+</a><a href="#h4-1-5" id="h4-1-5" class="i">+        let mode = match req.mode {
+</a><a href="#h4-1-6" id="h4-1-6" class="i">+            Some(service::QueryRequest_oneof_mode::txn_id(id)) =&gt; client::Mode::Transaction(id),
+</a><a href="#h4-1-7" id="h4-1-7" class="i">+            Some(service::QueryRequest_oneof_mode::snapshot_version(version)) =&gt; {
+</a><a href="#h4-1-8" id="h4-1-8" class="i">+                client::Mode::Snapshot(version)
+</a><a href="#h4-1-9" id="h4-1-9" class="i">+            }
+</a><a href="#h4-1-10" id="h4-1-10" class="i">+            None =&gt; client::Mode::Statement,
+</a><a href="#h4-1-11" id="h4-1-11" class="i">+        };
+</a><a href="#h4-1-12" id="h4-1-12" class="i">+        let result = match self.execute(mode, &amp;req.query) {
+</a>             Ok(result) =&gt; result,
+             Err(err) =&gt; {
+                 return grpc::StreamingResponse::completed(vec![service::Row {
+<a href="#h4-2" id="h4-2" class="h">@@ -71,8 +78,8 @@ impl service::ToyDB for ToyDB {
+</a>         let mut metadata = grpc::Metadata::new();
+         metadata
+             .add(grpc::MetadataKey::from(&quot;columns&quot;), serialize(result.columns()).unwrap().into());
+<a href="#h4-2-3" id="h4-2-3" class="d">-        if let Some(txn_id) = result.txn_id() {
+</a><a href="#h4-2-4" id="h4-2-4" class="d">-            metadata.add(grpc::MetadataKey::from(&quot;txn_id&quot;), serialize(txn_id).unwrap().into());
+</a><a href="#h4-2-5" id="h4-2-5" class="i">+        if let Some(effect) = result.effect.clone() {
+</a><a href="#h4-2-6" id="h4-2-6" class="i">+            metadata.add(grpc::MetadataKey::from(&quot;effect&quot;), serialize(effect).unwrap().into());
+</a>         }
+         grpc::StreamingResponse::iter_with_metadata(
+             metadata,
+<a href="#h4-3" id="h4-3" class="h">@@ -100,60 +107,98 @@ impl service::ToyDB for ToyDB {
+</a> 
+ impl ToyDB {
+     /// Executes an SQL statement
+<a href="#h4-3-3" id="h4-3-3" class="d">-    fn execute(&amp;self, txn_id: Option&lt;u64&gt;, query: &amp;str) -&gt; Result&lt;sql::types::ResultSet, Error&gt; {
+</a><a href="#h4-3-4" id="h4-3-4" class="i">+    fn execute(&amp;self, mode: client::Mode, query: &amp;str) -&gt; Result&lt;sql::types::ResultSet, Error&gt; {
+</a>         let statement = sql::Parser::new(query).parse()?;
+ 
+<a href="#h4-3-7" id="h4-3-7" class="d">-        // Handle statements in an ongoing transaction
+</a><a href="#h4-3-8" id="h4-3-8" class="d">-        if let Some(txn_id) = txn_id {
+</a><a href="#h4-3-9" id="h4-3-9" class="d">-            let mut txn = self.engine.resume(txn_id)?;
+</a><a href="#h4-3-10" id="h4-3-10" class="d">-            return match statement {
+</a><a href="#h4-3-11" id="h4-3-11" class="d">-                sql::ast::Statement::Begin =&gt; {
+</a><a href="#h4-3-12" id="h4-3-12" class="d">-                    Err(Error::Value(format!(&quot;Already in a transaction (id {})&quot;, txn_id)))
+</a><a href="#h4-3-13" id="h4-3-13" class="i">+        // FIXME Needs to return effect for DDL statements as well
+</a><a href="#h4-3-14" id="h4-3-14" class="i">+        match mode {
+</a><a href="#h4-3-15" id="h4-3-15" class="i">+            // Ongoing transaction
+</a><a href="#h4-3-16" id="h4-3-16" class="i">+            client::Mode::Transaction(txn_id) =&gt; {
+</a><a href="#h4-3-17" id="h4-3-17" class="i">+                let mut txn = self.engine.resume(txn_id)?;
+</a><a href="#h4-3-18" id="h4-3-18" class="i">+                match statement {
+</a><a href="#h4-3-19" id="h4-3-19" class="i">+                    sql::ast::Statement::Begin { .. } =&gt; {
+</a><a href="#h4-3-20" id="h4-3-20" class="i">+                        Err(Error::Value(&quot;Already in a transaction&quot;.into()))
+</a><a href="#h4-3-21" id="h4-3-21" class="i">+                    }
+</a><a href="#h4-3-22" id="h4-3-22" class="i">+                    sql::ast::Statement::Commit =&gt; {
+</a><a href="#h4-3-23" id="h4-3-23" class="i">+                        let mut rs = sql::types::ResultSet::empty();
+</a><a href="#h4-3-24" id="h4-3-24" class="i">+                        rs.effect = Some(client::Effect::Commit(txn.id()));
+</a><a href="#h4-3-25" id="h4-3-25" class="i">+                        txn.commit()?;
+</a><a href="#h4-3-26" id="h4-3-26" class="i">+                        Ok(rs)
+</a><a href="#h4-3-27" id="h4-3-27" class="i">+                    }
+</a><a href="#h4-3-28" id="h4-3-28" class="i">+                    sql::ast::Statement::Rollback =&gt; {
+</a><a href="#h4-3-29" id="h4-3-29" class="i">+                        let mut rs = sql::types::ResultSet::empty();
+</a><a href="#h4-3-30" id="h4-3-30" class="i">+                        rs.effect = Some(client::Effect::Rollback(txn.id()));
+</a><a href="#h4-3-31" id="h4-3-31" class="i">+                        txn.rollback()?;
+</a><a href="#h4-3-32" id="h4-3-32" class="i">+                        Ok(rs)
+</a><a href="#h4-3-33" id="h4-3-33" class="i">+                    }
+</a><a href="#h4-3-34" id="h4-3-34" class="i">+                    _ =&gt; {
+</a><a href="#h4-3-35" id="h4-3-35" class="i">+                        let rs = sql::Plan::build(statement)?
+</a><a href="#h4-3-36" id="h4-3-36" class="i">+                            .optimize()?
+</a><a href="#h4-3-37" id="h4-3-37" class="i">+                            .execute(sql::Context { txn: &amp;mut txn })?;
+</a><a href="#h4-3-38" id="h4-3-38" class="i">+                        Ok(rs)
+</a><a href="#h4-3-39" id="h4-3-39" class="i">+                    }
+</a>                 }
+<a href="#h4-3-41" id="h4-3-41" class="d">-                sql::ast::Statement::Commit =&gt; {
+</a><a href="#h4-3-42" id="h4-3-42" class="d">-                    txn.commit()?;
+</a><a href="#h4-3-43" id="h4-3-43" class="d">-                    Ok(sql::types::ResultSet::empty())
+</a><a href="#h4-3-44" id="h4-3-44" class="i">+            }
+</a><a href="#h4-3-45" id="h4-3-45" class="i">+            // Ongoing read-only snapshot transaction
+</a><a href="#h4-3-46" id="h4-3-46" class="i">+            client::Mode::Snapshot(version) =&gt; {
+</a><a href="#h4-3-47" id="h4-3-47" class="i">+                let mut txn = self.engine.snapshot(Some(version))?;
+</a><a href="#h4-3-48" id="h4-3-48" class="i">+                match statement {
+</a><a href="#h4-3-49" id="h4-3-49" class="i">+                    sql::ast::Statement::Begin { .. } =&gt; {
+</a><a href="#h4-3-50" id="h4-3-50" class="i">+                        Err(Error::Value(&quot;Already in a transaction&quot;.into()))
+</a><a href="#h4-3-51" id="h4-3-51" class="i">+                    }
+</a><a href="#h4-3-52" id="h4-3-52" class="i">+                    sql::ast::Statement::Commit =&gt; {
+</a><a href="#h4-3-53" id="h4-3-53" class="i">+                        let mut rs = sql::types::ResultSet::empty();
+</a><a href="#h4-3-54" id="h4-3-54" class="i">+                        rs.effect = Some(client::Effect::Commit(txn.id()));
+</a><a href="#h4-3-55" id="h4-3-55" class="i">+                        txn.commit()?;
+</a><a href="#h4-3-56" id="h4-3-56" class="i">+                        Ok(rs)
+</a><a href="#h4-3-57" id="h4-3-57" class="i">+                    }
+</a><a href="#h4-3-58" id="h4-3-58" class="i">+                    sql::ast::Statement::Rollback =&gt; {
+</a><a href="#h4-3-59" id="h4-3-59" class="i">+                        let mut rs = sql::types::ResultSet::empty();
+</a><a href="#h4-3-60" id="h4-3-60" class="i">+                        rs.effect = Some(client::Effect::Rollback(txn.id()));
+</a><a href="#h4-3-61" id="h4-3-61" class="i">+                        txn.rollback()?;
+</a><a href="#h4-3-62" id="h4-3-62" class="i">+                        Ok(rs)
+</a><a href="#h4-3-63" id="h4-3-63" class="i">+                    }
+</a><a href="#h4-3-64" id="h4-3-64" class="i">+                    _ =&gt; {
+</a><a href="#h4-3-65" id="h4-3-65" class="i">+                        let rs = sql::Plan::build(statement)?
+</a><a href="#h4-3-66" id="h4-3-66" class="i">+                            .optimize()?
+</a><a href="#h4-3-67" id="h4-3-67" class="i">+                            .execute(sql::Context { txn: &amp;mut txn })?;
+</a><a href="#h4-3-68" id="h4-3-68" class="i">+                        Ok(rs)
+</a><a href="#h4-3-69" id="h4-3-69" class="i">+                    }
+</a>                 }
+<a href="#h4-3-71" id="h4-3-71" class="d">-                sql::ast::Statement::Rollback =&gt; {
+</a><a href="#h4-3-72" id="h4-3-72" class="d">-                    txn.rollback()?;
+</a><a href="#h4-3-73" id="h4-3-73" class="d">-                    Ok(sql::types::ResultSet::empty())
+</a><a href="#h4-3-74" id="h4-3-74" class="i">+            }
+</a><a href="#h4-3-75" id="h4-3-75" class="i">+            client::Mode::Statement =&gt; match statement {
+</a><a href="#h4-3-76" id="h4-3-76" class="i">+                sql::ast::Statement::Begin { readonly: false } =&gt; {
+</a><a href="#h4-3-77" id="h4-3-77" class="i">+                    let txn = self.engine.begin()?;
+</a><a href="#h4-3-78" id="h4-3-78" class="i">+                    let mut rs = sql::types::ResultSet::empty();
+</a><a href="#h4-3-79" id="h4-3-79" class="i">+                    rs.effect = Some(client::Effect::Begin { id: txn.id(), readonly: false });
+</a><a href="#h4-3-80" id="h4-3-80" class="i">+                    Ok(rs)
+</a><a href="#h4-3-81" id="h4-3-81" class="i">+                }
+</a><a href="#h4-3-82" id="h4-3-82" class="i">+                sql::ast::Statement::Begin { readonly: true } =&gt; {
+</a><a href="#h4-3-83" id="h4-3-83" class="i">+                    let txn = self.engine.snapshot(None)?;
+</a><a href="#h4-3-84" id="h4-3-84" class="i">+                    let mut rs = sql::types::ResultSet::empty();
+</a><a href="#h4-3-85" id="h4-3-85" class="i">+                    rs.effect = Some(client::Effect::Begin { id: txn.id(), readonly: true });
+</a><a href="#h4-3-86" id="h4-3-86" class="i">+                    Ok(rs)
+</a><a href="#h4-3-87" id="h4-3-87" class="i">+                }
+</a><a href="#h4-3-88" id="h4-3-88" class="i">+                sql::ast::Statement::Commit | sql::ast::Statement::Rollback =&gt; {
+</a><a href="#h4-3-89" id="h4-3-89" class="i">+                    Err(Error::Value(&quot;Not in a transaction&quot;.into()))
+</a><a href="#h4-3-90" id="h4-3-90" class="i">+                }
+</a><a href="#h4-3-91" id="h4-3-91" class="i">+                sql::ast::Statement::Select { .. } =&gt; {
+</a><a href="#h4-3-92" id="h4-3-92" class="i">+                    let mut txn = self.engine.snapshot(None)?;
+</a><a href="#h4-3-93" id="h4-3-93" class="i">+                    let result = sql::Plan::build(statement)?
+</a><a href="#h4-3-94" id="h4-3-94" class="i">+                        .optimize()?
+</a><a href="#h4-3-95" id="h4-3-95" class="i">+                        .execute(sql::Context { txn: &amp;mut txn });
+</a><a href="#h4-3-96" id="h4-3-96" class="i">+                    txn.commit()?;
+</a><a href="#h4-3-97" id="h4-3-97" class="i">+                    result
+</a>                 }
+                 _ =&gt; {
+<a href="#h4-3-100" id="h4-3-100" class="d">-                    let mut rs = sql::Plan::build(statement)?
+</a><a href="#h4-3-101" id="h4-3-101" class="i">+                    let mut txn = self.engine.begin()?;
+</a><a href="#h4-3-102" id="h4-3-102" class="i">+                    let result = sql::Plan::build(statement)?
+</a>                         .optimize()?
+<a href="#h4-3-104" id="h4-3-104" class="d">-                        .execute(sql::Context { txn: &amp;mut txn })?;
+</a><a href="#h4-3-105" id="h4-3-105" class="d">-                    // FIXME Shouldn&#39;t be necessary
+</a><a href="#h4-3-106" id="h4-3-106" class="d">-                    rs.txn_id = Some(txn_id);
+</a><a href="#h4-3-107" id="h4-3-107" class="d">-                    Ok(rs)
+</a><a href="#h4-3-108" id="h4-3-108" class="i">+                        .execute(sql::Context { txn: &amp;mut txn });
+</a><a href="#h4-3-109" id="h4-3-109" class="i">+                    txn.commit()?;
+</a><a href="#h4-3-110" id="h4-3-110" class="i">+                    result
+</a>                 }
+<a href="#h4-3-112" id="h4-3-112" class="d">-            };
+</a><a href="#h4-3-113" id="h4-3-113" class="d">-        }
+</a><a href="#h4-3-114" id="h4-3-114" class="d">-
+</a><a href="#h4-3-115" id="h4-3-115" class="d">-        // Handle standalone statements
+</a><a href="#h4-3-116" id="h4-3-116" class="d">-        match statement {
+</a><a href="#h4-3-117" id="h4-3-117" class="d">-            sql::ast::Statement::Begin =&gt; {
+</a><a href="#h4-3-118" id="h4-3-118" class="d">-                let txn = self.engine.begin()?;
+</a><a href="#h4-3-119" id="h4-3-119" class="d">-                Ok(sql::types::ResultSet::from_begin(txn.id()))
+</a><a href="#h4-3-120" id="h4-3-120" class="d">-            }
+</a><a href="#h4-3-121" id="h4-3-121" class="d">-            sql::ast::Statement::Commit | sql::ast::Statement::Rollback =&gt; {
+</a><a href="#h4-3-122" id="h4-3-122" class="d">-                Err(Error::Value(&quot;Not in a transaction&quot;.into()))
+</a><a href="#h4-3-123" id="h4-3-123" class="d">-            }
+</a><a href="#h4-3-124" id="h4-3-124" class="d">-            sql::ast::Statement::Select { .. } =&gt; {
+</a><a href="#h4-3-125" id="h4-3-125" class="d">-                let mut txn = self.engine.snapshot(None)?;
+</a><a href="#h4-3-126" id="h4-3-126" class="d">-                let result = sql::Plan::build(statement)?
+</a><a href="#h4-3-127" id="h4-3-127" class="d">-                    .optimize()?
+</a><a href="#h4-3-128" id="h4-3-128" class="d">-                    .execute(sql::Context { txn: &amp;mut txn });
+</a><a href="#h4-3-129" id="h4-3-129" class="d">-                txn.commit()?;
+</a><a href="#h4-3-130" id="h4-3-130" class="d">-                result
+</a><a href="#h4-3-131" id="h4-3-131" class="d">-            }
+</a><a href="#h4-3-132" id="h4-3-132" class="d">-            _ =&gt; {
+</a><a href="#h4-3-133" id="h4-3-133" class="d">-                let mut txn = self.engine.begin()?;
+</a><a href="#h4-3-134" id="h4-3-134" class="d">-                let result = sql::Plan::build(statement)?
+</a><a href="#h4-3-135" id="h4-3-135" class="d">-                    .optimize()?
+</a><a href="#h4-3-136" id="h4-3-136" class="d">-                    .execute(sql::Context { txn: &amp;mut txn });
+</a><a href="#h4-3-137" id="h4-3-137" class="d">-                txn.commit()?;
+</a><a href="#h4-3-138" id="h4-3-138" class="d">-                result
+</a><a href="#h4-3-139" id="h4-3-139" class="d">-            }
+</a><a href="#h4-3-140" id="h4-3-140" class="i">+            },
+</a>         }
+     }
+ 
+<b>diff --git a/<a id="h5" href="../file/src/sql/parser/ast.rs.html">src/sql/parser/ast.rs</a> b/<a href="../file/src/sql/parser/ast.rs.html">src/sql/parser/ast.rs</a></b>
+<a href="#h5-0" id="h5-0" class="h">@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
+</a> #[allow(clippy::large_enum_variant)]
+ pub enum Statement {
+     /// A BEGIN statement
+<a href="#h5-0-3" id="h5-0-3" class="d">-    Begin,
+</a><a href="#h5-0-4" id="h5-0-4" class="i">+    Begin { readonly: bool },
+</a>     /// A COMMIT statement
+     Commit,
+     /// A ROLLBACK statement
+<a href="#h5-1" id="h5-1" class="h">@@ -34,35 +34,6 @@ pub enum Statement {
+</a>     Update { table: String, set: BTreeMap&lt;String, Expression&gt;, r#where: Option&lt;WhereClause&gt; },
+ }
+ 
+<a href="#h5-1-3" id="h5-1-3" class="d">-#[allow(dead_code)]
+</a><a href="#h5-1-4" id="h5-1-4" class="d">-impl Statement {
+</a><a href="#h5-1-5" id="h5-1-5" class="d">-    pub fn r#type(&amp;self) -&gt; StatementType {
+</a><a href="#h5-1-6" id="h5-1-6" class="d">-        match self {
+</a><a href="#h5-1-7" id="h5-1-7" class="d">-            Statement::Begin =&gt; StatementType::TCS,
+</a><a href="#h5-1-8" id="h5-1-8" class="d">-            Statement::Commit =&gt; StatementType::TCS,
+</a><a href="#h5-1-9" id="h5-1-9" class="d">-            Statement::Rollback =&gt; StatementType::TCS,
+</a><a href="#h5-1-10" id="h5-1-10" class="d">-
+</a><a href="#h5-1-11" id="h5-1-11" class="d">-            Statement::CreateTable { .. } =&gt; StatementType::DDL,
+</a><a href="#h5-1-12" id="h5-1-12" class="d">-            Statement::DropTable(_) =&gt; StatementType::DDL,
+</a><a href="#h5-1-13" id="h5-1-13" class="d">-
+</a><a href="#h5-1-14" id="h5-1-14" class="d">-            Statement::Delete { .. } =&gt; StatementType::DML,
+</a><a href="#h5-1-15" id="h5-1-15" class="d">-            Statement::Insert { .. } =&gt; StatementType::DML,
+</a><a href="#h5-1-16" id="h5-1-16" class="d">-            Statement::Select { .. } =&gt; StatementType::DML,
+</a><a href="#h5-1-17" id="h5-1-17" class="d">-            Statement::Update { .. } =&gt; StatementType::DML,
+</a><a href="#h5-1-18" id="h5-1-18" class="d">-        }
+</a><a href="#h5-1-19" id="h5-1-19" class="d">-    }
+</a><a href="#h5-1-20" id="h5-1-20" class="d">-}
+</a><a href="#h5-1-21" id="h5-1-21" class="d">-
+</a><a href="#h5-1-22" id="h5-1-22" class="d">-//// Statement types
+</a><a href="#h5-1-23" id="h5-1-23" class="d">-pub enum StatementType {
+</a><a href="#h5-1-24" id="h5-1-24" class="d">-    /// Data definition language
+</a><a href="#h5-1-25" id="h5-1-25" class="d">-    DDL,
+</a><a href="#h5-1-26" id="h5-1-26" class="d">-    /// Data manipulation language
+</a><a href="#h5-1-27" id="h5-1-27" class="d">-    DML,
+</a><a href="#h5-1-28" id="h5-1-28" class="d">-    /// Transaction control statement
+</a><a href="#h5-1-29" id="h5-1-29" class="d">-    TCS,
+</a><a href="#h5-1-30" id="h5-1-30" class="d">-}
+</a><a href="#h5-1-31" id="h5-1-31" class="d">-
+</a> /// A column specification
+ #[derive(Clone, Debug, PartialEq)]
+ pub struct ColumnSpec {
+<b>diff --git a/<a id="h6" href="../file/src/sql/parser/lexer.rs.html">src/sql/parser/lexer.rs</a> b/<a href="../file/src/sql/parser/lexer.rs.html">src/sql/parser/lexer.rs</a></b>
+<a href="#h6-0" id="h6-0" class="h">@@ -91,18 +91,22 @@ pub enum Keyword {
+</a>     Not,
+     Null,
+     Offset,
+<a href="#h6-0-3" id="h6-0-3" class="i">+    Only,
+</a>     Or,
+     Order,
+     Primary,
+<a href="#h6-0-7" id="h6-0-7" class="i">+    Read,
+</a>     Rollback,
+     Select,
+     Set,
+     Table,
+<a href="#h6-0-12" id="h6-0-12" class="i">+    Transaction,
+</a>     True,
+     Update,
+     Values,
+     Varchar,
+     Where,
+<a href="#h6-0-18" id="h6-0-18" class="i">+    Write,
+</a> }
+ 
+ impl Keyword {
+<a href="#h6-1" id="h6-1" class="h">@@ -130,18 +134,22 @@ impl Keyword {
+</a>             &quot;NOT&quot; =&gt; Self::Not,
+             &quot;NULL&quot; =&gt; Self::Null,
+             &quot;OFFSET&quot; =&gt; Self::Offset,
+<a href="#h6-1-3" id="h6-1-3" class="i">+            &quot;ONLY&quot; =&gt; Self::Only,
+</a>             &quot;OR&quot; =&gt; Self::Or,
+             &quot;ORDER&quot; =&gt; Self::Order,
+             &quot;PRIMARY&quot; =&gt; Self::Primary,
+<a href="#h6-1-7" id="h6-1-7" class="i">+            &quot;READ&quot; =&gt; Self::Read,
+</a>             &quot;ROLLBACK&quot; =&gt; Self::Rollback,
+             &quot;SELECT&quot; =&gt; Self::Select,
+             &quot;SET&quot; =&gt; Self::Set,
+             &quot;TABLE&quot; =&gt; Self::Table,
+<a href="#h6-1-12" id="h6-1-12" class="i">+            &quot;TRANSACTION&quot; =&gt; Self::Transaction,
+</a>             &quot;TRUE&quot; =&gt; Self::True,
+             &quot;UPDATE&quot; =&gt; Self::Update,
+             &quot;VALUES&quot; =&gt; Self::Values,
+             &quot;VARCHAR&quot; =&gt; Self::Varchar,
+             &quot;WHERE&quot; =&gt; Self::Where,
+<a href="#h6-1-18" id="h6-1-18" class="i">+            &quot;WRITE&quot; =&gt; Self::Write,
+</a>             _ =&gt; return None,
+         })
+     }
+<a href="#h6-2" id="h6-2" class="h">@@ -170,18 +178,22 @@ impl Keyword {
+</a>             Self::Not =&gt; &quot;NOT&quot;,
+             Self::Null =&gt; &quot;NULL&quot;,
+             Self::Offset =&gt; &quot;OFFSET&quot;,
+<a href="#h6-2-3" id="h6-2-3" class="i">+            Self::Only =&gt; &quot;ONLY&quot;,
+</a>             Self::Or =&gt; &quot;OR&quot;,
+             Self::Order =&gt; &quot;ORDER&quot;,
+             Self::Primary =&gt; &quot;PRIMARY&quot;,
+<a href="#h6-2-7" id="h6-2-7" class="i">+            Self::Read =&gt; &quot;READ&quot;,
+</a>             Self::Rollback =&gt; &quot;ROLLBACK&quot;,
+             Self::Select =&gt; &quot;SELECT&quot;,
+             Self::Set =&gt; &quot;SET&quot;,
+             Self::Table =&gt; &quot;TABLE&quot;,
+<a href="#h6-2-12" id="h6-2-12" class="i">+            Self::Transaction =&gt; &quot;TRANSACTION&quot;,
+</a>             Self::True =&gt; &quot;TRUE&quot;,
+             Self::Update =&gt; &quot;UPDATE&quot;,
+             Self::Values =&gt; &quot;VALUES&quot;,
+             Self::Varchar =&gt; &quot;VARCHAR&quot;,
+             Self::Where =&gt; &quot;WHERE&quot;,
+<a href="#h6-2-18" id="h6-2-18" class="i">+            Self::Write =&gt; &quot;WRITE&quot;,
+</a>         }
+     }
+ }
+<b>diff --git a/<a id="h7" href="../file/src/sql/parser/mod.rs.html">src/sql/parser/mod.rs</a> b/<a href="../file/src/sql/parser/mod.rs.html">src/sql/parser/mod.rs</a></b>
+<a href="#h7-0" id="h7-0" class="h">@@ -291,7 +291,18 @@ impl&lt;&#39;a&gt; Parser&lt;&#39;a&gt; {
+</a>     /// Parses a transaction statement
+     fn parse_transaction(&amp;mut self) -&gt; Result&lt;ast::Statement, Error&gt; {
+         match self.next()? {
+<a href="#h7-0-3" id="h7-0-3" class="d">-            Token::Keyword(Keyword::Begin) =&gt; Ok(ast::Statement::Begin),
+</a><a href="#h7-0-4" id="h7-0-4" class="i">+            Token::Keyword(Keyword::Begin) =&gt; {
+</a><a href="#h7-0-5" id="h7-0-5" class="i">+                let mut readonly = false;
+</a><a href="#h7-0-6" id="h7-0-6" class="i">+                self.next_if_token(Keyword::Transaction.into());
+</a><a href="#h7-0-7" id="h7-0-7" class="i">+                if self.next_if_token(Keyword::Read.into()).is_some() {
+</a><a href="#h7-0-8" id="h7-0-8" class="i">+                    match self.next()? {
+</a><a href="#h7-0-9" id="h7-0-9" class="i">+                        Token::Keyword(Keyword::Only) =&gt; readonly = true,
+</a><a href="#h7-0-10" id="h7-0-10" class="i">+                        Token::Keyword(Keyword::Write) =&gt; readonly = false,
+</a><a href="#h7-0-11" id="h7-0-11" class="i">+                        token =&gt; return Err(Error::Parse(format!(&quot;Unexpected token {}&quot;, token))),
+</a><a href="#h7-0-12" id="h7-0-12" class="i">+                    }
+</a><a href="#h7-0-13" id="h7-0-13" class="i">+                }
+</a><a href="#h7-0-14" id="h7-0-14" class="i">+                Ok(ast::Statement::Begin { readonly })
+</a><a href="#h7-0-15" id="h7-0-15" class="i">+            }
+</a>             Token::Keyword(Keyword::Commit) =&gt; Ok(ast::Statement::Commit),
+             Token::Keyword(Keyword::Rollback) =&gt; Ok(ast::Statement::Rollback),
+             token =&gt; Err(Error::Parse(format!(&quot;Unexpected token {}&quot;, token))),
+<b>diff --git a/<a id="h8" href="../file/src/sql/planner/mod.rs.html">src/sql/planner/mod.rs</a> b/<a href="../file/src/sql/planner/mod.rs.html">src/sql/planner/mod.rs</a></b>
+<a href="#h8-0" id="h8-0" class="h">@@ -25,7 +25,7 @@ impl Planner {
+</a>     /// Builds a plan node for a statement
+     fn build_statement(&amp;self, statement: ast::Statement) -&gt; Result&lt;Node, Error&gt; {
+         Ok(match statement {
+<a href="#h8-0-3" id="h8-0-3" class="d">-            ast::Statement::Begin | ast::Statement::Commit | ast::Statement::Rollback =&gt; {
+</a><a href="#h8-0-4" id="h8-0-4" class="i">+            ast::Statement::Begin { .. } | ast::Statement::Commit | ast::Statement::Rollback =&gt; {
+</a>                 return Err(Error::Internal(format!(
+                     &quot;Unexpected transaction statement {:?}&quot;,
+                     statement
+<b>diff --git a/<a id="h9" href="../file/src/sql/types.rs.html">src/sql/types.rs</a> b/<a href="../file/src/sql/types.rs.html">src/sql/types.rs</a></b>
+<a href="#h9-0" id="h9-0" class="h">@@ -1,4 +1,5 @@
+</a> use super::executor::Executor;
+<a href="#h9-0-1" id="h9-0-1" class="i">+use crate::client;
+</a> use crate::Error;
+ 
+ /// A datatype
+<a href="#h9-1" id="h9-1" class="h">@@ -117,38 +118,27 @@ pub type Row = Vec&lt;Value&gt;;
+</a> 
+ /// A result set
+ pub struct ResultSet {
+<a href="#h9-1-3" id="h9-1-3" class="d">-    // FIXME Shouldn&#39;t be public
+</a><a href="#h9-1-4" id="h9-1-4" class="d">-    pub txn_id: Option&lt;u64&gt;,
+</a><a href="#h9-1-5" id="h9-1-5" class="i">+    // FIXME Shouldn&#39;t be public, and shouldn&#39;t use client package
+</a><a href="#h9-1-6" id="h9-1-6" class="i">+    pub effect: Option&lt;client::Effect&gt;,
+</a>     columns: Vec&lt;String&gt;,
+     executor: Option&lt;Box&lt;dyn Executor&gt;&gt;,
+ }
+ 
+ impl ResultSet {
+<a href="#h9-1-12" id="h9-1-12" class="d">-    /// Creates an empty result set, mostly used for transaction commit and rollback
+</a><a href="#h9-1-13" id="h9-1-13" class="i">+    /// Creates an empty result set
+</a>     pub fn empty() -&gt; Self {
+<a href="#h9-1-15" id="h9-1-15" class="d">-        Self { txn_id: None, columns: Vec::new(), executor: None }
+</a><a href="#h9-1-16" id="h9-1-16" class="d">-    }
+</a><a href="#h9-1-17" id="h9-1-17" class="d">-
+</a><a href="#h9-1-18" id="h9-1-18" class="d">-    /// Creates a result set for a transaction begin
+</a><a href="#h9-1-19" id="h9-1-19" class="d">-    pub fn from_begin(txn_id: u64) -&gt; Self {
+</a><a href="#h9-1-20" id="h9-1-20" class="d">-        Self { txn_id: Some(txn_id), columns: Vec::new(), executor: None }
+</a><a href="#h9-1-21" id="h9-1-21" class="i">+        Self { effect: None, columns: Vec::new(), executor: None }
+</a>     }
+ 
+     /// Creates a result set from an executor
+     pub fn from_executor(executor: Box&lt;dyn Executor&gt;) -&gt; Self {
+<a href="#h9-1-26" id="h9-1-26" class="d">-        Self { txn_id: None, columns: executor.columns(), executor: Some(executor) }
+</a><a href="#h9-1-27" id="h9-1-27" class="i">+        Self { effect: None, columns: executor.columns(), executor: Some(executor) }
+</a>     }
+ 
+     /// Fetches the columns of the result set
+     pub fn columns(&amp;self) -&gt; Vec&lt;String&gt; {
+         self.columns.clone()
+     }
+<a href="#h9-1-34" id="h9-1-34" class="d">-
+</a><a href="#h9-1-35" id="h9-1-35" class="d">-    /// Fetches the active transaction ID after the statement was executed
+</a><a href="#h9-1-36" id="h9-1-36" class="d">-    /// (i.e. Some after BEGIN but None after COMMIT/ROLLBACK)
+</a><a href="#h9-1-37" id="h9-1-37" class="d">-    pub fn txn_id(&amp;self) -&gt; Option&lt;u64&gt; {
+</a><a href="#h9-1-38" id="h9-1-38" class="d">-        self.txn_id
+</a><a href="#h9-1-39" id="h9-1-39" class="d">-    }
+</a> }
+ 
+ impl Iterator for ResultSet {
+</pre>
+</div>
+</body>
+</html>

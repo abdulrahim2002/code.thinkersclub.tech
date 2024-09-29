@@ -1,0 +1,1754 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tests: rewrite end-to-end test harness - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/2eb01aa24ad9677fc350f57b2946fc8c40a3e5b5.html">2eb01aa24ad9677fc350f57b2946fc8c40a3e5b5</a>
+<b>parent</b> <a href="../commit/274d6311601355a3130a05414b191f8e69a2fbc5.html">274d6311601355a3130a05414b191f8e69a2fbc5</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Mon,  8 Apr 2024 17:01:51 +0200
+
+tests: rewrite end-to-end test harness
+
+This adds a `TestCluster` harness, which spawns separate toyDB processes rather
+than threads. This avoids having to do graceful shutdown, which can be
+non-trivial when Tokio is removed due to e.g. `TcpListener::accept()` not being
+interruptable.
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">Cargo.lock</a></td><td> | </td><td class="num">13</td><td><span class="i">+++++++++++++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">Cargo.toml</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="D">D</td><td><a href="#h2">tests/client/mod.rs</a></td><td> | </td><td class="num">367</td><td><span class="i"></span><span class="d">-------------------------------------------------------------------------------</span></td></tr>
+<tr><td class="D">D</td><td><a href="#h3">tests/cluster/isolation.rs</a></td><td> | </td><td class="num">144</td><td><span class="i"></span><span class="d">-------------------------------------------------------------------------------</span></td></tr>
+<tr><td class="D">D</td><td><a href="#h4">tests/cluster/mod.rs</a></td><td> | </td><td class="num">2</td><td><span class="i"></span><span class="d">--</span></td></tr>
+<tr><td class="D">D</td><td><a href="#h5">tests/cluster/recovery.rs</a></td><td> | </td><td class="num">47</td><td><span class="i"></span><span class="d">-----------------------------------------------</span></td></tr>
+<tr><td class="A">A</td><td><a href="#h6">tests/e2e/client.rs</a></td><td> | </td><td class="num">372</td><td><span class="i">+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d"></span></td></tr>
+<tr><td class="A">A</td><td><a href="#h7">tests/e2e/dataset.rs</a></td><td> | </td><td class="num">55</td><td><span class="i">+++++++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d"></span></td></tr>
+<tr><td class="A">A</td><td><a href="#h8">tests/e2e/isolation.rs</a></td><td> | </td><td class="num">159</td><td><span class="i">+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d"></span></td></tr>
+<tr><td class="A">A</td><td><a href="#h9">tests/e2e/mod.rs</a></td><td> | </td><td class="num">27</td><td><span class="i">+++++++++++++++++++++++++++</span><span class="d"></span></td></tr>
+<tr><td class="A">A</td><td><a href="#h10">tests/e2e/recovery.rs</a></td><td> | </td><td class="num">50</td><td><span class="i">++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d"></span></td></tr>
+<tr><td class="A">A</td><td><a href="#h11">tests/e2e/testcluster.rs</a></td><td> | </td><td class="num">179</td><td><span class="i">+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d"></span></td></tr>
+<tr><td class="D">D</td><td><a href="#h12">tests/setup.rs</a></td><td> | </td><td class="num">214</td><td><span class="i"></span><span class="d">-------------------------------------------------------------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h13">tests/tests.rs</a></td><td> | </td><td class="num">24</td><td><span class="i">+</span><span class="d">-----------------------</span></td></tr>
+</table></pre><pre>14 files changed, 857 insertions(+), 797 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/Cargo.lock.html">Cargo.lock</a> b/<a href="../file/Cargo.lock.html">Cargo.lock</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -554,6 +554,18 @@ source = &quot;registry+https://github.com/rust-lang/crates.io-index&quot;
+</a> checksum = &quot;a0474425d51df81997e2f90a21591180b38eccf27292d755f3e30750225c175b&quot;
+ 
+ [[package]]
+<a href="#h0-0-3" id="h0-0-3" class="i">+name = &quot;escargot&quot;
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+version = &quot;0.5.10&quot;
+</a><a href="#h0-0-5" id="h0-0-5" class="i">+source = &quot;registry+https://github.com/rust-lang/crates.io-index&quot;
+</a><a href="#h0-0-6" id="h0-0-6" class="i">+checksum = &quot;4f474c6844cbd04e783d0f25757583db4f491770ca618bedf2fb01815fc79939&quot;
+</a><a href="#h0-0-7" id="h0-0-7" class="i">+dependencies = [
+</a><a href="#h0-0-8" id="h0-0-8" class="i">+ &quot;log&quot;,
+</a><a href="#h0-0-9" id="h0-0-9" class="i">+ &quot;once_cell&quot;,
+</a><a href="#h0-0-10" id="h0-0-10" class="i">+ &quot;serde&quot;,
+</a><a href="#h0-0-11" id="h0-0-11" class="i">+ &quot;serde_json&quot;,
+</a><a href="#h0-0-12" id="h0-0-12" class="i">+]
+</a><a href="#h0-0-13" id="h0-0-13" class="i">+
+</a><a href="#h0-0-14" id="h0-0-14" class="i">+[[package]]
+</a> name = &quot;event-listener&quot;
+ version = &quot;5.3.0&quot;
+ source = &quot;registry+https://github.com/rust-lang/crates.io-index&quot;
+<a href="#h0-1" id="h0-1" class="h">@@ -1836,6 +1848,7 @@ dependencies = [
+</a>  &quot;clap 4.5.4&quot;,
+  &quot;config&quot;,
+  &quot;derivative&quot;,
+<a href="#h0-1-3" id="h0-1-3" class="i">+ &quot;escargot&quot;,
+</a>  &quot;fs4&quot;,
+  &quot;futures&quot;,
+  &quot;futures-util&quot;,
+<b>diff --git a/<a id="h1" href="../file/Cargo.toml.html">Cargo.toml</a> b/<a href="../file/Cargo.toml.html">Cargo.toml</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -47,6 +47,7 @@ tokio-util = { version = &quot;~0.7.8&quot;, features = [&quot;codec&quot;] }
+</a> uuid = { version = &quot;~1.8.0&quot;, features = [&quot;v4&quot;] }
+ 
+ [dev-dependencies]
+<a href="#h1-0-3" id="h1-0-3" class="i">+escargot = &quot;0.5.10&quot;
+</a> goldenfile = &quot;~1.6.0&quot;
+ paste = &quot;~1.0.14&quot;
+ pretty_assertions = &quot;~1.4.0&quot;
+<b>diff --git a/<a id="h2" href="../file/tests/client/mod.rs.html">tests/client/mod.rs</a> b/<a href="../file/tests/client/mod.rs.html">tests/client/mod.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -1,367 +0,0 @@
+</a><a href="#h2-0-0" id="h2-0-0" class="d">-use super::{assert_row, assert_rows, setup};
+</a><a href="#h2-0-1" id="h2-0-1" class="d">-
+</a><a href="#h2-0-2" id="h2-0-2" class="d">-use toydb::error::{Error, Result};
+</a><a href="#h2-0-3" id="h2-0-3" class="d">-use toydb::raft;
+</a><a href="#h2-0-4" id="h2-0-4" class="d">-use toydb::sql::engine::Status;
+</a><a href="#h2-0-5" id="h2-0-5" class="d">-use toydb::sql::execution::ResultSet;
+</a><a href="#h2-0-6" id="h2-0-6" class="d">-use toydb::sql::schema;
+</a><a href="#h2-0-7" id="h2-0-7" class="d">-use toydb::sql::types::{Column, DataType, Value};
+</a><a href="#h2-0-8" id="h2-0-8" class="d">-use toydb::storage;
+</a><a href="#h2-0-9" id="h2-0-9" class="d">-use toydb::storage::{engine, mvcc};
+</a><a href="#h2-0-10" id="h2-0-10" class="d">-use toydb::Client;
+</a><a href="#h2-0-11" id="h2-0-11" class="d">-
+</a><a href="#h2-0-12" id="h2-0-12" class="d">-use pretty_assertions::assert_eq;
+</a><a href="#h2-0-13" id="h2-0-13" class="d">-use serial_test::serial;
+</a><a href="#h2-0-14" id="h2-0-14" class="d">-
+</a><a href="#h2-0-15" id="h2-0-15" class="d">-#[tokio::test(flavor = &quot;multi_thread&quot;, worker_threads = 2)]
+</a><a href="#h2-0-16" id="h2-0-16" class="d">-#[serial]
+</a><a href="#h2-0-17" id="h2-0-17" class="d">-async fn get_table() -&gt; Result&lt;()&gt; {
+</a><a href="#h2-0-18" id="h2-0-18" class="d">-    let (mut c, _teardown) = setup::server_with_client(setup::movies()).await?;
+</a><a href="#h2-0-19" id="h2-0-19" class="d">-
+</a><a href="#h2-0-20" id="h2-0-20" class="d">-    assert_eq!(
+</a><a href="#h2-0-21" id="h2-0-21" class="d">-        c.get_table(&quot;unknown&quot;).await,
+</a><a href="#h2-0-22" id="h2-0-22" class="d">-        Err(Error::Value(&quot;Table unknown does not exist&quot;.into()))
+</a><a href="#h2-0-23" id="h2-0-23" class="d">-    );
+</a><a href="#h2-0-24" id="h2-0-24" class="d">-    assert_eq!(
+</a><a href="#h2-0-25" id="h2-0-25" class="d">-        c.get_table(&quot;movies&quot;).await?,
+</a><a href="#h2-0-26" id="h2-0-26" class="d">-        schema::Table {
+</a><a href="#h2-0-27" id="h2-0-27" class="d">-            name: &quot;movies&quot;.into(),
+</a><a href="#h2-0-28" id="h2-0-28" class="d">-            columns: vec![
+</a><a href="#h2-0-29" id="h2-0-29" class="d">-                schema::Column {
+</a><a href="#h2-0-30" id="h2-0-30" class="d">-                    name: &quot;id&quot;.into(),
+</a><a href="#h2-0-31" id="h2-0-31" class="d">-                    datatype: DataType::Integer,
+</a><a href="#h2-0-32" id="h2-0-32" class="d">-                    primary_key: true,
+</a><a href="#h2-0-33" id="h2-0-33" class="d">-                    nullable: false,
+</a><a href="#h2-0-34" id="h2-0-34" class="d">-                    default: None,
+</a><a href="#h2-0-35" id="h2-0-35" class="d">-                    unique: true,
+</a><a href="#h2-0-36" id="h2-0-36" class="d">-                    index: false,
+</a><a href="#h2-0-37" id="h2-0-37" class="d">-                    references: None,
+</a><a href="#h2-0-38" id="h2-0-38" class="d">-                },
+</a><a href="#h2-0-39" id="h2-0-39" class="d">-                schema::Column {
+</a><a href="#h2-0-40" id="h2-0-40" class="d">-                    name: &quot;title&quot;.into(),
+</a><a href="#h2-0-41" id="h2-0-41" class="d">-                    datatype: DataType::String,
+</a><a href="#h2-0-42" id="h2-0-42" class="d">-                    primary_key: false,
+</a><a href="#h2-0-43" id="h2-0-43" class="d">-                    nullable: false,
+</a><a href="#h2-0-44" id="h2-0-44" class="d">-                    default: None,
+</a><a href="#h2-0-45" id="h2-0-45" class="d">-                    unique: false,
+</a><a href="#h2-0-46" id="h2-0-46" class="d">-                    index: false,
+</a><a href="#h2-0-47" id="h2-0-47" class="d">-                    references: None,
+</a><a href="#h2-0-48" id="h2-0-48" class="d">-                },
+</a><a href="#h2-0-49" id="h2-0-49" class="d">-                schema::Column {
+</a><a href="#h2-0-50" id="h2-0-50" class="d">-                    name: &quot;studio_id&quot;.into(),
+</a><a href="#h2-0-51" id="h2-0-51" class="d">-                    datatype: DataType::Integer,
+</a><a href="#h2-0-52" id="h2-0-52" class="d">-                    primary_key: false,
+</a><a href="#h2-0-53" id="h2-0-53" class="d">-                    nullable: false,
+</a><a href="#h2-0-54" id="h2-0-54" class="d">-                    default: None,
+</a><a href="#h2-0-55" id="h2-0-55" class="d">-                    unique: false,
+</a><a href="#h2-0-56" id="h2-0-56" class="d">-                    index: false,
+</a><a href="#h2-0-57" id="h2-0-57" class="d">-                    references: Some(&quot;studios&quot;.into()),
+</a><a href="#h2-0-58" id="h2-0-58" class="d">-                },
+</a><a href="#h2-0-59" id="h2-0-59" class="d">-                schema::Column {
+</a><a href="#h2-0-60" id="h2-0-60" class="d">-                    name: &quot;genre_id&quot;.into(),
+</a><a href="#h2-0-61" id="h2-0-61" class="d">-                    datatype: DataType::Integer,
+</a><a href="#h2-0-62" id="h2-0-62" class="d">-                    primary_key: false,
+</a><a href="#h2-0-63" id="h2-0-63" class="d">-                    nullable: false,
+</a><a href="#h2-0-64" id="h2-0-64" class="d">-                    default: None,
+</a><a href="#h2-0-65" id="h2-0-65" class="d">-                    unique: false,
+</a><a href="#h2-0-66" id="h2-0-66" class="d">-                    index: false,
+</a><a href="#h2-0-67" id="h2-0-67" class="d">-                    references: Some(&quot;genres&quot;.into()),
+</a><a href="#h2-0-68" id="h2-0-68" class="d">-                },
+</a><a href="#h2-0-69" id="h2-0-69" class="d">-                schema::Column {
+</a><a href="#h2-0-70" id="h2-0-70" class="d">-                    name: &quot;released&quot;.into(),
+</a><a href="#h2-0-71" id="h2-0-71" class="d">-                    datatype: DataType::Integer,
+</a><a href="#h2-0-72" id="h2-0-72" class="d">-                    primary_key: false,
+</a><a href="#h2-0-73" id="h2-0-73" class="d">-                    nullable: false,
+</a><a href="#h2-0-74" id="h2-0-74" class="d">-                    default: None,
+</a><a href="#h2-0-75" id="h2-0-75" class="d">-                    unique: false,
+</a><a href="#h2-0-76" id="h2-0-76" class="d">-                    index: false,
+</a><a href="#h2-0-77" id="h2-0-77" class="d">-                    references: None,
+</a><a href="#h2-0-78" id="h2-0-78" class="d">-                },
+</a><a href="#h2-0-79" id="h2-0-79" class="d">-                schema::Column {
+</a><a href="#h2-0-80" id="h2-0-80" class="d">-                    name: &quot;rating&quot;.into(),
+</a><a href="#h2-0-81" id="h2-0-81" class="d">-                    datatype: DataType::Float,
+</a><a href="#h2-0-82" id="h2-0-82" class="d">-                    primary_key: false,
+</a><a href="#h2-0-83" id="h2-0-83" class="d">-                    nullable: true,
+</a><a href="#h2-0-84" id="h2-0-84" class="d">-                    default: Some(Value::Null),
+</a><a href="#h2-0-85" id="h2-0-85" class="d">-                    unique: false,
+</a><a href="#h2-0-86" id="h2-0-86" class="d">-                    index: false,
+</a><a href="#h2-0-87" id="h2-0-87" class="d">-                    references: None,
+</a><a href="#h2-0-88" id="h2-0-88" class="d">-                },
+</a><a href="#h2-0-89" id="h2-0-89" class="d">-                schema::Column {
+</a><a href="#h2-0-90" id="h2-0-90" class="d">-                    name: &quot;ultrahd&quot;.into(),
+</a><a href="#h2-0-91" id="h2-0-91" class="d">-                    datatype: DataType::Boolean,
+</a><a href="#h2-0-92" id="h2-0-92" class="d">-                    primary_key: false,
+</a><a href="#h2-0-93" id="h2-0-93" class="d">-                    nullable: true,
+</a><a href="#h2-0-94" id="h2-0-94" class="d">-                    default: Some(Value::Null),
+</a><a href="#h2-0-95" id="h2-0-95" class="d">-                    unique: false,
+</a><a href="#h2-0-96" id="h2-0-96" class="d">-                    index: false,
+</a><a href="#h2-0-97" id="h2-0-97" class="d">-                    references: None,
+</a><a href="#h2-0-98" id="h2-0-98" class="d">-                },
+</a><a href="#h2-0-99" id="h2-0-99" class="d">-            ]
+</a><a href="#h2-0-100" id="h2-0-100" class="d">-        }
+</a><a href="#h2-0-101" id="h2-0-101" class="d">-    );
+</a><a href="#h2-0-102" id="h2-0-102" class="d">-    Ok(())
+</a><a href="#h2-0-103" id="h2-0-103" class="d">-}
+</a><a href="#h2-0-104" id="h2-0-104" class="d">-
+</a><a href="#h2-0-105" id="h2-0-105" class="d">-#[tokio::test(flavor = &quot;multi_thread&quot;, worker_threads = 2)]
+</a><a href="#h2-0-106" id="h2-0-106" class="d">-#[serial]
+</a><a href="#h2-0-107" id="h2-0-107" class="d">-async fn list_tables() -&gt; Result&lt;()&gt; {
+</a><a href="#h2-0-108" id="h2-0-108" class="d">-    let (mut c, _teardown) = setup::server_with_client(setup::movies()).await?;
+</a><a href="#h2-0-109" id="h2-0-109" class="d">-
+</a><a href="#h2-0-110" id="h2-0-110" class="d">-    assert_eq!(c.list_tables().await?, vec![&quot;countries&quot;, &quot;genres&quot;, &quot;movies&quot;, &quot;studios&quot;]);
+</a><a href="#h2-0-111" id="h2-0-111" class="d">-    Ok(())
+</a><a href="#h2-0-112" id="h2-0-112" class="d">-}
+</a><a href="#h2-0-113" id="h2-0-113" class="d">-
+</a><a href="#h2-0-114" id="h2-0-114" class="d">-#[tokio::test(flavor = &quot;multi_thread&quot;, worker_threads = 2)]
+</a><a href="#h2-0-115" id="h2-0-115" class="d">-#[serial]
+</a><a href="#h2-0-116" id="h2-0-116" class="d">-async fn status() -&gt; Result&lt;()&gt; {
+</a><a href="#h2-0-117" id="h2-0-117" class="d">-    let (mut c, _teardown) = setup::server_with_client(setup::movies()).await?;
+</a><a href="#h2-0-118" id="h2-0-118" class="d">-
+</a><a href="#h2-0-119" id="h2-0-119" class="d">-    assert_eq!(
+</a><a href="#h2-0-120" id="h2-0-120" class="d">-        c.status().await?,
+</a><a href="#h2-0-121" id="h2-0-121" class="d">-        Status {
+</a><a href="#h2-0-122" id="h2-0-122" class="d">-            raft: raft::Status {
+</a><a href="#h2-0-123" id="h2-0-123" class="d">-                server: 1,
+</a><a href="#h2-0-124" id="h2-0-124" class="d">-                leader: 1,
+</a><a href="#h2-0-125" id="h2-0-125" class="d">-                term: 1,
+</a><a href="#h2-0-126" id="h2-0-126" class="d">-                last_index: [(1, 27)].into(),
+</a><a href="#h2-0-127" id="h2-0-127" class="d">-                commit_index: 27,
+</a><a href="#h2-0-128" id="h2-0-128" class="d">-                apply_index: 27,
+</a><a href="#h2-0-129" id="h2-0-129" class="d">-                storage: storage::engine::Status {
+</a><a href="#h2-0-130" id="h2-0-130" class="d">-                    name: &quot;bitcask&quot;.to_string(),
+</a><a href="#h2-0-131" id="h2-0-131" class="d">-                    keys: 29,
+</a><a href="#h2-0-132" id="h2-0-132" class="d">-                    size: 1324,
+</a><a href="#h2-0-133" id="h2-0-133" class="d">-                    total_disk_size: 1831,
+</a><a href="#h2-0-134" id="h2-0-134" class="d">-                    live_disk_size: 1556,
+</a><a href="#h2-0-135" id="h2-0-135" class="d">-                    garbage_disk_size: 275
+</a><a href="#h2-0-136" id="h2-0-136" class="d">-                },
+</a><a href="#h2-0-137" id="h2-0-137" class="d">-            },
+</a><a href="#h2-0-138" id="h2-0-138" class="d">-            mvcc: mvcc::Status {
+</a><a href="#h2-0-139" id="h2-0-139" class="d">-                versions: 1,
+</a><a href="#h2-0-140" id="h2-0-140" class="d">-                active_txns: 0,
+</a><a href="#h2-0-141" id="h2-0-141" class="d">-                storage: engine::Status {
+</a><a href="#h2-0-142" id="h2-0-142" class="d">-                    name: &quot;memory&quot;.to_string(),
+</a><a href="#h2-0-143" id="h2-0-143" class="d">-                    keys: 26,
+</a><a href="#h2-0-144" id="h2-0-144" class="d">-                    size: 1630,
+</a><a href="#h2-0-145" id="h2-0-145" class="d">-                    total_disk_size: 0,
+</a><a href="#h2-0-146" id="h2-0-146" class="d">-                    live_disk_size: 0,
+</a><a href="#h2-0-147" id="h2-0-147" class="d">-                    garbage_disk_size: 0
+</a><a href="#h2-0-148" id="h2-0-148" class="d">-                },
+</a><a href="#h2-0-149" id="h2-0-149" class="d">-            }
+</a><a href="#h2-0-150" id="h2-0-150" class="d">-        },
+</a><a href="#h2-0-151" id="h2-0-151" class="d">-    );
+</a><a href="#h2-0-152" id="h2-0-152" class="d">-    Ok(())
+</a><a href="#h2-0-153" id="h2-0-153" class="d">-}
+</a><a href="#h2-0-154" id="h2-0-154" class="d">-
+</a><a href="#h2-0-155" id="h2-0-155" class="d">-#[tokio::test(flavor = &quot;multi_thread&quot;, worker_threads = 2)]
+</a><a href="#h2-0-156" id="h2-0-156" class="d">-#[serial]
+</a><a href="#h2-0-157" id="h2-0-157" class="d">-async fn execute() -&gt; Result&lt;()&gt; {
+</a><a href="#h2-0-158" id="h2-0-158" class="d">-    let (mut c, _teardown) = setup::server_with_client(setup::movies()).await?;
+</a><a href="#h2-0-159" id="h2-0-159" class="d">-
+</a><a href="#h2-0-160" id="h2-0-160" class="d">-    // SELECT
+</a><a href="#h2-0-161" id="h2-0-161" class="d">-    let result = c.execute(&quot;SELECT * FROM genres&quot;).await?;
+</a><a href="#h2-0-162" id="h2-0-162" class="d">-    assert_eq!(
+</a><a href="#h2-0-163" id="h2-0-163" class="d">-        result,
+</a><a href="#h2-0-164" id="h2-0-164" class="d">-        ResultSet::Query {
+</a><a href="#h2-0-165" id="h2-0-165" class="d">-            columns: vec![Column { name: Some(&quot;id&quot;.into()) }, Column { name: Some(&quot;name&quot;.into()) }],
+</a><a href="#h2-0-166" id="h2-0-166" class="d">-            rows: Box::new(std::iter::empty()),
+</a><a href="#h2-0-167" id="h2-0-167" class="d">-        }
+</a><a href="#h2-0-168" id="h2-0-168" class="d">-    );
+</a><a href="#h2-0-169" id="h2-0-169" class="d">-    assert_rows(
+</a><a href="#h2-0-170" id="h2-0-170" class="d">-        result,
+</a><a href="#h2-0-171" id="h2-0-171" class="d">-        vec![
+</a><a href="#h2-0-172" id="h2-0-172" class="d">-            vec![Value::Integer(1), Value::String(&quot;Science Fiction&quot;.into())],
+</a><a href="#h2-0-173" id="h2-0-173" class="d">-            vec![Value::Integer(2), Value::String(&quot;Action&quot;.into())],
+</a><a href="#h2-0-174" id="h2-0-174" class="d">-            vec![Value::Integer(3), Value::String(&quot;Comedy&quot;.into())],
+</a><a href="#h2-0-175" id="h2-0-175" class="d">-        ],
+</a><a href="#h2-0-176" id="h2-0-176" class="d">-    );
+</a><a href="#h2-0-177" id="h2-0-177" class="d">-
+</a><a href="#h2-0-178" id="h2-0-178" class="d">-    let result = c.execute(&quot;SELECT * FROM genres WHERE FALSE&quot;).await?;
+</a><a href="#h2-0-179" id="h2-0-179" class="d">-    assert_eq!(
+</a><a href="#h2-0-180" id="h2-0-180" class="d">-        result,
+</a><a href="#h2-0-181" id="h2-0-181" class="d">-        ResultSet::Query {
+</a><a href="#h2-0-182" id="h2-0-182" class="d">-            columns: vec![Column { name: Some(&quot;id&quot;.into()) }, Column { name: Some(&quot;name&quot;.into()) }],
+</a><a href="#h2-0-183" id="h2-0-183" class="d">-            rows: Box::new(std::iter::empty()),
+</a><a href="#h2-0-184" id="h2-0-184" class="d">-        }
+</a><a href="#h2-0-185" id="h2-0-185" class="d">-    );
+</a><a href="#h2-0-186" id="h2-0-186" class="d">-    assert_rows(result, Vec::new());
+</a><a href="#h2-0-187" id="h2-0-187" class="d">-
+</a><a href="#h2-0-188" id="h2-0-188" class="d">-    assert_eq!(
+</a><a href="#h2-0-189" id="h2-0-189" class="d">-        c.execute(&quot;SELECT * FROM x&quot;).await,
+</a><a href="#h2-0-190" id="h2-0-190" class="d">-        Err(Error::Value(&quot;Table x does not exist&quot;.into()))
+</a><a href="#h2-0-191" id="h2-0-191" class="d">-    );
+</a><a href="#h2-0-192" id="h2-0-192" class="d">-
+</a><a href="#h2-0-193" id="h2-0-193" class="d">-    // INSERT
+</a><a href="#h2-0-194" id="h2-0-194" class="d">-    assert_eq!(
+</a><a href="#h2-0-195" id="h2-0-195" class="d">-        c.execute(&quot;INSERT INTO genres VALUES (1, &#39;Western&#39;)&quot;).await,
+</a><a href="#h2-0-196" id="h2-0-196" class="d">-        Err(Error::Value(&quot;Primary key 1 already exists for table genres&quot;.into())),
+</a><a href="#h2-0-197" id="h2-0-197" class="d">-    );
+</a><a href="#h2-0-198" id="h2-0-198" class="d">-    assert_eq!(
+</a><a href="#h2-0-199" id="h2-0-199" class="d">-        c.execute(&quot;INSERT INTO genres VALUES (9, &#39;Western&#39;)&quot;).await,
+</a><a href="#h2-0-200" id="h2-0-200" class="d">-        Ok(ResultSet::Create { count: 1 }),
+</a><a href="#h2-0-201" id="h2-0-201" class="d">-    );
+</a><a href="#h2-0-202" id="h2-0-202" class="d">-    assert_eq!(
+</a><a href="#h2-0-203" id="h2-0-203" class="d">-        c.execute(&quot;INSERT INTO x VALUES (9, &#39;Western&#39;)&quot;).await,
+</a><a href="#h2-0-204" id="h2-0-204" class="d">-        Err(Error::Value(&quot;Table x does not exist&quot;.into()))
+</a><a href="#h2-0-205" id="h2-0-205" class="d">-    );
+</a><a href="#h2-0-206" id="h2-0-206" class="d">-
+</a><a href="#h2-0-207" id="h2-0-207" class="d">-    // UPDATE
+</a><a href="#h2-0-208" id="h2-0-208" class="d">-    assert_eq!(
+</a><a href="#h2-0-209" id="h2-0-209" class="d">-        c.execute(&quot;UPDATE genres SET name = &#39;Horror&#39; WHERE FALSE&quot;).await,
+</a><a href="#h2-0-210" id="h2-0-210" class="d">-        Ok(ResultSet::Update { count: 0 }),
+</a><a href="#h2-0-211" id="h2-0-211" class="d">-    );
+</a><a href="#h2-0-212" id="h2-0-212" class="d">-    assert_eq!(
+</a><a href="#h2-0-213" id="h2-0-213" class="d">-        c.execute(&quot;UPDATE genres SET name = &#39;Horror&#39; WHERE id = 9&quot;).await,
+</a><a href="#h2-0-214" id="h2-0-214" class="d">-        Ok(ResultSet::Update { count: 1 }),
+</a><a href="#h2-0-215" id="h2-0-215" class="d">-    );
+</a><a href="#h2-0-216" id="h2-0-216" class="d">-    assert_eq!(
+</a><a href="#h2-0-217" id="h2-0-217" class="d">-        c.execute(&quot;UPDATE genres SET id = 1 WHERE id = 9&quot;).await,
+</a><a href="#h2-0-218" id="h2-0-218" class="d">-        Err(Error::Value(&quot;Primary key 1 already exists for table genres&quot;.into()))
+</a><a href="#h2-0-219" id="h2-0-219" class="d">-    );
+</a><a href="#h2-0-220" id="h2-0-220" class="d">-
+</a><a href="#h2-0-221" id="h2-0-221" class="d">-    // DELETE
+</a><a href="#h2-0-222" id="h2-0-222" class="d">-    assert_eq!(
+</a><a href="#h2-0-223" id="h2-0-223" class="d">-        c.execute(&quot;DELETE FROM genres WHERE FALSE&quot;).await,
+</a><a href="#h2-0-224" id="h2-0-224" class="d">-        Ok(ResultSet::Delete { count: 0 }),
+</a><a href="#h2-0-225" id="h2-0-225" class="d">-    );
+</a><a href="#h2-0-226" id="h2-0-226" class="d">-    assert_eq!(
+</a><a href="#h2-0-227" id="h2-0-227" class="d">-        c.execute(&quot;DELETE FROM genres WHERE id = 9&quot;).await,
+</a><a href="#h2-0-228" id="h2-0-228" class="d">-        Ok(ResultSet::Delete { count: 1 }),
+</a><a href="#h2-0-229" id="h2-0-229" class="d">-    );
+</a><a href="#h2-0-230" id="h2-0-230" class="d">-    assert_eq!(
+</a><a href="#h2-0-231" id="h2-0-231" class="d">-        c.execute(&quot;DELETE FROM genres WHERE x = 1&quot;).await,
+</a><a href="#h2-0-232" id="h2-0-232" class="d">-        Err(Error::Value(&quot;Unknown field x&quot;.into()))
+</a><a href="#h2-0-233" id="h2-0-233" class="d">-    );
+</a><a href="#h2-0-234" id="h2-0-234" class="d">-
+</a><a href="#h2-0-235" id="h2-0-235" class="d">-    Ok(())
+</a><a href="#h2-0-236" id="h2-0-236" class="d">-}
+</a><a href="#h2-0-237" id="h2-0-237" class="d">-
+</a><a href="#h2-0-238" id="h2-0-238" class="d">-#[tokio::test(flavor = &quot;multi_thread&quot;, worker_threads = 2)]
+</a><a href="#h2-0-239" id="h2-0-239" class="d">-#[serial]
+</a><a href="#h2-0-240" id="h2-0-240" class="d">-async fn execute_txn() -&gt; Result&lt;()&gt; {
+</a><a href="#h2-0-241" id="h2-0-241" class="d">-    let (mut c, _teardown) = setup::server_with_client(setup::movies()).await?;
+</a><a href="#h2-0-242" id="h2-0-242" class="d">-
+</a><a href="#h2-0-243" id="h2-0-243" class="d">-    assert_eq!(c.txn(), None);
+</a><a href="#h2-0-244" id="h2-0-244" class="d">-
+</a><a href="#h2-0-245" id="h2-0-245" class="d">-    // Committing a change in a txn should work
+</a><a href="#h2-0-246" id="h2-0-246" class="d">-    assert_eq!(c.execute(&quot;BEGIN&quot;).await?, ResultSet::Begin { version: 2, read_only: false });
+</a><a href="#h2-0-247" id="h2-0-247" class="d">-    assert_eq!(c.txn(), Some((2, false)));
+</a><a href="#h2-0-248" id="h2-0-248" class="d">-    c.execute(&quot;INSERT INTO genres VALUES (4, &#39;Drama&#39;)&quot;).await?;
+</a><a href="#h2-0-249" id="h2-0-249" class="d">-    assert_eq!(c.execute(&quot;COMMIT&quot;).await?, ResultSet::Commit { version: 2 });
+</a><a href="#h2-0-250" id="h2-0-250" class="d">-    assert_eq!(c.txn(), None);
+</a><a href="#h2-0-251" id="h2-0-251" class="d">-    assert_row(
+</a><a href="#h2-0-252" id="h2-0-252" class="d">-        c.execute(&quot;SELECT * FROM genres WHERE id = 4&quot;).await?,
+</a><a href="#h2-0-253" id="h2-0-253" class="d">-        vec![Value::Integer(4), Value::String(&quot;Drama&quot;.into())],
+</a><a href="#h2-0-254" id="h2-0-254" class="d">-    );
+</a><a href="#h2-0-255" id="h2-0-255" class="d">-    assert_eq!(c.txn(), None);
+</a><a href="#h2-0-256" id="h2-0-256" class="d">-
+</a><a href="#h2-0-257" id="h2-0-257" class="d">-    // Rolling back a change in a txn should also work
+</a><a href="#h2-0-258" id="h2-0-258" class="d">-    assert_eq!(c.execute(&quot;BEGIN&quot;).await?, ResultSet::Begin { version: 3, read_only: false });
+</a><a href="#h2-0-259" id="h2-0-259" class="d">-    assert_eq!(c.txn(), Some((3, false)));
+</a><a href="#h2-0-260" id="h2-0-260" class="d">-    c.execute(&quot;INSERT INTO genres VALUES (5, &#39;Musical&#39;)&quot;).await?;
+</a><a href="#h2-0-261" id="h2-0-261" class="d">-    assert_row(
+</a><a href="#h2-0-262" id="h2-0-262" class="d">-        c.execute(&quot;SELECT * FROM genres WHERE id = 5&quot;).await?,
+</a><a href="#h2-0-263" id="h2-0-263" class="d">-        vec![Value::Integer(5), Value::String(&quot;Musical&quot;.into())],
+</a><a href="#h2-0-264" id="h2-0-264" class="d">-    );
+</a><a href="#h2-0-265" id="h2-0-265" class="d">-    assert_eq!(c.execute(&quot;ROLLBACK&quot;).await?, ResultSet::Rollback { version: 3 });
+</a><a href="#h2-0-266" id="h2-0-266" class="d">-    assert_rows(c.execute(&quot;SELECT * FROM genres WHERE id = 5&quot;).await?, Vec::new());
+</a><a href="#h2-0-267" id="h2-0-267" class="d">-    assert_eq!(c.txn(), None);
+</a><a href="#h2-0-268" id="h2-0-268" class="d">-
+</a><a href="#h2-0-269" id="h2-0-269" class="d">-    // Starting a read-only txn should block writes
+</a><a href="#h2-0-270" id="h2-0-270" class="d">-    assert_eq!(
+</a><a href="#h2-0-271" id="h2-0-271" class="d">-        c.execute(&quot;BEGIN READ ONLY&quot;).await?,
+</a><a href="#h2-0-272" id="h2-0-272" class="d">-        ResultSet::Begin { version: 4, read_only: true }
+</a><a href="#h2-0-273" id="h2-0-273" class="d">-    );
+</a><a href="#h2-0-274" id="h2-0-274" class="d">-    assert_eq!(c.txn(), Some((4, true)));
+</a><a href="#h2-0-275" id="h2-0-275" class="d">-    assert_row(
+</a><a href="#h2-0-276" id="h2-0-276" class="d">-        c.execute(&quot;SELECT * FROM genres WHERE id = 4&quot;).await?,
+</a><a href="#h2-0-277" id="h2-0-277" class="d">-        vec![Value::Integer(4), Value::String(&quot;Drama&quot;.into())],
+</a><a href="#h2-0-278" id="h2-0-278" class="d">-    );
+</a><a href="#h2-0-279" id="h2-0-279" class="d">-    assert_eq!(c.execute(&quot;INSERT INTO genres VALUES (5, &#39;Musical&#39;)&quot;).await, Err(Error::ReadOnly));
+</a><a href="#h2-0-280" id="h2-0-280" class="d">-    assert_row(
+</a><a href="#h2-0-281" id="h2-0-281" class="d">-        c.execute(&quot;SELECT * FROM genres WHERE id = 4&quot;).await?,
+</a><a href="#h2-0-282" id="h2-0-282" class="d">-        vec![Value::Integer(4), Value::String(&quot;Drama&quot;.into())],
+</a><a href="#h2-0-283" id="h2-0-283" class="d">-    );
+</a><a href="#h2-0-284" id="h2-0-284" class="d">-    assert_eq!(c.execute(&quot;COMMIT&quot;).await?, ResultSet::Commit { version: 4 });
+</a><a href="#h2-0-285" id="h2-0-285" class="d">-
+</a><a href="#h2-0-286" id="h2-0-286" class="d">-    // Starting a time-travel txn should work, it shouldn&#39;t see recent changes, and it should
+</a><a href="#h2-0-287" id="h2-0-287" class="d">-    // block writes
+</a><a href="#h2-0-288" id="h2-0-288" class="d">-    assert_eq!(
+</a><a href="#h2-0-289" id="h2-0-289" class="d">-        c.execute(&quot;BEGIN READ ONLY AS OF SYSTEM TIME 2&quot;).await?,
+</a><a href="#h2-0-290" id="h2-0-290" class="d">-        ResultSet::Begin { version: 2, read_only: true },
+</a><a href="#h2-0-291" id="h2-0-291" class="d">-    );
+</a><a href="#h2-0-292" id="h2-0-292" class="d">-    assert_eq!(c.txn(), Some((2, true)));
+</a><a href="#h2-0-293" id="h2-0-293" class="d">-    assert_rows(
+</a><a href="#h2-0-294" id="h2-0-294" class="d">-        c.execute(&quot;SELECT * FROM genres&quot;).await?,
+</a><a href="#h2-0-295" id="h2-0-295" class="d">-        vec![
+</a><a href="#h2-0-296" id="h2-0-296" class="d">-            vec![Value::Integer(1), Value::String(&quot;Science Fiction&quot;.into())],
+</a><a href="#h2-0-297" id="h2-0-297" class="d">-            vec![Value::Integer(2), Value::String(&quot;Action&quot;.into())],
+</a><a href="#h2-0-298" id="h2-0-298" class="d">-            vec![Value::Integer(3), Value::String(&quot;Comedy&quot;.into())],
+</a><a href="#h2-0-299" id="h2-0-299" class="d">-        ],
+</a><a href="#h2-0-300" id="h2-0-300" class="d">-    );
+</a><a href="#h2-0-301" id="h2-0-301" class="d">-    assert_eq!(c.execute(&quot;INSERT INTO genres VALUES (5, &#39;Musical&#39;)&quot;).await, Err(Error::ReadOnly));
+</a><a href="#h2-0-302" id="h2-0-302" class="d">-    assert_eq!(c.execute(&quot;COMMIT&quot;).await?, ResultSet::Commit { version: 2 });
+</a><a href="#h2-0-303" id="h2-0-303" class="d">-
+</a><a href="#h2-0-304" id="h2-0-304" class="d">-    // A txn should still be usable after an error occurs
+</a><a href="#h2-0-305" id="h2-0-305" class="d">-    assert_eq!(c.execute(&quot;BEGIN&quot;).await?, ResultSet::Begin { version: 4, read_only: false });
+</a><a href="#h2-0-306" id="h2-0-306" class="d">-    c.execute(&quot;INSERT INTO genres VALUES (5, &#39;Horror&#39;)&quot;).await?;
+</a><a href="#h2-0-307" id="h2-0-307" class="d">-    assert_eq!(
+</a><a href="#h2-0-308" id="h2-0-308" class="d">-        c.execute(&quot;INSERT INTO genres VALUES (5, &#39;Musical&#39;)&quot;).await,
+</a><a href="#h2-0-309" id="h2-0-309" class="d">-        Err(Error::Value(&quot;Primary key 5 already exists for table genres&quot;.into()))
+</a><a href="#h2-0-310" id="h2-0-310" class="d">-    );
+</a><a href="#h2-0-311" id="h2-0-311" class="d">-    assert_eq!(c.txn(), Some((4, false)));
+</a><a href="#h2-0-312" id="h2-0-312" class="d">-    c.execute(&quot;INSERT INTO genres VALUES (6, &#39;Western&#39;)&quot;).await?;
+</a><a href="#h2-0-313" id="h2-0-313" class="d">-    assert_eq!(c.execute(&quot;COMMIT&quot;).await?, ResultSet::Commit { version: 4 });
+</a><a href="#h2-0-314" id="h2-0-314" class="d">-    assert_rows(
+</a><a href="#h2-0-315" id="h2-0-315" class="d">-        c.execute(&quot;SELECT * FROM genres&quot;).await?,
+</a><a href="#h2-0-316" id="h2-0-316" class="d">-        vec![
+</a><a href="#h2-0-317" id="h2-0-317" class="d">-            vec![Value::Integer(1), Value::String(&quot;Science Fiction&quot;.into())],
+</a><a href="#h2-0-318" id="h2-0-318" class="d">-            vec![Value::Integer(2), Value::String(&quot;Action&quot;.into())],
+</a><a href="#h2-0-319" id="h2-0-319" class="d">-            vec![Value::Integer(3), Value::String(&quot;Comedy&quot;.into())],
+</a><a href="#h2-0-320" id="h2-0-320" class="d">-            vec![Value::Integer(4), Value::String(&quot;Drama&quot;.into())],
+</a><a href="#h2-0-321" id="h2-0-321" class="d">-            vec![Value::Integer(5), Value::String(&quot;Horror&quot;.into())],
+</a><a href="#h2-0-322" id="h2-0-322" class="d">-            vec![Value::Integer(6), Value::String(&quot;Western&quot;.into())],
+</a><a href="#h2-0-323" id="h2-0-323" class="d">-        ],
+</a><a href="#h2-0-324" id="h2-0-324" class="d">-    );
+</a><a href="#h2-0-325" id="h2-0-325" class="d">-
+</a><a href="#h2-0-326" id="h2-0-326" class="d">-    Ok(())
+</a><a href="#h2-0-327" id="h2-0-327" class="d">-}
+</a><a href="#h2-0-328" id="h2-0-328" class="d">-
+</a><a href="#h2-0-329" id="h2-0-329" class="d">-#[tokio::test(flavor = &quot;multi_thread&quot;, worker_threads = 2)]
+</a><a href="#h2-0-330" id="h2-0-330" class="d">-#[serial]
+</a><a href="#h2-0-331" id="h2-0-331" class="d">-async fn execute_txn_concurrent() -&gt; Result&lt;()&gt; {
+</a><a href="#h2-0-332" id="h2-0-332" class="d">-    let (mut a, _teardown) = setup::server_with_client(setup::movies()).await?;
+</a><a href="#h2-0-333" id="h2-0-333" class="d">-    let mut b = Client::new(&quot;127.0.0.1:9605&quot;).await?;
+</a><a href="#h2-0-334" id="h2-0-334" class="d">-
+</a><a href="#h2-0-335" id="h2-0-335" class="d">-    // Concurrent updates should throw a serialization failure on conflict.
+</a><a href="#h2-0-336" id="h2-0-336" class="d">-    assert_eq!(a.execute(&quot;BEGIN&quot;).await?, ResultSet::Begin { version: 2, read_only: false });
+</a><a href="#h2-0-337" id="h2-0-337" class="d">-    assert_eq!(b.execute(&quot;BEGIN&quot;).await?, ResultSet::Begin { version: 3, read_only: false });
+</a><a href="#h2-0-338" id="h2-0-338" class="d">-
+</a><a href="#h2-0-339" id="h2-0-339" class="d">-    assert_row(
+</a><a href="#h2-0-340" id="h2-0-340" class="d">-        a.execute(&quot;SELECT * FROM genres WHERE id = 1&quot;).await?,
+</a><a href="#h2-0-341" id="h2-0-341" class="d">-        vec![Value::Integer(1), Value::String(&quot;Science Fiction&quot;.into())],
+</a><a href="#h2-0-342" id="h2-0-342" class="d">-    );
+</a><a href="#h2-0-343" id="h2-0-343" class="d">-    assert_row(
+</a><a href="#h2-0-344" id="h2-0-344" class="d">-        b.execute(&quot;SELECT * FROM genres WHERE id = 1&quot;).await?,
+</a><a href="#h2-0-345" id="h2-0-345" class="d">-        vec![Value::Integer(1), Value::String(&quot;Science Fiction&quot;.into())],
+</a><a href="#h2-0-346" id="h2-0-346" class="d">-    );
+</a><a href="#h2-0-347" id="h2-0-347" class="d">-
+</a><a href="#h2-0-348" id="h2-0-348" class="d">-    assert_eq!(
+</a><a href="#h2-0-349" id="h2-0-349" class="d">-        a.execute(&quot;UPDATE genres SET name = &#39;x&#39; WHERE id = 1&quot;).await,
+</a><a href="#h2-0-350" id="h2-0-350" class="d">-        Ok(ResultSet::Update { count: 1 })
+</a><a href="#h2-0-351" id="h2-0-351" class="d">-    );
+</a><a href="#h2-0-352" id="h2-0-352" class="d">-    assert_eq!(
+</a><a href="#h2-0-353" id="h2-0-353" class="d">-        b.execute(&quot;UPDATE genres SET name = &#39;y&#39; WHERE id = 1&quot;).await,
+</a><a href="#h2-0-354" id="h2-0-354" class="d">-        Err(Error::Serialization)
+</a><a href="#h2-0-355" id="h2-0-355" class="d">-    );
+</a><a href="#h2-0-356" id="h2-0-356" class="d">-
+</a><a href="#h2-0-357" id="h2-0-357" class="d">-    assert_eq!(a.execute(&quot;COMMIT&quot;).await, Ok(ResultSet::Commit { version: 2 }));
+</a><a href="#h2-0-358" id="h2-0-358" class="d">-    assert_eq!(b.execute(&quot;ROLLBACK&quot;).await, Ok(ResultSet::Rollback { version: 3 }));
+</a><a href="#h2-0-359" id="h2-0-359" class="d">-
+</a><a href="#h2-0-360" id="h2-0-360" class="d">-    assert_row(
+</a><a href="#h2-0-361" id="h2-0-361" class="d">-        a.execute(&quot;SELECT * FROM genres WHERE id = 1&quot;).await?,
+</a><a href="#h2-0-362" id="h2-0-362" class="d">-        vec![Value::Integer(1), Value::String(&quot;x&quot;.into())],
+</a><a href="#h2-0-363" id="h2-0-363" class="d">-    );
+</a><a href="#h2-0-364" id="h2-0-364" class="d">-
+</a><a href="#h2-0-365" id="h2-0-365" class="d">-    Ok(())
+</a><a href="#h2-0-366" id="h2-0-366" class="d">-}
+</a><b>diff --git a/<a id="h3" href="../file/tests/cluster/isolation.rs.html">tests/cluster/isolation.rs</a> b/<a href="../file/tests/cluster/isolation.rs.html">tests/cluster/isolation.rs</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -1,144 +0,0 @@
+</a><a href="#h3-0-0" id="h3-0-0" class="d">-use super::super::{assert_row, assert_rows, setup};
+</a><a href="#h3-0-1" id="h3-0-1" class="d">-
+</a><a href="#h3-0-2" id="h3-0-2" class="d">-use toydb::error::{Error, Result};
+</a><a href="#h3-0-3" id="h3-0-3" class="d">-use toydb::sql::types::Value;
+</a><a href="#h3-0-4" id="h3-0-4" class="d">-
+</a><a href="#h3-0-5" id="h3-0-5" class="d">-use serial_test::serial;
+</a><a href="#h3-0-6" id="h3-0-6" class="d">-
+</a><a href="#h3-0-7" id="h3-0-7" class="d">-#[tokio::test(flavor = &quot;multi_thread&quot;, worker_threads = 2)]
+</a><a href="#h3-0-8" id="h3-0-8" class="d">-#[serial]
+</a><a href="#h3-0-9" id="h3-0-9" class="d">-// A dirty write is when b overwrites an uncommitted value written by a.
+</a><a href="#h3-0-10" id="h3-0-10" class="d">-async fn anomaly_dirty_write() -&gt; Result&lt;()&gt; {
+</a><a href="#h3-0-11" id="h3-0-11" class="d">-    let (mut a, mut b, _, _teardown) = setup::cluster_simple().await?;
+</a><a href="#h3-0-12" id="h3-0-12" class="d">-
+</a><a href="#h3-0-13" id="h3-0-13" class="d">-    a.execute(&quot;BEGIN&quot;).await?;
+</a><a href="#h3-0-14" id="h3-0-14" class="d">-    a.execute(&quot;INSERT INTO test VALUES (1, &#39;a&#39;)&quot;).await?;
+</a><a href="#h3-0-15" id="h3-0-15" class="d">-
+</a><a href="#h3-0-16" id="h3-0-16" class="d">-    assert_eq!(b.execute(&quot;INSERT INTO test VALUES (1, &#39;b&#39;)&quot;).await, Err(Error::Serialization));
+</a><a href="#h3-0-17" id="h3-0-17" class="d">-
+</a><a href="#h3-0-18" id="h3-0-18" class="d">-    a.execute(&quot;COMMIT&quot;).await?;
+</a><a href="#h3-0-19" id="h3-0-19" class="d">-    assert_row(
+</a><a href="#h3-0-20" id="h3-0-20" class="d">-        a.execute(&quot;SELECT * FROM test WHERE id = 1&quot;).await?,
+</a><a href="#h3-0-21" id="h3-0-21" class="d">-        vec![Value::Integer(1), Value::String(&quot;a&quot;.into())],
+</a><a href="#h3-0-22" id="h3-0-22" class="d">-    );
+</a><a href="#h3-0-23" id="h3-0-23" class="d">-
+</a><a href="#h3-0-24" id="h3-0-24" class="d">-    Ok(())
+</a><a href="#h3-0-25" id="h3-0-25" class="d">-}
+</a><a href="#h3-0-26" id="h3-0-26" class="d">-
+</a><a href="#h3-0-27" id="h3-0-27" class="d">-#[tokio::test(flavor = &quot;multi_thread&quot;, worker_threads = 2)]
+</a><a href="#h3-0-28" id="h3-0-28" class="d">-#[serial]
+</a><a href="#h3-0-29" id="h3-0-29" class="d">-// A dirty read is when b can read an uncommitted value set by a.
+</a><a href="#h3-0-30" id="h3-0-30" class="d">-async fn anomaly_dirty_read() -&gt; Result&lt;()&gt; {
+</a><a href="#h3-0-31" id="h3-0-31" class="d">-    let (mut a, mut b, _, _teardown) = setup::cluster_simple().await?;
+</a><a href="#h3-0-32" id="h3-0-32" class="d">-
+</a><a href="#h3-0-33" id="h3-0-33" class="d">-    a.execute(&quot;BEGIN&quot;).await?;
+</a><a href="#h3-0-34" id="h3-0-34" class="d">-    a.execute(&quot;INSERT INTO test VALUES (1, &#39;a&#39;)&quot;).await?;
+</a><a href="#h3-0-35" id="h3-0-35" class="d">-
+</a><a href="#h3-0-36" id="h3-0-36" class="d">-    assert_rows(b.execute(&quot;SELECT * FROM test&quot;).await?, vec![]);
+</a><a href="#h3-0-37" id="h3-0-37" class="d">-
+</a><a href="#h3-0-38" id="h3-0-38" class="d">-    Ok(())
+</a><a href="#h3-0-39" id="h3-0-39" class="d">-}
+</a><a href="#h3-0-40" id="h3-0-40" class="d">-
+</a><a href="#h3-0-41" id="h3-0-41" class="d">-#[tokio::test(flavor = &quot;multi_thread&quot;, worker_threads = 2)]
+</a><a href="#h3-0-42" id="h3-0-42" class="d">-#[serial]
+</a><a href="#h3-0-43" id="h3-0-43" class="d">-// A lost update is when a and b both read a value and update it, where b&#39;s update replaces a.
+</a><a href="#h3-0-44" id="h3-0-44" class="d">-async fn anomaly_lost_update() -&gt; Result&lt;()&gt; {
+</a><a href="#h3-0-45" id="h3-0-45" class="d">-    let (mut a, mut b, mut c, _teardown) = setup::cluster_simple().await?;
+</a><a href="#h3-0-46" id="h3-0-46" class="d">-
+</a><a href="#h3-0-47" id="h3-0-47" class="d">-    c.execute(&quot;INSERT INTO test VALUES (1, &#39;c&#39;)&quot;).await?;
+</a><a href="#h3-0-48" id="h3-0-48" class="d">-
+</a><a href="#h3-0-49" id="h3-0-49" class="d">-    a.execute(&quot;BEGIN&quot;).await?;
+</a><a href="#h3-0-50" id="h3-0-50" class="d">-    b.execute(&quot;BEGIN&quot;).await?;
+</a><a href="#h3-0-51" id="h3-0-51" class="d">-
+</a><a href="#h3-0-52" id="h3-0-52" class="d">-    a.execute(&quot;UPDATE test SET value = &#39;a&#39; WHERE id = 1&quot;).await?;
+</a><a href="#h3-0-53" id="h3-0-53" class="d">-    assert_eq!(
+</a><a href="#h3-0-54" id="h3-0-54" class="d">-        b.execute(&quot;UPDATE test SET value = &#39;b&#39; WHERE id = 1&quot;).await,
+</a><a href="#h3-0-55" id="h3-0-55" class="d">-        Err(Error::Serialization)
+</a><a href="#h3-0-56" id="h3-0-56" class="d">-    );
+</a><a href="#h3-0-57" id="h3-0-57" class="d">-    a.execute(&quot;COMMIT&quot;).await?;
+</a><a href="#h3-0-58" id="h3-0-58" class="d">-
+</a><a href="#h3-0-59" id="h3-0-59" class="d">-    assert_row(
+</a><a href="#h3-0-60" id="h3-0-60" class="d">-        c.execute(&quot;SELECT * FROM test WHERE id = 1&quot;).await?,
+</a><a href="#h3-0-61" id="h3-0-61" class="d">-        vec![Value::Integer(1), Value::String(&quot;a&quot;.into())],
+</a><a href="#h3-0-62" id="h3-0-62" class="d">-    );
+</a><a href="#h3-0-63" id="h3-0-63" class="d">-
+</a><a href="#h3-0-64" id="h3-0-64" class="d">-    Ok(())
+</a><a href="#h3-0-65" id="h3-0-65" class="d">-}
+</a><a href="#h3-0-66" id="h3-0-66" class="d">-
+</a><a href="#h3-0-67" id="h3-0-67" class="d">-#[tokio::test(flavor = &quot;multi_thread&quot;, worker_threads = 2)]
+</a><a href="#h3-0-68" id="h3-0-68" class="d">-#[serial]
+</a><a href="#h3-0-69" id="h3-0-69" class="d">-// A fuzzy (or unrepeatable) read is when b sees a value change after a updates it.
+</a><a href="#h3-0-70" id="h3-0-70" class="d">-async fn anomaly_fuzzy_read() -&gt; Result&lt;()&gt; {
+</a><a href="#h3-0-71" id="h3-0-71" class="d">-    let (mut a, mut b, mut c, _teardown) = setup::cluster_simple().await?;
+</a><a href="#h3-0-72" id="h3-0-72" class="d">-
+</a><a href="#h3-0-73" id="h3-0-73" class="d">-    c.execute(&quot;INSERT INTO test VALUES (1, &#39;c&#39;)&quot;).await?;
+</a><a href="#h3-0-74" id="h3-0-74" class="d">-
+</a><a href="#h3-0-75" id="h3-0-75" class="d">-    a.execute(&quot;BEGIN&quot;).await?;
+</a><a href="#h3-0-76" id="h3-0-76" class="d">-    b.execute(&quot;BEGIN&quot;).await?;
+</a><a href="#h3-0-77" id="h3-0-77" class="d">-
+</a><a href="#h3-0-78" id="h3-0-78" class="d">-    assert_row(
+</a><a href="#h3-0-79" id="h3-0-79" class="d">-        b.execute(&quot;SELECT * FROM test WHERE id = 1&quot;).await?,
+</a><a href="#h3-0-80" id="h3-0-80" class="d">-        vec![Value::Integer(1), Value::String(&quot;c&quot;.into())],
+</a><a href="#h3-0-81" id="h3-0-81" class="d">-    );
+</a><a href="#h3-0-82" id="h3-0-82" class="d">-    a.execute(&quot;UPDATE test SET value = &#39;a&#39; WHERE id = 1&quot;).await?;
+</a><a href="#h3-0-83" id="h3-0-83" class="d">-    a.execute(&quot;COMMIT&quot;).await?;
+</a><a href="#h3-0-84" id="h3-0-84" class="d">-    assert_row(
+</a><a href="#h3-0-85" id="h3-0-85" class="d">-        b.execute(&quot;SELECT * FROM test WHERE id = 1&quot;).await?,
+</a><a href="#h3-0-86" id="h3-0-86" class="d">-        vec![Value::Integer(1), Value::String(&quot;c&quot;.into())],
+</a><a href="#h3-0-87" id="h3-0-87" class="d">-    );
+</a><a href="#h3-0-88" id="h3-0-88" class="d">-
+</a><a href="#h3-0-89" id="h3-0-89" class="d">-    Ok(())
+</a><a href="#h3-0-90" id="h3-0-90" class="d">-}
+</a><a href="#h3-0-91" id="h3-0-91" class="d">-
+</a><a href="#h3-0-92" id="h3-0-92" class="d">-#[tokio::test(flavor = &quot;multi_thread&quot;, worker_threads = 2)]
+</a><a href="#h3-0-93" id="h3-0-93" class="d">-#[serial]
+</a><a href="#h3-0-94" id="h3-0-94" class="d">-// Read skew is when a reads 1 and 2, but b modifies 2 in between the reads.
+</a><a href="#h3-0-95" id="h3-0-95" class="d">-async fn anomaly_read_skew() -&gt; Result&lt;()&gt; {
+</a><a href="#h3-0-96" id="h3-0-96" class="d">-    let (mut a, mut b, mut c, _teardown) = setup::cluster_simple().await?;
+</a><a href="#h3-0-97" id="h3-0-97" class="d">-
+</a><a href="#h3-0-98" id="h3-0-98" class="d">-    c.execute(&quot;INSERT INTO test VALUES (1, &#39;c&#39;), (2, &#39;c&#39;)&quot;).await?;
+</a><a href="#h3-0-99" id="h3-0-99" class="d">-
+</a><a href="#h3-0-100" id="h3-0-100" class="d">-    a.execute(&quot;BEGIN&quot;).await?;
+</a><a href="#h3-0-101" id="h3-0-101" class="d">-    b.execute(&quot;BEGIN&quot;).await?;
+</a><a href="#h3-0-102" id="h3-0-102" class="d">-
+</a><a href="#h3-0-103" id="h3-0-103" class="d">-    assert_row(
+</a><a href="#h3-0-104" id="h3-0-104" class="d">-        a.execute(&quot;SELECT * FROM test WHERE id = 1&quot;).await?,
+</a><a href="#h3-0-105" id="h3-0-105" class="d">-        vec![Value::Integer(1), Value::String(&quot;c&quot;.into())],
+</a><a href="#h3-0-106" id="h3-0-106" class="d">-    );
+</a><a href="#h3-0-107" id="h3-0-107" class="d">-    b.execute(&quot;UPDATE test SET value = &#39;b&#39; WHERE id = 2&quot;).await?;
+</a><a href="#h3-0-108" id="h3-0-108" class="d">-    b.execute(&quot;COMMIT&quot;).await?;
+</a><a href="#h3-0-109" id="h3-0-109" class="d">-    assert_row(
+</a><a href="#h3-0-110" id="h3-0-110" class="d">-        a.execute(&quot;SELECT * FROM test WHERE id = 2&quot;).await?,
+</a><a href="#h3-0-111" id="h3-0-111" class="d">-        vec![Value::Integer(2), Value::String(&quot;c&quot;.into())],
+</a><a href="#h3-0-112" id="h3-0-112" class="d">-    );
+</a><a href="#h3-0-113" id="h3-0-113" class="d">-
+</a><a href="#h3-0-114" id="h3-0-114" class="d">-    Ok(())
+</a><a href="#h3-0-115" id="h3-0-115" class="d">-}
+</a><a href="#h3-0-116" id="h3-0-116" class="d">-
+</a><a href="#h3-0-117" id="h3-0-117" class="d">-#[tokio::test(flavor = &quot;multi_thread&quot;, worker_threads = 2)]
+</a><a href="#h3-0-118" id="h3-0-118" class="d">-#[serial]
+</a><a href="#h3-0-119" id="h3-0-119" class="d">-// A phantom read is when a reads entries matching some predicate, but a modification by
+</a><a href="#h3-0-120" id="h3-0-120" class="d">-// b changes the entries that match the predicate such that a later read by a returns them.
+</a><a href="#h3-0-121" id="h3-0-121" class="d">-async fn anomaly_phantom_read() -&gt; Result&lt;()&gt; {
+</a><a href="#h3-0-122" id="h3-0-122" class="d">-    let (mut a, mut b, mut c, _teardown) = setup::cluster_simple().await?;
+</a><a href="#h3-0-123" id="h3-0-123" class="d">-
+</a><a href="#h3-0-124" id="h3-0-124" class="d">-    c.execute(&quot;INSERT INTO test VALUES (1, &#39;true&#39;), (2, &#39;false&#39;)&quot;).await?;
+</a><a href="#h3-0-125" id="h3-0-125" class="d">-
+</a><a href="#h3-0-126" id="h3-0-126" class="d">-    a.execute(&quot;BEGIN&quot;).await?;
+</a><a href="#h3-0-127" id="h3-0-127" class="d">-    b.execute(&quot;BEGIN&quot;).await?;
+</a><a href="#h3-0-128" id="h3-0-128" class="d">-
+</a><a href="#h3-0-129" id="h3-0-129" class="d">-    assert_rows(
+</a><a href="#h3-0-130" id="h3-0-130" class="d">-        a.execute(&quot;SELECT * FROM test WHERE value = &#39;true&#39;&quot;).await?,
+</a><a href="#h3-0-131" id="h3-0-131" class="d">-        vec![vec![Value::Integer(1), Value::String(&quot;true&quot;.into())]],
+</a><a href="#h3-0-132" id="h3-0-132" class="d">-    );
+</a><a href="#h3-0-133" id="h3-0-133" class="d">-    b.execute(&quot;UPDATE test SET value = &#39;true&#39; WHERE id = 2&quot;).await?;
+</a><a href="#h3-0-134" id="h3-0-134" class="d">-    b.execute(&quot;COMMIT&quot;).await?;
+</a><a href="#h3-0-135" id="h3-0-135" class="d">-    assert_rows(
+</a><a href="#h3-0-136" id="h3-0-136" class="d">-        a.execute(&quot;SELECT * FROM test WHERE value = &#39;true&#39;&quot;).await?,
+</a><a href="#h3-0-137" id="h3-0-137" class="d">-        vec![vec![Value::Integer(1), Value::String(&quot;true&quot;.into())]],
+</a><a href="#h3-0-138" id="h3-0-138" class="d">-    );
+</a><a href="#h3-0-139" id="h3-0-139" class="d">-
+</a><a href="#h3-0-140" id="h3-0-140" class="d">-    Ok(())
+</a><a href="#h3-0-141" id="h3-0-141" class="d">-}
+</a><a href="#h3-0-142" id="h3-0-142" class="d">-
+</a><a href="#h3-0-143" id="h3-0-143" class="d">-// FIXME We should test write skew, but we need to implement serializable snapshot isolation first.
+</a><b>diff --git a/<a id="h4" href="../file/tests/cluster/mod.rs.html">tests/cluster/mod.rs</a> b/<a href="../file/tests/cluster/mod.rs.html">tests/cluster/mod.rs</a></b>
+<a href="#h4-0" id="h4-0" class="h">@@ -1,2 +0,0 @@
+</a><a href="#h4-0-0" id="h4-0-0" class="d">-mod isolation;
+</a><a href="#h4-0-1" id="h4-0-1" class="d">-mod recovery;
+</a><b>diff --git a/<a id="h5" href="../file/tests/cluster/recovery.rs.html">tests/cluster/recovery.rs</a> b/<a href="../file/tests/cluster/recovery.rs.html">tests/cluster/recovery.rs</a></b>
+<a href="#h5-0" id="h5-0" class="h">@@ -1,47 +0,0 @@
+</a><a href="#h5-0-0" id="h5-0-0" class="d">-use super::super::{assert_row, setup};
+</a><a href="#h5-0-1" id="h5-0-1" class="d">-
+</a><a href="#h5-0-2" id="h5-0-2" class="d">-use toydb::error::{Error, Result};
+</a><a href="#h5-0-3" id="h5-0-3" class="d">-use toydb::sql::types::Value;
+</a><a href="#h5-0-4" id="h5-0-4" class="d">-
+</a><a href="#h5-0-5" id="h5-0-5" class="d">-use serial_test::serial;
+</a><a href="#h5-0-6" id="h5-0-6" class="d">-
+</a><a href="#h5-0-7" id="h5-0-7" class="d">-#[tokio::test(flavor = &quot;multi_thread&quot;, worker_threads = 2)]
+</a><a href="#h5-0-8" id="h5-0-8" class="d">-#[serial]
+</a><a href="#h5-0-9" id="h5-0-9" class="d">-// A client disconnect or termination should roll back its transaction.
+</a><a href="#h5-0-10" id="h5-0-10" class="d">-async fn client_disconnect_rollback() -&gt; Result&lt;()&gt; {
+</a><a href="#h5-0-11" id="h5-0-11" class="d">-    let (mut a, mut b, _, _teardown) = setup::cluster_simple().await?;
+</a><a href="#h5-0-12" id="h5-0-12" class="d">-
+</a><a href="#h5-0-13" id="h5-0-13" class="d">-    a.execute(&quot;BEGIN&quot;).await?;
+</a><a href="#h5-0-14" id="h5-0-14" class="d">-    a.execute(&quot;INSERT INTO test VALUES (1, &#39;a&#39;)&quot;).await?;
+</a><a href="#h5-0-15" id="h5-0-15" class="d">-    std::mem::drop(a);
+</a><a href="#h5-0-16" id="h5-0-16" class="d">-
+</a><a href="#h5-0-17" id="h5-0-17" class="d">-    // This would fail with a serialization error if the txn is not rolled back.
+</a><a href="#h5-0-18" id="h5-0-18" class="d">-    b.execute(&quot;INSERT INTO test VALUES (1, &#39;b&#39;)&quot;).await?;
+</a><a href="#h5-0-19" id="h5-0-19" class="d">-    assert_row(
+</a><a href="#h5-0-20" id="h5-0-20" class="d">-        b.execute(&quot;SELECT * FROM test WHERE id = 1&quot;).await?,
+</a><a href="#h5-0-21" id="h5-0-21" class="d">-        vec![Value::Integer(1), Value::String(&quot;b&quot;.into())],
+</a><a href="#h5-0-22" id="h5-0-22" class="d">-    );
+</a><a href="#h5-0-23" id="h5-0-23" class="d">-
+</a><a href="#h5-0-24" id="h5-0-24" class="d">-    Ok(())
+</a><a href="#h5-0-25" id="h5-0-25" class="d">-}
+</a><a href="#h5-0-26" id="h5-0-26" class="d">-
+</a><a href="#h5-0-27" id="h5-0-27" class="d">-#[tokio::test(flavor = &quot;multi_thread&quot;, worker_threads = 2)]
+</a><a href="#h5-0-28" id="h5-0-28" class="d">-#[serial]
+</a><a href="#h5-0-29" id="h5-0-29" class="d">-async fn client_commit_error() -&gt; Result&lt;()&gt; {
+</a><a href="#h5-0-30" id="h5-0-30" class="d">-    let (mut a, mut b, _, _teardown) = setup::cluster_simple().await?;
+</a><a href="#h5-0-31" id="h5-0-31" class="d">-
+</a><a href="#h5-0-32" id="h5-0-32" class="d">-    a.execute(&quot;BEGIN&quot;).await?;
+</a><a href="#h5-0-33" id="h5-0-33" class="d">-    a.execute(&quot;INSERT INTO test VALUES (1, &#39;a&#39;)&quot;).await?;
+</a><a href="#h5-0-34" id="h5-0-34" class="d">-
+</a><a href="#h5-0-35" id="h5-0-35" class="d">-    // When B gets a serialization error, it should still be in the txn and able to roll it back.
+</a><a href="#h5-0-36" id="h5-0-36" class="d">-    b.execute(&quot;BEGIN&quot;).await?;
+</a><a href="#h5-0-37" id="h5-0-37" class="d">-    b.execute(&quot;INSERT INTO test VALUES (2, &#39;b&#39;)&quot;).await?;
+</a><a href="#h5-0-38" id="h5-0-38" class="d">-    assert_eq!(b.execute(&quot;INSERT INTO test VALUES (1, &#39;b&#39;)&quot;).await, Err(Error::Serialization));
+</a><a href="#h5-0-39" id="h5-0-39" class="d">-    b.execute(&quot;ROLLBACK&quot;).await?;
+</a><a href="#h5-0-40" id="h5-0-40" class="d">-
+</a><a href="#h5-0-41" id="h5-0-41" class="d">-    // Once rolled back, A should be able to write ID 2 and commit.
+</a><a href="#h5-0-42" id="h5-0-42" class="d">-    a.execute(&quot;INSERT INTO test VALUES (2, &#39;a&#39;)&quot;).await?;
+</a><a href="#h5-0-43" id="h5-0-43" class="d">-    a.execute(&quot;COMMIT&quot;).await?;
+</a><a href="#h5-0-44" id="h5-0-44" class="d">-
+</a><a href="#h5-0-45" id="h5-0-45" class="d">-    Ok(())
+</a><a href="#h5-0-46" id="h5-0-46" class="d">-}
+</a><b>diff --git a/<a id="h6" href="../file/tests/e2e/client.rs.html">tests/e2e/client.rs</a> b/<a href="../file/tests/e2e/client.rs.html">tests/e2e/client.rs</a></b>
+<a href="#h6-0" id="h6-0" class="h">@@ -0,0 +1,372 @@
+</a><a href="#h6-0-0" id="h6-0-0" class="i">+use super::{assert_row, assert_rows, dataset, TestCluster};
+</a><a href="#h6-0-1" id="h6-0-1" class="i">+
+</a><a href="#h6-0-2" id="h6-0-2" class="i">+use toydb::error::{Error, Result};
+</a><a href="#h6-0-3" id="h6-0-3" class="i">+use toydb::raft;
+</a><a href="#h6-0-4" id="h6-0-4" class="i">+use toydb::sql::engine::Status;
+</a><a href="#h6-0-5" id="h6-0-5" class="i">+use toydb::sql::execution::ResultSet;
+</a><a href="#h6-0-6" id="h6-0-6" class="i">+use toydb::sql::schema;
+</a><a href="#h6-0-7" id="h6-0-7" class="i">+use toydb::sql::types::{Column, DataType, Value};
+</a><a href="#h6-0-8" id="h6-0-8" class="i">+use toydb::storage;
+</a><a href="#h6-0-9" id="h6-0-9" class="i">+use toydb::storage::{engine, mvcc};
+</a><a href="#h6-0-10" id="h6-0-10" class="i">+
+</a><a href="#h6-0-11" id="h6-0-11" class="i">+use pretty_assertions::assert_eq;
+</a><a href="#h6-0-12" id="h6-0-12" class="i">+use serial_test::serial;
+</a><a href="#h6-0-13" id="h6-0-13" class="i">+
+</a><a href="#h6-0-14" id="h6-0-14" class="i">+#[tokio::test(flavor = &quot;multi_thread&quot;, worker_threads = 2)]
+</a><a href="#h6-0-15" id="h6-0-15" class="i">+#[serial]
+</a><a href="#h6-0-16" id="h6-0-16" class="i">+async fn get_table() -&gt; Result&lt;()&gt; {
+</a><a href="#h6-0-17" id="h6-0-17" class="i">+    let tc = TestCluster::run_with(5, &amp;dataset::MOVIES).await?;
+</a><a href="#h6-0-18" id="h6-0-18" class="i">+    let mut c = tc.connect_any().await?;
+</a><a href="#h6-0-19" id="h6-0-19" class="i">+
+</a><a href="#h6-0-20" id="h6-0-20" class="i">+    assert_eq!(
+</a><a href="#h6-0-21" id="h6-0-21" class="i">+        c.get_table(&quot;unknown&quot;).await,
+</a><a href="#h6-0-22" id="h6-0-22" class="i">+        Err(Error::Value(&quot;Table unknown does not exist&quot;.into()))
+</a><a href="#h6-0-23" id="h6-0-23" class="i">+    );
+</a><a href="#h6-0-24" id="h6-0-24" class="i">+    assert_eq!(
+</a><a href="#h6-0-25" id="h6-0-25" class="i">+        c.get_table(&quot;movies&quot;).await?,
+</a><a href="#h6-0-26" id="h6-0-26" class="i">+        schema::Table {
+</a><a href="#h6-0-27" id="h6-0-27" class="i">+            name: &quot;movies&quot;.into(),
+</a><a href="#h6-0-28" id="h6-0-28" class="i">+            columns: vec![
+</a><a href="#h6-0-29" id="h6-0-29" class="i">+                schema::Column {
+</a><a href="#h6-0-30" id="h6-0-30" class="i">+                    name: &quot;id&quot;.into(),
+</a><a href="#h6-0-31" id="h6-0-31" class="i">+                    datatype: DataType::Integer,
+</a><a href="#h6-0-32" id="h6-0-32" class="i">+                    primary_key: true,
+</a><a href="#h6-0-33" id="h6-0-33" class="i">+                    nullable: false,
+</a><a href="#h6-0-34" id="h6-0-34" class="i">+                    default: None,
+</a><a href="#h6-0-35" id="h6-0-35" class="i">+                    unique: true,
+</a><a href="#h6-0-36" id="h6-0-36" class="i">+                    index: false,
+</a><a href="#h6-0-37" id="h6-0-37" class="i">+                    references: None,
+</a><a href="#h6-0-38" id="h6-0-38" class="i">+                },
+</a><a href="#h6-0-39" id="h6-0-39" class="i">+                schema::Column {
+</a><a href="#h6-0-40" id="h6-0-40" class="i">+                    name: &quot;title&quot;.into(),
+</a><a href="#h6-0-41" id="h6-0-41" class="i">+                    datatype: DataType::String,
+</a><a href="#h6-0-42" id="h6-0-42" class="i">+                    primary_key: false,
+</a><a href="#h6-0-43" id="h6-0-43" class="i">+                    nullable: false,
+</a><a href="#h6-0-44" id="h6-0-44" class="i">+                    default: None,
+</a><a href="#h6-0-45" id="h6-0-45" class="i">+                    unique: false,
+</a><a href="#h6-0-46" id="h6-0-46" class="i">+                    index: false,
+</a><a href="#h6-0-47" id="h6-0-47" class="i">+                    references: None,
+</a><a href="#h6-0-48" id="h6-0-48" class="i">+                },
+</a><a href="#h6-0-49" id="h6-0-49" class="i">+                schema::Column {
+</a><a href="#h6-0-50" id="h6-0-50" class="i">+                    name: &quot;studio_id&quot;.into(),
+</a><a href="#h6-0-51" id="h6-0-51" class="i">+                    datatype: DataType::Integer,
+</a><a href="#h6-0-52" id="h6-0-52" class="i">+                    primary_key: false,
+</a><a href="#h6-0-53" id="h6-0-53" class="i">+                    nullable: false,
+</a><a href="#h6-0-54" id="h6-0-54" class="i">+                    default: None,
+</a><a href="#h6-0-55" id="h6-0-55" class="i">+                    unique: false,
+</a><a href="#h6-0-56" id="h6-0-56" class="i">+                    index: false,
+</a><a href="#h6-0-57" id="h6-0-57" class="i">+                    references: Some(&quot;studios&quot;.into()),
+</a><a href="#h6-0-58" id="h6-0-58" class="i">+                },
+</a><a href="#h6-0-59" id="h6-0-59" class="i">+                schema::Column {
+</a><a href="#h6-0-60" id="h6-0-60" class="i">+                    name: &quot;genre_id&quot;.into(),
+</a><a href="#h6-0-61" id="h6-0-61" class="i">+                    datatype: DataType::Integer,
+</a><a href="#h6-0-62" id="h6-0-62" class="i">+                    primary_key: false,
+</a><a href="#h6-0-63" id="h6-0-63" class="i">+                    nullable: false,
+</a><a href="#h6-0-64" id="h6-0-64" class="i">+                    default: None,
+</a><a href="#h6-0-65" id="h6-0-65" class="i">+                    unique: false,
+</a><a href="#h6-0-66" id="h6-0-66" class="i">+                    index: false,
+</a><a href="#h6-0-67" id="h6-0-67" class="i">+                    references: Some(&quot;genres&quot;.into()),
+</a><a href="#h6-0-68" id="h6-0-68" class="i">+                },
+</a><a href="#h6-0-69" id="h6-0-69" class="i">+                schema::Column {
+</a><a href="#h6-0-70" id="h6-0-70" class="i">+                    name: &quot;released&quot;.into(),
+</a><a href="#h6-0-71" id="h6-0-71" class="i">+                    datatype: DataType::Integer,
+</a><a href="#h6-0-72" id="h6-0-72" class="i">+                    primary_key: false,
+</a><a href="#h6-0-73" id="h6-0-73" class="i">+                    nullable: false,
+</a><a href="#h6-0-74" id="h6-0-74" class="i">+                    default: None,
+</a><a href="#h6-0-75" id="h6-0-75" class="i">+                    unique: false,
+</a><a href="#h6-0-76" id="h6-0-76" class="i">+                    index: false,
+</a><a href="#h6-0-77" id="h6-0-77" class="i">+                    references: None,
+</a><a href="#h6-0-78" id="h6-0-78" class="i">+                },
+</a><a href="#h6-0-79" id="h6-0-79" class="i">+                schema::Column {
+</a><a href="#h6-0-80" id="h6-0-80" class="i">+                    name: &quot;rating&quot;.into(),
+</a><a href="#h6-0-81" id="h6-0-81" class="i">+                    datatype: DataType::Float,
+</a><a href="#h6-0-82" id="h6-0-82" class="i">+                    primary_key: false,
+</a><a href="#h6-0-83" id="h6-0-83" class="i">+                    nullable: true,
+</a><a href="#h6-0-84" id="h6-0-84" class="i">+                    default: Some(Value::Null),
+</a><a href="#h6-0-85" id="h6-0-85" class="i">+                    unique: false,
+</a><a href="#h6-0-86" id="h6-0-86" class="i">+                    index: false,
+</a><a href="#h6-0-87" id="h6-0-87" class="i">+                    references: None,
+</a><a href="#h6-0-88" id="h6-0-88" class="i">+                },
+</a><a href="#h6-0-89" id="h6-0-89" class="i">+                schema::Column {
+</a><a href="#h6-0-90" id="h6-0-90" class="i">+                    name: &quot;ultrahd&quot;.into(),
+</a><a href="#h6-0-91" id="h6-0-91" class="i">+                    datatype: DataType::Boolean,
+</a><a href="#h6-0-92" id="h6-0-92" class="i">+                    primary_key: false,
+</a><a href="#h6-0-93" id="h6-0-93" class="i">+                    nullable: true,
+</a><a href="#h6-0-94" id="h6-0-94" class="i">+                    default: Some(Value::Null),
+</a><a href="#h6-0-95" id="h6-0-95" class="i">+                    unique: false,
+</a><a href="#h6-0-96" id="h6-0-96" class="i">+                    index: false,
+</a><a href="#h6-0-97" id="h6-0-97" class="i">+                    references: None,
+</a><a href="#h6-0-98" id="h6-0-98" class="i">+                },
+</a><a href="#h6-0-99" id="h6-0-99" class="i">+            ]
+</a><a href="#h6-0-100" id="h6-0-100" class="i">+        }
+</a><a href="#h6-0-101" id="h6-0-101" class="i">+    );
+</a><a href="#h6-0-102" id="h6-0-102" class="i">+    Ok(())
+</a><a href="#h6-0-103" id="h6-0-103" class="i">+}
+</a><a href="#h6-0-104" id="h6-0-104" class="i">+
+</a><a href="#h6-0-105" id="h6-0-105" class="i">+#[tokio::test(flavor = &quot;multi_thread&quot;, worker_threads = 2)]
+</a><a href="#h6-0-106" id="h6-0-106" class="i">+#[serial]
+</a><a href="#h6-0-107" id="h6-0-107" class="i">+async fn list_tables() -&gt; Result&lt;()&gt; {
+</a><a href="#h6-0-108" id="h6-0-108" class="i">+    let tc = TestCluster::run_with(5, &amp;dataset::MOVIES).await?;
+</a><a href="#h6-0-109" id="h6-0-109" class="i">+    let mut c = tc.connect_any().await?;
+</a><a href="#h6-0-110" id="h6-0-110" class="i">+
+</a><a href="#h6-0-111" id="h6-0-111" class="i">+    assert_eq!(c.list_tables().await?, vec![&quot;countries&quot;, &quot;genres&quot;, &quot;movies&quot;, &quot;studios&quot;]);
+</a><a href="#h6-0-112" id="h6-0-112" class="i">+    Ok(())
+</a><a href="#h6-0-113" id="h6-0-113" class="i">+}
+</a><a href="#h6-0-114" id="h6-0-114" class="i">+
+</a><a href="#h6-0-115" id="h6-0-115" class="i">+#[tokio::test(flavor = &quot;multi_thread&quot;, worker_threads = 2)]
+</a><a href="#h6-0-116" id="h6-0-116" class="i">+#[serial]
+</a><a href="#h6-0-117" id="h6-0-117" class="i">+async fn status() -&gt; Result&lt;()&gt; {
+</a><a href="#h6-0-118" id="h6-0-118" class="i">+    let tc = TestCluster::run_with(1, &amp;dataset::MOVIES).await?;
+</a><a href="#h6-0-119" id="h6-0-119" class="i">+    let mut c = tc.connect_any().await?;
+</a><a href="#h6-0-120" id="h6-0-120" class="i">+
+</a><a href="#h6-0-121" id="h6-0-121" class="i">+    assert_eq!(
+</a><a href="#h6-0-122" id="h6-0-122" class="i">+        c.status().await?,
+</a><a href="#h6-0-123" id="h6-0-123" class="i">+        Status {
+</a><a href="#h6-0-124" id="h6-0-124" class="i">+            raft: raft::Status {
+</a><a href="#h6-0-125" id="h6-0-125" class="i">+                server: 1,
+</a><a href="#h6-0-126" id="h6-0-126" class="i">+                leader: 1,
+</a><a href="#h6-0-127" id="h6-0-127" class="i">+                term: 1,
+</a><a href="#h6-0-128" id="h6-0-128" class="i">+                last_index: [(1, 27)].into(),
+</a><a href="#h6-0-129" id="h6-0-129" class="i">+                commit_index: 27,
+</a><a href="#h6-0-130" id="h6-0-130" class="i">+                apply_index: 27,
+</a><a href="#h6-0-131" id="h6-0-131" class="i">+                storage: storage::engine::Status {
+</a><a href="#h6-0-132" id="h6-0-132" class="i">+                    name: &quot;bitcask&quot;.to_string(),
+</a><a href="#h6-0-133" id="h6-0-133" class="i">+                    keys: 29,
+</a><a href="#h6-0-134" id="h6-0-134" class="i">+                    size: 1324,
+</a><a href="#h6-0-135" id="h6-0-135" class="i">+                    total_disk_size: 1831,
+</a><a href="#h6-0-136" id="h6-0-136" class="i">+                    live_disk_size: 1556,
+</a><a href="#h6-0-137" id="h6-0-137" class="i">+                    garbage_disk_size: 275
+</a><a href="#h6-0-138" id="h6-0-138" class="i">+                },
+</a><a href="#h6-0-139" id="h6-0-139" class="i">+            },
+</a><a href="#h6-0-140" id="h6-0-140" class="i">+            mvcc: mvcc::Status {
+</a><a href="#h6-0-141" id="h6-0-141" class="i">+                versions: 1,
+</a><a href="#h6-0-142" id="h6-0-142" class="i">+                active_txns: 0,
+</a><a href="#h6-0-143" id="h6-0-143" class="i">+                storage: engine::Status {
+</a><a href="#h6-0-144" id="h6-0-144" class="i">+                    name: &quot;bitcask&quot;.to_string(),
+</a><a href="#h6-0-145" id="h6-0-145" class="i">+                    keys: 26,
+</a><a href="#h6-0-146" id="h6-0-146" class="i">+                    size: 1630,
+</a><a href="#h6-0-147" id="h6-0-147" class="i">+                    total_disk_size: 4556,
+</a><a href="#h6-0-148" id="h6-0-148" class="i">+                    live_disk_size: 1838,
+</a><a href="#h6-0-149" id="h6-0-149" class="i">+                    garbage_disk_size: 2718
+</a><a href="#h6-0-150" id="h6-0-150" class="i">+                },
+</a><a href="#h6-0-151" id="h6-0-151" class="i">+            }
+</a><a href="#h6-0-152" id="h6-0-152" class="i">+        },
+</a><a href="#h6-0-153" id="h6-0-153" class="i">+    );
+</a><a href="#h6-0-154" id="h6-0-154" class="i">+    Ok(())
+</a><a href="#h6-0-155" id="h6-0-155" class="i">+}
+</a><a href="#h6-0-156" id="h6-0-156" class="i">+
+</a><a href="#h6-0-157" id="h6-0-157" class="i">+#[tokio::test(flavor = &quot;multi_thread&quot;, worker_threads = 2)]
+</a><a href="#h6-0-158" id="h6-0-158" class="i">+#[serial]
+</a><a href="#h6-0-159" id="h6-0-159" class="i">+async fn execute() -&gt; Result&lt;()&gt; {
+</a><a href="#h6-0-160" id="h6-0-160" class="i">+    let tc = TestCluster::run_with(5, &amp;dataset::MOVIES).await?;
+</a><a href="#h6-0-161" id="h6-0-161" class="i">+    let mut c = tc.connect_any().await?;
+</a><a href="#h6-0-162" id="h6-0-162" class="i">+
+</a><a href="#h6-0-163" id="h6-0-163" class="i">+    // SELECT
+</a><a href="#h6-0-164" id="h6-0-164" class="i">+    let result = c.execute(&quot;SELECT * FROM genres&quot;).await?;
+</a><a href="#h6-0-165" id="h6-0-165" class="i">+    assert_eq!(
+</a><a href="#h6-0-166" id="h6-0-166" class="i">+        result,
+</a><a href="#h6-0-167" id="h6-0-167" class="i">+        ResultSet::Query {
+</a><a href="#h6-0-168" id="h6-0-168" class="i">+            columns: vec![Column { name: Some(&quot;id&quot;.into()) }, Column { name: Some(&quot;name&quot;.into()) }],
+</a><a href="#h6-0-169" id="h6-0-169" class="i">+            rows: Box::new(std::iter::empty()),
+</a><a href="#h6-0-170" id="h6-0-170" class="i">+        }
+</a><a href="#h6-0-171" id="h6-0-171" class="i">+    );
+</a><a href="#h6-0-172" id="h6-0-172" class="i">+    assert_rows(
+</a><a href="#h6-0-173" id="h6-0-173" class="i">+        result,
+</a><a href="#h6-0-174" id="h6-0-174" class="i">+        vec![
+</a><a href="#h6-0-175" id="h6-0-175" class="i">+            vec![Value::Integer(1), Value::String(&quot;Science Fiction&quot;.into())],
+</a><a href="#h6-0-176" id="h6-0-176" class="i">+            vec![Value::Integer(2), Value::String(&quot;Action&quot;.into())],
+</a><a href="#h6-0-177" id="h6-0-177" class="i">+            vec![Value::Integer(3), Value::String(&quot;Comedy&quot;.into())],
+</a><a href="#h6-0-178" id="h6-0-178" class="i">+        ],
+</a><a href="#h6-0-179" id="h6-0-179" class="i">+    );
+</a><a href="#h6-0-180" id="h6-0-180" class="i">+
+</a><a href="#h6-0-181" id="h6-0-181" class="i">+    let result = c.execute(&quot;SELECT * FROM genres WHERE FALSE&quot;).await?;
+</a><a href="#h6-0-182" id="h6-0-182" class="i">+    assert_eq!(
+</a><a href="#h6-0-183" id="h6-0-183" class="i">+        result,
+</a><a href="#h6-0-184" id="h6-0-184" class="i">+        ResultSet::Query {
+</a><a href="#h6-0-185" id="h6-0-185" class="i">+            columns: vec![Column { name: Some(&quot;id&quot;.into()) }, Column { name: Some(&quot;name&quot;.into()) }],
+</a><a href="#h6-0-186" id="h6-0-186" class="i">+            rows: Box::new(std::iter::empty()),
+</a><a href="#h6-0-187" id="h6-0-187" class="i">+        }
+</a><a href="#h6-0-188" id="h6-0-188" class="i">+    );
+</a><a href="#h6-0-189" id="h6-0-189" class="i">+    assert_rows(result, Vec::new());
+</a><a href="#h6-0-190" id="h6-0-190" class="i">+
+</a><a href="#h6-0-191" id="h6-0-191" class="i">+    assert_eq!(
+</a><a href="#h6-0-192" id="h6-0-192" class="i">+        c.execute(&quot;SELECT * FROM x&quot;).await,
+</a><a href="#h6-0-193" id="h6-0-193" class="i">+        Err(Error::Value(&quot;Table x does not exist&quot;.into()))
+</a><a href="#h6-0-194" id="h6-0-194" class="i">+    );
+</a><a href="#h6-0-195" id="h6-0-195" class="i">+
+</a><a href="#h6-0-196" id="h6-0-196" class="i">+    // INSERT
+</a><a href="#h6-0-197" id="h6-0-197" class="i">+    assert_eq!(
+</a><a href="#h6-0-198" id="h6-0-198" class="i">+        c.execute(&quot;INSERT INTO genres VALUES (1, &#39;Western&#39;)&quot;).await,
+</a><a href="#h6-0-199" id="h6-0-199" class="i">+        Err(Error::Value(&quot;Primary key 1 already exists for table genres&quot;.into())),
+</a><a href="#h6-0-200" id="h6-0-200" class="i">+    );
+</a><a href="#h6-0-201" id="h6-0-201" class="i">+    assert_eq!(
+</a><a href="#h6-0-202" id="h6-0-202" class="i">+        c.execute(&quot;INSERT INTO genres VALUES (9, &#39;Western&#39;)&quot;).await,
+</a><a href="#h6-0-203" id="h6-0-203" class="i">+        Ok(ResultSet::Create { count: 1 }),
+</a><a href="#h6-0-204" id="h6-0-204" class="i">+    );
+</a><a href="#h6-0-205" id="h6-0-205" class="i">+    assert_eq!(
+</a><a href="#h6-0-206" id="h6-0-206" class="i">+        c.execute(&quot;INSERT INTO x VALUES (9, &#39;Western&#39;)&quot;).await,
+</a><a href="#h6-0-207" id="h6-0-207" class="i">+        Err(Error::Value(&quot;Table x does not exist&quot;.into()))
+</a><a href="#h6-0-208" id="h6-0-208" class="i">+    );
+</a><a href="#h6-0-209" id="h6-0-209" class="i">+
+</a><a href="#h6-0-210" id="h6-0-210" class="i">+    // UPDATE
+</a><a href="#h6-0-211" id="h6-0-211" class="i">+    assert_eq!(
+</a><a href="#h6-0-212" id="h6-0-212" class="i">+        c.execute(&quot;UPDATE genres SET name = &#39;Horror&#39; WHERE FALSE&quot;).await,
+</a><a href="#h6-0-213" id="h6-0-213" class="i">+        Ok(ResultSet::Update { count: 0 }),
+</a><a href="#h6-0-214" id="h6-0-214" class="i">+    );
+</a><a href="#h6-0-215" id="h6-0-215" class="i">+    assert_eq!(
+</a><a href="#h6-0-216" id="h6-0-216" class="i">+        c.execute(&quot;UPDATE genres SET name = &#39;Horror&#39; WHERE id = 9&quot;).await,
+</a><a href="#h6-0-217" id="h6-0-217" class="i">+        Ok(ResultSet::Update { count: 1 }),
+</a><a href="#h6-0-218" id="h6-0-218" class="i">+    );
+</a><a href="#h6-0-219" id="h6-0-219" class="i">+    assert_eq!(
+</a><a href="#h6-0-220" id="h6-0-220" class="i">+        c.execute(&quot;UPDATE genres SET id = 1 WHERE id = 9&quot;).await,
+</a><a href="#h6-0-221" id="h6-0-221" class="i">+        Err(Error::Value(&quot;Primary key 1 already exists for table genres&quot;.into()))
+</a><a href="#h6-0-222" id="h6-0-222" class="i">+    );
+</a><a href="#h6-0-223" id="h6-0-223" class="i">+
+</a><a href="#h6-0-224" id="h6-0-224" class="i">+    // DELETE
+</a><a href="#h6-0-225" id="h6-0-225" class="i">+    assert_eq!(
+</a><a href="#h6-0-226" id="h6-0-226" class="i">+        c.execute(&quot;DELETE FROM genres WHERE FALSE&quot;).await,
+</a><a href="#h6-0-227" id="h6-0-227" class="i">+        Ok(ResultSet::Delete { count: 0 }),
+</a><a href="#h6-0-228" id="h6-0-228" class="i">+    );
+</a><a href="#h6-0-229" id="h6-0-229" class="i">+    assert_eq!(
+</a><a href="#h6-0-230" id="h6-0-230" class="i">+        c.execute(&quot;DELETE FROM genres WHERE id = 9&quot;).await,
+</a><a href="#h6-0-231" id="h6-0-231" class="i">+        Ok(ResultSet::Delete { count: 1 }),
+</a><a href="#h6-0-232" id="h6-0-232" class="i">+    );
+</a><a href="#h6-0-233" id="h6-0-233" class="i">+    assert_eq!(
+</a><a href="#h6-0-234" id="h6-0-234" class="i">+        c.execute(&quot;DELETE FROM genres WHERE x = 1&quot;).await,
+</a><a href="#h6-0-235" id="h6-0-235" class="i">+        Err(Error::Value(&quot;Unknown field x&quot;.into()))
+</a><a href="#h6-0-236" id="h6-0-236" class="i">+    );
+</a><a href="#h6-0-237" id="h6-0-237" class="i">+
+</a><a href="#h6-0-238" id="h6-0-238" class="i">+    Ok(())
+</a><a href="#h6-0-239" id="h6-0-239" class="i">+}
+</a><a href="#h6-0-240" id="h6-0-240" class="i">+
+</a><a href="#h6-0-241" id="h6-0-241" class="i">+#[tokio::test(flavor = &quot;multi_thread&quot;, worker_threads = 2)]
+</a><a href="#h6-0-242" id="h6-0-242" class="i">+#[serial]
+</a><a href="#h6-0-243" id="h6-0-243" class="i">+async fn execute_txn() -&gt; Result&lt;()&gt; {
+</a><a href="#h6-0-244" id="h6-0-244" class="i">+    let tc = TestCluster::run_with(5, &amp;dataset::MOVIES).await?;
+</a><a href="#h6-0-245" id="h6-0-245" class="i">+    let mut c = tc.connect_any().await?;
+</a><a href="#h6-0-246" id="h6-0-246" class="i">+
+</a><a href="#h6-0-247" id="h6-0-247" class="i">+    assert_eq!(c.txn(), None);
+</a><a href="#h6-0-248" id="h6-0-248" class="i">+
+</a><a href="#h6-0-249" id="h6-0-249" class="i">+    // Committing a change in a txn should work
+</a><a href="#h6-0-250" id="h6-0-250" class="i">+    assert_eq!(c.execute(&quot;BEGIN&quot;).await?, ResultSet::Begin { version: 2, read_only: false });
+</a><a href="#h6-0-251" id="h6-0-251" class="i">+    assert_eq!(c.txn(), Some((2, false)));
+</a><a href="#h6-0-252" id="h6-0-252" class="i">+    c.execute(&quot;INSERT INTO genres VALUES (4, &#39;Drama&#39;)&quot;).await?;
+</a><a href="#h6-0-253" id="h6-0-253" class="i">+    assert_eq!(c.execute(&quot;COMMIT&quot;).await?, ResultSet::Commit { version: 2 });
+</a><a href="#h6-0-254" id="h6-0-254" class="i">+    assert_eq!(c.txn(), None);
+</a><a href="#h6-0-255" id="h6-0-255" class="i">+    assert_row(
+</a><a href="#h6-0-256" id="h6-0-256" class="i">+        c.execute(&quot;SELECT * FROM genres WHERE id = 4&quot;).await?,
+</a><a href="#h6-0-257" id="h6-0-257" class="i">+        vec![Value::Integer(4), Value::String(&quot;Drama&quot;.into())],
+</a><a href="#h6-0-258" id="h6-0-258" class="i">+    );
+</a><a href="#h6-0-259" id="h6-0-259" class="i">+    assert_eq!(c.txn(), None);
+</a><a href="#h6-0-260" id="h6-0-260" class="i">+
+</a><a href="#h6-0-261" id="h6-0-261" class="i">+    // Rolling back a change in a txn should also work
+</a><a href="#h6-0-262" id="h6-0-262" class="i">+    assert_eq!(c.execute(&quot;BEGIN&quot;).await?, ResultSet::Begin { version: 3, read_only: false });
+</a><a href="#h6-0-263" id="h6-0-263" class="i">+    assert_eq!(c.txn(), Some((3, false)));
+</a><a href="#h6-0-264" id="h6-0-264" class="i">+    c.execute(&quot;INSERT INTO genres VALUES (5, &#39;Musical&#39;)&quot;).await?;
+</a><a href="#h6-0-265" id="h6-0-265" class="i">+    assert_row(
+</a><a href="#h6-0-266" id="h6-0-266" class="i">+        c.execute(&quot;SELECT * FROM genres WHERE id = 5&quot;).await?,
+</a><a href="#h6-0-267" id="h6-0-267" class="i">+        vec![Value::Integer(5), Value::String(&quot;Musical&quot;.into())],
+</a><a href="#h6-0-268" id="h6-0-268" class="i">+    );
+</a><a href="#h6-0-269" id="h6-0-269" class="i">+    assert_eq!(c.execute(&quot;ROLLBACK&quot;).await?, ResultSet::Rollback { version: 3 });
+</a><a href="#h6-0-270" id="h6-0-270" class="i">+    assert_rows(c.execute(&quot;SELECT * FROM genres WHERE id = 5&quot;).await?, Vec::new());
+</a><a href="#h6-0-271" id="h6-0-271" class="i">+    assert_eq!(c.txn(), None);
+</a><a href="#h6-0-272" id="h6-0-272" class="i">+
+</a><a href="#h6-0-273" id="h6-0-273" class="i">+    // Starting a read-only txn should block writes
+</a><a href="#h6-0-274" id="h6-0-274" class="i">+    assert_eq!(
+</a><a href="#h6-0-275" id="h6-0-275" class="i">+        c.execute(&quot;BEGIN READ ONLY&quot;).await?,
+</a><a href="#h6-0-276" id="h6-0-276" class="i">+        ResultSet::Begin { version: 4, read_only: true }
+</a><a href="#h6-0-277" id="h6-0-277" class="i">+    );
+</a><a href="#h6-0-278" id="h6-0-278" class="i">+    assert_eq!(c.txn(), Some((4, true)));
+</a><a href="#h6-0-279" id="h6-0-279" class="i">+    assert_row(
+</a><a href="#h6-0-280" id="h6-0-280" class="i">+        c.execute(&quot;SELECT * FROM genres WHERE id = 4&quot;).await?,
+</a><a href="#h6-0-281" id="h6-0-281" class="i">+        vec![Value::Integer(4), Value::String(&quot;Drama&quot;.into())],
+</a><a href="#h6-0-282" id="h6-0-282" class="i">+    );
+</a><a href="#h6-0-283" id="h6-0-283" class="i">+    assert_eq!(c.execute(&quot;INSERT INTO genres VALUES (5, &#39;Musical&#39;)&quot;).await, Err(Error::ReadOnly));
+</a><a href="#h6-0-284" id="h6-0-284" class="i">+    assert_row(
+</a><a href="#h6-0-285" id="h6-0-285" class="i">+        c.execute(&quot;SELECT * FROM genres WHERE id = 4&quot;).await?,
+</a><a href="#h6-0-286" id="h6-0-286" class="i">+        vec![Value::Integer(4), Value::String(&quot;Drama&quot;.into())],
+</a><a href="#h6-0-287" id="h6-0-287" class="i">+    );
+</a><a href="#h6-0-288" id="h6-0-288" class="i">+    assert_eq!(c.execute(&quot;COMMIT&quot;).await?, ResultSet::Commit { version: 4 });
+</a><a href="#h6-0-289" id="h6-0-289" class="i">+
+</a><a href="#h6-0-290" id="h6-0-290" class="i">+    // Starting a time-travel txn should work, it shouldn&#39;t see recent changes, and it should
+</a><a href="#h6-0-291" id="h6-0-291" class="i">+    // block writes
+</a><a href="#h6-0-292" id="h6-0-292" class="i">+    assert_eq!(
+</a><a href="#h6-0-293" id="h6-0-293" class="i">+        c.execute(&quot;BEGIN READ ONLY AS OF SYSTEM TIME 2&quot;).await?,
+</a><a href="#h6-0-294" id="h6-0-294" class="i">+        ResultSet::Begin { version: 2, read_only: true },
+</a><a href="#h6-0-295" id="h6-0-295" class="i">+    );
+</a><a href="#h6-0-296" id="h6-0-296" class="i">+    assert_eq!(c.txn(), Some((2, true)));
+</a><a href="#h6-0-297" id="h6-0-297" class="i">+    assert_rows(
+</a><a href="#h6-0-298" id="h6-0-298" class="i">+        c.execute(&quot;SELECT * FROM genres&quot;).await?,
+</a><a href="#h6-0-299" id="h6-0-299" class="i">+        vec![
+</a><a href="#h6-0-300" id="h6-0-300" class="i">+            vec![Value::Integer(1), Value::String(&quot;Science Fiction&quot;.into())],
+</a><a href="#h6-0-301" id="h6-0-301" class="i">+            vec![Value::Integer(2), Value::String(&quot;Action&quot;.into())],
+</a><a href="#h6-0-302" id="h6-0-302" class="i">+            vec![Value::Integer(3), Value::String(&quot;Comedy&quot;.into())],
+</a><a href="#h6-0-303" id="h6-0-303" class="i">+        ],
+</a><a href="#h6-0-304" id="h6-0-304" class="i">+    );
+</a><a href="#h6-0-305" id="h6-0-305" class="i">+    assert_eq!(c.execute(&quot;INSERT INTO genres VALUES (5, &#39;Musical&#39;)&quot;).await, Err(Error::ReadOnly));
+</a><a href="#h6-0-306" id="h6-0-306" class="i">+    assert_eq!(c.execute(&quot;COMMIT&quot;).await?, ResultSet::Commit { version: 2 });
+</a><a href="#h6-0-307" id="h6-0-307" class="i">+
+</a><a href="#h6-0-308" id="h6-0-308" class="i">+    // A txn should still be usable after an error occurs
+</a><a href="#h6-0-309" id="h6-0-309" class="i">+    assert_eq!(c.execute(&quot;BEGIN&quot;).await?, ResultSet::Begin { version: 4, read_only: false });
+</a><a href="#h6-0-310" id="h6-0-310" class="i">+    c.execute(&quot;INSERT INTO genres VALUES (5, &#39;Horror&#39;)&quot;).await?;
+</a><a href="#h6-0-311" id="h6-0-311" class="i">+    assert_eq!(
+</a><a href="#h6-0-312" id="h6-0-312" class="i">+        c.execute(&quot;INSERT INTO genres VALUES (5, &#39;Musical&#39;)&quot;).await,
+</a><a href="#h6-0-313" id="h6-0-313" class="i">+        Err(Error::Value(&quot;Primary key 5 already exists for table genres&quot;.into()))
+</a><a href="#h6-0-314" id="h6-0-314" class="i">+    );
+</a><a href="#h6-0-315" id="h6-0-315" class="i">+    assert_eq!(c.txn(), Some((4, false)));
+</a><a href="#h6-0-316" id="h6-0-316" class="i">+    c.execute(&quot;INSERT INTO genres VALUES (6, &#39;Western&#39;)&quot;).await?;
+</a><a href="#h6-0-317" id="h6-0-317" class="i">+    assert_eq!(c.execute(&quot;COMMIT&quot;).await?, ResultSet::Commit { version: 4 });
+</a><a href="#h6-0-318" id="h6-0-318" class="i">+    assert_rows(
+</a><a href="#h6-0-319" id="h6-0-319" class="i">+        c.execute(&quot;SELECT * FROM genres&quot;).await?,
+</a><a href="#h6-0-320" id="h6-0-320" class="i">+        vec![
+</a><a href="#h6-0-321" id="h6-0-321" class="i">+            vec![Value::Integer(1), Value::String(&quot;Science Fiction&quot;.into())],
+</a><a href="#h6-0-322" id="h6-0-322" class="i">+            vec![Value::Integer(2), Value::String(&quot;Action&quot;.into())],
+</a><a href="#h6-0-323" id="h6-0-323" class="i">+            vec![Value::Integer(3), Value::String(&quot;Comedy&quot;.into())],
+</a><a href="#h6-0-324" id="h6-0-324" class="i">+            vec![Value::Integer(4), Value::String(&quot;Drama&quot;.into())],
+</a><a href="#h6-0-325" id="h6-0-325" class="i">+            vec![Value::Integer(5), Value::String(&quot;Horror&quot;.into())],
+</a><a href="#h6-0-326" id="h6-0-326" class="i">+            vec![Value::Integer(6), Value::String(&quot;Western&quot;.into())],
+</a><a href="#h6-0-327" id="h6-0-327" class="i">+        ],
+</a><a href="#h6-0-328" id="h6-0-328" class="i">+    );
+</a><a href="#h6-0-329" id="h6-0-329" class="i">+
+</a><a href="#h6-0-330" id="h6-0-330" class="i">+    Ok(())
+</a><a href="#h6-0-331" id="h6-0-331" class="i">+}
+</a><a href="#h6-0-332" id="h6-0-332" class="i">+
+</a><a href="#h6-0-333" id="h6-0-333" class="i">+#[tokio::test(flavor = &quot;multi_thread&quot;, worker_threads = 2)]
+</a><a href="#h6-0-334" id="h6-0-334" class="i">+#[serial]
+</a><a href="#h6-0-335" id="h6-0-335" class="i">+async fn execute_txn_concurrent() -&gt; Result&lt;()&gt; {
+</a><a href="#h6-0-336" id="h6-0-336" class="i">+    let tc = TestCluster::run_with(5, &amp;dataset::MOVIES).await?;
+</a><a href="#h6-0-337" id="h6-0-337" class="i">+    let mut a = tc.connect_any().await?;
+</a><a href="#h6-0-338" id="h6-0-338" class="i">+    let mut b = tc.connect_any().await?;
+</a><a href="#h6-0-339" id="h6-0-339" class="i">+
+</a><a href="#h6-0-340" id="h6-0-340" class="i">+    // Concurrent updates should throw a serialization failure on conflict.
+</a><a href="#h6-0-341" id="h6-0-341" class="i">+    assert_eq!(a.execute(&quot;BEGIN&quot;).await?, ResultSet::Begin { version: 2, read_only: false });
+</a><a href="#h6-0-342" id="h6-0-342" class="i">+    assert_eq!(b.execute(&quot;BEGIN&quot;).await?, ResultSet::Begin { version: 3, read_only: false });
+</a><a href="#h6-0-343" id="h6-0-343" class="i">+
+</a><a href="#h6-0-344" id="h6-0-344" class="i">+    assert_row(
+</a><a href="#h6-0-345" id="h6-0-345" class="i">+        a.execute(&quot;SELECT * FROM genres WHERE id = 1&quot;).await?,
+</a><a href="#h6-0-346" id="h6-0-346" class="i">+        vec![Value::Integer(1), Value::String(&quot;Science Fiction&quot;.into())],
+</a><a href="#h6-0-347" id="h6-0-347" class="i">+    );
+</a><a href="#h6-0-348" id="h6-0-348" class="i">+    assert_row(
+</a><a href="#h6-0-349" id="h6-0-349" class="i">+        b.execute(&quot;SELECT * FROM genres WHERE id = 1&quot;).await?,
+</a><a href="#h6-0-350" id="h6-0-350" class="i">+        vec![Value::Integer(1), Value::String(&quot;Science Fiction&quot;.into())],
+</a><a href="#h6-0-351" id="h6-0-351" class="i">+    );
+</a><a href="#h6-0-352" id="h6-0-352" class="i">+
+</a><a href="#h6-0-353" id="h6-0-353" class="i">+    assert_eq!(
+</a><a href="#h6-0-354" id="h6-0-354" class="i">+        a.execute(&quot;UPDATE genres SET name = &#39;x&#39; WHERE id = 1&quot;).await,
+</a><a href="#h6-0-355" id="h6-0-355" class="i">+        Ok(ResultSet::Update { count: 1 })
+</a><a href="#h6-0-356" id="h6-0-356" class="i">+    );
+</a><a href="#h6-0-357" id="h6-0-357" class="i">+    assert_eq!(
+</a><a href="#h6-0-358" id="h6-0-358" class="i">+        b.execute(&quot;UPDATE genres SET name = &#39;y&#39; WHERE id = 1&quot;).await,
+</a><a href="#h6-0-359" id="h6-0-359" class="i">+        Err(Error::Serialization)
+</a><a href="#h6-0-360" id="h6-0-360" class="i">+    );
+</a><a href="#h6-0-361" id="h6-0-361" class="i">+
+</a><a href="#h6-0-362" id="h6-0-362" class="i">+    assert_eq!(a.execute(&quot;COMMIT&quot;).await, Ok(ResultSet::Commit { version: 2 }));
+</a><a href="#h6-0-363" id="h6-0-363" class="i">+    assert_eq!(b.execute(&quot;ROLLBACK&quot;).await, Ok(ResultSet::Rollback { version: 3 }));
+</a><a href="#h6-0-364" id="h6-0-364" class="i">+
+</a><a href="#h6-0-365" id="h6-0-365" class="i">+    assert_row(
+</a><a href="#h6-0-366" id="h6-0-366" class="i">+        a.execute(&quot;SELECT * FROM genres WHERE id = 1&quot;).await?,
+</a><a href="#h6-0-367" id="h6-0-367" class="i">+        vec![Value::Integer(1), Value::String(&quot;x&quot;.into())],
+</a><a href="#h6-0-368" id="h6-0-368" class="i">+    );
+</a><a href="#h6-0-369" id="h6-0-369" class="i">+
+</a><a href="#h6-0-370" id="h6-0-370" class="i">+    Ok(())
+</a><a href="#h6-0-371" id="h6-0-371" class="i">+}
+</a><b>diff --git a/<a id="h7" href="../file/tests/e2e/dataset.rs.html">tests/e2e/dataset.rs</a> b/<a href="../file/tests/e2e/dataset.rs.html">tests/e2e/dataset.rs</a></b>
+<a href="#h7-0" id="h7-0" class="h">@@ -0,0 +1,55 @@
+</a><a href="#h7-0-0" id="h7-0-0" class="i">+//! Pre-defined datasets.
+</a><a href="#h7-0-1" id="h7-0-1" class="i">+
+</a><a href="#h7-0-2" id="h7-0-2" class="i">+use lazy_static::lazy_static;
+</a><a href="#h7-0-3" id="h7-0-3" class="i">+
+</a><a href="#h7-0-4" id="h7-0-4" class="i">+lazy_static! {
+</a><a href="#h7-0-5" id="h7-0-5" class="i">+    pub static ref TEST_TABLE: &amp;&#39;static str =
+</a><a href="#h7-0-6" id="h7-0-6" class="i">+        &quot;CREATE TABLE test (id INTEGER PRIMARY KEY, value STRING)&quot;;
+</a><a href="#h7-0-7" id="h7-0-7" class="i">+    pub static ref MOVIES: &amp;&#39;static str = &quot;
+</a><a href="#h7-0-8" id="h7-0-8" class="i">+        CREATE TABLE countries (
+</a><a href="#h7-0-9" id="h7-0-9" class="i">+            id STRING PRIMARY KEY,
+</a><a href="#h7-0-10" id="h7-0-10" class="i">+            name STRING NOT NULL
+</a><a href="#h7-0-11" id="h7-0-11" class="i">+        );
+</a><a href="#h7-0-12" id="h7-0-12" class="i">+        INSERT INTO countries VALUES
+</a><a href="#h7-0-13" id="h7-0-13" class="i">+            (&#39;fr&#39;, &#39;France&#39;),
+</a><a href="#h7-0-14" id="h7-0-14" class="i">+            (&#39;ru&#39;, &#39;Russia&#39;),
+</a><a href="#h7-0-15" id="h7-0-15" class="i">+            (&#39;us&#39;, &#39;United States of America&#39;);
+</a><a href="#h7-0-16" id="h7-0-16" class="i">+        CREATE TABLE genres (
+</a><a href="#h7-0-17" id="h7-0-17" class="i">+            id INTEGER PRIMARY KEY,
+</a><a href="#h7-0-18" id="h7-0-18" class="i">+            name STRING NOT NULL
+</a><a href="#h7-0-19" id="h7-0-19" class="i">+        );
+</a><a href="#h7-0-20" id="h7-0-20" class="i">+        INSERT INTO genres VALUES
+</a><a href="#h7-0-21" id="h7-0-21" class="i">+            (1, &#39;Science Fiction&#39;),
+</a><a href="#h7-0-22" id="h7-0-22" class="i">+            (2, &#39;Action&#39;),
+</a><a href="#h7-0-23" id="h7-0-23" class="i">+            (3, &#39;Comedy&#39;);
+</a><a href="#h7-0-24" id="h7-0-24" class="i">+        CREATE TABLE studios (
+</a><a href="#h7-0-25" id="h7-0-25" class="i">+            id INTEGER PRIMARY KEY,
+</a><a href="#h7-0-26" id="h7-0-26" class="i">+            name STRING NOT NULL,
+</a><a href="#h7-0-27" id="h7-0-27" class="i">+            country_id STRING REFERENCES countries
+</a><a href="#h7-0-28" id="h7-0-28" class="i">+        );
+</a><a href="#h7-0-29" id="h7-0-29" class="i">+        INSERT INTO studios VALUES
+</a><a href="#h7-0-30" id="h7-0-30" class="i">+            (1, &#39;Mosfilm&#39;, &#39;ru&#39;),
+</a><a href="#h7-0-31" id="h7-0-31" class="i">+            (2, &#39;Lionsgate&#39;, &#39;us&#39;),
+</a><a href="#h7-0-32" id="h7-0-32" class="i">+            (3, &#39;StudioCanal&#39;, &#39;fr&#39;),
+</a><a href="#h7-0-33" id="h7-0-33" class="i">+            (4, &#39;Warner Bros&#39;, &#39;us&#39;);
+</a><a href="#h7-0-34" id="h7-0-34" class="i">+        CREATE TABLE movies (
+</a><a href="#h7-0-35" id="h7-0-35" class="i">+            id INTEGER PRIMARY KEY,
+</a><a href="#h7-0-36" id="h7-0-36" class="i">+            title STRING NOT NULL,
+</a><a href="#h7-0-37" id="h7-0-37" class="i">+            studio_id INTEGER NOT NULL REFERENCES studios,
+</a><a href="#h7-0-38" id="h7-0-38" class="i">+            genre_id INTEGER NOT NULL REFERENCES genres,
+</a><a href="#h7-0-39" id="h7-0-39" class="i">+            released INTEGER NOT NULL,
+</a><a href="#h7-0-40" id="h7-0-40" class="i">+            rating FLOAT,
+</a><a href="#h7-0-41" id="h7-0-41" class="i">+            ultrahd BOOLEAN
+</a><a href="#h7-0-42" id="h7-0-42" class="i">+        );
+</a><a href="#h7-0-43" id="h7-0-43" class="i">+        INSERT INTO movies VALUES
+</a><a href="#h7-0-44" id="h7-0-44" class="i">+            (1, &#39;Stalker&#39;, 1, 1, 1979, 8.2, NULL),
+</a><a href="#h7-0-45" id="h7-0-45" class="i">+            (2, &#39;Sicario&#39;, 2, 2, 2015, 7.6, TRUE),
+</a><a href="#h7-0-46" id="h7-0-46" class="i">+            (3, &#39;Primer&#39;, 3, 1, 2004, 6.9, NULL),
+</a><a href="#h7-0-47" id="h7-0-47" class="i">+            (4, &#39;Heat&#39;, 4, 2, 1995, 8.2, TRUE),
+</a><a href="#h7-0-48" id="h7-0-48" class="i">+            (5, &#39;The Fountain&#39;, 4, 1, 2006, 7.2, FALSE),
+</a><a href="#h7-0-49" id="h7-0-49" class="i">+            (6, &#39;Solaris&#39;, 1, 1, 1972, 8.1, NULL),
+</a><a href="#h7-0-50" id="h7-0-50" class="i">+            (7, &#39;Gravity&#39;, 4, 1, 2013, 7.7, TRUE),
+</a><a href="#h7-0-51" id="h7-0-51" class="i">+            (8, &#39;Blindspotting&#39;, 2, 3, 2018, 7.4, TRUE),
+</a><a href="#h7-0-52" id="h7-0-52" class="i">+            (9, &#39;Birdman&#39;, 4, 3, 2014, 7.7, TRUE),
+</a><a href="#h7-0-53" id="h7-0-53" class="i">+            (10, &#39;Inception&#39;, 4, 1, 2010, 8.8, TRUE)&quot;;
+</a><a href="#h7-0-54" id="h7-0-54" class="i">+}
+</a><b>diff --git a/<a id="h8" href="../file/tests/e2e/isolation.rs.html">tests/e2e/isolation.rs</a> b/<a href="../file/tests/e2e/isolation.rs.html">tests/e2e/isolation.rs</a></b>
+<a href="#h8-0" id="h8-0" class="h">@@ -0,0 +1,159 @@
+</a><a href="#h8-0-0" id="h8-0-0" class="i">+use super::{assert_row, assert_rows, dataset, TestCluster};
+</a><a href="#h8-0-1" id="h8-0-1" class="i">+
+</a><a href="#h8-0-2" id="h8-0-2" class="i">+use serial_test::serial;
+</a><a href="#h8-0-3" id="h8-0-3" class="i">+use toydb::error::{Error, Result};
+</a><a href="#h8-0-4" id="h8-0-4" class="i">+use toydb::sql::types::Value;
+</a><a href="#h8-0-5" id="h8-0-5" class="i">+
+</a><a href="#h8-0-6" id="h8-0-6" class="i">+#[tokio::test(flavor = &quot;multi_thread&quot;, worker_threads = 2)]
+</a><a href="#h8-0-7" id="h8-0-7" class="i">+#[serial]
+</a><a href="#h8-0-8" id="h8-0-8" class="i">+// A dirty write is when b overwrites an uncommitted value written by a.
+</a><a href="#h8-0-9" id="h8-0-9" class="i">+async fn dirty_write() -&gt; Result&lt;()&gt; {
+</a><a href="#h8-0-10" id="h8-0-10" class="i">+    let tc = TestCluster::run_with(5, &amp;dataset::TEST_TABLE).await?;
+</a><a href="#h8-0-11" id="h8-0-11" class="i">+    let mut a = tc.connect_any().await?;
+</a><a href="#h8-0-12" id="h8-0-12" class="i">+    let mut b = tc.connect_any().await?;
+</a><a href="#h8-0-13" id="h8-0-13" class="i">+
+</a><a href="#h8-0-14" id="h8-0-14" class="i">+    a.execute(&quot;BEGIN&quot;).await?;
+</a><a href="#h8-0-15" id="h8-0-15" class="i">+    a.execute(&quot;INSERT INTO test VALUES (1, &#39;a&#39;)&quot;).await?;
+</a><a href="#h8-0-16" id="h8-0-16" class="i">+
+</a><a href="#h8-0-17" id="h8-0-17" class="i">+    assert_eq!(b.execute(&quot;INSERT INTO test VALUES (1, &#39;b&#39;)&quot;).await, Err(Error::Serialization));
+</a><a href="#h8-0-18" id="h8-0-18" class="i">+
+</a><a href="#h8-0-19" id="h8-0-19" class="i">+    a.execute(&quot;COMMIT&quot;).await?;
+</a><a href="#h8-0-20" id="h8-0-20" class="i">+    assert_row(
+</a><a href="#h8-0-21" id="h8-0-21" class="i">+        a.execute(&quot;SELECT * FROM test WHERE id = 1&quot;).await?,
+</a><a href="#h8-0-22" id="h8-0-22" class="i">+        vec![Value::Integer(1), Value::String(&quot;a&quot;.into())],
+</a><a href="#h8-0-23" id="h8-0-23" class="i">+    );
+</a><a href="#h8-0-24" id="h8-0-24" class="i">+
+</a><a href="#h8-0-25" id="h8-0-25" class="i">+    Ok(())
+</a><a href="#h8-0-26" id="h8-0-26" class="i">+}
+</a><a href="#h8-0-27" id="h8-0-27" class="i">+
+</a><a href="#h8-0-28" id="h8-0-28" class="i">+#[tokio::test(flavor = &quot;multi_thread&quot;, worker_threads = 2)]
+</a><a href="#h8-0-29" id="h8-0-29" class="i">+#[serial]
+</a><a href="#h8-0-30" id="h8-0-30" class="i">+// A dirty read is when b can read an uncommitted value set by a.
+</a><a href="#h8-0-31" id="h8-0-31" class="i">+async fn anomaly_dirty_read() -&gt; Result&lt;()&gt; {
+</a><a href="#h8-0-32" id="h8-0-32" class="i">+    let tc = TestCluster::run_with(5, &amp;dataset::TEST_TABLE).await?;
+</a><a href="#h8-0-33" id="h8-0-33" class="i">+    let mut a = tc.connect_any().await?;
+</a><a href="#h8-0-34" id="h8-0-34" class="i">+    let mut b = tc.connect_any().await?;
+</a><a href="#h8-0-35" id="h8-0-35" class="i">+
+</a><a href="#h8-0-36" id="h8-0-36" class="i">+    a.execute(&quot;BEGIN&quot;).await?;
+</a><a href="#h8-0-37" id="h8-0-37" class="i">+    a.execute(&quot;INSERT INTO test VALUES (1, &#39;a&#39;)&quot;).await?;
+</a><a href="#h8-0-38" id="h8-0-38" class="i">+
+</a><a href="#h8-0-39" id="h8-0-39" class="i">+    assert_rows(b.execute(&quot;SELECT * FROM test&quot;).await?, vec![]);
+</a><a href="#h8-0-40" id="h8-0-40" class="i">+
+</a><a href="#h8-0-41" id="h8-0-41" class="i">+    Ok(())
+</a><a href="#h8-0-42" id="h8-0-42" class="i">+}
+</a><a href="#h8-0-43" id="h8-0-43" class="i">+
+</a><a href="#h8-0-44" id="h8-0-44" class="i">+#[tokio::test(flavor = &quot;multi_thread&quot;, worker_threads = 2)]
+</a><a href="#h8-0-45" id="h8-0-45" class="i">+#[serial]
+</a><a href="#h8-0-46" id="h8-0-46" class="i">+// A lost update is when a and b both read a value and update it, where b&#39;s update replaces a.
+</a><a href="#h8-0-47" id="h8-0-47" class="i">+async fn anomaly_lost_update() -&gt; Result&lt;()&gt; {
+</a><a href="#h8-0-48" id="h8-0-48" class="i">+    let tc = TestCluster::run_with(5, &amp;dataset::TEST_TABLE).await?;
+</a><a href="#h8-0-49" id="h8-0-49" class="i">+    let mut a = tc.connect_any().await?;
+</a><a href="#h8-0-50" id="h8-0-50" class="i">+    let mut b = tc.connect_any().await?;
+</a><a href="#h8-0-51" id="h8-0-51" class="i">+    let mut c = tc.connect_any().await?;
+</a><a href="#h8-0-52" id="h8-0-52" class="i">+
+</a><a href="#h8-0-53" id="h8-0-53" class="i">+    c.execute(&quot;INSERT INTO test VALUES (1, &#39;c&#39;)&quot;).await?;
+</a><a href="#h8-0-54" id="h8-0-54" class="i">+
+</a><a href="#h8-0-55" id="h8-0-55" class="i">+    a.execute(&quot;BEGIN&quot;).await?;
+</a><a href="#h8-0-56" id="h8-0-56" class="i">+    b.execute(&quot;BEGIN&quot;).await?;
+</a><a href="#h8-0-57" id="h8-0-57" class="i">+
+</a><a href="#h8-0-58" id="h8-0-58" class="i">+    a.execute(&quot;UPDATE test SET value = &#39;a&#39; WHERE id = 1&quot;).await?;
+</a><a href="#h8-0-59" id="h8-0-59" class="i">+    assert_eq!(
+</a><a href="#h8-0-60" id="h8-0-60" class="i">+        b.execute(&quot;UPDATE test SET value = &#39;b&#39; WHERE id = 1&quot;).await,
+</a><a href="#h8-0-61" id="h8-0-61" class="i">+        Err(Error::Serialization)
+</a><a href="#h8-0-62" id="h8-0-62" class="i">+    );
+</a><a href="#h8-0-63" id="h8-0-63" class="i">+    a.execute(&quot;COMMIT&quot;).await?;
+</a><a href="#h8-0-64" id="h8-0-64" class="i">+
+</a><a href="#h8-0-65" id="h8-0-65" class="i">+    assert_row(
+</a><a href="#h8-0-66" id="h8-0-66" class="i">+        c.execute(&quot;SELECT * FROM test WHERE id = 1&quot;).await?,
+</a><a href="#h8-0-67" id="h8-0-67" class="i">+        vec![Value::Integer(1), Value::String(&quot;a&quot;.into())],
+</a><a href="#h8-0-68" id="h8-0-68" class="i">+    );
+</a><a href="#h8-0-69" id="h8-0-69" class="i">+
+</a><a href="#h8-0-70" id="h8-0-70" class="i">+    Ok(())
+</a><a href="#h8-0-71" id="h8-0-71" class="i">+}
+</a><a href="#h8-0-72" id="h8-0-72" class="i">+
+</a><a href="#h8-0-73" id="h8-0-73" class="i">+#[tokio::test(flavor = &quot;multi_thread&quot;, worker_threads = 2)]
+</a><a href="#h8-0-74" id="h8-0-74" class="i">+#[serial]
+</a><a href="#h8-0-75" id="h8-0-75" class="i">+// A fuzzy (or unrepeatable) read is when b sees a value change after a updates it.
+</a><a href="#h8-0-76" id="h8-0-76" class="i">+async fn anomaly_fuzzy_read() -&gt; Result&lt;()&gt; {
+</a><a href="#h8-0-77" id="h8-0-77" class="i">+    let tc = TestCluster::run_with(5, &amp;dataset::TEST_TABLE).await?;
+</a><a href="#h8-0-78" id="h8-0-78" class="i">+    let mut a = tc.connect_any().await?;
+</a><a href="#h8-0-79" id="h8-0-79" class="i">+    let mut b = tc.connect_any().await?;
+</a><a href="#h8-0-80" id="h8-0-80" class="i">+    let mut c = tc.connect_any().await?;
+</a><a href="#h8-0-81" id="h8-0-81" class="i">+
+</a><a href="#h8-0-82" id="h8-0-82" class="i">+    c.execute(&quot;INSERT INTO test VALUES (1, &#39;c&#39;)&quot;).await?;
+</a><a href="#h8-0-83" id="h8-0-83" class="i">+
+</a><a href="#h8-0-84" id="h8-0-84" class="i">+    a.execute(&quot;BEGIN&quot;).await?;
+</a><a href="#h8-0-85" id="h8-0-85" class="i">+    b.execute(&quot;BEGIN&quot;).await?;
+</a><a href="#h8-0-86" id="h8-0-86" class="i">+
+</a><a href="#h8-0-87" id="h8-0-87" class="i">+    assert_row(
+</a><a href="#h8-0-88" id="h8-0-88" class="i">+        b.execute(&quot;SELECT * FROM test WHERE id = 1&quot;).await?,
+</a><a href="#h8-0-89" id="h8-0-89" class="i">+        vec![Value::Integer(1), Value::String(&quot;c&quot;.into())],
+</a><a href="#h8-0-90" id="h8-0-90" class="i">+    );
+</a><a href="#h8-0-91" id="h8-0-91" class="i">+    a.execute(&quot;UPDATE test SET value = &#39;a&#39; WHERE id = 1&quot;).await?;
+</a><a href="#h8-0-92" id="h8-0-92" class="i">+    a.execute(&quot;COMMIT&quot;).await?;
+</a><a href="#h8-0-93" id="h8-0-93" class="i">+    assert_row(
+</a><a href="#h8-0-94" id="h8-0-94" class="i">+        b.execute(&quot;SELECT * FROM test WHERE id = 1&quot;).await?,
+</a><a href="#h8-0-95" id="h8-0-95" class="i">+        vec![Value::Integer(1), Value::String(&quot;c&quot;.into())],
+</a><a href="#h8-0-96" id="h8-0-96" class="i">+    );
+</a><a href="#h8-0-97" id="h8-0-97" class="i">+
+</a><a href="#h8-0-98" id="h8-0-98" class="i">+    Ok(())
+</a><a href="#h8-0-99" id="h8-0-99" class="i">+}
+</a><a href="#h8-0-100" id="h8-0-100" class="i">+
+</a><a href="#h8-0-101" id="h8-0-101" class="i">+#[tokio::test(flavor = &quot;multi_thread&quot;, worker_threads = 2)]
+</a><a href="#h8-0-102" id="h8-0-102" class="i">+#[serial]
+</a><a href="#h8-0-103" id="h8-0-103" class="i">+// Read skew is when a reads 1 and 2, but b modifies 2 in between the reads.
+</a><a href="#h8-0-104" id="h8-0-104" class="i">+async fn anomaly_read_skew() -&gt; Result&lt;()&gt; {
+</a><a href="#h8-0-105" id="h8-0-105" class="i">+    let tc = TestCluster::run_with(5, &amp;dataset::TEST_TABLE).await?;
+</a><a href="#h8-0-106" id="h8-0-106" class="i">+    let mut a = tc.connect_any().await?;
+</a><a href="#h8-0-107" id="h8-0-107" class="i">+    let mut b = tc.connect_any().await?;
+</a><a href="#h8-0-108" id="h8-0-108" class="i">+    let mut c = tc.connect_any().await?;
+</a><a href="#h8-0-109" id="h8-0-109" class="i">+
+</a><a href="#h8-0-110" id="h8-0-110" class="i">+    c.execute(&quot;INSERT INTO test VALUES (1, &#39;c&#39;), (2, &#39;c&#39;)&quot;).await?;
+</a><a href="#h8-0-111" id="h8-0-111" class="i">+
+</a><a href="#h8-0-112" id="h8-0-112" class="i">+    a.execute(&quot;BEGIN&quot;).await?;
+</a><a href="#h8-0-113" id="h8-0-113" class="i">+    b.execute(&quot;BEGIN&quot;).await?;
+</a><a href="#h8-0-114" id="h8-0-114" class="i">+
+</a><a href="#h8-0-115" id="h8-0-115" class="i">+    assert_row(
+</a><a href="#h8-0-116" id="h8-0-116" class="i">+        a.execute(&quot;SELECT * FROM test WHERE id = 1&quot;).await?,
+</a><a href="#h8-0-117" id="h8-0-117" class="i">+        vec![Value::Integer(1), Value::String(&quot;c&quot;.into())],
+</a><a href="#h8-0-118" id="h8-0-118" class="i">+    );
+</a><a href="#h8-0-119" id="h8-0-119" class="i">+    b.execute(&quot;UPDATE test SET value = &#39;b&#39; WHERE id = 2&quot;).await?;
+</a><a href="#h8-0-120" id="h8-0-120" class="i">+    b.execute(&quot;COMMIT&quot;).await?;
+</a><a href="#h8-0-121" id="h8-0-121" class="i">+    assert_row(
+</a><a href="#h8-0-122" id="h8-0-122" class="i">+        a.execute(&quot;SELECT * FROM test WHERE id = 2&quot;).await?,
+</a><a href="#h8-0-123" id="h8-0-123" class="i">+        vec![Value::Integer(2), Value::String(&quot;c&quot;.into())],
+</a><a href="#h8-0-124" id="h8-0-124" class="i">+    );
+</a><a href="#h8-0-125" id="h8-0-125" class="i">+
+</a><a href="#h8-0-126" id="h8-0-126" class="i">+    Ok(())
+</a><a href="#h8-0-127" id="h8-0-127" class="i">+}
+</a><a href="#h8-0-128" id="h8-0-128" class="i">+
+</a><a href="#h8-0-129" id="h8-0-129" class="i">+#[tokio::test(flavor = &quot;multi_thread&quot;, worker_threads = 2)]
+</a><a href="#h8-0-130" id="h8-0-130" class="i">+#[serial]
+</a><a href="#h8-0-131" id="h8-0-131" class="i">+// A phantom read is when a reads entries matching some predicate, but a modification by
+</a><a href="#h8-0-132" id="h8-0-132" class="i">+// b changes the entries that match the predicate such that a later read by a returns them.
+</a><a href="#h8-0-133" id="h8-0-133" class="i">+async fn anomaly_phantom_read() -&gt; Result&lt;()&gt; {
+</a><a href="#h8-0-134" id="h8-0-134" class="i">+    let tc = TestCluster::run_with(5, &amp;dataset::TEST_TABLE).await?;
+</a><a href="#h8-0-135" id="h8-0-135" class="i">+    let mut a = tc.connect_any().await?;
+</a><a href="#h8-0-136" id="h8-0-136" class="i">+    let mut b = tc.connect_any().await?;
+</a><a href="#h8-0-137" id="h8-0-137" class="i">+    let mut c = tc.connect_any().await?;
+</a><a href="#h8-0-138" id="h8-0-138" class="i">+
+</a><a href="#h8-0-139" id="h8-0-139" class="i">+    c.execute(&quot;INSERT INTO test VALUES (1, &#39;true&#39;), (2, &#39;false&#39;)&quot;).await?;
+</a><a href="#h8-0-140" id="h8-0-140" class="i">+
+</a><a href="#h8-0-141" id="h8-0-141" class="i">+    a.execute(&quot;BEGIN&quot;).await?;
+</a><a href="#h8-0-142" id="h8-0-142" class="i">+    b.execute(&quot;BEGIN&quot;).await?;
+</a><a href="#h8-0-143" id="h8-0-143" class="i">+
+</a><a href="#h8-0-144" id="h8-0-144" class="i">+    assert_rows(
+</a><a href="#h8-0-145" id="h8-0-145" class="i">+        a.execute(&quot;SELECT * FROM test WHERE value = &#39;true&#39;&quot;).await?,
+</a><a href="#h8-0-146" id="h8-0-146" class="i">+        vec![vec![Value::Integer(1), Value::String(&quot;true&quot;.into())]],
+</a><a href="#h8-0-147" id="h8-0-147" class="i">+    );
+</a><a href="#h8-0-148" id="h8-0-148" class="i">+    b.execute(&quot;UPDATE test SET value = &#39;true&#39; WHERE id = 2&quot;).await?;
+</a><a href="#h8-0-149" id="h8-0-149" class="i">+    b.execute(&quot;COMMIT&quot;).await?;
+</a><a href="#h8-0-150" id="h8-0-150" class="i">+    assert_rows(
+</a><a href="#h8-0-151" id="h8-0-151" class="i">+        a.execute(&quot;SELECT * FROM test WHERE value = &#39;true&#39;&quot;).await?,
+</a><a href="#h8-0-152" id="h8-0-152" class="i">+        vec![vec![Value::Integer(1), Value::String(&quot;true&quot;.into())]],
+</a><a href="#h8-0-153" id="h8-0-153" class="i">+    );
+</a><a href="#h8-0-154" id="h8-0-154" class="i">+
+</a><a href="#h8-0-155" id="h8-0-155" class="i">+    Ok(())
+</a><a href="#h8-0-156" id="h8-0-156" class="i">+}
+</a><a href="#h8-0-157" id="h8-0-157" class="i">+
+</a><a href="#h8-0-158" id="h8-0-158" class="i">+// FIXME We should test write skew, but we need to implement serializable snapshot isolation first.
+</a><b>diff --git a/<a id="h9" href="../file/tests/e2e/mod.rs.html">tests/e2e/mod.rs</a> b/<a href="../file/tests/e2e/mod.rs.html">tests/e2e/mod.rs</a></b>
+<a href="#h9-0" id="h9-0" class="h">@@ -0,0 +1,27 @@
+</a><a href="#h9-0-0" id="h9-0-0" class="i">+//! End-to-end tests for toyDB. These spin up toyDB clusters as separate child
+</a><a href="#h9-0-1" id="h9-0-1" class="i">+//! processes using a built binary.
+</a><a href="#h9-0-2" id="h9-0-2" class="i">+//!
+</a><a href="#h9-0-3" id="h9-0-3" class="i">+//! TODO: these tests should be rewritten as data-driven golden master tests.
+</a><a href="#h9-0-4" id="h9-0-4" class="i">+
+</a><a href="#h9-0-5" id="h9-0-5" class="i">+mod client;
+</a><a href="#h9-0-6" id="h9-0-6" class="i">+pub mod dataset;
+</a><a href="#h9-0-7" id="h9-0-7" class="i">+mod isolation;
+</a><a href="#h9-0-8" id="h9-0-8" class="i">+mod recovery;
+</a><a href="#h9-0-9" id="h9-0-9" class="i">+mod testcluster;
+</a><a href="#h9-0-10" id="h9-0-10" class="i">+
+</a><a href="#h9-0-11" id="h9-0-11" class="i">+use testcluster::TestCluster;
+</a><a href="#h9-0-12" id="h9-0-12" class="i">+
+</a><a href="#h9-0-13" id="h9-0-13" class="i">+/// Asserts that a resultset contains the expected rows.
+</a><a href="#h9-0-14" id="h9-0-14" class="i">+fn assert_rows(result: toydb::ResultSet, expect: Vec&lt;toydb::sql::types::Row&gt;) {
+</a><a href="#h9-0-15" id="h9-0-15" class="i">+    match result {
+</a><a href="#h9-0-16" id="h9-0-16" class="i">+        toydb::ResultSet::Query { rows, .. } =&gt; {
+</a><a href="#h9-0-17" id="h9-0-17" class="i">+            pretty_assertions::assert_eq!(rows.collect::&lt;Result&lt;Vec&lt;_&gt;, _&gt;&gt;().unwrap(), expect)
+</a><a href="#h9-0-18" id="h9-0-18" class="i">+        }
+</a><a href="#h9-0-19" id="h9-0-19" class="i">+        r =&gt; panic!(&quot;Unexpected result {:?}&quot;, r),
+</a><a href="#h9-0-20" id="h9-0-20" class="i">+    }
+</a><a href="#h9-0-21" id="h9-0-21" class="i">+}
+</a><a href="#h9-0-22" id="h9-0-22" class="i">+
+</a><a href="#h9-0-23" id="h9-0-23" class="i">+/// Asserts that a resultset contains the single expected row.
+</a><a href="#h9-0-24" id="h9-0-24" class="i">+fn assert_row(result: toydb::ResultSet, expect: toydb::sql::types::Row) {
+</a><a href="#h9-0-25" id="h9-0-25" class="i">+    assert_rows(result, vec![expect])
+</a><a href="#h9-0-26" id="h9-0-26" class="i">+}
+</a><b>diff --git a/<a id="h10" href="../file/tests/e2e/recovery.rs.html">tests/e2e/recovery.rs</a> b/<a href="../file/tests/e2e/recovery.rs.html">tests/e2e/recovery.rs</a></b>
+<a href="#h10-0" id="h10-0" class="h">@@ -0,0 +1,50 @@
+</a><a href="#h10-0-0" id="h10-0-0" class="i">+use super::{assert_row, dataset, TestCluster};
+</a><a href="#h10-0-1" id="h10-0-1" class="i">+
+</a><a href="#h10-0-2" id="h10-0-2" class="i">+use serial_test::serial;
+</a><a href="#h10-0-3" id="h10-0-3" class="i">+use toydb::error::{Error, Result};
+</a><a href="#h10-0-4" id="h10-0-4" class="i">+use toydb::sql::types::Value;
+</a><a href="#h10-0-5" id="h10-0-5" class="i">+
+</a><a href="#h10-0-6" id="h10-0-6" class="i">+#[tokio::test(flavor = &quot;multi_thread&quot;, worker_threads = 2)]
+</a><a href="#h10-0-7" id="h10-0-7" class="i">+#[serial]
+</a><a href="#h10-0-8" id="h10-0-8" class="i">+// A client disconnect or termination should roll back its transaction.
+</a><a href="#h10-0-9" id="h10-0-9" class="i">+async fn client_disconnect_rollback() -&gt; Result&lt;()&gt; {
+</a><a href="#h10-0-10" id="h10-0-10" class="i">+    let tc = TestCluster::run_with(5, &amp;dataset::TEST_TABLE).await?;
+</a><a href="#h10-0-11" id="h10-0-11" class="i">+    let mut a = tc.connect_any().await?;
+</a><a href="#h10-0-12" id="h10-0-12" class="i">+    let mut b = tc.connect_any().await?;
+</a><a href="#h10-0-13" id="h10-0-13" class="i">+
+</a><a href="#h10-0-14" id="h10-0-14" class="i">+    a.execute(&quot;BEGIN&quot;).await?;
+</a><a href="#h10-0-15" id="h10-0-15" class="i">+    a.execute(&quot;INSERT INTO test VALUES (1, &#39;a&#39;)&quot;).await?;
+</a><a href="#h10-0-16" id="h10-0-16" class="i">+    std::mem::drop(a);
+</a><a href="#h10-0-17" id="h10-0-17" class="i">+
+</a><a href="#h10-0-18" id="h10-0-18" class="i">+    // This would fail with a serialization error if the txn is not rolled back.
+</a><a href="#h10-0-19" id="h10-0-19" class="i">+    b.execute(&quot;INSERT INTO test VALUES (1, &#39;b&#39;)&quot;).await?;
+</a><a href="#h10-0-20" id="h10-0-20" class="i">+    assert_row(
+</a><a href="#h10-0-21" id="h10-0-21" class="i">+        b.execute(&quot;SELECT * FROM test WHERE id = 1&quot;).await?,
+</a><a href="#h10-0-22" id="h10-0-22" class="i">+        vec![Value::Integer(1), Value::String(&quot;b&quot;.into())],
+</a><a href="#h10-0-23" id="h10-0-23" class="i">+    );
+</a><a href="#h10-0-24" id="h10-0-24" class="i">+
+</a><a href="#h10-0-25" id="h10-0-25" class="i">+    Ok(())
+</a><a href="#h10-0-26" id="h10-0-26" class="i">+}
+</a><a href="#h10-0-27" id="h10-0-27" class="i">+
+</a><a href="#h10-0-28" id="h10-0-28" class="i">+#[tokio::test(flavor = &quot;multi_thread&quot;, worker_threads = 2)]
+</a><a href="#h10-0-29" id="h10-0-29" class="i">+#[serial]
+</a><a href="#h10-0-30" id="h10-0-30" class="i">+async fn client_commit_error() -&gt; Result&lt;()&gt; {
+</a><a href="#h10-0-31" id="h10-0-31" class="i">+    let tc = TestCluster::run_with(5, &amp;dataset::TEST_TABLE).await?;
+</a><a href="#h10-0-32" id="h10-0-32" class="i">+    let mut a = tc.connect_any().await?;
+</a><a href="#h10-0-33" id="h10-0-33" class="i">+    let mut b = tc.connect_any().await?;
+</a><a href="#h10-0-34" id="h10-0-34" class="i">+
+</a><a href="#h10-0-35" id="h10-0-35" class="i">+    a.execute(&quot;BEGIN&quot;).await?;
+</a><a href="#h10-0-36" id="h10-0-36" class="i">+    a.execute(&quot;INSERT INTO test VALUES (1, &#39;a&#39;)&quot;).await?;
+</a><a href="#h10-0-37" id="h10-0-37" class="i">+
+</a><a href="#h10-0-38" id="h10-0-38" class="i">+    // When B gets a serialization error, it should still be in the txn and able to roll it back.
+</a><a href="#h10-0-39" id="h10-0-39" class="i">+    b.execute(&quot;BEGIN&quot;).await?;
+</a><a href="#h10-0-40" id="h10-0-40" class="i">+    b.execute(&quot;INSERT INTO test VALUES (2, &#39;b&#39;)&quot;).await?;
+</a><a href="#h10-0-41" id="h10-0-41" class="i">+    assert_eq!(b.execute(&quot;INSERT INTO test VALUES (1, &#39;b&#39;)&quot;).await, Err(Error::Serialization));
+</a><a href="#h10-0-42" id="h10-0-42" class="i">+    b.execute(&quot;ROLLBACK&quot;).await?;
+</a><a href="#h10-0-43" id="h10-0-43" class="i">+
+</a><a href="#h10-0-44" id="h10-0-44" class="i">+    // Once rolled back, A should be able to write ID 2 and commit.
+</a><a href="#h10-0-45" id="h10-0-45" class="i">+    a.execute(&quot;INSERT INTO test VALUES (2, &#39;a&#39;)&quot;).await?;
+</a><a href="#h10-0-46" id="h10-0-46" class="i">+    a.execute(&quot;COMMIT&quot;).await?;
+</a><a href="#h10-0-47" id="h10-0-47" class="i">+
+</a><a href="#h10-0-48" id="h10-0-48" class="i">+    Ok(())
+</a><a href="#h10-0-49" id="h10-0-49" class="i">+}
+</a><b>diff --git a/<a id="h11" href="../file/tests/e2e/testcluster.rs.html">tests/e2e/testcluster.rs</a> b/<a href="../file/tests/e2e/testcluster.rs.html">tests/e2e/testcluster.rs</a></b>
+<a href="#h11-0" id="h11-0" class="h">@@ -0,0 +1,179 @@
+</a><a href="#h11-0-0" id="h11-0-0" class="i">+use rand::Rng;
+</a><a href="#h11-0-1" id="h11-0-1" class="i">+use toydb::error::Result;
+</a><a href="#h11-0-2" id="h11-0-2" class="i">+use toydb::raft::NodeID;
+</a><a href="#h11-0-3" id="h11-0-3" class="i">+use toydb::Client;
+</a><a href="#h11-0-4" id="h11-0-4" class="i">+
+</a><a href="#h11-0-5" id="h11-0-5" class="i">+/// Runs a toyDB cluster using the built binary in a temporary directory. The
+</a><a href="#h11-0-6" id="h11-0-6" class="i">+/// cluster will be killed and removed when dropped.
+</a><a href="#h11-0-7" id="h11-0-7" class="i">+///
+</a><a href="#h11-0-8" id="h11-0-8" class="i">+/// This runs the cluster as child processes using the built binary instead of
+</a><a href="#h11-0-9" id="h11-0-9" class="i">+/// spawning in-memory threads for a couple of reasons: it avoids having to
+</a><a href="#h11-0-10" id="h11-0-10" class="i">+/// gracefully shut down the server (which is complicated by e.g.
+</a><a href="#h11-0-11" id="h11-0-11" class="i">+/// TcpListener::accept() not being interruptable), and it tests the entire
+</a><a href="#h11-0-12" id="h11-0-12" class="i">+/// server (and eventually the toySQL client) end-to-end.
+</a><a href="#h11-0-13" id="h11-0-13" class="i">+pub struct TestCluster {
+</a><a href="#h11-0-14" id="h11-0-14" class="i">+    nodes: u8,
+</a><a href="#h11-0-15" id="h11-0-15" class="i">+    dir: tempdir::TempDir,
+</a><a href="#h11-0-16" id="h11-0-16" class="i">+    children: std::collections::HashMap&lt;NodeID, std::process::Child&gt;,
+</a><a href="#h11-0-17" id="h11-0-17" class="i">+}
+</a><a href="#h11-0-18" id="h11-0-18" class="i">+
+</a><a href="#h11-0-19" id="h11-0-19" class="i">+impl TestCluster {
+</a><a href="#h11-0-20" id="h11-0-20" class="i">+    const SQL_BASE_PORT: u16 = 19600;
+</a><a href="#h11-0-21" id="h11-0-21" class="i">+    const RAFT_BASE_PORT: u16 = 19700;
+</a><a href="#h11-0-22" id="h11-0-22" class="i">+
+</a><a href="#h11-0-23" id="h11-0-23" class="i">+    /// Creates a new test cluster.
+</a><a href="#h11-0-24" id="h11-0-24" class="i">+    pub fn new(nodes: u8) -&gt; Result&lt;Self&gt; {
+</a><a href="#h11-0-25" id="h11-0-25" class="i">+        Ok(Self {
+</a><a href="#h11-0-26" id="h11-0-26" class="i">+            nodes,
+</a><a href="#h11-0-27" id="h11-0-27" class="i">+            dir: tempdir::TempDir::new(&quot;toydb&quot;)?,
+</a><a href="#h11-0-28" id="h11-0-28" class="i">+            children: std::collections::HashMap::new(),
+</a><a href="#h11-0-29" id="h11-0-29" class="i">+        })
+</a><a href="#h11-0-30" id="h11-0-30" class="i">+    }
+</a><a href="#h11-0-31" id="h11-0-31" class="i">+
+</a><a href="#h11-0-32" id="h11-0-32" class="i">+    /// Creates a new test cluster and starts it.
+</a><a href="#h11-0-33" id="h11-0-33" class="i">+    pub async fn run(nodes: u8) -&gt; Result&lt;Self&gt; {
+</a><a href="#h11-0-34" id="h11-0-34" class="i">+        let mut tc = Self::new(nodes)?;
+</a><a href="#h11-0-35" id="h11-0-35" class="i">+        tc.start().await?;
+</a><a href="#h11-0-36" id="h11-0-36" class="i">+        Ok(tc)
+</a><a href="#h11-0-37" id="h11-0-37" class="i">+    }
+</a><a href="#h11-0-38" id="h11-0-38" class="i">+
+</a><a href="#h11-0-39" id="h11-0-39" class="i">+    /// Creates a new test cluster, starts it, and imports an initial dataset.
+</a><a href="#h11-0-40" id="h11-0-40" class="i">+    pub async fn run_with(nodes: u8, init: &amp;str) -&gt; Result&lt;Self&gt; {
+</a><a href="#h11-0-41" id="h11-0-41" class="i">+        let tc = Self::run(nodes).await?;
+</a><a href="#h11-0-42" id="h11-0-42" class="i">+
+</a><a href="#h11-0-43" id="h11-0-43" class="i">+        let mut c = tc.connect_any().await?;
+</a><a href="#h11-0-44" id="h11-0-44" class="i">+        c.execute(&quot;BEGIN&quot;).await?;
+</a><a href="#h11-0-45" id="h11-0-45" class="i">+        for stmt in init.split(&#39;;&#39;) {
+</a><a href="#h11-0-46" id="h11-0-46" class="i">+            c.execute(stmt).await?;
+</a><a href="#h11-0-47" id="h11-0-47" class="i">+        }
+</a><a href="#h11-0-48" id="h11-0-48" class="i">+        c.execute(&quot;COMMIT&quot;).await?;
+</a><a href="#h11-0-49" id="h11-0-49" class="i">+
+</a><a href="#h11-0-50" id="h11-0-50" class="i">+        Ok(tc)
+</a><a href="#h11-0-51" id="h11-0-51" class="i">+    }
+</a><a href="#h11-0-52" id="h11-0-52" class="i">+
+</a><a href="#h11-0-53" id="h11-0-53" class="i">+    /// Returns an iterator over the cluster node IDs.
+</a><a href="#h11-0-54" id="h11-0-54" class="i">+    fn ids(&amp;self) -&gt; impl Iterator&lt;Item = NodeID&gt; {
+</a><a href="#h11-0-55" id="h11-0-55" class="i">+        1..=self.nodes
+</a><a href="#h11-0-56" id="h11-0-56" class="i">+    }
+</a><a href="#h11-0-57" id="h11-0-57" class="i">+
+</a><a href="#h11-0-58" id="h11-0-58" class="i">+    /// Asserts that the given node ID exists.
+</a><a href="#h11-0-59" id="h11-0-59" class="i">+    fn assert_id(&amp;self, id: NodeID) {
+</a><a href="#h11-0-60" id="h11-0-60" class="i">+        assert!(id &gt; 0 &amp;&amp; id &lt;= self.nodes, &quot;invalid node ID {}&quot;, id)
+</a><a href="#h11-0-61" id="h11-0-61" class="i">+    }
+</a><a href="#h11-0-62" id="h11-0-62" class="i">+
+</a><a href="#h11-0-63" id="h11-0-63" class="i">+    /// Asserts that all children are still alive.
+</a><a href="#h11-0-64" id="h11-0-64" class="i">+    fn assert_alive(&amp;mut self) {
+</a><a href="#h11-0-65" id="h11-0-65" class="i">+        for (id, child) in self.children.iter_mut() {
+</a><a href="#h11-0-66" id="h11-0-66" class="i">+            if let Some(s) = child.try_wait().expect(&quot;Failed to check child exit status&quot;) {
+</a><a href="#h11-0-67" id="h11-0-67" class="i">+                panic!(&quot;Node {id} exited with status {s}&quot;)
+</a><a href="#h11-0-68" id="h11-0-68" class="i">+            }
+</a><a href="#h11-0-69" id="h11-0-69" class="i">+        }
+</a><a href="#h11-0-70" id="h11-0-70" class="i">+    }
+</a><a href="#h11-0-71" id="h11-0-71" class="i">+
+</a><a href="#h11-0-72" id="h11-0-72" class="i">+    /// Returns the path to the given node&#39;s directory.
+</a><a href="#h11-0-73" id="h11-0-73" class="i">+    fn node_path(&amp;self, id: NodeID) -&gt; std::path::PathBuf {
+</a><a href="#h11-0-74" id="h11-0-74" class="i">+        self.assert_id(id);
+</a><a href="#h11-0-75" id="h11-0-75" class="i">+        self.dir.path().join(format!(&quot;toydb{}&quot;, id))
+</a><a href="#h11-0-76" id="h11-0-76" class="i">+    }
+</a><a href="#h11-0-77" id="h11-0-77" class="i">+
+</a><a href="#h11-0-78" id="h11-0-78" class="i">+    /// Generates a config file for the given node.
+</a><a href="#h11-0-79" id="h11-0-79" class="i">+    fn node_config(&amp;self, id: NodeID) -&gt; String {
+</a><a href="#h11-0-80" id="h11-0-80" class="i">+        self.assert_id(id);
+</a><a href="#h11-0-81" id="h11-0-81" class="i">+        let mut cfg = String::new();
+</a><a href="#h11-0-82" id="h11-0-82" class="i">+        cfg.push_str(&amp;format!(&quot;id: {}\n&quot;, id));
+</a><a href="#h11-0-83" id="h11-0-83" class="i">+        cfg.push_str(&amp;format!(&quot;data_dir: {}\n&quot;, self.node_path(id).to_string_lossy()));
+</a><a href="#h11-0-84" id="h11-0-84" class="i">+        cfg.push_str(&amp;format!(&quot;listen_sql: {}\n&quot;, self.node_address_sql(id)));
+</a><a href="#h11-0-85" id="h11-0-85" class="i">+        cfg.push_str(&amp;format!(&quot;listen_raft: {}\n&quot;, self.node_address_raft(id)));
+</a><a href="#h11-0-86" id="h11-0-86" class="i">+        cfg.push_str(&quot;peers: {\n&quot;);
+</a><a href="#h11-0-87" id="h11-0-87" class="i">+        for peer in self.ids().filter(|p| p != &amp;id) {
+</a><a href="#h11-0-88" id="h11-0-88" class="i">+            cfg.push_str(&amp;format!(&quot;  &#39;{}&#39;: {},\n&quot;, peer, self.node_address_raft(peer)))
+</a><a href="#h11-0-89" id="h11-0-89" class="i">+        }
+</a><a href="#h11-0-90" id="h11-0-90" class="i">+        cfg.push_str(&quot;}\n&quot;);
+</a><a href="#h11-0-91" id="h11-0-91" class="i">+        cfg
+</a><a href="#h11-0-92" id="h11-0-92" class="i">+    }
+</a><a href="#h11-0-93" id="h11-0-93" class="i">+
+</a><a href="#h11-0-94" id="h11-0-94" class="i">+    /// Returns the given node&#39;s Raft TCP address.
+</a><a href="#h11-0-95" id="h11-0-95" class="i">+    fn node_address_raft(&amp;self, id: NodeID) -&gt; String {
+</a><a href="#h11-0-96" id="h11-0-96" class="i">+        self.assert_id(id);
+</a><a href="#h11-0-97" id="h11-0-97" class="i">+        format!(&quot;localhost:{}&quot;, Self::RAFT_BASE_PORT + id as u16)
+</a><a href="#h11-0-98" id="h11-0-98" class="i">+    }
+</a><a href="#h11-0-99" id="h11-0-99" class="i">+
+</a><a href="#h11-0-100" id="h11-0-100" class="i">+    /// Returns the given node&#39;s SQL TCP address.
+</a><a href="#h11-0-101" id="h11-0-101" class="i">+    fn node_address_sql(&amp;self, id: NodeID) -&gt; String {
+</a><a href="#h11-0-102" id="h11-0-102" class="i">+        self.assert_id(id);
+</a><a href="#h11-0-103" id="h11-0-103" class="i">+        format!(&quot;localhost:{}&quot;, Self::SQL_BASE_PORT + id as u16)
+</a><a href="#h11-0-104" id="h11-0-104" class="i">+    }
+</a><a href="#h11-0-105" id="h11-0-105" class="i">+
+</a><a href="#h11-0-106" id="h11-0-106" class="i">+    /// Starts the test cluster. It keeps running until the cluster is dropped.
+</a><a href="#h11-0-107" id="h11-0-107" class="i">+    ///
+</a><a href="#h11-0-108" id="h11-0-108" class="i">+    /// TODO: this only uses async because Client is still async. Remove it.
+</a><a href="#h11-0-109" id="h11-0-109" class="i">+    pub async fn start(&amp;mut self) -&gt; Result&lt;()&gt; {
+</a><a href="#h11-0-110" id="h11-0-110" class="i">+        // Build the binary.
+</a><a href="#h11-0-111" id="h11-0-111" class="i">+        let build = escargot::CargoBuild::new().bin(&quot;toydb&quot;).run().expect(&quot;Failed to build binary&quot;);
+</a><a href="#h11-0-112" id="h11-0-112" class="i">+
+</a><a href="#h11-0-113" id="h11-0-113" class="i">+        // Spawn nodes.
+</a><a href="#h11-0-114" id="h11-0-114" class="i">+        for id in self.ids() {
+</a><a href="#h11-0-115" id="h11-0-115" class="i">+            // Create node directory and config file.
+</a><a href="#h11-0-116" id="h11-0-116" class="i">+            std::fs::create_dir_all(&amp;self.node_path(id))?;
+</a><a href="#h11-0-117" id="h11-0-117" class="i">+            std::fs::write(&amp;self.node_path(id).join(&quot;toydb.yaml&quot;), self.node_config(id))?;
+</a><a href="#h11-0-118" id="h11-0-118" class="i">+
+</a><a href="#h11-0-119" id="h11-0-119" class="i">+            // Spawn node. Silence output by default, since there doesn&#39;t appear
+</a><a href="#h11-0-120" id="h11-0-120" class="i">+            // to be a way to pass the output to the &quot;cargo test&quot; output capture
+</a><a href="#h11-0-121" id="h11-0-121" class="i">+            // without a thread piping it through println!.
+</a><a href="#h11-0-122" id="h11-0-122" class="i">+            //
+</a><a href="#h11-0-123" id="h11-0-123" class="i">+            // TODO: see if there&#39;s a way to send this to &quot;cargo test&quot; and have
+</a><a href="#h11-0-124" id="h11-0-124" class="i">+            // it capture it like println!.
+</a><a href="#h11-0-125" id="h11-0-125" class="i">+            let child = build
+</a><a href="#h11-0-126" id="h11-0-126" class="i">+                .command()
+</a><a href="#h11-0-127" id="h11-0-127" class="i">+                .args(vec![&quot;-c&quot;, &amp;self.node_path(id).join(&quot;toydb.yaml&quot;).to_string_lossy()])
+</a><a href="#h11-0-128" id="h11-0-128" class="i">+                .stdout(std::process::Stdio::null())
+</a><a href="#h11-0-129" id="h11-0-129" class="i">+                .stderr(std::process::Stdio::null())
+</a><a href="#h11-0-130" id="h11-0-130" class="i">+                .spawn()?;
+</a><a href="#h11-0-131" id="h11-0-131" class="i">+            self.children.insert(id, child);
+</a><a href="#h11-0-132" id="h11-0-132" class="i">+        }
+</a><a href="#h11-0-133" id="h11-0-133" class="i">+        self.assert_alive();
+</a><a href="#h11-0-134" id="h11-0-134" class="i">+
+</a><a href="#h11-0-135" id="h11-0-135" class="i">+        // Wait for all nodes to be ready, by connecting to them and fetching
+</a><a href="#h11-0-136" id="h11-0-136" class="i">+        // the cluster status.
+</a><a href="#h11-0-137" id="h11-0-137" class="i">+        const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+</a><a href="#h11-0-138" id="h11-0-138" class="i">+        const COOLDOWN: std::time::Duration = std::time::Duration::from_millis(200);
+</a><a href="#h11-0-139" id="h11-0-139" class="i">+
+</a><a href="#h11-0-140" id="h11-0-140" class="i">+        let deadline = std::time::Instant::now().checked_add(TIMEOUT).unwrap();
+</a><a href="#h11-0-141" id="h11-0-141" class="i">+        for id in self.ids() {
+</a><a href="#h11-0-142" id="h11-0-142" class="i">+            while let Err(e) = async { self.connect(id).await?.status().await }.await {
+</a><a href="#h11-0-143" id="h11-0-143" class="i">+                self.assert_alive();
+</a><a href="#h11-0-144" id="h11-0-144" class="i">+                if std::time::Instant::now() &gt;= deadline {
+</a><a href="#h11-0-145" id="h11-0-145" class="i">+                    return Err(e);
+</a><a href="#h11-0-146" id="h11-0-146" class="i">+                }
+</a><a href="#h11-0-147" id="h11-0-147" class="i">+                tokio::time::sleep(COOLDOWN).await;
+</a><a href="#h11-0-148" id="h11-0-148" class="i">+            }
+</a><a href="#h11-0-149" id="h11-0-149" class="i">+        }
+</a><a href="#h11-0-150" id="h11-0-150" class="i">+
+</a><a href="#h11-0-151" id="h11-0-151" class="i">+        Ok(())
+</a><a href="#h11-0-152" id="h11-0-152" class="i">+    }
+</a><a href="#h11-0-153" id="h11-0-153" class="i">+
+</a><a href="#h11-0-154" id="h11-0-154" class="i">+    /// Connects to the given cluster node.
+</a><a href="#h11-0-155" id="h11-0-155" class="i">+    pub async fn connect(&amp;self, id: NodeID) -&gt; Result&lt;Client&gt; {
+</a><a href="#h11-0-156" id="h11-0-156" class="i">+        self.assert_id(id);
+</a><a href="#h11-0-157" id="h11-0-157" class="i">+        Client::new(self.node_address_sql(id)).await
+</a><a href="#h11-0-158" id="h11-0-158" class="i">+    }
+</a><a href="#h11-0-159" id="h11-0-159" class="i">+
+</a><a href="#h11-0-160" id="h11-0-160" class="i">+    /// Connects to a random cluster node.
+</a><a href="#h11-0-161" id="h11-0-161" class="i">+    pub async fn connect_any(&amp;self) -&gt; Result&lt;Client&gt; {
+</a><a href="#h11-0-162" id="h11-0-162" class="i">+        self.connect(rand::thread_rng().gen_range(1..=self.nodes)).await
+</a><a href="#h11-0-163" id="h11-0-163" class="i">+    }
+</a><a href="#h11-0-164" id="h11-0-164" class="i">+}
+</a><a href="#h11-0-165" id="h11-0-165" class="i">+
+</a><a href="#h11-0-166" id="h11-0-166" class="i">+impl Drop for TestCluster {
+</a><a href="#h11-0-167" id="h11-0-167" class="i">+    /// Kills the child processes when the cluster is dropped. The temp dir is
+</a><a href="#h11-0-168" id="h11-0-168" class="i">+    /// removed by TempDir::drop().
+</a><a href="#h11-0-169" id="h11-0-169" class="i">+    ///
+</a><a href="#h11-0-170" id="h11-0-170" class="i">+    /// Note that cargo will itself kill all child processes if the tests are
+</a><a href="#h11-0-171" id="h11-0-171" class="i">+    /// aborted via e.g. Ctrl-C: https://github.com/rust-lang/cargo/issues/5598
+</a><a href="#h11-0-172" id="h11-0-172" class="i">+    fn drop(&amp;mut self) {
+</a><a href="#h11-0-173" id="h11-0-173" class="i">+        for (_, mut child) in self.children.drain() {
+</a><a href="#h11-0-174" id="h11-0-174" class="i">+            child.kill().expect(&quot;Failed to kill node&quot;);
+</a><a href="#h11-0-175" id="h11-0-175" class="i">+            child.wait().expect(&quot;Failed to wait for node to terminate&quot;);
+</a><a href="#h11-0-176" id="h11-0-176" class="i">+        }
+</a><a href="#h11-0-177" id="h11-0-177" class="i">+    }
+</a><a href="#h11-0-178" id="h11-0-178" class="i">+}
+</a><b>diff --git a/<a id="h12" href="../file/tests/setup.rs.html">tests/setup.rs</a> b/<a href="../file/tests/setup.rs.html">tests/setup.rs</a></b>
+<a href="#h12-0" id="h12-0" class="h">@@ -1,214 +0,0 @@
+</a><a href="#h12-0-0" id="h12-0-0" class="d">-#![allow(clippy::implicit_hasher)]
+</a><a href="#h12-0-1" id="h12-0-1" class="d">-
+</a><a href="#h12-0-2" id="h12-0-2" class="d">-use toydb::client::Client;
+</a><a href="#h12-0-3" id="h12-0-3" class="d">-use toydb::error::Result;
+</a><a href="#h12-0-4" id="h12-0-4" class="d">-use toydb::server::Server;
+</a><a href="#h12-0-5" id="h12-0-5" class="d">-use toydb::{raft, sql, storage};
+</a><a href="#h12-0-6" id="h12-0-6" class="d">-
+</a><a href="#h12-0-7" id="h12-0-7" class="d">-use futures_util::future::FutureExt as _;
+</a><a href="#h12-0-8" id="h12-0-8" class="d">-use pretty_assertions::assert_eq;
+</a><a href="#h12-0-9" id="h12-0-9" class="d">-use std::collections::HashMap;
+</a><a href="#h12-0-10" id="h12-0-10" class="d">-use std::time::Duration;
+</a><a href="#h12-0-11" id="h12-0-11" class="d">-use tempdir::TempDir;
+</a><a href="#h12-0-12" id="h12-0-12" class="d">-use tokio::net::TcpListener;
+</a><a href="#h12-0-13" id="h12-0-13" class="d">-
+</a><a href="#h12-0-14" id="h12-0-14" class="d">-// Movie data
+</a><a href="#h12-0-15" id="h12-0-15" class="d">-pub fn movies() -&gt; Vec&lt;&amp;&#39;static str&gt; {
+</a><a href="#h12-0-16" id="h12-0-16" class="d">-    vec![
+</a><a href="#h12-0-17" id="h12-0-17" class="d">-        &quot;CREATE TABLE countries (
+</a><a href="#h12-0-18" id="h12-0-18" class="d">-            id STRING PRIMARY KEY,
+</a><a href="#h12-0-19" id="h12-0-19" class="d">-            name STRING NOT NULL
+</a><a href="#h12-0-20" id="h12-0-20" class="d">-        )&quot;,
+</a><a href="#h12-0-21" id="h12-0-21" class="d">-        &quot;INSERT INTO countries VALUES
+</a><a href="#h12-0-22" id="h12-0-22" class="d">-            (&#39;fr&#39;, &#39;France&#39;),
+</a><a href="#h12-0-23" id="h12-0-23" class="d">-            (&#39;ru&#39;, &#39;Russia&#39;),
+</a><a href="#h12-0-24" id="h12-0-24" class="d">-            (&#39;us&#39;, &#39;United States of America&#39;)&quot;,
+</a><a href="#h12-0-25" id="h12-0-25" class="d">-        &quot;CREATE TABLE genres (
+</a><a href="#h12-0-26" id="h12-0-26" class="d">-            id INTEGER PRIMARY KEY,
+</a><a href="#h12-0-27" id="h12-0-27" class="d">-            name STRING NOT NULL
+</a><a href="#h12-0-28" id="h12-0-28" class="d">-        )&quot;,
+</a><a href="#h12-0-29" id="h12-0-29" class="d">-        &quot;INSERT INTO genres VALUES
+</a><a href="#h12-0-30" id="h12-0-30" class="d">-            (1, &#39;Science Fiction&#39;),
+</a><a href="#h12-0-31" id="h12-0-31" class="d">-            (2, &#39;Action&#39;),
+</a><a href="#h12-0-32" id="h12-0-32" class="d">-            (3, &#39;Comedy&#39;)&quot;,
+</a><a href="#h12-0-33" id="h12-0-33" class="d">-        &quot;CREATE TABLE studios (
+</a><a href="#h12-0-34" id="h12-0-34" class="d">-            id INTEGER PRIMARY KEY,
+</a><a href="#h12-0-35" id="h12-0-35" class="d">-            name STRING NOT NULL,
+</a><a href="#h12-0-36" id="h12-0-36" class="d">-            country_id STRING REFERENCES countries
+</a><a href="#h12-0-37" id="h12-0-37" class="d">-        )&quot;,
+</a><a href="#h12-0-38" id="h12-0-38" class="d">-        &quot;INSERT INTO studios VALUES
+</a><a href="#h12-0-39" id="h12-0-39" class="d">-            (1, &#39;Mosfilm&#39;, &#39;ru&#39;),
+</a><a href="#h12-0-40" id="h12-0-40" class="d">-            (2, &#39;Lionsgate&#39;, &#39;us&#39;),
+</a><a href="#h12-0-41" id="h12-0-41" class="d">-            (3, &#39;StudioCanal&#39;, &#39;fr&#39;),
+</a><a href="#h12-0-42" id="h12-0-42" class="d">-            (4, &#39;Warner Bros&#39;, &#39;us&#39;)&quot;,
+</a><a href="#h12-0-43" id="h12-0-43" class="d">-        &quot;CREATE TABLE movies (
+</a><a href="#h12-0-44" id="h12-0-44" class="d">-            id INTEGER PRIMARY KEY,
+</a><a href="#h12-0-45" id="h12-0-45" class="d">-            title STRING NOT NULL,
+</a><a href="#h12-0-46" id="h12-0-46" class="d">-            studio_id INTEGER NOT NULL REFERENCES studios,
+</a><a href="#h12-0-47" id="h12-0-47" class="d">-            genre_id INTEGER NOT NULL REFERENCES genres,
+</a><a href="#h12-0-48" id="h12-0-48" class="d">-            released INTEGER NOT NULL,
+</a><a href="#h12-0-49" id="h12-0-49" class="d">-            rating FLOAT,
+</a><a href="#h12-0-50" id="h12-0-50" class="d">-            ultrahd BOOLEAN
+</a><a href="#h12-0-51" id="h12-0-51" class="d">-        )&quot;,
+</a><a href="#h12-0-52" id="h12-0-52" class="d">-        &quot;INSERT INTO movies VALUES
+</a><a href="#h12-0-53" id="h12-0-53" class="d">-            (1, &#39;Stalker&#39;, 1, 1, 1979, 8.2, NULL),
+</a><a href="#h12-0-54" id="h12-0-54" class="d">-            (2, &#39;Sicario&#39;, 2, 2, 2015, 7.6, TRUE),
+</a><a href="#h12-0-55" id="h12-0-55" class="d">-            (3, &#39;Primer&#39;, 3, 1, 2004, 6.9, NULL),
+</a><a href="#h12-0-56" id="h12-0-56" class="d">-            (4, &#39;Heat&#39;, 4, 2, 1995, 8.2, TRUE),
+</a><a href="#h12-0-57" id="h12-0-57" class="d">-            (5, &#39;The Fountain&#39;, 4, 1, 2006, 7.2, FALSE),
+</a><a href="#h12-0-58" id="h12-0-58" class="d">-            (6, &#39;Solaris&#39;, 1, 1, 1972, 8.1, NULL),
+</a><a href="#h12-0-59" id="h12-0-59" class="d">-            (7, &#39;Gravity&#39;, 4, 1, 2013, 7.7, TRUE),
+</a><a href="#h12-0-60" id="h12-0-60" class="d">-            (8, &#39;Blindspotting&#39;, 2, 3, 2018, 7.4, TRUE),
+</a><a href="#h12-0-61" id="h12-0-61" class="d">-            (9, &#39;Birdman&#39;, 4, 3, 2014, 7.7, TRUE),
+</a><a href="#h12-0-62" id="h12-0-62" class="d">-            (10, &#39;Inception&#39;, 4, 1, 2010, 8.8, TRUE)&quot;,
+</a><a href="#h12-0-63" id="h12-0-63" class="d">-    ]
+</a><a href="#h12-0-64" id="h12-0-64" class="d">-}
+</a><a href="#h12-0-65" id="h12-0-65" class="d">-
+</a><a href="#h12-0-66" id="h12-0-66" class="d">-/// Simple data
+</a><a href="#h12-0-67" id="h12-0-67" class="d">-pub fn simple() -&gt; Vec&lt;&amp;&#39;static str&gt; {
+</a><a href="#h12-0-68" id="h12-0-68" class="d">-    vec![&quot;CREATE TABLE test (id INTEGER PRIMARY KEY, value STRING)&quot;]
+</a><a href="#h12-0-69" id="h12-0-69" class="d">-}
+</a><a href="#h12-0-70" id="h12-0-70" class="d">-
+</a><a href="#h12-0-71" id="h12-0-71" class="d">-/// Sets up a test server
+</a><a href="#h12-0-72" id="h12-0-72" class="d">-pub async fn server(
+</a><a href="#h12-0-73" id="h12-0-73" class="d">-    id: raft::NodeID,
+</a><a href="#h12-0-74" id="h12-0-74" class="d">-    addr_sql: &amp;str,
+</a><a href="#h12-0-75" id="h12-0-75" class="d">-    addr_raft: &amp;str,
+</a><a href="#h12-0-76" id="h12-0-76" class="d">-    peers: HashMap&lt;raft::NodeID, String&gt;,
+</a><a href="#h12-0-77" id="h12-0-77" class="d">-) -&gt; Result&lt;Teardown&gt; {
+</a><a href="#h12-0-78" id="h12-0-78" class="d">-    let dir = TempDir::new(&quot;toydb&quot;)?;
+</a><a href="#h12-0-79" id="h12-0-79" class="d">-    let raft_log = raft::Log::new(storage::engine::BitCask::new(dir.path().join(&quot;log&quot;))?, false)?;
+</a><a href="#h12-0-80" id="h12-0-80" class="d">-    let raft_state = Box::new(sql::engine::Raft::new_state(storage::engine::Memory::new())?);
+</a><a href="#h12-0-81" id="h12-0-81" class="d">-    let raft_listener = TcpListener::bind(addr_raft).await?;
+</a><a href="#h12-0-82" id="h12-0-82" class="d">-    let sql_listener = TcpListener::bind(addr_sql).await?;
+</a><a href="#h12-0-83" id="h12-0-83" class="d">-
+</a><a href="#h12-0-84" id="h12-0-84" class="d">-    let (task, abort) = Server::new(id, peers, raft_log, raft_state)?
+</a><a href="#h12-0-85" id="h12-0-85" class="d">-        .serve(raft_listener, sql_listener)
+</a><a href="#h12-0-86" id="h12-0-86" class="d">-        .remote_handle();
+</a><a href="#h12-0-87" id="h12-0-87" class="d">-
+</a><a href="#h12-0-88" id="h12-0-88" class="d">-    tokio::spawn(task);
+</a><a href="#h12-0-89" id="h12-0-89" class="d">-
+</a><a href="#h12-0-90" id="h12-0-90" class="d">-    Ok(Teardown::new(move || {
+</a><a href="#h12-0-91" id="h12-0-91" class="d">-        std::mem::drop(abort);
+</a><a href="#h12-0-92" id="h12-0-92" class="d">-        std::mem::drop(dir);
+</a><a href="#h12-0-93" id="h12-0-93" class="d">-    }))
+</a><a href="#h12-0-94" id="h12-0-94" class="d">-}
+</a><a href="#h12-0-95" id="h12-0-95" class="d">-
+</a><a href="#h12-0-96" id="h12-0-96" class="d">-/// Sets up a server with a client
+</a><a href="#h12-0-97" id="h12-0-97" class="d">-pub async fn server_with_client(queries: Vec&lt;&amp;str&gt;) -&gt; Result&lt;(Client, Teardown)&gt; {
+</a><a href="#h12-0-98" id="h12-0-98" class="d">-    let teardown = server(1, &quot;127.0.0.1:9605&quot;, &quot;127.0.0.1:9705&quot;, HashMap::new()).await?;
+</a><a href="#h12-0-99" id="h12-0-99" class="d">-    let mut client = Client::new(&quot;127.0.0.1:9605&quot;).await?;
+</a><a href="#h12-0-100" id="h12-0-100" class="d">-    if !queries.is_empty() {
+</a><a href="#h12-0-101" id="h12-0-101" class="d">-        client.execute(&quot;BEGIN&quot;).await?;
+</a><a href="#h12-0-102" id="h12-0-102" class="d">-        for query in queries {
+</a><a href="#h12-0-103" id="h12-0-103" class="d">-            client.execute(query).await?;
+</a><a href="#h12-0-104" id="h12-0-104" class="d">-        }
+</a><a href="#h12-0-105" id="h12-0-105" class="d">-        client.execute(&quot;COMMIT&quot;).await?;
+</a><a href="#h12-0-106" id="h12-0-106" class="d">-    }
+</a><a href="#h12-0-107" id="h12-0-107" class="d">-    Ok((client, teardown))
+</a><a href="#h12-0-108" id="h12-0-108" class="d">-}
+</a><a href="#h12-0-109" id="h12-0-109" class="d">-
+</a><a href="#h12-0-110" id="h12-0-110" class="d">-/// Sets up a server cluster.
+</a><a href="#h12-0-111" id="h12-0-111" class="d">-pub async fn cluster(nodes: HashMap&lt;raft::NodeID, (String, String)&gt;) -&gt; Result&lt;Teardown&gt; {
+</a><a href="#h12-0-112" id="h12-0-112" class="d">-    let mut teardown = Teardown::empty();
+</a><a href="#h12-0-113" id="h12-0-113" class="d">-    for (id, (addr_sql, addr_raft)) in nodes.iter() {
+</a><a href="#h12-0-114" id="h12-0-114" class="d">-        let peers = nodes
+</a><a href="#h12-0-115" id="h12-0-115" class="d">-            .iter()
+</a><a href="#h12-0-116" id="h12-0-116" class="d">-            .filter(|(i, _)| i != &amp;id)
+</a><a href="#h12-0-117" id="h12-0-117" class="d">-            .map(|(id, (_, raft))| (*id, raft.clone()))
+</a><a href="#h12-0-118" id="h12-0-118" class="d">-            .collect();
+</a><a href="#h12-0-119" id="h12-0-119" class="d">-        teardown.merge(server(*id, addr_sql, addr_raft, peers).await?);
+</a><a href="#h12-0-120" id="h12-0-120" class="d">-    }
+</a><a href="#h12-0-121" id="h12-0-121" class="d">-
+</a><a href="#h12-0-122" id="h12-0-122" class="d">-    // Wait for nodes to have a leader.
+</a><a href="#h12-0-123" id="h12-0-123" class="d">-    for (id, (addr_sql, _)) in nodes.iter() {
+</a><a href="#h12-0-124" id="h12-0-124" class="d">-        for _ in 0..10 {
+</a><a href="#h12-0-125" id="h12-0-125" class="d">-            match Client::new(addr_sql).await {
+</a><a href="#h12-0-126" id="h12-0-126" class="d">-                Ok(mut client) =&gt; match client.status().await {
+</a><a href="#h12-0-127" id="h12-0-127" class="d">-                    Ok(status) if status.raft.leader &gt; 0 =&gt; break,
+</a><a href="#h12-0-128" id="h12-0-128" class="d">-                    Ok(_) =&gt; log::error!(&quot;no leader&quot;),
+</a><a href="#h12-0-129" id="h12-0-129" class="d">-                    Err(err) =&gt; log::error!(&quot;Status failed for {}: {}&quot;, id, err),
+</a><a href="#h12-0-130" id="h12-0-130" class="d">-                },
+</a><a href="#h12-0-131" id="h12-0-131" class="d">-                Err(err) =&gt; log::error!(&quot;Client failed for {}: {}&quot;, id, err),
+</a><a href="#h12-0-132" id="h12-0-132" class="d">-            }
+</a><a href="#h12-0-133" id="h12-0-133" class="d">-            tokio::time::sleep(Duration::from_millis(100)).await
+</a><a href="#h12-0-134" id="h12-0-134" class="d">-        }
+</a><a href="#h12-0-135" id="h12-0-135" class="d">-    }
+</a><a href="#h12-0-136" id="h12-0-136" class="d">-
+</a><a href="#h12-0-137" id="h12-0-137" class="d">-    Ok(teardown)
+</a><a href="#h12-0-138" id="h12-0-138" class="d">-}
+</a><a href="#h12-0-139" id="h12-0-139" class="d">-
+</a><a href="#h12-0-140" id="h12-0-140" class="d">-/// Sets up a server cluster with clients
+</a><a href="#h12-0-141" id="h12-0-141" class="d">-pub async fn cluster_with_clients(size: u8, queries: Vec&lt;&amp;str&gt;) -&gt; Result&lt;(Vec&lt;Client&gt;, Teardown)&gt; {
+</a><a href="#h12-0-142" id="h12-0-142" class="d">-    let mut nodes = HashMap::new();
+</a><a href="#h12-0-143" id="h12-0-143" class="d">-    for i in 1..=size {
+</a><a href="#h12-0-144" id="h12-0-144" class="d">-        nodes.insert(
+</a><a href="#h12-0-145" id="h12-0-145" class="d">-            i,
+</a><a href="#h12-0-146" id="h12-0-146" class="d">-            (format!(&quot;127.0.0.1:{}&quot;, 9605 + i as u64), format!(&quot;127.0.0.1:{}&quot;, 9705 + i as u64)),
+</a><a href="#h12-0-147" id="h12-0-147" class="d">-        );
+</a><a href="#h12-0-148" id="h12-0-148" class="d">-    }
+</a><a href="#h12-0-149" id="h12-0-149" class="d">-    let teardown = cluster(nodes.clone()).await?;
+</a><a href="#h12-0-150" id="h12-0-150" class="d">-
+</a><a href="#h12-0-151" id="h12-0-151" class="d">-    let mut clients = Vec::&lt;Client&gt;::new();
+</a><a href="#h12-0-152" id="h12-0-152" class="d">-    for (id, (addr_sql, _)) in nodes {
+</a><a href="#h12-0-153" id="h12-0-153" class="d">-        let mut client = Client::new(addr_sql).await?;
+</a><a href="#h12-0-154" id="h12-0-154" class="d">-        assert_eq!(id, client.status().await?.raft.server);
+</a><a href="#h12-0-155" id="h12-0-155" class="d">-        clients.push(client);
+</a><a href="#h12-0-156" id="h12-0-156" class="d">-    }
+</a><a href="#h12-0-157" id="h12-0-157" class="d">-
+</a><a href="#h12-0-158" id="h12-0-158" class="d">-    if !queries.is_empty() {
+</a><a href="#h12-0-159" id="h12-0-159" class="d">-        let c = clients.get_mut(0).unwrap();
+</a><a href="#h12-0-160" id="h12-0-160" class="d">-        c.execute(&quot;BEGIN&quot;).await?;
+</a><a href="#h12-0-161" id="h12-0-161" class="d">-        for query in queries {
+</a><a href="#h12-0-162" id="h12-0-162" class="d">-            c.execute(query).await?;
+</a><a href="#h12-0-163" id="h12-0-163" class="d">-        }
+</a><a href="#h12-0-164" id="h12-0-164" class="d">-        c.execute(&quot;COMMIT&quot;).await?;
+</a><a href="#h12-0-165" id="h12-0-165" class="d">-    }
+</a><a href="#h12-0-166" id="h12-0-166" class="d">-
+</a><a href="#h12-0-167" id="h12-0-167" class="d">-    Ok((clients, teardown))
+</a><a href="#h12-0-168" id="h12-0-168" class="d">-}
+</a><a href="#h12-0-169" id="h12-0-169" class="d">-
+</a><a href="#h12-0-170" id="h12-0-170" class="d">-/// Sets up a simple cluster with 3 clients and a test table
+</a><a href="#h12-0-171" id="h12-0-171" class="d">-pub async fn cluster_simple() -&gt; Result&lt;(Client, Client, Client, Teardown)&gt; {
+</a><a href="#h12-0-172" id="h12-0-172" class="d">-    let (mut clients, teardown) = cluster_with_clients(3, simple()).await?;
+</a><a href="#h12-0-173" id="h12-0-173" class="d">-    let a = clients.remove(0);
+</a><a href="#h12-0-174" id="h12-0-174" class="d">-    let b = clients.remove(0);
+</a><a href="#h12-0-175" id="h12-0-175" class="d">-    let c = clients.remove(0);
+</a><a href="#h12-0-176" id="h12-0-176" class="d">-
+</a><a href="#h12-0-177" id="h12-0-177" class="d">-    Ok((a, b, c, teardown))
+</a><a href="#h12-0-178" id="h12-0-178" class="d">-}
+</a><a href="#h12-0-179" id="h12-0-179" class="d">-
+</a><a href="#h12-0-180" id="h12-0-180" class="d">-/// Tears down a test fixture when dropped.
+</a><a href="#h12-0-181" id="h12-0-181" class="d">-pub struct Teardown {
+</a><a href="#h12-0-182" id="h12-0-182" class="d">-    fns: Vec&lt;Box&lt;dyn FnOnce()&gt;&gt;,
+</a><a href="#h12-0-183" id="h12-0-183" class="d">-}
+</a><a href="#h12-0-184" id="h12-0-184" class="d">-
+</a><a href="#h12-0-185" id="h12-0-185" class="d">-impl Teardown {
+</a><a href="#h12-0-186" id="h12-0-186" class="d">-    fn new&lt;F: FnOnce() + &#39;static&gt;(f: F) -&gt; Self {
+</a><a href="#h12-0-187" id="h12-0-187" class="d">-        let mut t = Self::empty();
+</a><a href="#h12-0-188" id="h12-0-188" class="d">-        t.on_drop(f);
+</a><a href="#h12-0-189" id="h12-0-189" class="d">-        t
+</a><a href="#h12-0-190" id="h12-0-190" class="d">-    }
+</a><a href="#h12-0-191" id="h12-0-191" class="d">-
+</a><a href="#h12-0-192" id="h12-0-192" class="d">-    fn empty() -&gt; Self {
+</a><a href="#h12-0-193" id="h12-0-193" class="d">-        Self { fns: Vec::new() }
+</a><a href="#h12-0-194" id="h12-0-194" class="d">-    }
+</a><a href="#h12-0-195" id="h12-0-195" class="d">-
+</a><a href="#h12-0-196" id="h12-0-196" class="d">-    fn on_drop&lt;F: FnOnce() + &#39;static&gt;(&amp;mut self, f: F) {
+</a><a href="#h12-0-197" id="h12-0-197" class="d">-        self.fns.push(Box::new(f))
+</a><a href="#h12-0-198" id="h12-0-198" class="d">-    }
+</a><a href="#h12-0-199" id="h12-0-199" class="d">-
+</a><a href="#h12-0-200" id="h12-0-200" class="d">-    fn merge(&amp;mut self, mut other: Teardown) {
+</a><a href="#h12-0-201" id="h12-0-201" class="d">-        while !other.fns.is_empty() {
+</a><a href="#h12-0-202" id="h12-0-202" class="d">-            self.fns.push(other.fns.remove(0))
+</a><a href="#h12-0-203" id="h12-0-203" class="d">-        }
+</a><a href="#h12-0-204" id="h12-0-204" class="d">-    }
+</a><a href="#h12-0-205" id="h12-0-205" class="d">-}
+</a><a href="#h12-0-206" id="h12-0-206" class="d">-
+</a><a href="#h12-0-207" id="h12-0-207" class="d">-impl Drop for Teardown {
+</a><a href="#h12-0-208" id="h12-0-208" class="d">-    fn drop(&amp;mut self) {
+</a><a href="#h12-0-209" id="h12-0-209" class="d">-        while !self.fns.is_empty() {
+</a><a href="#h12-0-210" id="h12-0-210" class="d">-            self.fns.remove(0)()
+</a><a href="#h12-0-211" id="h12-0-211" class="d">-        }
+</a><a href="#h12-0-212" id="h12-0-212" class="d">-    }
+</a><a href="#h12-0-213" id="h12-0-213" class="d">-}
+</a><b>diff --git a/<a id="h13" href="../file/tests/tests.rs.html">tests/tests.rs</a> b/<a href="../file/tests/tests.rs.html">tests/tests.rs</a></b>
+<a href="#h13-0" id="h13-0" class="h">@@ -1,26 +1,4 @@
+</a> #![warn(clippy::all)]
+ 
+<a href="#h13-0-2" id="h13-0-2" class="d">-mod client;
+</a><a href="#h13-0-3" id="h13-0-3" class="d">-mod cluster;
+</a><a href="#h13-0-4" id="h13-0-4" class="d">-mod setup;
+</a><a href="#h13-0-5" id="h13-0-5" class="i">+mod e2e;
+</a> mod sql;
+<a href="#h13-0-7" id="h13-0-7" class="d">-
+</a><a href="#h13-0-8" id="h13-0-8" class="d">-use toydb::sql::execution::ResultSet;
+</a><a href="#h13-0-9" id="h13-0-9" class="d">-use toydb::sql::types::Row;
+</a><a href="#h13-0-10" id="h13-0-10" class="d">-
+</a><a href="#h13-0-11" id="h13-0-11" class="d">-use pretty_assertions::assert_eq;
+</a><a href="#h13-0-12" id="h13-0-12" class="d">-
+</a><a href="#h13-0-13" id="h13-0-13" class="d">-/// Asserts that a resultset contains the expected rows.
+</a><a href="#h13-0-14" id="h13-0-14" class="d">-pub fn assert_rows(result: ResultSet, expect: Vec&lt;Row&gt;) {
+</a><a href="#h13-0-15" id="h13-0-15" class="d">-    match result {
+</a><a href="#h13-0-16" id="h13-0-16" class="d">-        ResultSet::Query { rows, .. } =&gt; {
+</a><a href="#h13-0-17" id="h13-0-17" class="d">-            assert_eq!(rows.collect::&lt;Result&lt;Vec&lt;_&gt;, _&gt;&gt;().unwrap(), expect)
+</a><a href="#h13-0-18" id="h13-0-18" class="d">-        }
+</a><a href="#h13-0-19" id="h13-0-19" class="d">-        r =&gt; panic!(&quot;Unexpected result {:?}&quot;, r),
+</a><a href="#h13-0-20" id="h13-0-20" class="d">-    }
+</a><a href="#h13-0-21" id="h13-0-21" class="d">-}
+</a><a href="#h13-0-22" id="h13-0-22" class="d">-
+</a><a href="#h13-0-23" id="h13-0-23" class="d">-/// Asserts that a resultset contains the single expected row.
+</a><a href="#h13-0-24" id="h13-0-24" class="d">-pub fn assert_row(result: ResultSet, expect: Row) {
+</a><a href="#h13-0-25" id="h13-0-25" class="d">-    assert_rows(result, vec![expect])
+</a><a href="#h13-0-26" id="h13-0-26" class="d">-}
+</a></pre>
+</div>
+</body>
+</html>

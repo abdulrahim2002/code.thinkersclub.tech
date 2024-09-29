@@ -1,0 +1,586 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>sql: split out engine and session submodules - toydb - An SQL engine written in Rust
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+</head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
+</span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/README.md.html">README</a> | <a href="../file/LICENSE.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/d3c09027819e5cc185ce689c21e34ac031825757.html">d3c09027819e5cc185ce689c21e34ac031825757</a>
+<b>parent</b> <a href="../commit/9a3d8399216f8fe8daf985b2f4d439347ded576b.html">9a3d8399216f8fe8daf985b2f4d439347ded576b</a>
+<b>Author:</b> Erik Grinaker &lt;<a href="mailto:erik@grinaker.org">erik@grinaker.org</a>&gt;
+<b>Date:</b>   Mon, 17 Jun 2024 13:40:54 +0200
+
+sql: split out engine and session submodules
+
+<b>Diffstat:</b>
+<table><tr><td class="A">A</td><td><a href="#h0">src/sql/engine/engine.rs</a></td><td> | </td><td class="num">66</td><td><span class="i">++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">src/sql/engine/mod.rs</a></td><td> | </td><td class="num">268</td><td><span class="i">++</span><span class="d">-----------------------------------------------------------------------------</span></td></tr>
+<tr><td class="A">A</td><td><a href="#h2">src/sql/engine/session.rs</a></td><td> | </td><td class="num">209</td><td><span class="i">+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d"></span></td></tr>
+</table></pre><pre>3 files changed, 281 insertions(+), 262 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/src/sql/engine/engine.rs.html">src/sql/engine/engine.rs</a> b/<a href="../file/src/sql/engine/engine.rs.html">src/sql/engine/engine.rs</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -0,0 +1,66 @@
+</a><a href="#h0-0-0" id="h0-0-0" class="i">+#![allow(clippy::module_inception)]
+</a><a href="#h0-0-1" id="h0-0-1" class="i">+
+</a><a href="#h0-0-2" id="h0-0-2" class="i">+use super::Session;
+</a><a href="#h0-0-3" id="h0-0-3" class="i">+use crate::error::Result;
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+use crate::sql::types::schema::Catalog;
+</a><a href="#h0-0-5" id="h0-0-5" class="i">+use crate::sql::types::{Expression, Row, Value};
+</a><a href="#h0-0-6" id="h0-0-6" class="i">+
+</a><a href="#h0-0-7" id="h0-0-7" class="i">+use std::collections::HashSet;
+</a><a href="#h0-0-8" id="h0-0-8" class="i">+
+</a><a href="#h0-0-9" id="h0-0-9" class="i">+/// The SQL engine interface
+</a><a href="#h0-0-10" id="h0-0-10" class="i">+pub trait Engine: Clone {
+</a><a href="#h0-0-11" id="h0-0-11" class="i">+    /// The transaction type
+</a><a href="#h0-0-12" id="h0-0-12" class="i">+    type Transaction: Transaction;
+</a><a href="#h0-0-13" id="h0-0-13" class="i">+
+</a><a href="#h0-0-14" id="h0-0-14" class="i">+    /// Begins a read-write transaction.
+</a><a href="#h0-0-15" id="h0-0-15" class="i">+    fn begin(&amp;self) -&gt; Result&lt;Self::Transaction&gt;;
+</a><a href="#h0-0-16" id="h0-0-16" class="i">+
+</a><a href="#h0-0-17" id="h0-0-17" class="i">+    /// Begins a read-only transaction.
+</a><a href="#h0-0-18" id="h0-0-18" class="i">+    fn begin_read_only(&amp;self) -&gt; Result&lt;Self::Transaction&gt;;
+</a><a href="#h0-0-19" id="h0-0-19" class="i">+
+</a><a href="#h0-0-20" id="h0-0-20" class="i">+    /// Begins a read-only transaction as of a historical version.
+</a><a href="#h0-0-21" id="h0-0-21" class="i">+    fn begin_as_of(&amp;self, version: u64) -&gt; Result&lt;Self::Transaction&gt;;
+</a><a href="#h0-0-22" id="h0-0-22" class="i">+
+</a><a href="#h0-0-23" id="h0-0-23" class="i">+    /// Begins a session for executing individual statements
+</a><a href="#h0-0-24" id="h0-0-24" class="i">+    fn session(&amp;self) -&gt; Session&lt;Self&gt; {
+</a><a href="#h0-0-25" id="h0-0-25" class="i">+        Session::new(self.clone())
+</a><a href="#h0-0-26" id="h0-0-26" class="i">+    }
+</a><a href="#h0-0-27" id="h0-0-27" class="i">+}
+</a><a href="#h0-0-28" id="h0-0-28" class="i">+
+</a><a href="#h0-0-29" id="h0-0-29" class="i">+/// A SQL transaction.
+</a><a href="#h0-0-30" id="h0-0-30" class="i">+///
+</a><a href="#h0-0-31" id="h0-0-31" class="i">+/// TODO: split out Catalog trait and don&#39;t have Transaction depend on it. This
+</a><a href="#h0-0-32" id="h0-0-32" class="i">+/// enforces cleaner separation of when catalog access is valid (i.e. during
+</a><a href="#h0-0-33" id="h0-0-33" class="i">+/// planning but not execution).
+</a><a href="#h0-0-34" id="h0-0-34" class="i">+pub trait Transaction: Catalog {
+</a><a href="#h0-0-35" id="h0-0-35" class="i">+    /// The transaction&#39;s version
+</a><a href="#h0-0-36" id="h0-0-36" class="i">+    fn version(&amp;self) -&gt; u64;
+</a><a href="#h0-0-37" id="h0-0-37" class="i">+    /// Whether the transaction is read-only
+</a><a href="#h0-0-38" id="h0-0-38" class="i">+    fn read_only(&amp;self) -&gt; bool;
+</a><a href="#h0-0-39" id="h0-0-39" class="i">+
+</a><a href="#h0-0-40" id="h0-0-40" class="i">+    /// Commits the transaction
+</a><a href="#h0-0-41" id="h0-0-41" class="i">+    fn commit(self) -&gt; Result&lt;()&gt;;
+</a><a href="#h0-0-42" id="h0-0-42" class="i">+    /// Rolls back the transaction
+</a><a href="#h0-0-43" id="h0-0-43" class="i">+    fn rollback(self) -&gt; Result&lt;()&gt;;
+</a><a href="#h0-0-44" id="h0-0-44" class="i">+
+</a><a href="#h0-0-45" id="h0-0-45" class="i">+    /// Creates a new table row
+</a><a href="#h0-0-46" id="h0-0-46" class="i">+    fn create(&amp;mut self, table: &amp;str, row: Row) -&gt; Result&lt;()&gt;;
+</a><a href="#h0-0-47" id="h0-0-47" class="i">+    /// Deletes a table row
+</a><a href="#h0-0-48" id="h0-0-48" class="i">+    fn delete(&amp;mut self, table: &amp;str, id: &amp;Value) -&gt; Result&lt;()&gt;;
+</a><a href="#h0-0-49" id="h0-0-49" class="i">+    /// Reads a table row, if it exists
+</a><a href="#h0-0-50" id="h0-0-50" class="i">+    fn read(&amp;self, table: &amp;str, id: &amp;Value) -&gt; Result&lt;Option&lt;Row&gt;&gt;;
+</a><a href="#h0-0-51" id="h0-0-51" class="i">+    /// Reads an index entry, if it exists
+</a><a href="#h0-0-52" id="h0-0-52" class="i">+    fn read_index(&amp;self, table: &amp;str, column: &amp;str, value: &amp;Value) -&gt; Result&lt;HashSet&lt;Value&gt;&gt;;
+</a><a href="#h0-0-53" id="h0-0-53" class="i">+    /// Scans a table&#39;s rows
+</a><a href="#h0-0-54" id="h0-0-54" class="i">+    fn scan(&amp;self, table: &amp;str, filter: Option&lt;Expression&gt;) -&gt; Result&lt;Scan&gt;;
+</a><a href="#h0-0-55" id="h0-0-55" class="i">+    /// Scans a column&#39;s index entries
+</a><a href="#h0-0-56" id="h0-0-56" class="i">+    fn scan_index(&amp;self, table: &amp;str, column: &amp;str) -&gt; Result&lt;IndexScan&gt;;
+</a><a href="#h0-0-57" id="h0-0-57" class="i">+    /// Updates a table row
+</a><a href="#h0-0-58" id="h0-0-58" class="i">+    fn update(&amp;mut self, table: &amp;str, id: &amp;Value, row: Row) -&gt; Result&lt;()&gt;;
+</a><a href="#h0-0-59" id="h0-0-59" class="i">+}
+</a><a href="#h0-0-60" id="h0-0-60" class="i">+
+</a><a href="#h0-0-61" id="h0-0-61" class="i">+/// A row scan iterator
+</a><a href="#h0-0-62" id="h0-0-62" class="i">+pub type Scan = Box&lt;dyn DoubleEndedIterator&lt;Item = Result&lt;Row&gt;&gt; + Send&gt;;
+</a><a href="#h0-0-63" id="h0-0-63" class="i">+
+</a><a href="#h0-0-64" id="h0-0-64" class="i">+/// An index scan iterator
+</a><a href="#h0-0-65" id="h0-0-65" class="i">+pub type IndexScan = Box&lt;dyn DoubleEndedIterator&lt;Item = Result&lt;(Value, HashSet&lt;Value&gt;)&gt;&gt; + Send&gt;;
+</a><b>diff --git a/<a id="h1" href="../file/src/sql/engine/mod.rs.html">src/sql/engine/mod.rs</a> b/<a href="../file/src/sql/engine/mod.rs.html">src/sql/engine/mod.rs</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -1,265 +1,9 @@
+</a><a href="#h1-0-0" id="h1-0-0" class="d">-//! The SQL engine provides fundamental CRUD storage operations.
+</a><a href="#h1-0-1" id="h1-0-1" class="i">+mod engine;
+</a> mod kv;
+<a href="#h1-0-3" id="h1-0-3" class="d">-pub mod raft;
+</a><a href="#h1-0-4" id="h1-0-4" class="i">+mod raft;
+</a><a href="#h1-0-5" id="h1-0-5" class="i">+mod session;
+</a><a href="#h1-0-6" id="h1-0-6" class="i">+
+</a><a href="#h1-0-7" id="h1-0-7" class="i">+pub use engine::{Engine, IndexScan, Scan, Transaction};
+</a> pub use kv::KV;
+ pub use raft::{Raft, Status};
+<a href="#h1-0-10" id="h1-0-10" class="d">-use serde::{Deserialize, Serialize};
+</a><a href="#h1-0-11" id="h1-0-11" class="d">-
+</a><a href="#h1-0-12" id="h1-0-12" class="d">-use super::execution::ExecutionResult;
+</a><a href="#h1-0-13" id="h1-0-13" class="d">-use super::parser::{ast, Parser};
+</a><a href="#h1-0-14" id="h1-0-14" class="d">-use super::plan::Plan;
+</a><a href="#h1-0-15" id="h1-0-15" class="d">-use super::types::schema::Catalog;
+</a><a href="#h1-0-16" id="h1-0-16" class="d">-use super::types::{Columns, Expression, Row, Rows, Value};
+</a><a href="#h1-0-17" id="h1-0-17" class="d">-use crate::error::{Error, Result};
+</a><a href="#h1-0-18" id="h1-0-18" class="d">-use crate::{errdata, errinput};
+</a><a href="#h1-0-19" id="h1-0-19" class="d">-
+</a><a href="#h1-0-20" id="h1-0-20" class="d">-use std::collections::HashSet;
+</a><a href="#h1-0-21" id="h1-0-21" class="d">-
+</a><a href="#h1-0-22" id="h1-0-22" class="d">-/// The SQL engine interface
+</a><a href="#h1-0-23" id="h1-0-23" class="d">-pub trait Engine: Clone {
+</a><a href="#h1-0-24" id="h1-0-24" class="d">-    /// The transaction type
+</a><a href="#h1-0-25" id="h1-0-25" class="d">-    type Transaction: Transaction;
+</a><a href="#h1-0-26" id="h1-0-26" class="d">-
+</a><a href="#h1-0-27" id="h1-0-27" class="d">-    /// Begins a read-write transaction.
+</a><a href="#h1-0-28" id="h1-0-28" class="d">-    fn begin(&amp;self) -&gt; Result&lt;Self::Transaction&gt;;
+</a><a href="#h1-0-29" id="h1-0-29" class="d">-
+</a><a href="#h1-0-30" id="h1-0-30" class="d">-    /// Begins a read-only transaction.
+</a><a href="#h1-0-31" id="h1-0-31" class="d">-    fn begin_read_only(&amp;self) -&gt; Result&lt;Self::Transaction&gt;;
+</a><a href="#h1-0-32" id="h1-0-32" class="d">-
+</a><a href="#h1-0-33" id="h1-0-33" class="d">-    /// Begins a read-only transaction as of a historical version.
+</a><a href="#h1-0-34" id="h1-0-34" class="d">-    fn begin_as_of(&amp;self, version: u64) -&gt; Result&lt;Self::Transaction&gt;;
+</a><a href="#h1-0-35" id="h1-0-35" class="d">-
+</a><a href="#h1-0-36" id="h1-0-36" class="d">-    /// Begins a session for executing individual statements
+</a><a href="#h1-0-37" id="h1-0-37" class="d">-    fn session(&amp;self) -&gt; Session&lt;Self&gt; {
+</a><a href="#h1-0-38" id="h1-0-38" class="d">-        Session { engine: self.clone(), txn: None }
+</a><a href="#h1-0-39" id="h1-0-39" class="d">-    }
+</a><a href="#h1-0-40" id="h1-0-40" class="d">-}
+</a><a href="#h1-0-41" id="h1-0-41" class="d">-
+</a><a href="#h1-0-42" id="h1-0-42" class="d">-/// An SQL transaction
+</a><a href="#h1-0-43" id="h1-0-43" class="d">-pub trait Transaction: Catalog {
+</a><a href="#h1-0-44" id="h1-0-44" class="d">-    /// The transaction&#39;s version
+</a><a href="#h1-0-45" id="h1-0-45" class="d">-    fn version(&amp;self) -&gt; u64;
+</a><a href="#h1-0-46" id="h1-0-46" class="d">-    /// Whether the transaction is read-only
+</a><a href="#h1-0-47" id="h1-0-47" class="d">-    fn read_only(&amp;self) -&gt; bool;
+</a><a href="#h1-0-48" id="h1-0-48" class="d">-
+</a><a href="#h1-0-49" id="h1-0-49" class="d">-    /// Commits the transaction
+</a><a href="#h1-0-50" id="h1-0-50" class="d">-    fn commit(self) -&gt; Result&lt;()&gt;;
+</a><a href="#h1-0-51" id="h1-0-51" class="d">-    /// Rolls back the transaction
+</a><a href="#h1-0-52" id="h1-0-52" class="d">-    fn rollback(self) -&gt; Result&lt;()&gt;;
+</a><a href="#h1-0-53" id="h1-0-53" class="d">-
+</a><a href="#h1-0-54" id="h1-0-54" class="d">-    /// Creates a new table row
+</a><a href="#h1-0-55" id="h1-0-55" class="d">-    fn create(&amp;mut self, table: &amp;str, row: Row) -&gt; Result&lt;()&gt;;
+</a><a href="#h1-0-56" id="h1-0-56" class="d">-    /// Deletes a table row
+</a><a href="#h1-0-57" id="h1-0-57" class="d">-    fn delete(&amp;mut self, table: &amp;str, id: &amp;Value) -&gt; Result&lt;()&gt;;
+</a><a href="#h1-0-58" id="h1-0-58" class="d">-    /// Reads a table row, if it exists
+</a><a href="#h1-0-59" id="h1-0-59" class="d">-    fn read(&amp;self, table: &amp;str, id: &amp;Value) -&gt; Result&lt;Option&lt;Row&gt;&gt;;
+</a><a href="#h1-0-60" id="h1-0-60" class="d">-    /// Reads an index entry, if it exists
+</a><a href="#h1-0-61" id="h1-0-61" class="d">-    fn read_index(&amp;self, table: &amp;str, column: &amp;str, value: &amp;Value) -&gt; Result&lt;HashSet&lt;Value&gt;&gt;;
+</a><a href="#h1-0-62" id="h1-0-62" class="d">-    /// Scans a table&#39;s rows
+</a><a href="#h1-0-63" id="h1-0-63" class="d">-    fn scan(&amp;self, table: &amp;str, filter: Option&lt;Expression&gt;) -&gt; Result&lt;Scan&gt;;
+</a><a href="#h1-0-64" id="h1-0-64" class="d">-    /// Scans a column&#39;s index entries
+</a><a href="#h1-0-65" id="h1-0-65" class="d">-    fn scan_index(&amp;self, table: &amp;str, column: &amp;str) -&gt; Result&lt;IndexScan&gt;;
+</a><a href="#h1-0-66" id="h1-0-66" class="d">-    /// Updates a table row
+</a><a href="#h1-0-67" id="h1-0-67" class="d">-    fn update(&amp;mut self, table: &amp;str, id: &amp;Value, row: Row) -&gt; Result&lt;()&gt;;
+</a><a href="#h1-0-68" id="h1-0-68" class="d">-}
+</a><a href="#h1-0-69" id="h1-0-69" class="d">-
+</a><a href="#h1-0-70" id="h1-0-70" class="d">-/// An SQL session, which handles transaction control and simplified query execution
+</a><a href="#h1-0-71" id="h1-0-71" class="d">-pub struct Session&lt;E: Engine + &#39;static&gt; {
+</a><a href="#h1-0-72" id="h1-0-72" class="d">-    /// The underlying engine
+</a><a href="#h1-0-73" id="h1-0-73" class="d">-    engine: E,
+</a><a href="#h1-0-74" id="h1-0-74" class="d">-    /// The current session transaction, if any
+</a><a href="#h1-0-75" id="h1-0-75" class="d">-    txn: Option&lt;E::Transaction&gt;,
+</a><a href="#h1-0-76" id="h1-0-76" class="d">-}
+</a><a href="#h1-0-77" id="h1-0-77" class="d">-
+</a><a href="#h1-0-78" id="h1-0-78" class="d">-impl&lt;E: Engine + &#39;static&gt; Session&lt;E&gt; {
+</a><a href="#h1-0-79" id="h1-0-79" class="d">-    /// Executes a query, managing transaction status for the session
+</a><a href="#h1-0-80" id="h1-0-80" class="d">-    pub fn execute(&amp;mut self, query: &amp;str) -&gt; Result&lt;StatementResult&gt; {
+</a><a href="#h1-0-81" id="h1-0-81" class="d">-        // FIXME We should match on self.txn as well, but get this error:
+</a><a href="#h1-0-82" id="h1-0-82" class="d">-        // error[E0009]: cannot bind by-move and by-ref in the same pattern
+</a><a href="#h1-0-83" id="h1-0-83" class="d">-        // ...which seems like an arbitrary compiler limitation
+</a><a href="#h1-0-84" id="h1-0-84" class="d">-        match Parser::new(query).parse()? {
+</a><a href="#h1-0-85" id="h1-0-85" class="d">-            ast::Statement::Begin { .. } if self.txn.is_some() =&gt; {
+</a><a href="#h1-0-86" id="h1-0-86" class="d">-                errinput!(&quot;already in a transaction&quot;)
+</a><a href="#h1-0-87" id="h1-0-87" class="d">-            }
+</a><a href="#h1-0-88" id="h1-0-88" class="d">-            ast::Statement::Begin { read_only: true, as_of: None } =&gt; {
+</a><a href="#h1-0-89" id="h1-0-89" class="d">-                let txn = self.engine.begin_read_only()?;
+</a><a href="#h1-0-90" id="h1-0-90" class="d">-                let result = StatementResult::Begin { version: txn.version(), read_only: true };
+</a><a href="#h1-0-91" id="h1-0-91" class="d">-                self.txn = Some(txn);
+</a><a href="#h1-0-92" id="h1-0-92" class="d">-                Ok(result)
+</a><a href="#h1-0-93" id="h1-0-93" class="d">-            }
+</a><a href="#h1-0-94" id="h1-0-94" class="d">-            ast::Statement::Begin { read_only: true, as_of: Some(version) } =&gt; {
+</a><a href="#h1-0-95" id="h1-0-95" class="d">-                let txn = self.engine.begin_as_of(version)?;
+</a><a href="#h1-0-96" id="h1-0-96" class="d">-                let result = StatementResult::Begin { version, read_only: true };
+</a><a href="#h1-0-97" id="h1-0-97" class="d">-                self.txn = Some(txn);
+</a><a href="#h1-0-98" id="h1-0-98" class="d">-                Ok(result)
+</a><a href="#h1-0-99" id="h1-0-99" class="d">-            }
+</a><a href="#h1-0-100" id="h1-0-100" class="d">-            ast::Statement::Begin { read_only: false, as_of: Some(_) } =&gt; {
+</a><a href="#h1-0-101" id="h1-0-101" class="d">-                errinput!(&quot;can&#39;t start read-write transaction in a given version&quot;)
+</a><a href="#h1-0-102" id="h1-0-102" class="d">-            }
+</a><a href="#h1-0-103" id="h1-0-103" class="d">-            ast::Statement::Begin { read_only: false, as_of: None } =&gt; {
+</a><a href="#h1-0-104" id="h1-0-104" class="d">-                let txn = self.engine.begin()?;
+</a><a href="#h1-0-105" id="h1-0-105" class="d">-                let result = StatementResult::Begin { version: txn.version(), read_only: false };
+</a><a href="#h1-0-106" id="h1-0-106" class="d">-                self.txn = Some(txn);
+</a><a href="#h1-0-107" id="h1-0-107" class="d">-                Ok(result)
+</a><a href="#h1-0-108" id="h1-0-108" class="d">-            }
+</a><a href="#h1-0-109" id="h1-0-109" class="d">-            ast::Statement::Commit | ast::Statement::Rollback if self.txn.is_none() =&gt; {
+</a><a href="#h1-0-110" id="h1-0-110" class="d">-                errinput!(&quot;not in a transaction&quot;)
+</a><a href="#h1-0-111" id="h1-0-111" class="d">-            }
+</a><a href="#h1-0-112" id="h1-0-112" class="d">-            ast::Statement::Commit =&gt; {
+</a><a href="#h1-0-113" id="h1-0-113" class="d">-                let txn = self.txn.take().unwrap();
+</a><a href="#h1-0-114" id="h1-0-114" class="d">-                let version = txn.version();
+</a><a href="#h1-0-115" id="h1-0-115" class="d">-                txn.commit()?;
+</a><a href="#h1-0-116" id="h1-0-116" class="d">-                Ok(StatementResult::Commit { version })
+</a><a href="#h1-0-117" id="h1-0-117" class="d">-            }
+</a><a href="#h1-0-118" id="h1-0-118" class="d">-            ast::Statement::Rollback =&gt; {
+</a><a href="#h1-0-119" id="h1-0-119" class="d">-                let txn = self.txn.take().unwrap();
+</a><a href="#h1-0-120" id="h1-0-120" class="d">-                let version = txn.version();
+</a><a href="#h1-0-121" id="h1-0-121" class="d">-                txn.rollback()?;
+</a><a href="#h1-0-122" id="h1-0-122" class="d">-                Ok(StatementResult::Rollback { version })
+</a><a href="#h1-0-123" id="h1-0-123" class="d">-            }
+</a><a href="#h1-0-124" id="h1-0-124" class="d">-            // TODO: this needs testing.
+</a><a href="#h1-0-125" id="h1-0-125" class="d">-            ast::Statement::Explain(statement) =&gt; self.with_txn_read_only(|txn| {
+</a><a href="#h1-0-126" id="h1-0-126" class="d">-                Ok(StatementResult::Explain(Plan::build(*statement, txn)?.optimize(txn)?))
+</a><a href="#h1-0-127" id="h1-0-127" class="d">-            }),
+</a><a href="#h1-0-128" id="h1-0-128" class="d">-            statement if self.txn.is_some() =&gt; {
+</a><a href="#h1-0-129" id="h1-0-129" class="d">-                Self::execute_with(statement, self.txn.as_mut().unwrap())
+</a><a href="#h1-0-130" id="h1-0-130" class="d">-            }
+</a><a href="#h1-0-131" id="h1-0-131" class="d">-            statement @ ast::Statement::Select { .. } =&gt; {
+</a><a href="#h1-0-132" id="h1-0-132" class="d">-                let mut txn = self.engine.begin_read_only()?;
+</a><a href="#h1-0-133" id="h1-0-133" class="d">-                let result = Self::execute_with(statement, &amp;mut txn);
+</a><a href="#h1-0-134" id="h1-0-134" class="d">-                txn.rollback()?;
+</a><a href="#h1-0-135" id="h1-0-135" class="d">-                result
+</a><a href="#h1-0-136" id="h1-0-136" class="d">-            }
+</a><a href="#h1-0-137" id="h1-0-137" class="d">-            statement =&gt; {
+</a><a href="#h1-0-138" id="h1-0-138" class="d">-                let mut txn = self.engine.begin()?;
+</a><a href="#h1-0-139" id="h1-0-139" class="d">-                let result = Self::execute_with(statement, &amp;mut txn);
+</a><a href="#h1-0-140" id="h1-0-140" class="d">-                match &amp;result {
+</a><a href="#h1-0-141" id="h1-0-141" class="d">-                    Ok(_) =&gt; txn.commit()?,
+</a><a href="#h1-0-142" id="h1-0-142" class="d">-                    Err(_) =&gt; txn.rollback()?,
+</a><a href="#h1-0-143" id="h1-0-143" class="d">-                }
+</a><a href="#h1-0-144" id="h1-0-144" class="d">-                result
+</a><a href="#h1-0-145" id="h1-0-145" class="d">-            }
+</a><a href="#h1-0-146" id="h1-0-146" class="d">-        }
+</a><a href="#h1-0-147" id="h1-0-147" class="d">-    }
+</a><a href="#h1-0-148" id="h1-0-148" class="d">-
+</a><a href="#h1-0-149" id="h1-0-149" class="d">-    /// Helper function to execute a statement with the given transaction.
+</a><a href="#h1-0-150" id="h1-0-150" class="d">-    /// Allows using a mutable borrow either to the session&#39;s transaction
+</a><a href="#h1-0-151" id="h1-0-151" class="d">-    /// or a temporary read-only or read/write transaction.
+</a><a href="#h1-0-152" id="h1-0-152" class="d">-    ///
+</a><a href="#h1-0-153" id="h1-0-153" class="d">-    /// TODO: reconsider this.
+</a><a href="#h1-0-154" id="h1-0-154" class="d">-    fn execute_with(
+</a><a href="#h1-0-155" id="h1-0-155" class="d">-        statement: ast::Statement,
+</a><a href="#h1-0-156" id="h1-0-156" class="d">-        txn: &amp;mut E::Transaction,
+</a><a href="#h1-0-157" id="h1-0-157" class="d">-    ) -&gt; Result&lt;StatementResult&gt; {
+</a><a href="#h1-0-158" id="h1-0-158" class="d">-        Plan::build(statement, txn)?.optimize(txn)?.execute(txn)?.try_into()
+</a><a href="#h1-0-159" id="h1-0-159" class="d">-    }
+</a><a href="#h1-0-160" id="h1-0-160" class="d">-
+</a><a href="#h1-0-161" id="h1-0-161" class="d">-    /// Runs a read-only closure in the session&#39;s transaction, or a new
+</a><a href="#h1-0-162" id="h1-0-162" class="d">-    /// read-only transaction if none is active.
+</a><a href="#h1-0-163" id="h1-0-163" class="d">-    ///
+</a><a href="#h1-0-164" id="h1-0-164" class="d">-    /// TODO: reconsider this.
+</a><a href="#h1-0-165" id="h1-0-165" class="d">-    pub fn with_txn_read_only&lt;F, R&gt;(&amp;mut self, f: F) -&gt; Result&lt;R&gt;
+</a><a href="#h1-0-166" id="h1-0-166" class="d">-    where
+</a><a href="#h1-0-167" id="h1-0-167" class="d">-        F: FnOnce(&amp;mut E::Transaction) -&gt; Result&lt;R&gt;,
+</a><a href="#h1-0-168" id="h1-0-168" class="d">-    {
+</a><a href="#h1-0-169" id="h1-0-169" class="d">-        if let Some(ref mut txn) = self.txn {
+</a><a href="#h1-0-170" id="h1-0-170" class="d">-            return f(txn);
+</a><a href="#h1-0-171" id="h1-0-171" class="d">-        }
+</a><a href="#h1-0-172" id="h1-0-172" class="d">-        let mut txn = self.engine.begin_read_only()?;
+</a><a href="#h1-0-173" id="h1-0-173" class="d">-        let result = f(&amp;mut txn);
+</a><a href="#h1-0-174" id="h1-0-174" class="d">-        txn.rollback()?;
+</a><a href="#h1-0-175" id="h1-0-175" class="d">-        result
+</a><a href="#h1-0-176" id="h1-0-176" class="d">-    }
+</a><a href="#h1-0-177" id="h1-0-177" class="d">-}
+</a><a href="#h1-0-178" id="h1-0-178" class="d">-
+</a><a href="#h1-0-179" id="h1-0-179" class="d">-impl Session&lt;Raft&gt; {
+</a><a href="#h1-0-180" id="h1-0-180" class="d">-    pub fn status(&amp;self) -&gt; Result&lt;Status&gt; {
+</a><a href="#h1-0-181" id="h1-0-181" class="d">-        self.engine.status()
+</a><a href="#h1-0-182" id="h1-0-182" class="d">-    }
+</a><a href="#h1-0-183" id="h1-0-183" class="d">-}
+</a><a href="#h1-0-184" id="h1-0-184" class="d">-
+</a><a href="#h1-0-185" id="h1-0-185" class="d">-impl&lt;E: Engine + &#39;static&gt; Drop for Session&lt;E&gt; {
+</a><a href="#h1-0-186" id="h1-0-186" class="d">-    fn drop(&amp;mut self) {
+</a><a href="#h1-0-187" id="h1-0-187" class="d">-        self.execute(&quot;ROLLBACK&quot;).ok();
+</a><a href="#h1-0-188" id="h1-0-188" class="d">-    }
+</a><a href="#h1-0-189" id="h1-0-189" class="d">-}
+</a><a href="#h1-0-190" id="h1-0-190" class="d">-
+</a><a href="#h1-0-191" id="h1-0-191" class="d">-/// A row scan iterator
+</a><a href="#h1-0-192" id="h1-0-192" class="d">-pub type Scan = Box&lt;dyn DoubleEndedIterator&lt;Item = Result&lt;Row&gt;&gt; + Send&gt;;
+</a><a href="#h1-0-193" id="h1-0-193" class="d">-
+</a><a href="#h1-0-194" id="h1-0-194" class="d">-/// An index scan iterator
+</a><a href="#h1-0-195" id="h1-0-195" class="d">-pub type IndexScan = Box&lt;dyn DoubleEndedIterator&lt;Item = Result&lt;(Value, HashSet&lt;Value&gt;)&gt;&gt; + Send&gt;;
+</a><a href="#h1-0-196" id="h1-0-196" class="d">-
+</a><a href="#h1-0-197" id="h1-0-197" class="d">-/// A session statement result. This is also sent across the wire to SQL
+</a><a href="#h1-0-198" id="h1-0-198" class="d">-/// clients.
+</a><a href="#h1-0-199" id="h1-0-199" class="d">-#[derive(Debug, PartialEq, Serialize, Deserialize)]
+</a><a href="#h1-0-200" id="h1-0-200" class="d">-pub enum StatementResult {
+</a><a href="#h1-0-201" id="h1-0-201" class="d">-    // Transaction started
+</a><a href="#h1-0-202" id="h1-0-202" class="d">-    Begin { version: u64, read_only: bool },
+</a><a href="#h1-0-203" id="h1-0-203" class="d">-    // Transaction committed
+</a><a href="#h1-0-204" id="h1-0-204" class="d">-    Commit { version: u64 },
+</a><a href="#h1-0-205" id="h1-0-205" class="d">-    // Transaction rolled back
+</a><a href="#h1-0-206" id="h1-0-206" class="d">-    Rollback { version: u64 },
+</a><a href="#h1-0-207" id="h1-0-207" class="d">-    // Rows created
+</a><a href="#h1-0-208" id="h1-0-208" class="d">-    Create { count: u64 },
+</a><a href="#h1-0-209" id="h1-0-209" class="d">-    // Rows deleted
+</a><a href="#h1-0-210" id="h1-0-210" class="d">-    Delete { count: u64 },
+</a><a href="#h1-0-211" id="h1-0-211" class="d">-    // Rows updated
+</a><a href="#h1-0-212" id="h1-0-212" class="d">-    Update { count: u64 },
+</a><a href="#h1-0-213" id="h1-0-213" class="d">-    // Table created
+</a><a href="#h1-0-214" id="h1-0-214" class="d">-    CreateTable { name: String },
+</a><a href="#h1-0-215" id="h1-0-215" class="d">-    // Table dropped
+</a><a href="#h1-0-216" id="h1-0-216" class="d">-    DropTable { name: String, existed: bool },
+</a><a href="#h1-0-217" id="h1-0-217" class="d">-    // Query result.
+</a><a href="#h1-0-218" id="h1-0-218" class="d">-    //
+</a><a href="#h1-0-219" id="h1-0-219" class="d">-    // For simplicity, buffer and send the entire result as a vector instead of
+</a><a href="#h1-0-220" id="h1-0-220" class="d">-    // streaming it to the client. Streaming reads haven&#39;t been implemented from
+</a><a href="#h1-0-221" id="h1-0-221" class="d">-    // Raft either.
+</a><a href="#h1-0-222" id="h1-0-222" class="d">-    Query { columns: Columns, rows: Vec&lt;Row&gt; },
+</a><a href="#h1-0-223" id="h1-0-223" class="d">-    // Explain result
+</a><a href="#h1-0-224" id="h1-0-224" class="d">-    Explain(Plan),
+</a><a href="#h1-0-225" id="h1-0-225" class="d">-}
+</a><a href="#h1-0-226" id="h1-0-226" class="d">-
+</a><a href="#h1-0-227" id="h1-0-227" class="d">-impl StatementResult {
+</a><a href="#h1-0-228" id="h1-0-228" class="d">-    /// Converts the ResultSet into a row, or errors if not a query result with rows.
+</a><a href="#h1-0-229" id="h1-0-229" class="d">-    pub fn into_row(self) -&gt; Result&lt;Row&gt; {
+</a><a href="#h1-0-230" id="h1-0-230" class="d">-        self.into_rows()?.next().transpose()?.ok_or(errdata!(&quot;no rows returned&quot;))
+</a><a href="#h1-0-231" id="h1-0-231" class="d">-    }
+</a><a href="#h1-0-232" id="h1-0-232" class="d">-
+</a><a href="#h1-0-233" id="h1-0-233" class="d">-    /// Converts the ResultSet into a row iterator, or errors if not a query
+</a><a href="#h1-0-234" id="h1-0-234" class="d">-    /// result with rows.
+</a><a href="#h1-0-235" id="h1-0-235" class="d">-    pub fn into_rows(self) -&gt; Result&lt;Rows&gt; {
+</a><a href="#h1-0-236" id="h1-0-236" class="d">-        if let StatementResult::Query { rows, .. } = self {
+</a><a href="#h1-0-237" id="h1-0-237" class="d">-            Ok(Box::new(rows.into_iter().map(Ok)))
+</a><a href="#h1-0-238" id="h1-0-238" class="d">-        } else {
+</a><a href="#h1-0-239" id="h1-0-239" class="d">-            errdata!(&quot;not a query result: {self:?}&quot;)
+</a><a href="#h1-0-240" id="h1-0-240" class="d">-        }
+</a><a href="#h1-0-241" id="h1-0-241" class="d">-    }
+</a><a href="#h1-0-242" id="h1-0-242" class="d">-
+</a><a href="#h1-0-243" id="h1-0-243" class="d">-    /// Converts the ResultSet into a value, if possible.
+</a><a href="#h1-0-244" id="h1-0-244" class="d">-    /// TODO: use TryFrom for this, also to primitive types via Value as TryFrom.
+</a><a href="#h1-0-245" id="h1-0-245" class="d">-    pub fn into_value(self) -&gt; Result&lt;Value&gt; {
+</a><a href="#h1-0-246" id="h1-0-246" class="d">-        self.into_row()?.into_iter().next().ok_or(errdata!(&quot;no value returned&quot;))
+</a><a href="#h1-0-247" id="h1-0-247" class="d">-    }
+</a><a href="#h1-0-248" id="h1-0-248" class="d">-}
+</a><a href="#h1-0-249" id="h1-0-249" class="d">-
+</a><a href="#h1-0-250" id="h1-0-250" class="d">-// TODO: remove or revisit this.
+</a><a href="#h1-0-251" id="h1-0-251" class="d">-impl TryFrom&lt;ExecutionResult&gt; for StatementResult {
+</a><a href="#h1-0-252" id="h1-0-252" class="d">-    type Error = Error;
+</a><a href="#h1-0-253" id="h1-0-253" class="d">-
+</a><a href="#h1-0-254" id="h1-0-254" class="d">-    fn try_from(result: ExecutionResult) -&gt; Result&lt;Self&gt; {
+</a><a href="#h1-0-255" id="h1-0-255" class="d">-        Ok(match result {
+</a><a href="#h1-0-256" id="h1-0-256" class="d">-            ExecutionResult::CreateTable { name } =&gt; StatementResult::CreateTable { name },
+</a><a href="#h1-0-257" id="h1-0-257" class="d">-            ExecutionResult::DropTable { name, existed } =&gt; {
+</a><a href="#h1-0-258" id="h1-0-258" class="d">-                StatementResult::DropTable { name, existed }
+</a><a href="#h1-0-259" id="h1-0-259" class="d">-            }
+</a><a href="#h1-0-260" id="h1-0-260" class="d">-            ExecutionResult::Delete { count } =&gt; StatementResult::Delete { count },
+</a><a href="#h1-0-261" id="h1-0-261" class="d">-            ExecutionResult::Insert { count } =&gt; StatementResult::Create { count },
+</a><a href="#h1-0-262" id="h1-0-262" class="d">-            ExecutionResult::Select { iter } =&gt; StatementResult::Query {
+</a><a href="#h1-0-263" id="h1-0-263" class="d">-                columns: iter.columns,
+</a><a href="#h1-0-264" id="h1-0-264" class="d">-                rows: iter.rows.collect::&lt;Result&lt;_&gt;&gt;()?,
+</a><a href="#h1-0-265" id="h1-0-265" class="d">-            },
+</a><a href="#h1-0-266" id="h1-0-266" class="d">-            ExecutionResult::Update { count } =&gt; StatementResult::Update { count },
+</a><a href="#h1-0-267" id="h1-0-267" class="d">-        })
+</a><a href="#h1-0-268" id="h1-0-268" class="d">-    }
+</a><a href="#h1-0-269" id="h1-0-269" class="d">-}
+</a><a href="#h1-0-270" id="h1-0-270" class="i">+pub use session::{Session, StatementResult};
+</a><b>diff --git a/<a id="h2" href="../file/src/sql/engine/session.rs.html">src/sql/engine/session.rs</a> b/<a href="../file/src/sql/engine/session.rs.html">src/sql/engine/session.rs</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -0,0 +1,209 @@
+</a><a href="#h2-0-0" id="h2-0-0" class="i">+use super::raft::{Raft, Status};
+</a><a href="#h2-0-1" id="h2-0-1" class="i">+use super::{Engine, Transaction as _};
+</a><a href="#h2-0-2" id="h2-0-2" class="i">+use crate::error::{Error, Result};
+</a><a href="#h2-0-3" id="h2-0-3" class="i">+use crate::sql::execution::ExecutionResult;
+</a><a href="#h2-0-4" id="h2-0-4" class="i">+use crate::sql::parser::{ast, Parser};
+</a><a href="#h2-0-5" id="h2-0-5" class="i">+use crate::sql::plan::Plan;
+</a><a href="#h2-0-6" id="h2-0-6" class="i">+use crate::sql::types::{Columns, Row, Rows, Value};
+</a><a href="#h2-0-7" id="h2-0-7" class="i">+use crate::{errdata, errinput};
+</a><a href="#h2-0-8" id="h2-0-8" class="i">+
+</a><a href="#h2-0-9" id="h2-0-9" class="i">+use serde::{Deserialize, Serialize};
+</a><a href="#h2-0-10" id="h2-0-10" class="i">+
+</a><a href="#h2-0-11" id="h2-0-11" class="i">+/// An SQL session, which handles transaction control and simplified query execution
+</a><a href="#h2-0-12" id="h2-0-12" class="i">+pub struct Session&lt;E: Engine + &#39;static&gt; {
+</a><a href="#h2-0-13" id="h2-0-13" class="i">+    /// The underlying engine
+</a><a href="#h2-0-14" id="h2-0-14" class="i">+    engine: E,
+</a><a href="#h2-0-15" id="h2-0-15" class="i">+    /// The current session transaction, if any
+</a><a href="#h2-0-16" id="h2-0-16" class="i">+    txn: Option&lt;E::Transaction&gt;,
+</a><a href="#h2-0-17" id="h2-0-17" class="i">+}
+</a><a href="#h2-0-18" id="h2-0-18" class="i">+
+</a><a href="#h2-0-19" id="h2-0-19" class="i">+impl&lt;E: Engine + &#39;static&gt; Session&lt;E&gt; {
+</a><a href="#h2-0-20" id="h2-0-20" class="i">+    pub fn new(engine: E) -&gt; Self {
+</a><a href="#h2-0-21" id="h2-0-21" class="i">+        Self { engine, txn: None }
+</a><a href="#h2-0-22" id="h2-0-22" class="i">+    }
+</a><a href="#h2-0-23" id="h2-0-23" class="i">+
+</a><a href="#h2-0-24" id="h2-0-24" class="i">+    /// Executes a query, managing transaction status for the session
+</a><a href="#h2-0-25" id="h2-0-25" class="i">+    pub fn execute(&amp;mut self, query: &amp;str) -&gt; Result&lt;StatementResult&gt; {
+</a><a href="#h2-0-26" id="h2-0-26" class="i">+        // FIXME We should match on self.txn as well, but get this error:
+</a><a href="#h2-0-27" id="h2-0-27" class="i">+        // error[E0009]: cannot bind by-move and by-ref in the same pattern
+</a><a href="#h2-0-28" id="h2-0-28" class="i">+        // ...which seems like an arbitrary compiler limitation
+</a><a href="#h2-0-29" id="h2-0-29" class="i">+        match Parser::new(query).parse()? {
+</a><a href="#h2-0-30" id="h2-0-30" class="i">+            ast::Statement::Begin { .. } if self.txn.is_some() =&gt; {
+</a><a href="#h2-0-31" id="h2-0-31" class="i">+                errinput!(&quot;already in a transaction&quot;)
+</a><a href="#h2-0-32" id="h2-0-32" class="i">+            }
+</a><a href="#h2-0-33" id="h2-0-33" class="i">+            ast::Statement::Begin { read_only: true, as_of: None } =&gt; {
+</a><a href="#h2-0-34" id="h2-0-34" class="i">+                let txn = self.engine.begin_read_only()?;
+</a><a href="#h2-0-35" id="h2-0-35" class="i">+                let result = StatementResult::Begin { version: txn.version(), read_only: true };
+</a><a href="#h2-0-36" id="h2-0-36" class="i">+                self.txn = Some(txn);
+</a><a href="#h2-0-37" id="h2-0-37" class="i">+                Ok(result)
+</a><a href="#h2-0-38" id="h2-0-38" class="i">+            }
+</a><a href="#h2-0-39" id="h2-0-39" class="i">+            ast::Statement::Begin { read_only: true, as_of: Some(version) } =&gt; {
+</a><a href="#h2-0-40" id="h2-0-40" class="i">+                let txn = self.engine.begin_as_of(version)?;
+</a><a href="#h2-0-41" id="h2-0-41" class="i">+                let result = StatementResult::Begin { version, read_only: true };
+</a><a href="#h2-0-42" id="h2-0-42" class="i">+                self.txn = Some(txn);
+</a><a href="#h2-0-43" id="h2-0-43" class="i">+                Ok(result)
+</a><a href="#h2-0-44" id="h2-0-44" class="i">+            }
+</a><a href="#h2-0-45" id="h2-0-45" class="i">+            ast::Statement::Begin { read_only: false, as_of: Some(_) } =&gt; {
+</a><a href="#h2-0-46" id="h2-0-46" class="i">+                errinput!(&quot;can&#39;t start read-write transaction in a given version&quot;)
+</a><a href="#h2-0-47" id="h2-0-47" class="i">+            }
+</a><a href="#h2-0-48" id="h2-0-48" class="i">+            ast::Statement::Begin { read_only: false, as_of: None } =&gt; {
+</a><a href="#h2-0-49" id="h2-0-49" class="i">+                let txn = self.engine.begin()?;
+</a><a href="#h2-0-50" id="h2-0-50" class="i">+                let result = StatementResult::Begin { version: txn.version(), read_only: false };
+</a><a href="#h2-0-51" id="h2-0-51" class="i">+                self.txn = Some(txn);
+</a><a href="#h2-0-52" id="h2-0-52" class="i">+                Ok(result)
+</a><a href="#h2-0-53" id="h2-0-53" class="i">+            }
+</a><a href="#h2-0-54" id="h2-0-54" class="i">+            ast::Statement::Commit | ast::Statement::Rollback if self.txn.is_none() =&gt; {
+</a><a href="#h2-0-55" id="h2-0-55" class="i">+                errinput!(&quot;not in a transaction&quot;)
+</a><a href="#h2-0-56" id="h2-0-56" class="i">+            }
+</a><a href="#h2-0-57" id="h2-0-57" class="i">+            ast::Statement::Commit =&gt; {
+</a><a href="#h2-0-58" id="h2-0-58" class="i">+                let txn = self.txn.take().unwrap();
+</a><a href="#h2-0-59" id="h2-0-59" class="i">+                let version = txn.version();
+</a><a href="#h2-0-60" id="h2-0-60" class="i">+                txn.commit()?;
+</a><a href="#h2-0-61" id="h2-0-61" class="i">+                Ok(StatementResult::Commit { version })
+</a><a href="#h2-0-62" id="h2-0-62" class="i">+            }
+</a><a href="#h2-0-63" id="h2-0-63" class="i">+            ast::Statement::Rollback =&gt; {
+</a><a href="#h2-0-64" id="h2-0-64" class="i">+                let txn = self.txn.take().unwrap();
+</a><a href="#h2-0-65" id="h2-0-65" class="i">+                let version = txn.version();
+</a><a href="#h2-0-66" id="h2-0-66" class="i">+                txn.rollback()?;
+</a><a href="#h2-0-67" id="h2-0-67" class="i">+                Ok(StatementResult::Rollback { version })
+</a><a href="#h2-0-68" id="h2-0-68" class="i">+            }
+</a><a href="#h2-0-69" id="h2-0-69" class="i">+            // TODO: this needs testing.
+</a><a href="#h2-0-70" id="h2-0-70" class="i">+            ast::Statement::Explain(statement) =&gt; self.with_txn_read_only(|txn| {
+</a><a href="#h2-0-71" id="h2-0-71" class="i">+                Ok(StatementResult::Explain(Plan::build(*statement, txn)?.optimize(txn)?))
+</a><a href="#h2-0-72" id="h2-0-72" class="i">+            }),
+</a><a href="#h2-0-73" id="h2-0-73" class="i">+            statement if self.txn.is_some() =&gt; {
+</a><a href="#h2-0-74" id="h2-0-74" class="i">+                Self::execute_with(statement, self.txn.as_mut().unwrap())
+</a><a href="#h2-0-75" id="h2-0-75" class="i">+            }
+</a><a href="#h2-0-76" id="h2-0-76" class="i">+            statement @ ast::Statement::Select { .. } =&gt; {
+</a><a href="#h2-0-77" id="h2-0-77" class="i">+                let mut txn = self.engine.begin_read_only()?;
+</a><a href="#h2-0-78" id="h2-0-78" class="i">+                let result = Self::execute_with(statement, &amp;mut txn);
+</a><a href="#h2-0-79" id="h2-0-79" class="i">+                txn.rollback()?;
+</a><a href="#h2-0-80" id="h2-0-80" class="i">+                result
+</a><a href="#h2-0-81" id="h2-0-81" class="i">+            }
+</a><a href="#h2-0-82" id="h2-0-82" class="i">+            statement =&gt; {
+</a><a href="#h2-0-83" id="h2-0-83" class="i">+                let mut txn = self.engine.begin()?;
+</a><a href="#h2-0-84" id="h2-0-84" class="i">+                let result = Self::execute_with(statement, &amp;mut txn);
+</a><a href="#h2-0-85" id="h2-0-85" class="i">+                match &amp;result {
+</a><a href="#h2-0-86" id="h2-0-86" class="i">+                    Ok(_) =&gt; txn.commit()?,
+</a><a href="#h2-0-87" id="h2-0-87" class="i">+                    Err(_) =&gt; txn.rollback()?,
+</a><a href="#h2-0-88" id="h2-0-88" class="i">+                }
+</a><a href="#h2-0-89" id="h2-0-89" class="i">+                result
+</a><a href="#h2-0-90" id="h2-0-90" class="i">+            }
+</a><a href="#h2-0-91" id="h2-0-91" class="i">+        }
+</a><a href="#h2-0-92" id="h2-0-92" class="i">+    }
+</a><a href="#h2-0-93" id="h2-0-93" class="i">+
+</a><a href="#h2-0-94" id="h2-0-94" class="i">+    /// Helper function to execute a statement with the given transaction.
+</a><a href="#h2-0-95" id="h2-0-95" class="i">+    /// Allows using a mutable borrow either to the session&#39;s transaction
+</a><a href="#h2-0-96" id="h2-0-96" class="i">+    /// or a temporary read-only or read/write transaction.
+</a><a href="#h2-0-97" id="h2-0-97" class="i">+    ///
+</a><a href="#h2-0-98" id="h2-0-98" class="i">+    /// TODO: reconsider this.
+</a><a href="#h2-0-99" id="h2-0-99" class="i">+    fn execute_with(
+</a><a href="#h2-0-100" id="h2-0-100" class="i">+        statement: ast::Statement,
+</a><a href="#h2-0-101" id="h2-0-101" class="i">+        txn: &amp;mut E::Transaction,
+</a><a href="#h2-0-102" id="h2-0-102" class="i">+    ) -&gt; Result&lt;StatementResult&gt; {
+</a><a href="#h2-0-103" id="h2-0-103" class="i">+        Plan::build(statement, txn)?.optimize(txn)?.execute(txn)?.try_into()
+</a><a href="#h2-0-104" id="h2-0-104" class="i">+    }
+</a><a href="#h2-0-105" id="h2-0-105" class="i">+
+</a><a href="#h2-0-106" id="h2-0-106" class="i">+    /// Runs a read-only closure in the session&#39;s transaction, or a new
+</a><a href="#h2-0-107" id="h2-0-107" class="i">+    /// read-only transaction if none is active.
+</a><a href="#h2-0-108" id="h2-0-108" class="i">+    ///
+</a><a href="#h2-0-109" id="h2-0-109" class="i">+    /// TODO: reconsider this.
+</a><a href="#h2-0-110" id="h2-0-110" class="i">+    pub fn with_txn_read_only&lt;F, R&gt;(&amp;mut self, f: F) -&gt; Result&lt;R&gt;
+</a><a href="#h2-0-111" id="h2-0-111" class="i">+    where
+</a><a href="#h2-0-112" id="h2-0-112" class="i">+        F: FnOnce(&amp;mut E::Transaction) -&gt; Result&lt;R&gt;,
+</a><a href="#h2-0-113" id="h2-0-113" class="i">+    {
+</a><a href="#h2-0-114" id="h2-0-114" class="i">+        if let Some(ref mut txn) = self.txn {
+</a><a href="#h2-0-115" id="h2-0-115" class="i">+            return f(txn);
+</a><a href="#h2-0-116" id="h2-0-116" class="i">+        }
+</a><a href="#h2-0-117" id="h2-0-117" class="i">+        let mut txn = self.engine.begin_read_only()?;
+</a><a href="#h2-0-118" id="h2-0-118" class="i">+        let result = f(&amp;mut txn);
+</a><a href="#h2-0-119" id="h2-0-119" class="i">+        txn.rollback()?;
+</a><a href="#h2-0-120" id="h2-0-120" class="i">+        result
+</a><a href="#h2-0-121" id="h2-0-121" class="i">+    }
+</a><a href="#h2-0-122" id="h2-0-122" class="i">+}
+</a><a href="#h2-0-123" id="h2-0-123" class="i">+
+</a><a href="#h2-0-124" id="h2-0-124" class="i">+impl Session&lt;Raft&gt; {
+</a><a href="#h2-0-125" id="h2-0-125" class="i">+    pub fn status(&amp;self) -&gt; Result&lt;Status&gt; {
+</a><a href="#h2-0-126" id="h2-0-126" class="i">+        self.engine.status()
+</a><a href="#h2-0-127" id="h2-0-127" class="i">+    }
+</a><a href="#h2-0-128" id="h2-0-128" class="i">+}
+</a><a href="#h2-0-129" id="h2-0-129" class="i">+
+</a><a href="#h2-0-130" id="h2-0-130" class="i">+impl&lt;E: Engine + &#39;static&gt; Drop for Session&lt;E&gt; {
+</a><a href="#h2-0-131" id="h2-0-131" class="i">+    fn drop(&amp;mut self) {
+</a><a href="#h2-0-132" id="h2-0-132" class="i">+        self.execute(&quot;ROLLBACK&quot;).ok();
+</a><a href="#h2-0-133" id="h2-0-133" class="i">+    }
+</a><a href="#h2-0-134" id="h2-0-134" class="i">+}
+</a><a href="#h2-0-135" id="h2-0-135" class="i">+
+</a><a href="#h2-0-136" id="h2-0-136" class="i">+/// A session statement result. This is also sent across the wire to SQL
+</a><a href="#h2-0-137" id="h2-0-137" class="i">+/// clients.
+</a><a href="#h2-0-138" id="h2-0-138" class="i">+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+</a><a href="#h2-0-139" id="h2-0-139" class="i">+pub enum StatementResult {
+</a><a href="#h2-0-140" id="h2-0-140" class="i">+    // Transaction started
+</a><a href="#h2-0-141" id="h2-0-141" class="i">+    Begin { version: u64, read_only: bool },
+</a><a href="#h2-0-142" id="h2-0-142" class="i">+    // Transaction committed
+</a><a href="#h2-0-143" id="h2-0-143" class="i">+    Commit { version: u64 },
+</a><a href="#h2-0-144" id="h2-0-144" class="i">+    // Transaction rolled back
+</a><a href="#h2-0-145" id="h2-0-145" class="i">+    Rollback { version: u64 },
+</a><a href="#h2-0-146" id="h2-0-146" class="i">+    // Rows created
+</a><a href="#h2-0-147" id="h2-0-147" class="i">+    Create { count: u64 },
+</a><a href="#h2-0-148" id="h2-0-148" class="i">+    // Rows deleted
+</a><a href="#h2-0-149" id="h2-0-149" class="i">+    Delete { count: u64 },
+</a><a href="#h2-0-150" id="h2-0-150" class="i">+    // Rows updated
+</a><a href="#h2-0-151" id="h2-0-151" class="i">+    Update { count: u64 },
+</a><a href="#h2-0-152" id="h2-0-152" class="i">+    // Table created
+</a><a href="#h2-0-153" id="h2-0-153" class="i">+    CreateTable { name: String },
+</a><a href="#h2-0-154" id="h2-0-154" class="i">+    // Table dropped
+</a><a href="#h2-0-155" id="h2-0-155" class="i">+    DropTable { name: String, existed: bool },
+</a><a href="#h2-0-156" id="h2-0-156" class="i">+    // Query result.
+</a><a href="#h2-0-157" id="h2-0-157" class="i">+    //
+</a><a href="#h2-0-158" id="h2-0-158" class="i">+    // For simplicity, buffer and send the entire result as a vector instead of
+</a><a href="#h2-0-159" id="h2-0-159" class="i">+    // streaming it to the client. Streaming reads haven&#39;t been implemented from
+</a><a href="#h2-0-160" id="h2-0-160" class="i">+    // Raft either.
+</a><a href="#h2-0-161" id="h2-0-161" class="i">+    Query { columns: Columns, rows: Vec&lt;Row&gt; },
+</a><a href="#h2-0-162" id="h2-0-162" class="i">+    // Explain result
+</a><a href="#h2-0-163" id="h2-0-163" class="i">+    Explain(Plan),
+</a><a href="#h2-0-164" id="h2-0-164" class="i">+}
+</a><a href="#h2-0-165" id="h2-0-165" class="i">+
+</a><a href="#h2-0-166" id="h2-0-166" class="i">+impl StatementResult {
+</a><a href="#h2-0-167" id="h2-0-167" class="i">+    /// Converts the ResultSet into a row, or errors if not a query result with rows.
+</a><a href="#h2-0-168" id="h2-0-168" class="i">+    pub fn into_row(self) -&gt; Result&lt;Row&gt; {
+</a><a href="#h2-0-169" id="h2-0-169" class="i">+        self.into_rows()?.next().transpose()?.ok_or(errdata!(&quot;no rows returned&quot;))
+</a><a href="#h2-0-170" id="h2-0-170" class="i">+    }
+</a><a href="#h2-0-171" id="h2-0-171" class="i">+
+</a><a href="#h2-0-172" id="h2-0-172" class="i">+    /// Converts the ResultSet into a row iterator, or errors if not a query
+</a><a href="#h2-0-173" id="h2-0-173" class="i">+    /// result with rows.
+</a><a href="#h2-0-174" id="h2-0-174" class="i">+    pub fn into_rows(self) -&gt; Result&lt;Rows&gt; {
+</a><a href="#h2-0-175" id="h2-0-175" class="i">+        if let StatementResult::Query { rows, .. } = self {
+</a><a href="#h2-0-176" id="h2-0-176" class="i">+            Ok(Box::new(rows.into_iter().map(Ok)))
+</a><a href="#h2-0-177" id="h2-0-177" class="i">+        } else {
+</a><a href="#h2-0-178" id="h2-0-178" class="i">+            errdata!(&quot;not a query result: {self:?}&quot;)
+</a><a href="#h2-0-179" id="h2-0-179" class="i">+        }
+</a><a href="#h2-0-180" id="h2-0-180" class="i">+    }
+</a><a href="#h2-0-181" id="h2-0-181" class="i">+
+</a><a href="#h2-0-182" id="h2-0-182" class="i">+    /// Converts the ResultSet into a value, if possible.
+</a><a href="#h2-0-183" id="h2-0-183" class="i">+    /// TODO: use TryFrom for this, also to primitive types via Value as TryFrom.
+</a><a href="#h2-0-184" id="h2-0-184" class="i">+    pub fn into_value(self) -&gt; Result&lt;Value&gt; {
+</a><a href="#h2-0-185" id="h2-0-185" class="i">+        self.into_row()?.into_iter().next().ok_or(errdata!(&quot;no value returned&quot;))
+</a><a href="#h2-0-186" id="h2-0-186" class="i">+    }
+</a><a href="#h2-0-187" id="h2-0-187" class="i">+}
+</a><a href="#h2-0-188" id="h2-0-188" class="i">+
+</a><a href="#h2-0-189" id="h2-0-189" class="i">+// TODO: remove or revisit this.
+</a><a href="#h2-0-190" id="h2-0-190" class="i">+impl TryFrom&lt;ExecutionResult&gt; for StatementResult {
+</a><a href="#h2-0-191" id="h2-0-191" class="i">+    type Error = Error;
+</a><a href="#h2-0-192" id="h2-0-192" class="i">+
+</a><a href="#h2-0-193" id="h2-0-193" class="i">+    fn try_from(result: ExecutionResult) -&gt; Result&lt;Self&gt; {
+</a><a href="#h2-0-194" id="h2-0-194" class="i">+        Ok(match result {
+</a><a href="#h2-0-195" id="h2-0-195" class="i">+            ExecutionResult::CreateTable { name } =&gt; StatementResult::CreateTable { name },
+</a><a href="#h2-0-196" id="h2-0-196" class="i">+            ExecutionResult::DropTable { name, existed } =&gt; {
+</a><a href="#h2-0-197" id="h2-0-197" class="i">+                StatementResult::DropTable { name, existed }
+</a><a href="#h2-0-198" id="h2-0-198" class="i">+            }
+</a><a href="#h2-0-199" id="h2-0-199" class="i">+            ExecutionResult::Delete { count } =&gt; StatementResult::Delete { count },
+</a><a href="#h2-0-200" id="h2-0-200" class="i">+            ExecutionResult::Insert { count } =&gt; StatementResult::Create { count },
+</a><a href="#h2-0-201" id="h2-0-201" class="i">+            ExecutionResult::Select { iter } =&gt; StatementResult::Query {
+</a><a href="#h2-0-202" id="h2-0-202" class="i">+                columns: iter.columns,
+</a><a href="#h2-0-203" id="h2-0-203" class="i">+                rows: iter.rows.collect::&lt;Result&lt;_&gt;&gt;()?,
+</a><a href="#h2-0-204" id="h2-0-204" class="i">+            },
+</a><a href="#h2-0-205" id="h2-0-205" class="i">+            ExecutionResult::Update { count } =&gt; StatementResult::Update { count },
+</a><a href="#h2-0-206" id="h2-0-206" class="i">+        })
+</a><a href="#h2-0-207" id="h2-0-207" class="i">+    }
+</a><a href="#h2-0-208" id="h2-0-208" class="i">+}
+</a></pre>
+</div>
+</body>
+</html>
