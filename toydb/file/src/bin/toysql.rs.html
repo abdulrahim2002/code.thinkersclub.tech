@@ -9,6 +9,13 @@
 <link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../../../atom.xml" />
 <link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../../../tags.xml" />
 <link rel="stylesheet" type="text/css" href="../../../style.css" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Source+Code+Pro:ital,wght@0,200..900;1,200..900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/default.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script>hljs.highlightAll();</script>
 </head>
 <body>
 <table><tr><td><a href="../../../../"><img src="../../../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
@@ -17,283 +24,283 @@
 <hr/>
 <div id="content">
 <p> toysql.rs (11015B)</p><hr/><pre id="blob">
-<a href="#l1" class="line" id="l1">      1</a><code class="language-auto"> //! toySQL is a command-line client for toyDB. It connects to a toyDB node</code>
-<a href="#l2" class="line" id="l2">      2</a><code class="language-auto"> //! (default localhost:9605) and executes SQL statements against it via an</code>
-<a href="#l3" class="line" id="l3">      3</a><code class="language-auto"> //! interactive shell interface. Command history is stored in .toysql.history.</code>
-<a href="#l4" class="line" id="l4">      4</a><code class="language-auto"> </code>
-<a href="#l5" class="line" id="l5">      5</a><code class="language-auto"> #![warn(clippy::all)]</code>
-<a href="#l6" class="line" id="l6">      6</a><code class="language-auto"> </code>
-<a href="#l7" class="line" id="l7">      7</a><code class="language-auto"> use toydb::errinput;</code>
-<a href="#l8" class="line" id="l8">      8</a><code class="language-auto"> use toydb::error::Result;</code>
-<a href="#l9" class="line" id="l9">      9</a><code class="language-auto"> use toydb::sql::engine::StatementResult;</code>
-<a href="#l10" class="line" id="l10">     10</a><code class="language-auto"> use toydb::sql::parser::{Lexer, Token};</code>
-<a href="#l11" class="line" id="l11">     11</a><code class="language-auto"> use toydb::Client;</code>
-<a href="#l12" class="line" id="l12">     12</a><code class="language-auto"> </code>
-<a href="#l13" class="line" id="l13">     13</a><code class="language-auto"> use clap::Parser as _;</code>
-<a href="#l14" class="line" id="l14">     14</a><code class="language-auto"> use itertools::Itertools as _;</code>
-<a href="#l15" class="line" id="l15">     15</a><code class="language-auto"> use rustyline::error::ReadlineError;</code>
-<a href="#l16" class="line" id="l16">     16</a><code class="language-auto"> use rustyline::history::DefaultHistory;</code>
-<a href="#l17" class="line" id="l17">     17</a><code class="language-auto"> use rustyline::validate::{ValidationContext, ValidationResult, Validator};</code>
-<a href="#l18" class="line" id="l18">     18</a><code class="language-auto"> use rustyline::{Editor, Modifiers};</code>
-<a href="#l19" class="line" id="l19">     19</a><code class="language-auto"> use rustyline_derive::{Completer, Helper, Highlighter, Hinter};</code>
-<a href="#l20" class="line" id="l20">     20</a><code class="language-auto"> </code>
-<a href="#l21" class="line" id="l21">     21</a><code class="language-auto"> fn main() {</code>
-<a href="#l22" class="line" id="l22">     22</a><code class="language-auto">     if let Err(error) = Command::parse().run() {</code>
-<a href="#l23" class="line" id="l23">     23</a><code class="language-auto">         eprintln!(&quot;Error: {error}&quot;);</code>
-<a href="#l24" class="line" id="l24">     24</a><code class="language-auto">     }</code>
-<a href="#l25" class="line" id="l25">     25</a><code class="language-auto"> }</code>
-<a href="#l26" class="line" id="l26">     26</a><code class="language-auto"> </code>
-<a href="#l27" class="line" id="l27">     27</a><code class="language-auto"> /// The toySQL command.</code>
-<a href="#l28" class="line" id="l28">     28</a><code class="language-auto"> #[derive(clap::Parser)]</code>
-<a href="#l29" class="line" id="l29">     29</a><code class="language-auto"> #[command(about = &quot;A toyDB client.&quot;, version, propagate_version = true)]</code>
-<a href="#l30" class="line" id="l30">     30</a><code class="language-auto"> struct Command {</code>
-<a href="#l31" class="line" id="l31">     31</a><code class="language-auto">     /// A SQL statement to execute, then exit.</code>
-<a href="#l32" class="line" id="l32">     32</a><code class="language-auto">     #[arg()]</code>
-<a href="#l33" class="line" id="l33">     33</a><code class="language-auto">     statement: Option&lt;String&gt;,</code>
-<a href="#l34" class="line" id="l34">     34</a><code class="language-auto">     /// Host to connect to.</code>
-<a href="#l35" class="line" id="l35">     35</a><code class="language-auto">     #[arg(short = &#39;H&#39;, long, default_value = &quot;localhost&quot;)]</code>
-<a href="#l36" class="line" id="l36">     36</a><code class="language-auto">     host: String,</code>
-<a href="#l37" class="line" id="l37">     37</a><code class="language-auto">     /// Port number to connect to.</code>
-<a href="#l38" class="line" id="l38">     38</a><code class="language-auto">     #[arg(short = &#39;p&#39;, long, default_value = &quot;9605&quot;)]</code>
-<a href="#l39" class="line" id="l39">     39</a><code class="language-auto">     port: u16,</code>
-<a href="#l40" class="line" id="l40">     40</a><code class="language-auto"> }</code>
-<a href="#l41" class="line" id="l41">     41</a><code class="language-auto"> </code>
-<a href="#l42" class="line" id="l42">     42</a><code class="language-auto"> impl Command {</code>
-<a href="#l43" class="line" id="l43">     43</a><code class="language-auto">     /// Runs the command.</code>
-<a href="#l44" class="line" id="l44">     44</a><code class="language-auto">     fn run(self) -&gt; Result&lt;()&gt; {</code>
-<a href="#l45" class="line" id="l45">     45</a><code class="language-auto">         let mut shell = Shell::new(&amp;self.host, self.port)?;</code>
-<a href="#l46" class="line" id="l46">     46</a><code class="language-auto">         match self.statement {</code>
-<a href="#l47" class="line" id="l47">     47</a><code class="language-auto">             Some(statement) =&gt; shell.execute(&amp;statement),</code>
-<a href="#l48" class="line" id="l48">     48</a><code class="language-auto">             None =&gt; shell.run(),</code>
-<a href="#l49" class="line" id="l49">     49</a><code class="language-auto">         }</code>
-<a href="#l50" class="line" id="l50">     50</a><code class="language-auto">     }</code>
-<a href="#l51" class="line" id="l51">     51</a><code class="language-auto"> }</code>
-<a href="#l52" class="line" id="l52">     52</a><code class="language-auto"> </code>
-<a href="#l53" class="line" id="l53">     53</a><code class="language-auto"> /// An interactive toySQL shell.</code>
-<a href="#l54" class="line" id="l54">     54</a><code class="language-auto"> struct Shell {</code>
-<a href="#l55" class="line" id="l55">     55</a><code class="language-auto">     /// The toyDB client.</code>
-<a href="#l56" class="line" id="l56">     56</a><code class="language-auto">     client: Client,</code>
-<a href="#l57" class="line" id="l57">     57</a><code class="language-auto">     /// The Rustyline command editor.</code>
-<a href="#l58" class="line" id="l58">     58</a><code class="language-auto">     editor: Editor&lt;InputValidator, DefaultHistory&gt;,</code>
-<a href="#l59" class="line" id="l59">     59</a><code class="language-auto">     /// The path to the history file, if any.</code>
-<a href="#l60" class="line" id="l60">     60</a><code class="language-auto">     history_path: Option&lt;std::path::PathBuf&gt;,</code>
-<a href="#l61" class="line" id="l61">     61</a><code class="language-auto">     /// If true, SELECT column headers will be displayed.</code>
-<a href="#l62" class="line" id="l62">     62</a><code class="language-auto">     show_headers: bool,</code>
-<a href="#l63" class="line" id="l63">     63</a><code class="language-auto"> }</code>
-<a href="#l64" class="line" id="l64">     64</a><code class="language-auto"> </code>
-<a href="#l65" class="line" id="l65">     65</a><code class="language-auto"> impl Shell {</code>
-<a href="#l66" class="line" id="l66">     66</a><code class="language-auto">     /// Creates a new shell connected to the given server.</code>
-<a href="#l67" class="line" id="l67">     67</a><code class="language-auto">     fn new(host: &amp;str, port: u16) -&gt; Result&lt;Self&gt; {</code>
-<a href="#l68" class="line" id="l68">     68</a><code class="language-auto">         let client = Client::connect((host, port))?;</code>
-<a href="#l69" class="line" id="l69">     69</a><code class="language-auto">         // Set up Rustyline. Make sure multiline pastes are handled normally.</code>
-<a href="#l70" class="line" id="l70">     70</a><code class="language-auto">         let mut editor = Editor::new()?;</code>
-<a href="#l71" class="line" id="l71">     71</a><code class="language-auto">         editor.set_helper(Some(InputValidator));</code>
-<a href="#l72" class="line" id="l72">     72</a><code class="language-auto">         editor.bind_sequence(</code>
-<a href="#l73" class="line" id="l73">     73</a><code class="language-auto">             rustyline::KeyEvent(rustyline::KeyCode::BracketedPasteStart, Modifiers::NONE),</code>
-<a href="#l74" class="line" id="l74">     74</a><code class="language-auto">             rustyline::Cmd::Noop,</code>
-<a href="#l75" class="line" id="l75">     75</a><code class="language-auto">         );</code>
-<a href="#l76" class="line" id="l76">     76</a><code class="language-auto">         let history_path = std::env::var_os(&quot;HOME&quot;)</code>
-<a href="#l77" class="line" id="l77">     77</a><code class="language-auto">             .map(|home| std::path::PathBuf::from(home).join(&quot;.toysql.history&quot;));</code>
-<a href="#l78" class="line" id="l78">     78</a><code class="language-auto">         Ok(Self { client, editor, history_path, show_headers: false })</code>
-<a href="#l79" class="line" id="l79">     79</a><code class="language-auto">     }</code>
-<a href="#l80" class="line" id="l80">     80</a><code class="language-auto"> </code>
-<a href="#l81" class="line" id="l81">     81</a><code class="language-auto">     /// Executes a SQL statement or ! command.</code>
-<a href="#l82" class="line" id="l82">     82</a><code class="language-auto">     fn execute(&amp;mut self, input: &amp;str) -&gt; Result&lt;()&gt; {</code>
-<a href="#l83" class="line" id="l83">     83</a><code class="language-auto">         if input.starts_with(&#39;!&#39;) {</code>
-<a href="#l84" class="line" id="l84">     84</a><code class="language-auto">             self.execute_command(input)</code>
-<a href="#l85" class="line" id="l85">     85</a><code class="language-auto">         } else if !input.is_empty() {</code>
-<a href="#l86" class="line" id="l86">     86</a><code class="language-auto">             self.execute_sql(input)</code>
-<a href="#l87" class="line" id="l87">     87</a><code class="language-auto">         } else {</code>
-<a href="#l88" class="line" id="l88">     88</a><code class="language-auto">             Ok(())</code>
-<a href="#l89" class="line" id="l89">     89</a><code class="language-auto">         }</code>
-<a href="#l90" class="line" id="l90">     90</a><code class="language-auto">     }</code>
-<a href="#l91" class="line" id="l91">     91</a><code class="language-auto"> </code>
-<a href="#l92" class="line" id="l92">     92</a><code class="language-auto">     /// Executes a toySQL ! command (e.g. !help)</code>
-<a href="#l93" class="line" id="l93">     93</a><code class="language-auto">     fn execute_command(&amp;mut self, input: &amp;str) -&gt; Result&lt;()&gt; {</code>
-<a href="#l94" class="line" id="l94">     94</a><code class="language-auto">         let mut input = input.split_ascii_whitespace();</code>
-<a href="#l95" class="line" id="l95">     95</a><code class="language-auto">         let Some(command) = input.next() else {</code>
-<a href="#l96" class="line" id="l96">     96</a><code class="language-auto">             return errinput!(&quot;expected command&quot;);</code>
-<a href="#l97" class="line" id="l97">     97</a><code class="language-auto">         };</code>
-<a href="#l98" class="line" id="l98">     98</a><code class="language-auto">         let args = input.collect_vec();</code>
-<a href="#l99" class="line" id="l99">     99</a><code class="language-auto"> </code>
-<a href="#l100" class="line" id="l100">    100</a><code class="language-auto">         match (command, args.as_slice()) {</code>
-<a href="#l101" class="line" id="l101">    101</a><code class="language-auto">             // Toggles column headers.</code>
-<a href="#l102" class="line" id="l102">    102</a><code class="language-auto">             (&quot;!headers&quot;, []) =&gt; {</code>
-<a href="#l103" class="line" id="l103">    103</a><code class="language-auto">                 self.show_headers = !self.show_headers;</code>
-<a href="#l104" class="line" id="l104">    104</a><code class="language-auto">                 match self.show_headers {</code>
-<a href="#l105" class="line" id="l105">    105</a><code class="language-auto">                     true =&gt; println!(&quot;Headers enabled&quot;),</code>
-<a href="#l106" class="line" id="l106">    106</a><code class="language-auto">                     false =&gt; println!(&quot;Headers disabled&quot;),</code>
-<a href="#l107" class="line" id="l107">    107</a><code class="language-auto">                 }</code>
-<a href="#l108" class="line" id="l108">    108</a><code class="language-auto">             }</code>
-<a href="#l109" class="line" id="l109">    109</a><code class="language-auto">             (&quot;!headers&quot;, _) =&gt; return errinput!(&quot;!headers takes no arguments&quot;),</code>
-<a href="#l110" class="line" id="l110">    110</a><code class="language-auto"> </code>
-<a href="#l111" class="line" id="l111">    111</a><code class="language-auto">             // Displays help.</code>
-<a href="#l112" class="line" id="l112">    112</a><code class="language-auto">             (&quot;!help&quot;, []) =&gt; println!(</code>
-<a href="#l113" class="line" id="l113">    113</a><code class="language-auto">                 r#&quot;</code>
-<a href="#l114" class="line" id="l114">    114</a><code class="language-auto"> Enter a SQL statement terminated by a semicolon (;) to execute it, or Ctrl-D to</code>
-<a href="#l115" class="line" id="l115">    115</a><code class="language-auto"> exit. The following commands are also available:</code>
-<a href="#l116" class="line" id="l116">    116</a><code class="language-auto"> </code>
-<a href="#l117" class="line" id="l117">    117</a><code class="language-auto">     !headers           Toggles column headers</code>
-<a href="#l118" class="line" id="l118">    118</a><code class="language-auto">     !help              This help message</code>
-<a href="#l119" class="line" id="l119">    119</a><code class="language-auto">     !status            Display server status</code>
-<a href="#l120" class="line" id="l120">    120</a><code class="language-auto">     !table NAME        Display a table schema</code>
-<a href="#l121" class="line" id="l121">    121</a><code class="language-auto">     !tables            List tables</code>
-<a href="#l122" class="line" id="l122">    122</a><code class="language-auto"> &quot;#</code>
-<a href="#l123" class="line" id="l123">    123</a><code class="language-auto">             ),</code>
-<a href="#l124" class="line" id="l124">    124</a><code class="language-auto">             (&quot;!help&quot;, _) =&gt; return errinput!(&quot;!help takes no arguments&quot;),</code>
-<a href="#l125" class="line" id="l125">    125</a><code class="language-auto"> </code>
-<a href="#l126" class="line" id="l126">    126</a><code class="language-auto">             // Displays server status.</code>
-<a href="#l127" class="line" id="l127">    127</a><code class="language-auto">             (&quot;!status&quot;, []) =&gt; {</code>
-<a href="#l128" class="line" id="l128">    128</a><code class="language-auto">                 let status = self.client.status()?;</code>
-<a href="#l129" class="line" id="l129">    129</a><code class="language-auto">                 println!(</code>
-<a href="#l130" class="line" id="l130">    130</a><code class="language-auto">                     r#&quot;</code>
-<a href="#l131" class="line" id="l131">    131</a><code class="language-auto"> Server:       n{server} with Raft leader n{leader} in term {term} for {nodes} nodes</code>
-<a href="#l132" class="line" id="l132">    132</a><code class="language-auto"> Raft log:     {committed} committed, {applied} applied, {raft_size} MB, {raft_garbage}% garbage ({raft_storage} engine)</code>
-<a href="#l133" class="line" id="l133">    133</a><code class="language-auto"> Replication:  {raft_match}</code>
-<a href="#l134" class="line" id="l134">    134</a><code class="language-auto"> SQL storage:  {sql_keys} keys, {sql_size} MB logical, {nodes}x {sql_disk_size} MB disk, {sql_garbage}% garbage ({sql_storage} engine)</code>
-<a href="#l135" class="line" id="l135">    135</a><code class="language-auto"> Transactions: {active_txns} active, {versions} total</code>
-<a href="#l136" class="line" id="l136">    136</a><code class="language-auto"> &quot;#,</code>
-<a href="#l137" class="line" id="l137">    137</a><code class="language-auto">                     server = status.server,</code>
-<a href="#l138" class="line" id="l138">    138</a><code class="language-auto">                     leader = status.raft.leader,</code>
-<a href="#l139" class="line" id="l139">    139</a><code class="language-auto">                     term = status.raft.term,</code>
-<a href="#l140" class="line" id="l140">    140</a><code class="language-auto">                     nodes = status.raft.match_index.len(),</code>
-<a href="#l141" class="line" id="l141">    141</a><code class="language-auto">                     committed = status.raft.commit_index,</code>
-<a href="#l142" class="line" id="l142">    142</a><code class="language-auto">                     applied = status.raft.applied_index,</code>
-<a href="#l143" class="line" id="l143">    143</a><code class="language-auto">                     raft_size = format_args!(&quot;{:.3}&quot;, status.raft.storage.size as f64 / 1000000.0),</code>
-<a href="#l144" class="line" id="l144">    144</a><code class="language-auto">                     raft_garbage = format_args!(&quot;{:.0}&quot;, status.raft.storage.garbage_percent()),</code>
-<a href="#l145" class="line" id="l145">    145</a><code class="language-auto">                     raft_storage = status.raft.storage.name,</code>
-<a href="#l146" class="line" id="l146">    146</a><code class="language-auto">                     raft_match =</code>
-<a href="#l147" class="line" id="l147">    147</a><code class="language-auto">                         status.raft.match_index.iter().map(|(n, m)| format!(&quot;n{n}:{m}&quot;)).join(&quot; &quot;),</code>
-<a href="#l148" class="line" id="l148">    148</a><code class="language-auto">                     sql_keys = status.mvcc.storage.keys,</code>
-<a href="#l149" class="line" id="l149">    149</a><code class="language-auto">                     sql_size = format_args!(&quot;{:.3}&quot;, status.mvcc.storage.size as f64 / 1000000.0),</code>
-<a href="#l150" class="line" id="l150">    150</a><code class="language-auto">                     sql_disk_size = format_args!(</code>
-<a href="#l151" class="line" id="l151">    151</a><code class="language-auto">                         &quot;{:.3}&quot;,</code>
-<a href="#l152" class="line" id="l152">    152</a><code class="language-auto">                         status.mvcc.storage.total_disk_size as f64 / 1000000.0</code>
-<a href="#l153" class="line" id="l153">    153</a><code class="language-auto">                     ),</code>
-<a href="#l154" class="line" id="l154">    154</a><code class="language-auto">                     sql_garbage = format_args!(&quot;{:.0}&quot;, status.mvcc.storage.garbage_percent()),</code>
-<a href="#l155" class="line" id="l155">    155</a><code class="language-auto">                     sql_storage = status.mvcc.storage.name,</code>
-<a href="#l156" class="line" id="l156">    156</a><code class="language-auto">                     active_txns = status.mvcc.active_txns,</code>
-<a href="#l157" class="line" id="l157">    157</a><code class="language-auto">                     versions = status.mvcc.versions,</code>
-<a href="#l158" class="line" id="l158">    158</a><code class="language-auto">                 )</code>
-<a href="#l159" class="line" id="l159">    159</a><code class="language-auto">             }</code>
-<a href="#l160" class="line" id="l160">    160</a><code class="language-auto">             (&quot;!status&quot;, _) =&gt; return errinput!(&quot;!status takes no arguments&quot;),</code>
-<a href="#l161" class="line" id="l161">    161</a><code class="language-auto"> </code>
-<a href="#l162" class="line" id="l162">    162</a><code class="language-auto">             (&quot;!table&quot;, [name]) =&gt; println!(&quot;{}&quot;, self.client.get_table(name)?),</code>
-<a href="#l163" class="line" id="l163">    163</a><code class="language-auto">             (&quot;!table&quot;, _) =&gt; return errinput!(&quot;!table takes 1 argument&quot;),</code>
-<a href="#l164" class="line" id="l164">    164</a><code class="language-auto"> </code>
-<a href="#l165" class="line" id="l165">    165</a><code class="language-auto">             (&quot;!tables&quot;, []) =&gt; self.client.list_tables()?.iter().for_each(|t| println!(&quot;{t}&quot;)),</code>
-<a href="#l166" class="line" id="l166">    166</a><code class="language-auto">             (&quot;!tables&quot;, _) =&gt; return errinput!(&quot;!tables takes no arguments&quot;),</code>
-<a href="#l167" class="line" id="l167">    167</a><code class="language-auto"> </code>
-<a href="#l168" class="line" id="l168">    168</a><code class="language-auto">             (command, _) =&gt; return errinput!(&quot;unknown command {command}&quot;),</code>
-<a href="#l169" class="line" id="l169">    169</a><code class="language-auto">         }</code>
-<a href="#l170" class="line" id="l170">    170</a><code class="language-auto">         Ok(())</code>
-<a href="#l171" class="line" id="l171">    171</a><code class="language-auto">     }</code>
-<a href="#l172" class="line" id="l172">    172</a><code class="language-auto"> </code>
-<a href="#l173" class="line" id="l173">    173</a><code class="language-auto">     /// Executes a SQL statement and displays the results.</code>
-<a href="#l174" class="line" id="l174">    174</a><code class="language-auto">     fn execute_sql(&amp;mut self, statement: &amp;str) -&gt; Result&lt;()&gt; {</code>
-<a href="#l175" class="line" id="l175">    175</a><code class="language-auto">         use StatementResult::*;</code>
-<a href="#l176" class="line" id="l176">    176</a><code class="language-auto">         match self.client.execute(statement)? {</code>
-<a href="#l177" class="line" id="l177">    177</a><code class="language-auto">             Begin(state) =&gt; match state.read_only {</code>
-<a href="#l178" class="line" id="l178">    178</a><code class="language-auto">                 true =&gt; println!(&quot;Began read-only transaction at version {}&quot;, state.version),</code>
-<a href="#l179" class="line" id="l179">    179</a><code class="language-auto">                 false =&gt; println!(&quot;Began transaction {}&quot;, state.version),</code>
-<a href="#l180" class="line" id="l180">    180</a><code class="language-auto">             },</code>
-<a href="#l181" class="line" id="l181">    181</a><code class="language-auto">             Commit { version } =&gt; println!(&quot;Committed transaction {version}&quot;),</code>
-<a href="#l182" class="line" id="l182">    182</a><code class="language-auto">             Rollback { version } =&gt; println!(&quot;Rolled back transaction {version}&quot;),</code>
-<a href="#l183" class="line" id="l183">    183</a><code class="language-auto">             Insert { count } =&gt; println!(&quot;Inserted {count} rows&quot;),</code>
-<a href="#l184" class="line" id="l184">    184</a><code class="language-auto">             Delete { count } =&gt; println!(&quot;Deleted {count} rows&quot;),</code>
-<a href="#l185" class="line" id="l185">    185</a><code class="language-auto">             Update { count } =&gt; println!(&quot;Updated {count} rows&quot;),</code>
-<a href="#l186" class="line" id="l186">    186</a><code class="language-auto">             CreateTable { name } =&gt; println!(&quot;Created table {name}&quot;),</code>
-<a href="#l187" class="line" id="l187">    187</a><code class="language-auto">             DropTable { name, existed } =&gt; match existed {</code>
-<a href="#l188" class="line" id="l188">    188</a><code class="language-auto">                 true =&gt; println!(&quot;Dropped table {name}&quot;),</code>
-<a href="#l189" class="line" id="l189">    189</a><code class="language-auto">                 false =&gt; println!(&quot;Table {name} does not exist&quot;),</code>
-<a href="#l190" class="line" id="l190">    190</a><code class="language-auto">             },</code>
-<a href="#l191" class="line" id="l191">    191</a><code class="language-auto">             Explain(plan) =&gt; println!(&quot;{plan}&quot;),</code>
-<a href="#l192" class="line" id="l192">    192</a><code class="language-auto">             Select { columns, rows } =&gt; {</code>
-<a href="#l193" class="line" id="l193">    193</a><code class="language-auto">                 if self.show_headers {</code>
-<a href="#l194" class="line" id="l194">    194</a><code class="language-auto">                     println!(&quot;{}&quot;, columns.iter().map(|c| c.as_header()).join(&quot;, &quot;));</code>
-<a href="#l195" class="line" id="l195">    195</a><code class="language-auto">                 }</code>
-<a href="#l196" class="line" id="l196">    196</a><code class="language-auto">                 for row in rows {</code>
-<a href="#l197" class="line" id="l197">    197</a><code class="language-auto">                     println!(&quot;{}&quot;, row.iter().join(&quot;, &quot;));</code>
-<a href="#l198" class="line" id="l198">    198</a><code class="language-auto">                 }</code>
-<a href="#l199" class="line" id="l199">    199</a><code class="language-auto">             }</code>
-<a href="#l200" class="line" id="l200">    200</a><code class="language-auto">         }</code>
-<a href="#l201" class="line" id="l201">    201</a><code class="language-auto">         Ok(())</code>
-<a href="#l202" class="line" id="l202">    202</a><code class="language-auto">     }</code>
-<a href="#l203" class="line" id="l203">    203</a><code class="language-auto"> </code>
-<a href="#l204" class="line" id="l204">    204</a><code class="language-auto">     /// Prompts the user for input. Returns None if the shell should close.</code>
-<a href="#l205" class="line" id="l205">    205</a><code class="language-auto">     fn prompt(&amp;mut self) -&gt; rustyline::Result&lt;String&gt; {</code>
-<a href="#l206" class="line" id="l206">    206</a><code class="language-auto">         let prompt = match self.client.txn() {</code>
-<a href="#l207" class="line" id="l207">    207</a><code class="language-auto">             Some(txn) if txn.read_only =&gt; format!(&quot;toydb@{}&gt; &quot;, txn.version),</code>
-<a href="#l208" class="line" id="l208">    208</a><code class="language-auto">             Some(txn) =&gt; format!(&quot;toydb:{}&gt; &quot;, txn.version),</code>
-<a href="#l209" class="line" id="l209">    209</a><code class="language-auto">             None =&gt; &quot;toydb&gt; &quot;.to_string(),</code>
-<a href="#l210" class="line" id="l210">    210</a><code class="language-auto">         };</code>
-<a href="#l211" class="line" id="l211">    211</a><code class="language-auto">         self.editor.readline(&amp;prompt)</code>
-<a href="#l212" class="line" id="l212">    212</a><code class="language-auto">     }</code>
-<a href="#l213" class="line" id="l213">    213</a><code class="language-auto"> </code>
-<a href="#l214" class="line" id="l214">    214</a><code class="language-auto">     /// Runs the interactive shell.</code>
-<a href="#l215" class="line" id="l215">    215</a><code class="language-auto">     fn run(&amp;mut self) -&gt; Result&lt;()&gt; {</code>
-<a href="#l216" class="line" id="l216">    216</a><code class="language-auto">         // Load the history file, if any.</code>
-<a href="#l217" class="line" id="l217">    217</a><code class="language-auto">         if let Some(history_path) = &amp;self.history_path {</code>
-<a href="#l218" class="line" id="l218">    218</a><code class="language-auto">             match self.editor.load_history(history_path) {</code>
-<a href="#l219" class="line" id="l219">    219</a><code class="language-auto">                 Ok(()) =&gt; {}</code>
-<a href="#l220" class="line" id="l220">    220</a><code class="language-auto">                 Err(ReadlineError::Io(error)) if error.kind() == std::io::ErrorKind::NotFound =&gt; {}</code>
-<a href="#l221" class="line" id="l221">    221</a><code class="language-auto">                 Err(error) =&gt; return Err(error.into()),</code>
-<a href="#l222" class="line" id="l222">    222</a><code class="language-auto">             }</code>
-<a href="#l223" class="line" id="l223">    223</a><code class="language-auto">         }</code>
-<a href="#l224" class="line" id="l224">    224</a><code class="language-auto"> </code>
-<a href="#l225" class="line" id="l225">    225</a><code class="language-auto">         // Print welcome message.</code>
-<a href="#l226" class="line" id="l226">    226</a><code class="language-auto">         let server = self.client.status()?.server;</code>
-<a href="#l227" class="line" id="l227">    227</a><code class="language-auto">         println!(&quot;Connected to toyDB node n{server}. Enter !help for instructions.&quot;);</code>
-<a href="#l228" class="line" id="l228">    228</a><code class="language-auto"> </code>
-<a href="#l229" class="line" id="l229">    229</a><code class="language-auto">         // Prompt for commands and execute them.</code>
-<a href="#l230" class="line" id="l230">    230</a><code class="language-auto">         loop {</code>
-<a href="#l231" class="line" id="l231">    231</a><code class="language-auto">             let input = match self.prompt() {</code>
-<a href="#l232" class="line" id="l232">    232</a><code class="language-auto">                 Ok(input) =&gt; input.trim().to_string(),</code>
-<a href="#l233" class="line" id="l233">    233</a><code class="language-auto">                 Err(ReadlineError::Interrupted) =&gt; continue,</code>
-<a href="#l234" class="line" id="l234">    234</a><code class="language-auto">                 Err(ReadlineError::Eof) =&gt; break,</code>
-<a href="#l235" class="line" id="l235">    235</a><code class="language-auto">                 Err(error) =&gt; return Err(error.into()),</code>
-<a href="#l236" class="line" id="l236">    236</a><code class="language-auto">             };</code>
-<a href="#l237" class="line" id="l237">    237</a><code class="language-auto">             self.editor.add_history_entry(&amp;input)?;</code>
-<a href="#l238" class="line" id="l238">    238</a><code class="language-auto">             if let Err(error) = self.execute(&amp;input) {</code>
-<a href="#l239" class="line" id="l239">    239</a><code class="language-auto">                 eprintln!(&quot;Error: {error}&quot;);</code>
-<a href="#l240" class="line" id="l240">    240</a><code class="language-auto">             };</code>
-<a href="#l241" class="line" id="l241">    241</a><code class="language-auto">         }</code>
-<a href="#l242" class="line" id="l242">    242</a><code class="language-auto"> </code>
-<a href="#l243" class="line" id="l243">    243</a><code class="language-auto">         // Save the history file.</code>
-<a href="#l244" class="line" id="l244">    244</a><code class="language-auto">         if let Some(history_path) = &amp;self.history_path {</code>
-<a href="#l245" class="line" id="l245">    245</a><code class="language-auto">             self.editor.save_history(history_path)?;</code>
-<a href="#l246" class="line" id="l246">    246</a><code class="language-auto">         }</code>
-<a href="#l247" class="line" id="l247">    247</a><code class="language-auto">         Ok(())</code>
-<a href="#l248" class="line" id="l248">    248</a><code class="language-auto">     }</code>
-<a href="#l249" class="line" id="l249">    249</a><code class="language-auto"> }</code>
-<a href="#l250" class="line" id="l250">    250</a><code class="language-auto"> </code>
-<a href="#l251" class="line" id="l251">    251</a><code class="language-auto"> /// A Rustyline helper for multiline editing. After a new line is entered, it</code>
-<a href="#l252" class="line" id="l252">    252</a><code class="language-auto"> /// determines whether the input makes up a complete SQL statement that should</code>
-<a href="#l253" class="line" id="l253">    253</a><code class="language-auto"> /// be submitted to the server (i.e. it&#39;s terminated by ;), or wait for further</code>
-<a href="#l254" class="line" id="l254">    254</a><code class="language-auto"> /// input.</code>
-<a href="#l255" class="line" id="l255">    255</a><code class="language-auto"> #[derive(Completer, Helper, Highlighter, Hinter)]</code>
-<a href="#l256" class="line" id="l256">    256</a><code class="language-auto"> struct InputValidator;</code>
-<a href="#l257" class="line" id="l257">    257</a><code class="language-auto"> </code>
-<a href="#l258" class="line" id="l258">    258</a><code class="language-auto"> impl Validator for InputValidator {</code>
-<a href="#l259" class="line" id="l259">    259</a><code class="language-auto">     fn validate(&amp;self, ctx: &amp;mut ValidationContext) -&gt; rustyline::Result&lt;ValidationResult&gt; {</code>
-<a href="#l260" class="line" id="l260">    260</a><code class="language-auto">         let input = ctx.input();</code>
-<a href="#l261" class="line" id="l261">    261</a><code class="language-auto">         // Empty lines and ! commands are ready.</code>
-<a href="#l262" class="line" id="l262">    262</a><code class="language-auto">         if input.is_empty() || input.starts_with(&#39;!&#39;) || input == &quot;;&quot; {</code>
-<a href="#l263" class="line" id="l263">    263</a><code class="language-auto">             return Ok(ValidationResult::Valid(None));</code>
-<a href="#l264" class="line" id="l264">    264</a><code class="language-auto">         }</code>
-<a href="#l265" class="line" id="l265">    265</a><code class="language-auto">         // For SQL statements, just look for any semicolon or lexer error, and</code>
-<a href="#l266" class="line" id="l266">    266</a><code class="language-auto">         // rely on the server for further validation and error handling.</code>
-<a href="#l267" class="line" id="l267">    267</a><code class="language-auto">         if Lexer::new(input).any(|r| matches!(r, Ok(Token::Semicolon) | Err(_))) {</code>
-<a href="#l268" class="line" id="l268">    268</a><code class="language-auto">             return Ok(ValidationResult::Valid(None));</code>
-<a href="#l269" class="line" id="l269">    269</a><code class="language-auto">         }</code>
-<a href="#l270" class="line" id="l270">    270</a><code class="language-auto">         // Otherwise, wait for more input.</code>
-<a href="#l271" class="line" id="l271">    271</a><code class="language-auto">         Ok(ValidationResult::Incomplete)</code>
-<a href="#l272" class="line" id="l272">    272</a><code class="language-auto">     }</code>
-<a href="#l273" class="line" id="l273">    273</a><code class="language-auto"> </code>
-<a href="#l274" class="line" id="l274">    274</a><code class="language-auto">     fn validate_while_typing(&amp;self) -&gt; bool {</code>
-<a href="#l275" class="line" id="l275">    275</a><code class="language-auto">         false // only check after completed lines</code>
-<a href="#l276" class="line" id="l276">    276</a><code class="language-auto">     }</code>
-<a href="#l277" class="line" id="l277">    277</a><code class="language-auto"> }</code>
+<code><a href="#l1" class="line" id="l1">      1</a> //! toySQL is a command-line client for toyDB. It connects to a toyDB node</code>
+<code><a href="#l2" class="line" id="l2">      2</a> //! (default localhost:9605) and executes SQL statements against it via an</code>
+<code><a href="#l3" class="line" id="l3">      3</a> //! interactive shell interface. Command history is stored in .toysql.history.</code>
+<code><a href="#l4" class="line" id="l4">      4</a> </code>
+<code><a href="#l5" class="line" id="l5">      5</a> #![warn(clippy::all)]</code>
+<code><a href="#l6" class="line" id="l6">      6</a> </code>
+<code><a href="#l7" class="line" id="l7">      7</a> use toydb::errinput;</code>
+<code><a href="#l8" class="line" id="l8">      8</a> use toydb::error::Result;</code>
+<code><a href="#l9" class="line" id="l9">      9</a> use toydb::sql::engine::StatementResult;</code>
+<code><a href="#l10" class="line" id="l10">     10</a> use toydb::sql::parser::{Lexer, Token};</code>
+<code><a href="#l11" class="line" id="l11">     11</a> use toydb::Client;</code>
+<code><a href="#l12" class="line" id="l12">     12</a> </code>
+<code><a href="#l13" class="line" id="l13">     13</a> use clap::Parser as _;</code>
+<code><a href="#l14" class="line" id="l14">     14</a> use itertools::Itertools as _;</code>
+<code><a href="#l15" class="line" id="l15">     15</a> use rustyline::error::ReadlineError;</code>
+<code><a href="#l16" class="line" id="l16">     16</a> use rustyline::history::DefaultHistory;</code>
+<code><a href="#l17" class="line" id="l17">     17</a> use rustyline::validate::{ValidationContext, ValidationResult, Validator};</code>
+<code><a href="#l18" class="line" id="l18">     18</a> use rustyline::{Editor, Modifiers};</code>
+<code><a href="#l19" class="line" id="l19">     19</a> use rustyline_derive::{Completer, Helper, Highlighter, Hinter};</code>
+<code><a href="#l20" class="line" id="l20">     20</a> </code>
+<code><a href="#l21" class="line" id="l21">     21</a> fn main() {</code>
+<code><a href="#l22" class="line" id="l22">     22</a>     if let Err(error) = Command::parse().run() {</code>
+<code><a href="#l23" class="line" id="l23">     23</a>         eprintln!(&quot;Error: {error}&quot;);</code>
+<code><a href="#l24" class="line" id="l24">     24</a>     }</code>
+<code><a href="#l25" class="line" id="l25">     25</a> }</code>
+<code><a href="#l26" class="line" id="l26">     26</a> </code>
+<code><a href="#l27" class="line" id="l27">     27</a> /// The toySQL command.</code>
+<code><a href="#l28" class="line" id="l28">     28</a> #[derive(clap::Parser)]</code>
+<code><a href="#l29" class="line" id="l29">     29</a> #[command(about = &quot;A toyDB client.&quot;, version, propagate_version = true)]</code>
+<code><a href="#l30" class="line" id="l30">     30</a> struct Command {</code>
+<code><a href="#l31" class="line" id="l31">     31</a>     /// A SQL statement to execute, then exit.</code>
+<code><a href="#l32" class="line" id="l32">     32</a>     #[arg()]</code>
+<code><a href="#l33" class="line" id="l33">     33</a>     statement: Option&lt;String&gt;,</code>
+<code><a href="#l34" class="line" id="l34">     34</a>     /// Host to connect to.</code>
+<code><a href="#l35" class="line" id="l35">     35</a>     #[arg(short = &#39;H&#39;, long, default_value = &quot;localhost&quot;)]</code>
+<code><a href="#l36" class="line" id="l36">     36</a>     host: String,</code>
+<code><a href="#l37" class="line" id="l37">     37</a>     /// Port number to connect to.</code>
+<code><a href="#l38" class="line" id="l38">     38</a>     #[arg(short = &#39;p&#39;, long, default_value = &quot;9605&quot;)]</code>
+<code><a href="#l39" class="line" id="l39">     39</a>     port: u16,</code>
+<code><a href="#l40" class="line" id="l40">     40</a> }</code>
+<code><a href="#l41" class="line" id="l41">     41</a> </code>
+<code><a href="#l42" class="line" id="l42">     42</a> impl Command {</code>
+<code><a href="#l43" class="line" id="l43">     43</a>     /// Runs the command.</code>
+<code><a href="#l44" class="line" id="l44">     44</a>     fn run(self) -&gt; Result&lt;()&gt; {</code>
+<code><a href="#l45" class="line" id="l45">     45</a>         let mut shell = Shell::new(&amp;self.host, self.port)?;</code>
+<code><a href="#l46" class="line" id="l46">     46</a>         match self.statement {</code>
+<code><a href="#l47" class="line" id="l47">     47</a>             Some(statement) =&gt; shell.execute(&amp;statement),</code>
+<code><a href="#l48" class="line" id="l48">     48</a>             None =&gt; shell.run(),</code>
+<code><a href="#l49" class="line" id="l49">     49</a>         }</code>
+<code><a href="#l50" class="line" id="l50">     50</a>     }</code>
+<code><a href="#l51" class="line" id="l51">     51</a> }</code>
+<code><a href="#l52" class="line" id="l52">     52</a> </code>
+<code><a href="#l53" class="line" id="l53">     53</a> /// An interactive toySQL shell.</code>
+<code><a href="#l54" class="line" id="l54">     54</a> struct Shell {</code>
+<code><a href="#l55" class="line" id="l55">     55</a>     /// The toyDB client.</code>
+<code><a href="#l56" class="line" id="l56">     56</a>     client: Client,</code>
+<code><a href="#l57" class="line" id="l57">     57</a>     /// The Rustyline command editor.</code>
+<code><a href="#l58" class="line" id="l58">     58</a>     editor: Editor&lt;InputValidator, DefaultHistory&gt;,</code>
+<code><a href="#l59" class="line" id="l59">     59</a>     /// The path to the history file, if any.</code>
+<code><a href="#l60" class="line" id="l60">     60</a>     history_path: Option&lt;std::path::PathBuf&gt;,</code>
+<code><a href="#l61" class="line" id="l61">     61</a>     /// If true, SELECT column headers will be displayed.</code>
+<code><a href="#l62" class="line" id="l62">     62</a>     show_headers: bool,</code>
+<code><a href="#l63" class="line" id="l63">     63</a> }</code>
+<code><a href="#l64" class="line" id="l64">     64</a> </code>
+<code><a href="#l65" class="line" id="l65">     65</a> impl Shell {</code>
+<code><a href="#l66" class="line" id="l66">     66</a>     /// Creates a new shell connected to the given server.</code>
+<code><a href="#l67" class="line" id="l67">     67</a>     fn new(host: &amp;str, port: u16) -&gt; Result&lt;Self&gt; {</code>
+<code><a href="#l68" class="line" id="l68">     68</a>         let client = Client::connect((host, port))?;</code>
+<code><a href="#l69" class="line" id="l69">     69</a>         // Set up Rustyline. Make sure multiline pastes are handled normally.</code>
+<code><a href="#l70" class="line" id="l70">     70</a>         let mut editor = Editor::new()?;</code>
+<code><a href="#l71" class="line" id="l71">     71</a>         editor.set_helper(Some(InputValidator));</code>
+<code><a href="#l72" class="line" id="l72">     72</a>         editor.bind_sequence(</code>
+<code><a href="#l73" class="line" id="l73">     73</a>             rustyline::KeyEvent(rustyline::KeyCode::BracketedPasteStart, Modifiers::NONE),</code>
+<code><a href="#l74" class="line" id="l74">     74</a>             rustyline::Cmd::Noop,</code>
+<code><a href="#l75" class="line" id="l75">     75</a>         );</code>
+<code><a href="#l76" class="line" id="l76">     76</a>         let history_path = std::env::var_os(&quot;HOME&quot;)</code>
+<code><a href="#l77" class="line" id="l77">     77</a>             .map(|home| std::path::PathBuf::from(home).join(&quot;.toysql.history&quot;));</code>
+<code><a href="#l78" class="line" id="l78">     78</a>         Ok(Self { client, editor, history_path, show_headers: false })</code>
+<code><a href="#l79" class="line" id="l79">     79</a>     }</code>
+<code><a href="#l80" class="line" id="l80">     80</a> </code>
+<code><a href="#l81" class="line" id="l81">     81</a>     /// Executes a SQL statement or ! command.</code>
+<code><a href="#l82" class="line" id="l82">     82</a>     fn execute(&amp;mut self, input: &amp;str) -&gt; Result&lt;()&gt; {</code>
+<code><a href="#l83" class="line" id="l83">     83</a>         if input.starts_with(&#39;!&#39;) {</code>
+<code><a href="#l84" class="line" id="l84">     84</a>             self.execute_command(input)</code>
+<code><a href="#l85" class="line" id="l85">     85</a>         } else if !input.is_empty() {</code>
+<code><a href="#l86" class="line" id="l86">     86</a>             self.execute_sql(input)</code>
+<code><a href="#l87" class="line" id="l87">     87</a>         } else {</code>
+<code><a href="#l88" class="line" id="l88">     88</a>             Ok(())</code>
+<code><a href="#l89" class="line" id="l89">     89</a>         }</code>
+<code><a href="#l90" class="line" id="l90">     90</a>     }</code>
+<code><a href="#l91" class="line" id="l91">     91</a> </code>
+<code><a href="#l92" class="line" id="l92">     92</a>     /// Executes a toySQL ! command (e.g. !help)</code>
+<code><a href="#l93" class="line" id="l93">     93</a>     fn execute_command(&amp;mut self, input: &amp;str) -&gt; Result&lt;()&gt; {</code>
+<code><a href="#l94" class="line" id="l94">     94</a>         let mut input = input.split_ascii_whitespace();</code>
+<code><a href="#l95" class="line" id="l95">     95</a>         let Some(command) = input.next() else {</code>
+<code><a href="#l96" class="line" id="l96">     96</a>             return errinput!(&quot;expected command&quot;);</code>
+<code><a href="#l97" class="line" id="l97">     97</a>         };</code>
+<code><a href="#l98" class="line" id="l98">     98</a>         let args = input.collect_vec();</code>
+<code><a href="#l99" class="line" id="l99">     99</a> </code>
+<code><a href="#l100" class="line" id="l100">    100</a>         match (command, args.as_slice()) {</code>
+<code><a href="#l101" class="line" id="l101">    101</a>             // Toggles column headers.</code>
+<code><a href="#l102" class="line" id="l102">    102</a>             (&quot;!headers&quot;, []) =&gt; {</code>
+<code><a href="#l103" class="line" id="l103">    103</a>                 self.show_headers = !self.show_headers;</code>
+<code><a href="#l104" class="line" id="l104">    104</a>                 match self.show_headers {</code>
+<code><a href="#l105" class="line" id="l105">    105</a>                     true =&gt; println!(&quot;Headers enabled&quot;),</code>
+<code><a href="#l106" class="line" id="l106">    106</a>                     false =&gt; println!(&quot;Headers disabled&quot;),</code>
+<code><a href="#l107" class="line" id="l107">    107</a>                 }</code>
+<code><a href="#l108" class="line" id="l108">    108</a>             }</code>
+<code><a href="#l109" class="line" id="l109">    109</a>             (&quot;!headers&quot;, _) =&gt; return errinput!(&quot;!headers takes no arguments&quot;),</code>
+<code><a href="#l110" class="line" id="l110">    110</a> </code>
+<code><a href="#l111" class="line" id="l111">    111</a>             // Displays help.</code>
+<code><a href="#l112" class="line" id="l112">    112</a>             (&quot;!help&quot;, []) =&gt; println!(</code>
+<code><a href="#l113" class="line" id="l113">    113</a>                 r#&quot;</code>
+<code><a href="#l114" class="line" id="l114">    114</a> Enter a SQL statement terminated by a semicolon (;) to execute it, or Ctrl-D to</code>
+<code><a href="#l115" class="line" id="l115">    115</a> exit. The following commands are also available:</code>
+<code><a href="#l116" class="line" id="l116">    116</a> </code>
+<code><a href="#l117" class="line" id="l117">    117</a>     !headers           Toggles column headers</code>
+<code><a href="#l118" class="line" id="l118">    118</a>     !help              This help message</code>
+<code><a href="#l119" class="line" id="l119">    119</a>     !status            Display server status</code>
+<code><a href="#l120" class="line" id="l120">    120</a>     !table NAME        Display a table schema</code>
+<code><a href="#l121" class="line" id="l121">    121</a>     !tables            List tables</code>
+<code><a href="#l122" class="line" id="l122">    122</a> &quot;#</code>
+<code><a href="#l123" class="line" id="l123">    123</a>             ),</code>
+<code><a href="#l124" class="line" id="l124">    124</a>             (&quot;!help&quot;, _) =&gt; return errinput!(&quot;!help takes no arguments&quot;),</code>
+<code><a href="#l125" class="line" id="l125">    125</a> </code>
+<code><a href="#l126" class="line" id="l126">    126</a>             // Displays server status.</code>
+<code><a href="#l127" class="line" id="l127">    127</a>             (&quot;!status&quot;, []) =&gt; {</code>
+<code><a href="#l128" class="line" id="l128">    128</a>                 let status = self.client.status()?;</code>
+<code><a href="#l129" class="line" id="l129">    129</a>                 println!(</code>
+<code><a href="#l130" class="line" id="l130">    130</a>                     r#&quot;</code>
+<code><a href="#l131" class="line" id="l131">    131</a> Server:       n{server} with Raft leader n{leader} in term {term} for {nodes} nodes</code>
+<code><a href="#l132" class="line" id="l132">    132</a> Raft log:     {committed} committed, {applied} applied, {raft_size} MB, {raft_garbage}% garbage ({raft_storage} engine)</code>
+<code><a href="#l133" class="line" id="l133">    133</a> Replication:  {raft_match}</code>
+<code><a href="#l134" class="line" id="l134">    134</a> SQL storage:  {sql_keys} keys, {sql_size} MB logical, {nodes}x {sql_disk_size} MB disk, {sql_garbage}% garbage ({sql_storage} engine)</code>
+<code><a href="#l135" class="line" id="l135">    135</a> Transactions: {active_txns} active, {versions} total</code>
+<code><a href="#l136" class="line" id="l136">    136</a> &quot;#,</code>
+<code><a href="#l137" class="line" id="l137">    137</a>                     server = status.server,</code>
+<code><a href="#l138" class="line" id="l138">    138</a>                     leader = status.raft.leader,</code>
+<code><a href="#l139" class="line" id="l139">    139</a>                     term = status.raft.term,</code>
+<code><a href="#l140" class="line" id="l140">    140</a>                     nodes = status.raft.match_index.len(),</code>
+<code><a href="#l141" class="line" id="l141">    141</a>                     committed = status.raft.commit_index,</code>
+<code><a href="#l142" class="line" id="l142">    142</a>                     applied = status.raft.applied_index,</code>
+<code><a href="#l143" class="line" id="l143">    143</a>                     raft_size = format_args!(&quot;{:.3}&quot;, status.raft.storage.size as f64 / 1000000.0),</code>
+<code><a href="#l144" class="line" id="l144">    144</a>                     raft_garbage = format_args!(&quot;{:.0}&quot;, status.raft.storage.garbage_percent()),</code>
+<code><a href="#l145" class="line" id="l145">    145</a>                     raft_storage = status.raft.storage.name,</code>
+<code><a href="#l146" class="line" id="l146">    146</a>                     raft_match =</code>
+<code><a href="#l147" class="line" id="l147">    147</a>                         status.raft.match_index.iter().map(|(n, m)| format!(&quot;n{n}:{m}&quot;)).join(&quot; &quot;),</code>
+<code><a href="#l148" class="line" id="l148">    148</a>                     sql_keys = status.mvcc.storage.keys,</code>
+<code><a href="#l149" class="line" id="l149">    149</a>                     sql_size = format_args!(&quot;{:.3}&quot;, status.mvcc.storage.size as f64 / 1000000.0),</code>
+<code><a href="#l150" class="line" id="l150">    150</a>                     sql_disk_size = format_args!(</code>
+<code><a href="#l151" class="line" id="l151">    151</a>                         &quot;{:.3}&quot;,</code>
+<code><a href="#l152" class="line" id="l152">    152</a>                         status.mvcc.storage.total_disk_size as f64 / 1000000.0</code>
+<code><a href="#l153" class="line" id="l153">    153</a>                     ),</code>
+<code><a href="#l154" class="line" id="l154">    154</a>                     sql_garbage = format_args!(&quot;{:.0}&quot;, status.mvcc.storage.garbage_percent()),</code>
+<code><a href="#l155" class="line" id="l155">    155</a>                     sql_storage = status.mvcc.storage.name,</code>
+<code><a href="#l156" class="line" id="l156">    156</a>                     active_txns = status.mvcc.active_txns,</code>
+<code><a href="#l157" class="line" id="l157">    157</a>                     versions = status.mvcc.versions,</code>
+<code><a href="#l158" class="line" id="l158">    158</a>                 )</code>
+<code><a href="#l159" class="line" id="l159">    159</a>             }</code>
+<code><a href="#l160" class="line" id="l160">    160</a>             (&quot;!status&quot;, _) =&gt; return errinput!(&quot;!status takes no arguments&quot;),</code>
+<code><a href="#l161" class="line" id="l161">    161</a> </code>
+<code><a href="#l162" class="line" id="l162">    162</a>             (&quot;!table&quot;, [name]) =&gt; println!(&quot;{}&quot;, self.client.get_table(name)?),</code>
+<code><a href="#l163" class="line" id="l163">    163</a>             (&quot;!table&quot;, _) =&gt; return errinput!(&quot;!table takes 1 argument&quot;),</code>
+<code><a href="#l164" class="line" id="l164">    164</a> </code>
+<code><a href="#l165" class="line" id="l165">    165</a>             (&quot;!tables&quot;, []) =&gt; self.client.list_tables()?.iter().for_each(|t| println!(&quot;{t}&quot;)),</code>
+<code><a href="#l166" class="line" id="l166">    166</a>             (&quot;!tables&quot;, _) =&gt; return errinput!(&quot;!tables takes no arguments&quot;),</code>
+<code><a href="#l167" class="line" id="l167">    167</a> </code>
+<code><a href="#l168" class="line" id="l168">    168</a>             (command, _) =&gt; return errinput!(&quot;unknown command {command}&quot;),</code>
+<code><a href="#l169" class="line" id="l169">    169</a>         }</code>
+<code><a href="#l170" class="line" id="l170">    170</a>         Ok(())</code>
+<code><a href="#l171" class="line" id="l171">    171</a>     }</code>
+<code><a href="#l172" class="line" id="l172">    172</a> </code>
+<code><a href="#l173" class="line" id="l173">    173</a>     /// Executes a SQL statement and displays the results.</code>
+<code><a href="#l174" class="line" id="l174">    174</a>     fn execute_sql(&amp;mut self, statement: &amp;str) -&gt; Result&lt;()&gt; {</code>
+<code><a href="#l175" class="line" id="l175">    175</a>         use StatementResult::*;</code>
+<code><a href="#l176" class="line" id="l176">    176</a>         match self.client.execute(statement)? {</code>
+<code><a href="#l177" class="line" id="l177">    177</a>             Begin(state) =&gt; match state.read_only {</code>
+<code><a href="#l178" class="line" id="l178">    178</a>                 true =&gt; println!(&quot;Began read-only transaction at version {}&quot;, state.version),</code>
+<code><a href="#l179" class="line" id="l179">    179</a>                 false =&gt; println!(&quot;Began transaction {}&quot;, state.version),</code>
+<code><a href="#l180" class="line" id="l180">    180</a>             },</code>
+<code><a href="#l181" class="line" id="l181">    181</a>             Commit { version } =&gt; println!(&quot;Committed transaction {version}&quot;),</code>
+<code><a href="#l182" class="line" id="l182">    182</a>             Rollback { version } =&gt; println!(&quot;Rolled back transaction {version}&quot;),</code>
+<code><a href="#l183" class="line" id="l183">    183</a>             Insert { count } =&gt; println!(&quot;Inserted {count} rows&quot;),</code>
+<code><a href="#l184" class="line" id="l184">    184</a>             Delete { count } =&gt; println!(&quot;Deleted {count} rows&quot;),</code>
+<code><a href="#l185" class="line" id="l185">    185</a>             Update { count } =&gt; println!(&quot;Updated {count} rows&quot;),</code>
+<code><a href="#l186" class="line" id="l186">    186</a>             CreateTable { name } =&gt; println!(&quot;Created table {name}&quot;),</code>
+<code><a href="#l187" class="line" id="l187">    187</a>             DropTable { name, existed } =&gt; match existed {</code>
+<code><a href="#l188" class="line" id="l188">    188</a>                 true =&gt; println!(&quot;Dropped table {name}&quot;),</code>
+<code><a href="#l189" class="line" id="l189">    189</a>                 false =&gt; println!(&quot;Table {name} does not exist&quot;),</code>
+<code><a href="#l190" class="line" id="l190">    190</a>             },</code>
+<code><a href="#l191" class="line" id="l191">    191</a>             Explain(plan) =&gt; println!(&quot;{plan}&quot;),</code>
+<code><a href="#l192" class="line" id="l192">    192</a>             Select { columns, rows } =&gt; {</code>
+<code><a href="#l193" class="line" id="l193">    193</a>                 if self.show_headers {</code>
+<code><a href="#l194" class="line" id="l194">    194</a>                     println!(&quot;{}&quot;, columns.iter().map(|c| c.as_header()).join(&quot;, &quot;));</code>
+<code><a href="#l195" class="line" id="l195">    195</a>                 }</code>
+<code><a href="#l196" class="line" id="l196">    196</a>                 for row in rows {</code>
+<code><a href="#l197" class="line" id="l197">    197</a>                     println!(&quot;{}&quot;, row.iter().join(&quot;, &quot;));</code>
+<code><a href="#l198" class="line" id="l198">    198</a>                 }</code>
+<code><a href="#l199" class="line" id="l199">    199</a>             }</code>
+<code><a href="#l200" class="line" id="l200">    200</a>         }</code>
+<code><a href="#l201" class="line" id="l201">    201</a>         Ok(())</code>
+<code><a href="#l202" class="line" id="l202">    202</a>     }</code>
+<code><a href="#l203" class="line" id="l203">    203</a> </code>
+<code><a href="#l204" class="line" id="l204">    204</a>     /// Prompts the user for input. Returns None if the shell should close.</code>
+<code><a href="#l205" class="line" id="l205">    205</a>     fn prompt(&amp;mut self) -&gt; rustyline::Result&lt;String&gt; {</code>
+<code><a href="#l206" class="line" id="l206">    206</a>         let prompt = match self.client.txn() {</code>
+<code><a href="#l207" class="line" id="l207">    207</a>             Some(txn) if txn.read_only =&gt; format!(&quot;toydb@{}&gt; &quot;, txn.version),</code>
+<code><a href="#l208" class="line" id="l208">    208</a>             Some(txn) =&gt; format!(&quot;toydb:{}&gt; &quot;, txn.version),</code>
+<code><a href="#l209" class="line" id="l209">    209</a>             None =&gt; &quot;toydb&gt; &quot;.to_string(),</code>
+<code><a href="#l210" class="line" id="l210">    210</a>         };</code>
+<code><a href="#l211" class="line" id="l211">    211</a>         self.editor.readline(&amp;prompt)</code>
+<code><a href="#l212" class="line" id="l212">    212</a>     }</code>
+<code><a href="#l213" class="line" id="l213">    213</a> </code>
+<code><a href="#l214" class="line" id="l214">    214</a>     /// Runs the interactive shell.</code>
+<code><a href="#l215" class="line" id="l215">    215</a>     fn run(&amp;mut self) -&gt; Result&lt;()&gt; {</code>
+<code><a href="#l216" class="line" id="l216">    216</a>         // Load the history file, if any.</code>
+<code><a href="#l217" class="line" id="l217">    217</a>         if let Some(history_path) = &amp;self.history_path {</code>
+<code><a href="#l218" class="line" id="l218">    218</a>             match self.editor.load_history(history_path) {</code>
+<code><a href="#l219" class="line" id="l219">    219</a>                 Ok(()) =&gt; {}</code>
+<code><a href="#l220" class="line" id="l220">    220</a>                 Err(ReadlineError::Io(error)) if error.kind() == std::io::ErrorKind::NotFound =&gt; {}</code>
+<code><a href="#l221" class="line" id="l221">    221</a>                 Err(error) =&gt; return Err(error.into()),</code>
+<code><a href="#l222" class="line" id="l222">    222</a>             }</code>
+<code><a href="#l223" class="line" id="l223">    223</a>         }</code>
+<code><a href="#l224" class="line" id="l224">    224</a> </code>
+<code><a href="#l225" class="line" id="l225">    225</a>         // Print welcome message.</code>
+<code><a href="#l226" class="line" id="l226">    226</a>         let server = self.client.status()?.server;</code>
+<code><a href="#l227" class="line" id="l227">    227</a>         println!(&quot;Connected to toyDB node n{server}. Enter !help for instructions.&quot;);</code>
+<code><a href="#l228" class="line" id="l228">    228</a> </code>
+<code><a href="#l229" class="line" id="l229">    229</a>         // Prompt for commands and execute them.</code>
+<code><a href="#l230" class="line" id="l230">    230</a>         loop {</code>
+<code><a href="#l231" class="line" id="l231">    231</a>             let input = match self.prompt() {</code>
+<code><a href="#l232" class="line" id="l232">    232</a>                 Ok(input) =&gt; input.trim().to_string(),</code>
+<code><a href="#l233" class="line" id="l233">    233</a>                 Err(ReadlineError::Interrupted) =&gt; continue,</code>
+<code><a href="#l234" class="line" id="l234">    234</a>                 Err(ReadlineError::Eof) =&gt; break,</code>
+<code><a href="#l235" class="line" id="l235">    235</a>                 Err(error) =&gt; return Err(error.into()),</code>
+<code><a href="#l236" class="line" id="l236">    236</a>             };</code>
+<code><a href="#l237" class="line" id="l237">    237</a>             self.editor.add_history_entry(&amp;input)?;</code>
+<code><a href="#l238" class="line" id="l238">    238</a>             if let Err(error) = self.execute(&amp;input) {</code>
+<code><a href="#l239" class="line" id="l239">    239</a>                 eprintln!(&quot;Error: {error}&quot;);</code>
+<code><a href="#l240" class="line" id="l240">    240</a>             };</code>
+<code><a href="#l241" class="line" id="l241">    241</a>         }</code>
+<code><a href="#l242" class="line" id="l242">    242</a> </code>
+<code><a href="#l243" class="line" id="l243">    243</a>         // Save the history file.</code>
+<code><a href="#l244" class="line" id="l244">    244</a>         if let Some(history_path) = &amp;self.history_path {</code>
+<code><a href="#l245" class="line" id="l245">    245</a>             self.editor.save_history(history_path)?;</code>
+<code><a href="#l246" class="line" id="l246">    246</a>         }</code>
+<code><a href="#l247" class="line" id="l247">    247</a>         Ok(())</code>
+<code><a href="#l248" class="line" id="l248">    248</a>     }</code>
+<code><a href="#l249" class="line" id="l249">    249</a> }</code>
+<code><a href="#l250" class="line" id="l250">    250</a> </code>
+<code><a href="#l251" class="line" id="l251">    251</a> /// A Rustyline helper for multiline editing. After a new line is entered, it</code>
+<code><a href="#l252" class="line" id="l252">    252</a> /// determines whether the input makes up a complete SQL statement that should</code>
+<code><a href="#l253" class="line" id="l253">    253</a> /// be submitted to the server (i.e. it&#39;s terminated by ;), or wait for further</code>
+<code><a href="#l254" class="line" id="l254">    254</a> /// input.</code>
+<code><a href="#l255" class="line" id="l255">    255</a> #[derive(Completer, Helper, Highlighter, Hinter)]</code>
+<code><a href="#l256" class="line" id="l256">    256</a> struct InputValidator;</code>
+<code><a href="#l257" class="line" id="l257">    257</a> </code>
+<code><a href="#l258" class="line" id="l258">    258</a> impl Validator for InputValidator {</code>
+<code><a href="#l259" class="line" id="l259">    259</a>     fn validate(&amp;self, ctx: &amp;mut ValidationContext) -&gt; rustyline::Result&lt;ValidationResult&gt; {</code>
+<code><a href="#l260" class="line" id="l260">    260</a>         let input = ctx.input();</code>
+<code><a href="#l261" class="line" id="l261">    261</a>         // Empty lines and ! commands are ready.</code>
+<code><a href="#l262" class="line" id="l262">    262</a>         if input.is_empty() || input.starts_with(&#39;!&#39;) || input == &quot;;&quot; {</code>
+<code><a href="#l263" class="line" id="l263">    263</a>             return Ok(ValidationResult::Valid(None));</code>
+<code><a href="#l264" class="line" id="l264">    264</a>         }</code>
+<code><a href="#l265" class="line" id="l265">    265</a>         // For SQL statements, just look for any semicolon or lexer error, and</code>
+<code><a href="#l266" class="line" id="l266">    266</a>         // rely on the server for further validation and error handling.</code>
+<code><a href="#l267" class="line" id="l267">    267</a>         if Lexer::new(input).any(|r| matches!(r, Ok(Token::Semicolon) | Err(_))) {</code>
+<code><a href="#l268" class="line" id="l268">    268</a>             return Ok(ValidationResult::Valid(None));</code>
+<code><a href="#l269" class="line" id="l269">    269</a>         }</code>
+<code><a href="#l270" class="line" id="l270">    270</a>         // Otherwise, wait for more input.</code>
+<code><a href="#l271" class="line" id="l271">    271</a>         Ok(ValidationResult::Incomplete)</code>
+<code><a href="#l272" class="line" id="l272">    272</a>     }</code>
+<code><a href="#l273" class="line" id="l273">    273</a> </code>
+<code><a href="#l274" class="line" id="l274">    274</a>     fn validate_while_typing(&amp;self) -&gt; bool {</code>
+<code><a href="#l275" class="line" id="l275">    275</a>         false // only check after completed lines</code>
+<code><a href="#l276" class="line" id="l276">    276</a>     }</code>
+<code><a href="#l277" class="line" id="l277">    277</a> }</code>
 </pre>
 </div>
 </body>

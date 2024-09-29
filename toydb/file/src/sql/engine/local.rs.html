@@ -9,6 +9,13 @@
 <link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed" href="../../../../atom.xml" />
 <link rel="alternate" type="application/atom+xml" title="toydb.git Atom Feed (tags)" href="../../../../tags.xml" />
 <link rel="stylesheet" type="text/css" href="../../../../style.css" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Source+Code+Pro:ital,wght@0,200..900;1,200..900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/default.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script>hljs.highlightAll();</script>
 </head>
 <body>
 <table><tr><td><a href="../../../../../"><img src="../../../../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
@@ -17,420 +24,420 @@
 <hr/>
 <div id="content">
 <p> local.rs (16206B)</p><hr/><pre id="blob">
-<a href="#l1" class="line" id="l1">      1</a><code class="language-auto"> use super::Catalog;</code>
-<a href="#l2" class="line" id="l2">      2</a><code class="language-auto"> use crate::encoding::{self, Key as _, Value as _};</code>
-<a href="#l3" class="line" id="l3">      3</a><code class="language-auto"> use crate::errinput;</code>
-<a href="#l4" class="line" id="l4">      4</a><code class="language-auto"> use crate::error::Result;</code>
-<a href="#l5" class="line" id="l5">      5</a><code class="language-auto"> use crate::sql::types::{Expression, Row, Rows, Table, Value};</code>
-<a href="#l6" class="line" id="l6">      6</a><code class="language-auto"> use crate::storage::{self, mvcc};</code>
-<a href="#l7" class="line" id="l7">      7</a><code class="language-auto"> </code>
-<a href="#l8" class="line" id="l8">      8</a><code class="language-auto"> use itertools::Itertools as _;</code>
-<a href="#l9" class="line" id="l9">      9</a><code class="language-auto"> use serde::{Deserialize, Serialize};</code>
-<a href="#l10" class="line" id="l10">     10</a><code class="language-auto"> use std::borrow::Cow;</code>
-<a href="#l11" class="line" id="l11">     11</a><code class="language-auto"> use std::collections::{BTreeMap, BTreeSet};</code>
-<a href="#l12" class="line" id="l12">     12</a><code class="language-auto"> </code>
-<a href="#l13" class="line" id="l13">     13</a><code class="language-auto"> /// A SQL engine using local storage. This provides the main SQL storage logic,</code>
-<a href="#l14" class="line" id="l14">     14</a><code class="language-auto"> /// and the Raft SQL engine just dispatches to this for node-local SQL storage.</code>
-<a href="#l15" class="line" id="l15">     15</a><code class="language-auto"> pub struct Local&lt;E: storage::Engine + &#39;static&gt; {</code>
-<a href="#l16" class="line" id="l16">     16</a><code class="language-auto">     /// The local MVCC storage engine.</code>
-<a href="#l17" class="line" id="l17">     17</a><code class="language-auto">     pub mvcc: mvcc::MVCC&lt;E&gt;,</code>
-<a href="#l18" class="line" id="l18">     18</a><code class="language-auto"> }</code>
-<a href="#l19" class="line" id="l19">     19</a><code class="language-auto"> </code>
-<a href="#l20" class="line" id="l20">     20</a><code class="language-auto"> impl&lt;E: storage::Engine&gt; Local&lt;E&gt; {</code>
-<a href="#l21" class="line" id="l21">     21</a><code class="language-auto">     /// Creates a new local SQL engine using the given storage engine.</code>
-<a href="#l22" class="line" id="l22">     22</a><code class="language-auto">     pub fn new(engine: E) -&gt; Self {</code>
-<a href="#l23" class="line" id="l23">     23</a><code class="language-auto">         Self { mvcc: mvcc::MVCC::new(engine) }</code>
-<a href="#l24" class="line" id="l24">     24</a><code class="language-auto">     }</code>
-<a href="#l25" class="line" id="l25">     25</a><code class="language-auto"> </code>
-<a href="#l26" class="line" id="l26">     26</a><code class="language-auto">     /// Resumes a transaction from the given state. This is usually encapsulated</code>
-<a href="#l27" class="line" id="l27">     27</a><code class="language-auto">     /// in `mvcc::Transaction`, but the Raft-based engine can&#39;t retain the MVCC</code>
-<a href="#l28" class="line" id="l28">     28</a><code class="language-auto">     /// transaction between each request since it may be executed across</code>
-<a href="#l29" class="line" id="l29">     29</a><code class="language-auto">     /// different leader nodes, so it instead keeps the state in the session.</code>
-<a href="#l30" class="line" id="l30">     30</a><code class="language-auto">     pub fn resume(&amp;self, state: mvcc::TransactionState) -&gt; Result&lt;Transaction&lt;E&gt;&gt; {</code>
-<a href="#l31" class="line" id="l31">     31</a><code class="language-auto">         Ok(Transaction::new(self.mvcc.resume(state)?))</code>
-<a href="#l32" class="line" id="l32">     32</a><code class="language-auto">     }</code>
-<a href="#l33" class="line" id="l33">     33</a><code class="language-auto"> </code>
-<a href="#l34" class="line" id="l34">     34</a><code class="language-auto">     /// Gets an unversioned key, or None if it doesn&#39;t exist.</code>
-<a href="#l35" class="line" id="l35">     35</a><code class="language-auto">     pub fn get_unversioned(&amp;self, key: &amp;[u8]) -&gt; Result&lt;Option&lt;Vec&lt;u8&gt;&gt;&gt; {</code>
-<a href="#l36" class="line" id="l36">     36</a><code class="language-auto">         self.mvcc.get_unversioned(key)</code>
-<a href="#l37" class="line" id="l37">     37</a><code class="language-auto">     }</code>
-<a href="#l38" class="line" id="l38">     38</a><code class="language-auto"> </code>
-<a href="#l39" class="line" id="l39">     39</a><code class="language-auto">     /// Sets an unversioned key.</code>
-<a href="#l40" class="line" id="l40">     40</a><code class="language-auto">     pub fn set_unversioned(&amp;self, key: &amp;[u8], value: Vec&lt;u8&gt;) -&gt; Result&lt;()&gt; {</code>
-<a href="#l41" class="line" id="l41">     41</a><code class="language-auto">         self.mvcc.set_unversioned(key, value)</code>
-<a href="#l42" class="line" id="l42">     42</a><code class="language-auto">     }</code>
-<a href="#l43" class="line" id="l43">     43</a><code class="language-auto"> }</code>
-<a href="#l44" class="line" id="l44">     44</a><code class="language-auto"> </code>
-<a href="#l45" class="line" id="l45">     45</a><code class="language-auto"> impl&lt;&#39;a, E: storage::Engine&gt; super::Engine&lt;&#39;a&gt; for Local&lt;E&gt; {</code>
-<a href="#l46" class="line" id="l46">     46</a><code class="language-auto">     type Transaction = Transaction&lt;E&gt;;</code>
-<a href="#l47" class="line" id="l47">     47</a><code class="language-auto"> </code>
-<a href="#l48" class="line" id="l48">     48</a><code class="language-auto">     fn begin(&amp;self) -&gt; Result&lt;Self::Transaction&gt; {</code>
-<a href="#l49" class="line" id="l49">     49</a><code class="language-auto">         Ok(Self::Transaction::new(self.mvcc.begin()?))</code>
-<a href="#l50" class="line" id="l50">     50</a><code class="language-auto">     }</code>
-<a href="#l51" class="line" id="l51">     51</a><code class="language-auto"> </code>
-<a href="#l52" class="line" id="l52">     52</a><code class="language-auto">     fn begin_read_only(&amp;self) -&gt; Result&lt;Self::Transaction&gt; {</code>
-<a href="#l53" class="line" id="l53">     53</a><code class="language-auto">         Ok(Self::Transaction::new(self.mvcc.begin_read_only()?))</code>
-<a href="#l54" class="line" id="l54">     54</a><code class="language-auto">     }</code>
-<a href="#l55" class="line" id="l55">     55</a><code class="language-auto"> </code>
-<a href="#l56" class="line" id="l56">     56</a><code class="language-auto">     fn begin_as_of(&amp;self, version: mvcc::Version) -&gt; Result&lt;Self::Transaction&gt; {</code>
-<a href="#l57" class="line" id="l57">     57</a><code class="language-auto">         Ok(Self::Transaction::new(self.mvcc.begin_as_of(version)?))</code>
-<a href="#l58" class="line" id="l58">     58</a><code class="language-auto">     }</code>
-<a href="#l59" class="line" id="l59">     59</a><code class="language-auto"> }</code>
-<a href="#l60" class="line" id="l60">     60</a><code class="language-auto"> </code>
-<a href="#l61" class="line" id="l61">     61</a><code class="language-auto"> /// A SQL transaction, wrapping an MVCC transaction.</code>
-<a href="#l62" class="line" id="l62">     62</a><code class="language-auto"> pub struct Transaction&lt;E: storage::Engine + &#39;static&gt; {</code>
-<a href="#l63" class="line" id="l63">     63</a><code class="language-auto">     txn: mvcc::Transaction&lt;E&gt;,</code>
-<a href="#l64" class="line" id="l64">     64</a><code class="language-auto"> }</code>
-<a href="#l65" class="line" id="l65">     65</a><code class="language-auto"> </code>
-<a href="#l66" class="line" id="l66">     66</a><code class="language-auto"> impl&lt;E: storage::Engine&gt; Transaction&lt;E&gt; {</code>
-<a href="#l67" class="line" id="l67">     67</a><code class="language-auto">     /// Creates a new SQL transaction using the given MVCC transaction.</code>
-<a href="#l68" class="line" id="l68">     68</a><code class="language-auto">     fn new(txn: mvcc::Transaction&lt;E&gt;) -&gt; Self {</code>
-<a href="#l69" class="line" id="l69">     69</a><code class="language-auto">         Self { txn }</code>
-<a href="#l70" class="line" id="l70">     70</a><code class="language-auto">     }</code>
-<a href="#l71" class="line" id="l71">     71</a><code class="language-auto"> </code>
-<a href="#l72" class="line" id="l72">     72</a><code class="language-auto">     /// Returns the transaction&#39;s internal state.</code>
-<a href="#l73" class="line" id="l73">     73</a><code class="language-auto">     pub fn state(&amp;self) -&gt; &amp;mvcc::TransactionState {</code>
-<a href="#l74" class="line" id="l74">     74</a><code class="language-auto">         self.txn.state()</code>
-<a href="#l75" class="line" id="l75">     75</a><code class="language-auto">     }</code>
-<a href="#l76" class="line" id="l76">     76</a><code class="language-auto"> </code>
-<a href="#l77" class="line" id="l77">     77</a><code class="language-auto">     /// Fetches the matching primary keys for the given secondary index value,</code>
-<a href="#l78" class="line" id="l78">     78</a><code class="language-auto">     /// or an empty set if there is none. The value must already be normalized.</code>
-<a href="#l79" class="line" id="l79">     79</a><code class="language-auto">     fn get_index(&amp;self, table: &amp;str, column: &amp;str, value: &amp;Value) -&gt; Result&lt;BTreeSet&lt;Value&gt;&gt; {</code>
-<a href="#l80" class="line" id="l80">     80</a><code class="language-auto">         debug_assert!(self.has_index(table, column)?, &quot;no index on {table}.{column}&quot;);</code>
-<a href="#l81" class="line" id="l81">     81</a><code class="language-auto">         debug_assert!(value.is_normalized(), &quot;value not normalized&quot;);</code>
-<a href="#l82" class="line" id="l82">     82</a><code class="language-auto">         Ok(self</code>
-<a href="#l83" class="line" id="l83">     83</a><code class="language-auto">             .txn</code>
-<a href="#l84" class="line" id="l84">     84</a><code class="language-auto">             .get(&amp;Key::Index(table.into(), column.into(), value.into()).encode())?</code>
-<a href="#l85" class="line" id="l85">     85</a><code class="language-auto">             .map(|v| BTreeSet::decode(&amp;v))</code>
-<a href="#l86" class="line" id="l86">     86</a><code class="language-auto">             .transpose()?</code>
-<a href="#l87" class="line" id="l87">     87</a><code class="language-auto">             .unwrap_or_default())</code>
-<a href="#l88" class="line" id="l88">     88</a><code class="language-auto">     }</code>
-<a href="#l89" class="line" id="l89">     89</a><code class="language-auto"> </code>
-<a href="#l90" class="line" id="l90">     90</a><code class="language-auto">     /// Fetches a single row by primary key, or None if it doesn&#39;t exist. The key</code>
-<a href="#l91" class="line" id="l91">     91</a><code class="language-auto">     /// must already be normalized.</code>
-<a href="#l92" class="line" id="l92">     92</a><code class="language-auto">     fn get_row(&amp;self, table: &amp;str, id: &amp;Value) -&gt; Result&lt;Option&lt;Row&gt;&gt; {</code>
-<a href="#l93" class="line" id="l93">     93</a><code class="language-auto">         debug_assert!(id.is_normalized(), &quot;value not normalized&quot;);</code>
-<a href="#l94" class="line" id="l94">     94</a><code class="language-auto">         self.txn</code>
-<a href="#l95" class="line" id="l95">     95</a><code class="language-auto">             .get(&amp;Key::Row(table.into(), id.into()).encode())?</code>
-<a href="#l96" class="line" id="l96">     96</a><code class="language-auto">             .map(|v| Row::decode(&amp;v))</code>
-<a href="#l97" class="line" id="l97">     97</a><code class="language-auto">             .transpose()</code>
-<a href="#l98" class="line" id="l98">     98</a><code class="language-auto">     }</code>
-<a href="#l99" class="line" id="l99">     99</a><code class="language-auto"> </code>
-<a href="#l100" class="line" id="l100">    100</a><code class="language-auto">     /// Returns true if the given secondary index exists.</code>
-<a href="#l101" class="line" id="l101">    101</a><code class="language-auto">     fn has_index(&amp;self, table: &amp;str, column: &amp;str) -&gt; Result&lt;bool&gt; {</code>
-<a href="#l102" class="line" id="l102">    102</a><code class="language-auto">         let table = self.must_get_table(table)?;</code>
-<a href="#l103" class="line" id="l103">    103</a><code class="language-auto">         Ok(table.columns.iter().find(|c| c.name == column).map(|c| c.index).unwrap_or(false))</code>
-<a href="#l104" class="line" id="l104">    104</a><code class="language-auto">     }</code>
-<a href="#l105" class="line" id="l105">    105</a><code class="language-auto"> </code>
-<a href="#l106" class="line" id="l106">    106</a><code class="language-auto">     /// Stores a secondary index entry for the given column value, replacing the</code>
-<a href="#l107" class="line" id="l107">    107</a><code class="language-auto">     /// existing entry. The value and ids must already be normalized.</code>
-<a href="#l108" class="line" id="l108">    108</a><code class="language-auto">     fn set_index(</code>
-<a href="#l109" class="line" id="l109">    109</a><code class="language-auto">         &amp;self,</code>
-<a href="#l110" class="line" id="l110">    110</a><code class="language-auto">         table: &amp;str,</code>
-<a href="#l111" class="line" id="l111">    111</a><code class="language-auto">         column: &amp;str,</code>
-<a href="#l112" class="line" id="l112">    112</a><code class="language-auto">         value: &amp;Value,</code>
-<a href="#l113" class="line" id="l113">    113</a><code class="language-auto">         ids: BTreeSet&lt;Value&gt;,</code>
-<a href="#l114" class="line" id="l114">    114</a><code class="language-auto">     ) -&gt; Result&lt;()&gt; {</code>
-<a href="#l115" class="line" id="l115">    115</a><code class="language-auto">         debug_assert!(self.has_index(table, column)?, &quot;no index on {table}.{column}&quot;);</code>
-<a href="#l116" class="line" id="l116">    116</a><code class="language-auto">         debug_assert!(value.is_normalized(), &quot;value not normalized&quot;);</code>
-<a href="#l117" class="line" id="l117">    117</a><code class="language-auto">         debug_assert!(ids.iter().all(|v| v.is_normalized()), &quot;value not normalized&quot;);</code>
-<a href="#l118" class="line" id="l118">    118</a><code class="language-auto">         let key = Key::Index(table.into(), column.into(), value.into()).encode();</code>
-<a href="#l119" class="line" id="l119">    119</a><code class="language-auto">         if ids.is_empty() {</code>
-<a href="#l120" class="line" id="l120">    120</a><code class="language-auto">             self.txn.delete(&amp;key)</code>
-<a href="#l121" class="line" id="l121">    121</a><code class="language-auto">         } else {</code>
-<a href="#l122" class="line" id="l122">    122</a><code class="language-auto">             self.txn.set(&amp;key, ids.encode())</code>
-<a href="#l123" class="line" id="l123">    123</a><code class="language-auto">         }</code>
-<a href="#l124" class="line" id="l124">    124</a><code class="language-auto">     }</code>
-<a href="#l125" class="line" id="l125">    125</a><code class="language-auto"> </code>
-<a href="#l126" class="line" id="l126">    126</a><code class="language-auto">     /// Returns all tables referencing a table, as (table, column index) pairs.</code>
-<a href="#l127" class="line" id="l127">    127</a><code class="language-auto">     /// This includes references from the table itself.</code>
-<a href="#l128" class="line" id="l128">    128</a><code class="language-auto">     fn table_references(&amp;self, table: &amp;str) -&gt; Result&lt;Vec&lt;(Table, Vec&lt;usize&gt;)&gt;&gt; {</code>
-<a href="#l129" class="line" id="l129">    129</a><code class="language-auto">         Ok(self</code>
-<a href="#l130" class="line" id="l130">    130</a><code class="language-auto">             .list_tables()?</code>
-<a href="#l131" class="line" id="l131">    131</a><code class="language-auto">             .into_iter()</code>
-<a href="#l132" class="line" id="l132">    132</a><code class="language-auto">             .map(|t| {</code>
-<a href="#l133" class="line" id="l133">    133</a><code class="language-auto">                 let references: Vec&lt;usize&gt; = t</code>
-<a href="#l134" class="line" id="l134">    134</a><code class="language-auto">                     .columns</code>
-<a href="#l135" class="line" id="l135">    135</a><code class="language-auto">                     .iter()</code>
-<a href="#l136" class="line" id="l136">    136</a><code class="language-auto">                     .enumerate()</code>
-<a href="#l137" class="line" id="l137">    137</a><code class="language-auto">                     .filter(|(_, c)| c.references.as_deref() == Some(table))</code>
-<a href="#l138" class="line" id="l138">    138</a><code class="language-auto">                     .map(|(i, _)| i)</code>
-<a href="#l139" class="line" id="l139">    139</a><code class="language-auto">                     .collect();</code>
-<a href="#l140" class="line" id="l140">    140</a><code class="language-auto">                 (t, references)</code>
-<a href="#l141" class="line" id="l141">    141</a><code class="language-auto">             })</code>
-<a href="#l142" class="line" id="l142">    142</a><code class="language-auto">             .filter(|(_, references)| !references.is_empty())</code>
-<a href="#l143" class="line" id="l143">    143</a><code class="language-auto">             .collect())</code>
-<a href="#l144" class="line" id="l144">    144</a><code class="language-auto">     }</code>
-<a href="#l145" class="line" id="l145">    145</a><code class="language-auto"> }</code>
-<a href="#l146" class="line" id="l146">    146</a><code class="language-auto"> </code>
-<a href="#l147" class="line" id="l147">    147</a><code class="language-auto"> impl&lt;E: storage::Engine&gt; super::Transaction for Transaction&lt;E&gt; {</code>
-<a href="#l148" class="line" id="l148">    148</a><code class="language-auto">     fn state(&amp;self) -&gt; &amp;mvcc::TransactionState {</code>
-<a href="#l149" class="line" id="l149">    149</a><code class="language-auto">         self.txn.state()</code>
-<a href="#l150" class="line" id="l150">    150</a><code class="language-auto">     }</code>
-<a href="#l151" class="line" id="l151">    151</a><code class="language-auto"> </code>
-<a href="#l152" class="line" id="l152">    152</a><code class="language-auto">     fn commit(self) -&gt; Result&lt;()&gt; {</code>
-<a href="#l153" class="line" id="l153">    153</a><code class="language-auto">         self.txn.commit()</code>
-<a href="#l154" class="line" id="l154">    154</a><code class="language-auto">     }</code>
-<a href="#l155" class="line" id="l155">    155</a><code class="language-auto"> </code>
-<a href="#l156" class="line" id="l156">    156</a><code class="language-auto">     fn rollback(self) -&gt; Result&lt;()&gt; {</code>
-<a href="#l157" class="line" id="l157">    157</a><code class="language-auto">         self.txn.rollback()</code>
-<a href="#l158" class="line" id="l158">    158</a><code class="language-auto">     }</code>
-<a href="#l159" class="line" id="l159">    159</a><code class="language-auto"> </code>
-<a href="#l160" class="line" id="l160">    160</a><code class="language-auto">     fn delete(&amp;self, table: &amp;str, ids: &amp;[Value]) -&gt; Result&lt;()&gt; {</code>
-<a href="#l161" class="line" id="l161">    161</a><code class="language-auto">         let table = self.must_get_table(table)?;</code>
-<a href="#l162" class="line" id="l162">    162</a><code class="language-auto">         let indexes = table.columns.iter().enumerate().filter(|(_, c)| c.index).collect_vec();</code>
-<a href="#l163" class="line" id="l163">    163</a><code class="language-auto"> </code>
-<a href="#l164" class="line" id="l164">    164</a><code class="language-auto">         // Check for foreign key references to the deleted rows.</code>
-<a href="#l165" class="line" id="l165">    165</a><code class="language-auto">         for (source, refs) in self.table_references(&amp;table.name)? {</code>
-<a href="#l166" class="line" id="l166">    166</a><code class="language-auto">             let self_reference = source.name == table.name;</code>
-<a href="#l167" class="line" id="l167">    167</a><code class="language-auto">             for i in refs {</code>
-<a href="#l168" class="line" id="l168">    168</a><code class="language-auto">                 let column = &amp;source.columns[i];</code>
-<a href="#l169" class="line" id="l169">    169</a><code class="language-auto">                 let mut source_ids = if i == source.primary_key {</code>
-<a href="#l170" class="line" id="l170">    170</a><code class="language-auto">                     // If the reference is from a primary key column, do a lookup.</code>
-<a href="#l171" class="line" id="l171">    171</a><code class="language-auto">                     self.get(&amp;source.name, ids)?</code>
-<a href="#l172" class="line" id="l172">    172</a><code class="language-auto">                         .into_iter()</code>
-<a href="#l173" class="line" id="l173">    173</a><code class="language-auto">                         .map(|row| row.into_iter().nth(i).expect(&quot;short row&quot;))</code>
-<a href="#l174" class="line" id="l174">    174</a><code class="language-auto">                         .collect()</code>
-<a href="#l175" class="line" id="l175">    175</a><code class="language-auto">                 } else {</code>
-<a href="#l176" class="line" id="l176">    176</a><code class="language-auto">                     // Otherwise (commonly), do a secondary index lookup.</code>
-<a href="#l177" class="line" id="l177">    177</a><code class="language-auto">                     // All foreign keys have a secondary index.</code>
-<a href="#l178" class="line" id="l178">    178</a><code class="language-auto">                     self.lookup_index(&amp;source.name, &amp;column.name, ids)?</code>
-<a href="#l179" class="line" id="l179">    179</a><code class="language-auto">                 };</code>
-<a href="#l180" class="line" id="l180">    180</a><code class="language-auto">                 // We can ignore any references between the deleted rows,</code>
-<a href="#l181" class="line" id="l181">    181</a><code class="language-auto">                 // including a row referring to itself.</code>
-<a href="#l182" class="line" id="l182">    182</a><code class="language-auto">                 if self_reference {</code>
-<a href="#l183" class="line" id="l183">    183</a><code class="language-auto">                     for id in ids {</code>
-<a href="#l184" class="line" id="l184">    184</a><code class="language-auto">                         source_ids.remove(id);</code>
-<a href="#l185" class="line" id="l185">    185</a><code class="language-auto">                     }</code>
-<a href="#l186" class="line" id="l186">    186</a><code class="language-auto">                 }</code>
-<a href="#l187" class="line" id="l187">    187</a><code class="language-auto">                 // Error if the delete would violate referential integrity.</code>
-<a href="#l188" class="line" id="l188">    188</a><code class="language-auto">                 if let Some(source_id) = source_ids.first() {</code>
-<a href="#l189" class="line" id="l189">    189</a><code class="language-auto">                     let table = source.name;</code>
-<a href="#l190" class="line" id="l190">    190</a><code class="language-auto">                     let column = &amp;source.columns[source.primary_key].name;</code>
-<a href="#l191" class="line" id="l191">    191</a><code class="language-auto">                     return errinput!(&quot;row referenced by {table}.{column}={source_id}&quot;);</code>
-<a href="#l192" class="line" id="l192">    192</a><code class="language-auto">                 }</code>
-<a href="#l193" class="line" id="l193">    193</a><code class="language-auto">             }</code>
-<a href="#l194" class="line" id="l194">    194</a><code class="language-auto">         }</code>
-<a href="#l195" class="line" id="l195">    195</a><code class="language-auto"> </code>
-<a href="#l196" class="line" id="l196">    196</a><code class="language-auto">         // Delete the rows.</code>
-<a href="#l197" class="line" id="l197">    197</a><code class="language-auto">         for id in ids {</code>
-<a href="#l198" class="line" id="l198">    198</a><code class="language-auto">             let id = id.normalize_ref();</code>
-<a href="#l199" class="line" id="l199">    199</a><code class="language-auto"> </code>
-<a href="#l200" class="line" id="l200">    200</a><code class="language-auto">             // Update any index entries.</code>
-<a href="#l201" class="line" id="l201">    201</a><code class="language-auto">             if !indexes.is_empty() {</code>
-<a href="#l202" class="line" id="l202">    202</a><code class="language-auto">                 if let Some(row) = self.get_row(&amp;table.name, &amp;id)? {</code>
-<a href="#l203" class="line" id="l203">    203</a><code class="language-auto">                     for (i, column) in indexes.iter().copied() {</code>
-<a href="#l204" class="line" id="l204">    204</a><code class="language-auto">                         let mut index = self.get_index(&amp;table.name, &amp;column.name, &amp;row[i])?;</code>
-<a href="#l205" class="line" id="l205">    205</a><code class="language-auto">                         index.remove(&amp;id);</code>
-<a href="#l206" class="line" id="l206">    206</a><code class="language-auto">                         self.set_index(&amp;table.name, &amp;column.name, &amp;row[i], index)?;</code>
-<a href="#l207" class="line" id="l207">    207</a><code class="language-auto">                     }</code>
-<a href="#l208" class="line" id="l208">    208</a><code class="language-auto">                 }</code>
-<a href="#l209" class="line" id="l209">    209</a><code class="language-auto">             }</code>
-<a href="#l210" class="line" id="l210">    210</a><code class="language-auto"> </code>
-<a href="#l211" class="line" id="l211">    211</a><code class="language-auto">             self.txn.delete(&amp;Key::Row((&amp;table.name).into(), id).encode())?;</code>
-<a href="#l212" class="line" id="l212">    212</a><code class="language-auto">         }</code>
-<a href="#l213" class="line" id="l213">    213</a><code class="language-auto">         Ok(())</code>
-<a href="#l214" class="line" id="l214">    214</a><code class="language-auto">     }</code>
-<a href="#l215" class="line" id="l215">    215</a><code class="language-auto"> </code>
-<a href="#l216" class="line" id="l216">    216</a><code class="language-auto">     fn get(&amp;self, table: &amp;str, ids: &amp;[Value]) -&gt; Result&lt;Vec&lt;Row&gt;&gt; {</code>
-<a href="#l217" class="line" id="l217">    217</a><code class="language-auto">         ids.iter().filter_map(|id| self.get_row(table, &amp;id.normalize_ref()).transpose()).collect()</code>
-<a href="#l218" class="line" id="l218">    218</a><code class="language-auto">     }</code>
-<a href="#l219" class="line" id="l219">    219</a><code class="language-auto"> </code>
-<a href="#l220" class="line" id="l220">    220</a><code class="language-auto">     fn insert(&amp;self, table: &amp;str, rows: Vec&lt;Row&gt;) -&gt; Result&lt;()&gt; {</code>
-<a href="#l221" class="line" id="l221">    221</a><code class="language-auto">         let table = self.must_get_table(table)?;</code>
-<a href="#l222" class="line" id="l222">    222</a><code class="language-auto">         for mut row in rows {</code>
-<a href="#l223" class="line" id="l223">    223</a><code class="language-auto">             // Normalize the row.</code>
-<a href="#l224" class="line" id="l224">    224</a><code class="language-auto">             row.iter_mut().for_each(|v| v.normalize());</code>
-<a href="#l225" class="line" id="l225">    225</a><code class="language-auto"> </code>
-<a href="#l226" class="line" id="l226">    226</a><code class="language-auto">             // Insert the row.</code>
-<a href="#l227" class="line" id="l227">    227</a><code class="language-auto">             table.validate_row(&amp;row, false, self)?;</code>
-<a href="#l228" class="line" id="l228">    228</a><code class="language-auto">             let id = &amp;row[table.primary_key];</code>
-<a href="#l229" class="line" id="l229">    229</a><code class="language-auto">             self.txn.set(&amp;Key::Row((&amp;table.name).into(), id.into()).encode(), row.encode())?;</code>
-<a href="#l230" class="line" id="l230">    230</a><code class="language-auto"> </code>
-<a href="#l231" class="line" id="l231">    231</a><code class="language-auto">             // Update any secondary indexes.</code>
-<a href="#l232" class="line" id="l232">    232</a><code class="language-auto">             for (i, column) in table.columns.iter().enumerate().filter(|(_, c)| c.index) {</code>
-<a href="#l233" class="line" id="l233">    233</a><code class="language-auto">                 let mut index = self.get_index(&amp;table.name, &amp;column.name, &amp;row[i])?;</code>
-<a href="#l234" class="line" id="l234">    234</a><code class="language-auto">                 index.insert(id.clone());</code>
-<a href="#l235" class="line" id="l235">    235</a><code class="language-auto">                 self.set_index(&amp;table.name, &amp;column.name, &amp;row[i], index)?;</code>
-<a href="#l236" class="line" id="l236">    236</a><code class="language-auto">             }</code>
-<a href="#l237" class="line" id="l237">    237</a><code class="language-auto">         }</code>
-<a href="#l238" class="line" id="l238">    238</a><code class="language-auto">         Ok(())</code>
-<a href="#l239" class="line" id="l239">    239</a><code class="language-auto">     }</code>
-<a href="#l240" class="line" id="l240">    240</a><code class="language-auto"> </code>
-<a href="#l241" class="line" id="l241">    241</a><code class="language-auto">     fn lookup_index(&amp;self, table: &amp;str, column: &amp;str, values: &amp;[Value]) -&gt; Result&lt;BTreeSet&lt;Value&gt;&gt; {</code>
-<a href="#l242" class="line" id="l242">    242</a><code class="language-auto">         debug_assert!(self.has_index(table, column)?, &quot;no index on {table}.{column}&quot;);</code>
-<a href="#l243" class="line" id="l243">    243</a><code class="language-auto">         values</code>
-<a href="#l244" class="line" id="l244">    244</a><code class="language-auto">             .iter()</code>
-<a href="#l245" class="line" id="l245">    245</a><code class="language-auto">             .map(|v| self.get_index(table, column, &amp;v.normalize_ref()))</code>
-<a href="#l246" class="line" id="l246">    246</a><code class="language-auto">             .flatten_ok()</code>
-<a href="#l247" class="line" id="l247">    247</a><code class="language-auto">             .collect()</code>
-<a href="#l248" class="line" id="l248">    248</a><code class="language-auto">     }</code>
-<a href="#l249" class="line" id="l249">    249</a><code class="language-auto"> </code>
-<a href="#l250" class="line" id="l250">    250</a><code class="language-auto">     fn scan(&amp;self, table: &amp;str, filter: Option&lt;Expression&gt;) -&gt; Result&lt;Rows&gt; {</code>
-<a href="#l251" class="line" id="l251">    251</a><code class="language-auto">         // TODO: this could be simpler if process_results() implemented Clone.</code>
-<a href="#l252" class="line" id="l252">    252</a><code class="language-auto">         let rows = self</code>
-<a href="#l253" class="line" id="l253">    253</a><code class="language-auto">             .txn</code>
-<a href="#l254" class="line" id="l254">    254</a><code class="language-auto">             .scan_prefix(&amp;KeyPrefix::Row(table.into()).encode())</code>
-<a href="#l255" class="line" id="l255">    255</a><code class="language-auto">             .map(|result| result.and_then(|(_, value)| Row::decode(&amp;value)));</code>
-<a href="#l256" class="line" id="l256">    256</a><code class="language-auto">         let Some(filter) = filter else {</code>
-<a href="#l257" class="line" id="l257">    257</a><code class="language-auto">             return Ok(Box::new(rows));</code>
-<a href="#l258" class="line" id="l258">    258</a><code class="language-auto">         };</code>
-<a href="#l259" class="line" id="l259">    259</a><code class="language-auto">         let rows = rows.filter_map(move |result| {</code>
-<a href="#l260" class="line" id="l260">    260</a><code class="language-auto">             result</code>
-<a href="#l261" class="line" id="l261">    261</a><code class="language-auto">                 .and_then(|row| match filter.evaluate(Some(&amp;row))? {</code>
-<a href="#l262" class="line" id="l262">    262</a><code class="language-auto">                     Value::Boolean(true) =&gt; Ok(Some(row)),</code>
-<a href="#l263" class="line" id="l263">    263</a><code class="language-auto">                     Value::Boolean(false) | Value::Null =&gt; Ok(None),</code>
-<a href="#l264" class="line" id="l264">    264</a><code class="language-auto">                     value =&gt; errinput!(&quot;filter returned {value}, expected boolean&quot;),</code>
-<a href="#l265" class="line" id="l265">    265</a><code class="language-auto">                 })</code>
-<a href="#l266" class="line" id="l266">    266</a><code class="language-auto">                 .transpose()</code>
-<a href="#l267" class="line" id="l267">    267</a><code class="language-auto">         });</code>
-<a href="#l268" class="line" id="l268">    268</a><code class="language-auto">         Ok(Box::new(rows))</code>
-<a href="#l269" class="line" id="l269">    269</a><code class="language-auto">     }</code>
-<a href="#l270" class="line" id="l270">    270</a><code class="language-auto"> </code>
-<a href="#l271" class="line" id="l271">    271</a><code class="language-auto">     fn update(&amp;self, table: &amp;str, rows: BTreeMap&lt;Value, Row&gt;) -&gt; Result&lt;()&gt; {</code>
-<a href="#l272" class="line" id="l272">    272</a><code class="language-auto">         let table = self.must_get_table(table)?;</code>
-<a href="#l273" class="line" id="l273">    273</a><code class="language-auto">         for (mut id, mut row) in rows {</code>
-<a href="#l274" class="line" id="l274">    274</a><code class="language-auto">             // Normalize the ID and row.</code>
-<a href="#l275" class="line" id="l275">    275</a><code class="language-auto">             id.normalize();</code>
-<a href="#l276" class="line" id="l276">    276</a><code class="language-auto">             row.iter_mut().for_each(|v| v.normalize());</code>
-<a href="#l277" class="line" id="l277">    277</a><code class="language-auto"> </code>
-<a href="#l278" class="line" id="l278">    278</a><code class="language-auto">             // If the primary key changes, we simply do a delete and insert.</code>
-<a href="#l279" class="line" id="l279">    279</a><code class="language-auto">             // This simplifies constraint validation.</code>
-<a href="#l280" class="line" id="l280">    280</a><code class="language-auto">             if id != row[table.primary_key] {</code>
-<a href="#l281" class="line" id="l281">    281</a><code class="language-auto">                 self.delete(&amp;table.name, &amp;[id])?;</code>
-<a href="#l282" class="line" id="l282">    282</a><code class="language-auto">                 self.insert(&amp;table.name, vec![row])?;</code>
-<a href="#l283" class="line" id="l283">    283</a><code class="language-auto">                 continue;</code>
-<a href="#l284" class="line" id="l284">    284</a><code class="language-auto">             }</code>
-<a href="#l285" class="line" id="l285">    285</a><code class="language-auto"> </code>
-<a href="#l286" class="line" id="l286">    286</a><code class="language-auto">             // Validate the row, but don&#39;t write it yet since we may need to</code>
-<a href="#l287" class="line" id="l287">    287</a><code class="language-auto">             // read the existing value to update secondary indexes.</code>
-<a href="#l288" class="line" id="l288">    288</a><code class="language-auto">             table.validate_row(&amp;row, true, self)?;</code>
-<a href="#l289" class="line" id="l289">    289</a><code class="language-auto"> </code>
-<a href="#l290" class="line" id="l290">    290</a><code class="language-auto">             // Update indexes, knowing that the primary key has not changed.</code>
-<a href="#l291" class="line" id="l291">    291</a><code class="language-auto">             let indexes = table.columns.iter().enumerate().filter(|(_, c)| c.index).collect_vec();</code>
-<a href="#l292" class="line" id="l292">    292</a><code class="language-auto">             if !indexes.is_empty() {</code>
-<a href="#l293" class="line" id="l293">    293</a><code class="language-auto">                 let old = self.get(&amp;table.name, &amp;[id.clone()])?.remove(0);</code>
-<a href="#l294" class="line" id="l294">    294</a><code class="language-auto">                 for (i, column) in indexes {</code>
-<a href="#l295" class="line" id="l295">    295</a><code class="language-auto">                     // If the value didn&#39;t change, we don&#39;t have to do anything.</code>
-<a href="#l296" class="line" id="l296">    296</a><code class="language-auto">                     if old[i] == row[i] {</code>
-<a href="#l297" class="line" id="l297">    297</a><code class="language-auto">                         continue;</code>
-<a href="#l298" class="line" id="l298">    298</a><code class="language-auto">                     }</code>
-<a href="#l299" class="line" id="l299">    299</a><code class="language-auto"> </code>
-<a href="#l300" class="line" id="l300">    300</a><code class="language-auto">                     // Remove the old value from the index entry.</code>
-<a href="#l301" class="line" id="l301">    301</a><code class="language-auto">                     let mut index = self.get_index(&amp;table.name, &amp;column.name, &amp;old[i])?;</code>
-<a href="#l302" class="line" id="l302">    302</a><code class="language-auto">                     index.remove(&amp;id);</code>
-<a href="#l303" class="line" id="l303">    303</a><code class="language-auto">                     self.set_index(&amp;table.name, &amp;column.name, &amp;old[i], index)?;</code>
-<a href="#l304" class="line" id="l304">    304</a><code class="language-auto"> </code>
-<a href="#l305" class="line" id="l305">    305</a><code class="language-auto">                     // Insert the new value into the index entry.</code>
-<a href="#l306" class="line" id="l306">    306</a><code class="language-auto">                     let mut index = self.get_index(&amp;table.name, &amp;column.name, &amp;row[i])?;</code>
-<a href="#l307" class="line" id="l307">    307</a><code class="language-auto">                     index.insert(id.clone());</code>
-<a href="#l308" class="line" id="l308">    308</a><code class="language-auto">                     self.set_index(&amp;table.name, &amp;column.name, &amp;row[i], index)?;</code>
-<a href="#l309" class="line" id="l309">    309</a><code class="language-auto">                 }</code>
-<a href="#l310" class="line" id="l310">    310</a><code class="language-auto">             }</code>
-<a href="#l311" class="line" id="l311">    311</a><code class="language-auto"> </code>
-<a href="#l312" class="line" id="l312">    312</a><code class="language-auto">             // Update the row.</code>
-<a href="#l313" class="line" id="l313">    313</a><code class="language-auto">             self.txn.set(&amp;Key::Row((&amp;table.name).into(), (&amp;id).into()).encode(), row.encode())?;</code>
-<a href="#l314" class="line" id="l314">    314</a><code class="language-auto">         }</code>
-<a href="#l315" class="line" id="l315">    315</a><code class="language-auto">         Ok(())</code>
-<a href="#l316" class="line" id="l316">    316</a><code class="language-auto">     }</code>
-<a href="#l317" class="line" id="l317">    317</a><code class="language-auto"> }</code>
-<a href="#l318" class="line" id="l318">    318</a><code class="language-auto"> </code>
-<a href="#l319" class="line" id="l319">    319</a><code class="language-auto"> impl&lt;E: storage::Engine&gt; Catalog for Transaction&lt;E&gt; {</code>
-<a href="#l320" class="line" id="l320">    320</a><code class="language-auto">     fn create_table(&amp;self, table: Table) -&gt; Result&lt;()&gt; {</code>
-<a href="#l321" class="line" id="l321">    321</a><code class="language-auto">         if self.get_table(&amp;table.name)?.is_some() {</code>
-<a href="#l322" class="line" id="l322">    322</a><code class="language-auto">             return errinput!(&quot;table {} already exists&quot;, table.name);</code>
-<a href="#l323" class="line" id="l323">    323</a><code class="language-auto">         }</code>
-<a href="#l324" class="line" id="l324">    324</a><code class="language-auto">         table.validate(self)?;</code>
-<a href="#l325" class="line" id="l325">    325</a><code class="language-auto">         self.txn.set(&amp;Key::Table((&amp;table.name).into()).encode(), table.encode())</code>
-<a href="#l326" class="line" id="l326">    326</a><code class="language-auto">     }</code>
-<a href="#l327" class="line" id="l327">    327</a><code class="language-auto"> </code>
-<a href="#l328" class="line" id="l328">    328</a><code class="language-auto">     fn drop_table(&amp;self, table: &amp;str, if_exists: bool) -&gt; Result&lt;bool&gt; {</code>
-<a href="#l329" class="line" id="l329">    329</a><code class="language-auto">         let table = match self.get_table(table)? {</code>
-<a href="#l330" class="line" id="l330">    330</a><code class="language-auto">             Some(table) =&gt; table,</code>
-<a href="#l331" class="line" id="l331">    331</a><code class="language-auto">             None if if_exists =&gt; return Ok(false),</code>
-<a href="#l332" class="line" id="l332">    332</a><code class="language-auto">             None =&gt; return errinput!(&quot;table {table} does not exist&quot;),</code>
-<a href="#l333" class="line" id="l333">    333</a><code class="language-auto">         };</code>
-<a href="#l334" class="line" id="l334">    334</a><code class="language-auto"> </code>
-<a href="#l335" class="line" id="l335">    335</a><code class="language-auto">         // Check for foreign key references.</code>
-<a href="#l336" class="line" id="l336">    336</a><code class="language-auto">         if let Some((source, refs)) =</code>
-<a href="#l337" class="line" id="l337">    337</a><code class="language-auto">             self.table_references(&amp;table.name)?.iter().find(|(t, _)| t.name != table.name)</code>
-<a href="#l338" class="line" id="l338">    338</a><code class="language-auto">         {</code>
-<a href="#l339" class="line" id="l339">    339</a><code class="language-auto">             return errinput!(</code>
-<a href="#l340" class="line" id="l340">    340</a><code class="language-auto">                 &quot;table {} is referenced from {}.{}&quot;,</code>
-<a href="#l341" class="line" id="l341">    341</a><code class="language-auto">                 table.name,</code>
-<a href="#l342" class="line" id="l342">    342</a><code class="language-auto">                 source.name,</code>
-<a href="#l343" class="line" id="l343">    343</a><code class="language-auto">                 source.columns[refs[0]].name</code>
-<a href="#l344" class="line" id="l344">    344</a><code class="language-auto">             );</code>
-<a href="#l345" class="line" id="l345">    345</a><code class="language-auto">         }</code>
-<a href="#l346" class="line" id="l346">    346</a><code class="language-auto"> </code>
-<a href="#l347" class="line" id="l347">    347</a><code class="language-auto">         // Delete the table schema entry.</code>
-<a href="#l348" class="line" id="l348">    348</a><code class="language-auto">         self.txn.delete(&amp;Key::Table((&amp;table.name).into()).encode())?;</code>
-<a href="#l349" class="line" id="l349">    349</a><code class="language-auto"> </code>
-<a href="#l350" class="line" id="l350">    350</a><code class="language-auto">         // Delete the table rows. storage::Engine doesn&#39;t support writing while</code>
-<a href="#l351" class="line" id="l351">    351</a><code class="language-auto">         // scanning, so we buffer all keys in a vector. We could also do this in</code>
-<a href="#l352" class="line" id="l352">    352</a><code class="language-auto">         // batches, although we&#39;d want to do the batching above Raft to avoid</code>
-<a href="#l353" class="line" id="l353">    353</a><code class="language-auto">         // blocking Raft processing for the duration of the drop.</code>
-<a href="#l354" class="line" id="l354">    354</a><code class="language-auto">         let prefix = &amp;KeyPrefix::Row((&amp;table.name).into()).encode();</code>
-<a href="#l355" class="line" id="l355">    355</a><code class="language-auto">         let keys: Vec&lt;Vec&lt;u8&gt;&gt; =</code>
-<a href="#l356" class="line" id="l356">    356</a><code class="language-auto">             self.txn.scan_prefix(prefix).map_ok(|(key, _)| key).try_collect()?;</code>
-<a href="#l357" class="line" id="l357">    357</a><code class="language-auto">         for key in keys {</code>
-<a href="#l358" class="line" id="l358">    358</a><code class="language-auto">             self.txn.delete(&amp;key)?;</code>
-<a href="#l359" class="line" id="l359">    359</a><code class="language-auto">         }</code>
-<a href="#l360" class="line" id="l360">    360</a><code class="language-auto"> </code>
-<a href="#l361" class="line" id="l361">    361</a><code class="language-auto">         // Delete any secondary indexes.</code>
-<a href="#l362" class="line" id="l362">    362</a><code class="language-auto">         for column in table.columns.iter().filter(|c| c.index) {</code>
-<a href="#l363" class="line" id="l363">    363</a><code class="language-auto">             let prefix = &amp;KeyPrefix::Index((&amp;table.name).into(), (&amp;column.name).into()).encode();</code>
-<a href="#l364" class="line" id="l364">    364</a><code class="language-auto">             let keys: Vec&lt;_&gt; = self.txn.scan_prefix(prefix).map_ok(|(key, _)| key).try_collect()?;</code>
-<a href="#l365" class="line" id="l365">    365</a><code class="language-auto">             for key in keys {</code>
-<a href="#l366" class="line" id="l366">    366</a><code class="language-auto">                 self.txn.delete(&amp;key)?;</code>
-<a href="#l367" class="line" id="l367">    367</a><code class="language-auto">             }</code>
-<a href="#l368" class="line" id="l368">    368</a><code class="language-auto">         }</code>
-<a href="#l369" class="line" id="l369">    369</a><code class="language-auto">         Ok(true)</code>
-<a href="#l370" class="line" id="l370">    370</a><code class="language-auto">     }</code>
-<a href="#l371" class="line" id="l371">    371</a><code class="language-auto"> </code>
-<a href="#l372" class="line" id="l372">    372</a><code class="language-auto">     fn get_table(&amp;self, table: &amp;str) -&gt; Result&lt;Option&lt;Table&gt;&gt; {</code>
-<a href="#l373" class="line" id="l373">    373</a><code class="language-auto">         self.txn.get(&amp;Key::Table(table.into()).encode())?.map(|v| Table::decode(&amp;v)).transpose()</code>
-<a href="#l374" class="line" id="l374">    374</a><code class="language-auto">     }</code>
-<a href="#l375" class="line" id="l375">    375</a><code class="language-auto"> </code>
-<a href="#l376" class="line" id="l376">    376</a><code class="language-auto">     fn list_tables(&amp;self) -&gt; Result&lt;Vec&lt;Table&gt;&gt; {</code>
-<a href="#l377" class="line" id="l377">    377</a><code class="language-auto">         self.txn</code>
-<a href="#l378" class="line" id="l378">    378</a><code class="language-auto">             .scan_prefix(&amp;KeyPrefix::Table.encode())</code>
-<a href="#l379" class="line" id="l379">    379</a><code class="language-auto">             .map(|r| r.and_then(|(_, v)| Table::decode(&amp;v)))</code>
-<a href="#l380" class="line" id="l380">    380</a><code class="language-auto">             .collect()</code>
-<a href="#l381" class="line" id="l381">    381</a><code class="language-auto">     }</code>
-<a href="#l382" class="line" id="l382">    382</a><code class="language-auto"> }</code>
-<a href="#l383" class="line" id="l383">    383</a><code class="language-auto"> </code>
-<a href="#l384" class="line" id="l384">    384</a><code class="language-auto"> /// SQL engine keys, using the KeyCode order-preserving encoding. For</code>
-<a href="#l385" class="line" id="l385">    385</a><code class="language-auto"> /// simplicity, table and column names are used directly as identifiers in</code>
-<a href="#l386" class="line" id="l386">    386</a><code class="language-auto"> /// keys, instead of e.g. numberic IDs. It is not possible to change</code>
-<a href="#l387" class="line" id="l387">    387</a><code class="language-auto"> /// table/column names, so this is fine.</code>
-<a href="#l388" class="line" id="l388">    388</a><code class="language-auto"> ///</code>
-<a href="#l389" class="line" id="l389">    389</a><code class="language-auto"> /// Uses Cow to allow encoding borrowed values but decoding owned values.</code>
-<a href="#l390" class="line" id="l390">    390</a><code class="language-auto"> #[derive(Debug, Deserialize, Serialize)]</code>
-<a href="#l391" class="line" id="l391">    391</a><code class="language-auto"> pub enum Key&lt;&#39;a&gt; {</code>
-<a href="#l392" class="line" id="l392">    392</a><code class="language-auto">     /// A table schema by table name.</code>
-<a href="#l393" class="line" id="l393">    393</a><code class="language-auto">     Table(Cow&lt;&#39;a, str&gt;),</code>
-<a href="#l394" class="line" id="l394">    394</a><code class="language-auto">     /// An index entry, by table name, index name, and index value.</code>
-<a href="#l395" class="line" id="l395">    395</a><code class="language-auto">     Index(Cow&lt;&#39;a, str&gt;, Cow&lt;&#39;a, str&gt;, Cow&lt;&#39;a, Value&gt;),</code>
-<a href="#l396" class="line" id="l396">    396</a><code class="language-auto">     /// A table row, by table name and primary key value.</code>
-<a href="#l397" class="line" id="l397">    397</a><code class="language-auto">     Row(Cow&lt;&#39;a, str&gt;, Cow&lt;&#39;a, Value&gt;),</code>
-<a href="#l398" class="line" id="l398">    398</a><code class="language-auto"> }</code>
-<a href="#l399" class="line" id="l399">    399</a><code class="language-auto"> </code>
-<a href="#l400" class="line" id="l400">    400</a><code class="language-auto"> impl&lt;&#39;a&gt; encoding::Key&lt;&#39;a&gt; for Key&lt;&#39;a&gt; {}</code>
-<a href="#l401" class="line" id="l401">    401</a><code class="language-auto"> </code>
-<a href="#l402" class="line" id="l402">    402</a><code class="language-auto"> /// Key prefixes, allowing prefix scans of specific parts of the keyspace. These</code>
-<a href="#l403" class="line" id="l403">    403</a><code class="language-auto"> /// must match the keys -- in particular, the enum variant indexes must match.</code>
-<a href="#l404" class="line" id="l404">    404</a><code class="language-auto"> #[derive(Deserialize, Serialize)]</code>
-<a href="#l405" class="line" id="l405">    405</a><code class="language-auto"> enum KeyPrefix&lt;&#39;a&gt; {</code>
-<a href="#l406" class="line" id="l406">    406</a><code class="language-auto">     /// All table schemas.</code>
-<a href="#l407" class="line" id="l407">    407</a><code class="language-auto">     Table,</code>
-<a href="#l408" class="line" id="l408">    408</a><code class="language-auto">     /// An entire table index, by table and index name.</code>
-<a href="#l409" class="line" id="l409">    409</a><code class="language-auto">     Index(Cow&lt;&#39;a, str&gt;, Cow&lt;&#39;a, str&gt;),</code>
-<a href="#l410" class="line" id="l410">    410</a><code class="language-auto">     /// An entire table&#39;s rows, by table name.</code>
-<a href="#l411" class="line" id="l411">    411</a><code class="language-auto">     Row(Cow&lt;&#39;a, str&gt;),</code>
-<a href="#l412" class="line" id="l412">    412</a><code class="language-auto"> }</code>
-<a href="#l413" class="line" id="l413">    413</a><code class="language-auto"> </code>
-<a href="#l414" class="line" id="l414">    414</a><code class="language-auto"> impl&lt;&#39;a&gt; encoding::Key&lt;&#39;a&gt; for KeyPrefix&lt;&#39;a&gt; {}</code>
+<code><a href="#l1" class="line" id="l1">      1</a> use super::Catalog;</code>
+<code><a href="#l2" class="line" id="l2">      2</a> use crate::encoding::{self, Key as _, Value as _};</code>
+<code><a href="#l3" class="line" id="l3">      3</a> use crate::errinput;</code>
+<code><a href="#l4" class="line" id="l4">      4</a> use crate::error::Result;</code>
+<code><a href="#l5" class="line" id="l5">      5</a> use crate::sql::types::{Expression, Row, Rows, Table, Value};</code>
+<code><a href="#l6" class="line" id="l6">      6</a> use crate::storage::{self, mvcc};</code>
+<code><a href="#l7" class="line" id="l7">      7</a> </code>
+<code><a href="#l8" class="line" id="l8">      8</a> use itertools::Itertools as _;</code>
+<code><a href="#l9" class="line" id="l9">      9</a> use serde::{Deserialize, Serialize};</code>
+<code><a href="#l10" class="line" id="l10">     10</a> use std::borrow::Cow;</code>
+<code><a href="#l11" class="line" id="l11">     11</a> use std::collections::{BTreeMap, BTreeSet};</code>
+<code><a href="#l12" class="line" id="l12">     12</a> </code>
+<code><a href="#l13" class="line" id="l13">     13</a> /// A SQL engine using local storage. This provides the main SQL storage logic,</code>
+<code><a href="#l14" class="line" id="l14">     14</a> /// and the Raft SQL engine just dispatches to this for node-local SQL storage.</code>
+<code><a href="#l15" class="line" id="l15">     15</a> pub struct Local&lt;E: storage::Engine + &#39;static&gt; {</code>
+<code><a href="#l16" class="line" id="l16">     16</a>     /// The local MVCC storage engine.</code>
+<code><a href="#l17" class="line" id="l17">     17</a>     pub mvcc: mvcc::MVCC&lt;E&gt;,</code>
+<code><a href="#l18" class="line" id="l18">     18</a> }</code>
+<code><a href="#l19" class="line" id="l19">     19</a> </code>
+<code><a href="#l20" class="line" id="l20">     20</a> impl&lt;E: storage::Engine&gt; Local&lt;E&gt; {</code>
+<code><a href="#l21" class="line" id="l21">     21</a>     /// Creates a new local SQL engine using the given storage engine.</code>
+<code><a href="#l22" class="line" id="l22">     22</a>     pub fn new(engine: E) -&gt; Self {</code>
+<code><a href="#l23" class="line" id="l23">     23</a>         Self { mvcc: mvcc::MVCC::new(engine) }</code>
+<code><a href="#l24" class="line" id="l24">     24</a>     }</code>
+<code><a href="#l25" class="line" id="l25">     25</a> </code>
+<code><a href="#l26" class="line" id="l26">     26</a>     /// Resumes a transaction from the given state. This is usually encapsulated</code>
+<code><a href="#l27" class="line" id="l27">     27</a>     /// in `mvcc::Transaction`, but the Raft-based engine can&#39;t retain the MVCC</code>
+<code><a href="#l28" class="line" id="l28">     28</a>     /// transaction between each request since it may be executed across</code>
+<code><a href="#l29" class="line" id="l29">     29</a>     /// different leader nodes, so it instead keeps the state in the session.</code>
+<code><a href="#l30" class="line" id="l30">     30</a>     pub fn resume(&amp;self, state: mvcc::TransactionState) -&gt; Result&lt;Transaction&lt;E&gt;&gt; {</code>
+<code><a href="#l31" class="line" id="l31">     31</a>         Ok(Transaction::new(self.mvcc.resume(state)?))</code>
+<code><a href="#l32" class="line" id="l32">     32</a>     }</code>
+<code><a href="#l33" class="line" id="l33">     33</a> </code>
+<code><a href="#l34" class="line" id="l34">     34</a>     /// Gets an unversioned key, or None if it doesn&#39;t exist.</code>
+<code><a href="#l35" class="line" id="l35">     35</a>     pub fn get_unversioned(&amp;self, key: &amp;[u8]) -&gt; Result&lt;Option&lt;Vec&lt;u8&gt;&gt;&gt; {</code>
+<code><a href="#l36" class="line" id="l36">     36</a>         self.mvcc.get_unversioned(key)</code>
+<code><a href="#l37" class="line" id="l37">     37</a>     }</code>
+<code><a href="#l38" class="line" id="l38">     38</a> </code>
+<code><a href="#l39" class="line" id="l39">     39</a>     /// Sets an unversioned key.</code>
+<code><a href="#l40" class="line" id="l40">     40</a>     pub fn set_unversioned(&amp;self, key: &amp;[u8], value: Vec&lt;u8&gt;) -&gt; Result&lt;()&gt; {</code>
+<code><a href="#l41" class="line" id="l41">     41</a>         self.mvcc.set_unversioned(key, value)</code>
+<code><a href="#l42" class="line" id="l42">     42</a>     }</code>
+<code><a href="#l43" class="line" id="l43">     43</a> }</code>
+<code><a href="#l44" class="line" id="l44">     44</a> </code>
+<code><a href="#l45" class="line" id="l45">     45</a> impl&lt;&#39;a, E: storage::Engine&gt; super::Engine&lt;&#39;a&gt; for Local&lt;E&gt; {</code>
+<code><a href="#l46" class="line" id="l46">     46</a>     type Transaction = Transaction&lt;E&gt;;</code>
+<code><a href="#l47" class="line" id="l47">     47</a> </code>
+<code><a href="#l48" class="line" id="l48">     48</a>     fn begin(&amp;self) -&gt; Result&lt;Self::Transaction&gt; {</code>
+<code><a href="#l49" class="line" id="l49">     49</a>         Ok(Self::Transaction::new(self.mvcc.begin()?))</code>
+<code><a href="#l50" class="line" id="l50">     50</a>     }</code>
+<code><a href="#l51" class="line" id="l51">     51</a> </code>
+<code><a href="#l52" class="line" id="l52">     52</a>     fn begin_read_only(&amp;self) -&gt; Result&lt;Self::Transaction&gt; {</code>
+<code><a href="#l53" class="line" id="l53">     53</a>         Ok(Self::Transaction::new(self.mvcc.begin_read_only()?))</code>
+<code><a href="#l54" class="line" id="l54">     54</a>     }</code>
+<code><a href="#l55" class="line" id="l55">     55</a> </code>
+<code><a href="#l56" class="line" id="l56">     56</a>     fn begin_as_of(&amp;self, version: mvcc::Version) -&gt; Result&lt;Self::Transaction&gt; {</code>
+<code><a href="#l57" class="line" id="l57">     57</a>         Ok(Self::Transaction::new(self.mvcc.begin_as_of(version)?))</code>
+<code><a href="#l58" class="line" id="l58">     58</a>     }</code>
+<code><a href="#l59" class="line" id="l59">     59</a> }</code>
+<code><a href="#l60" class="line" id="l60">     60</a> </code>
+<code><a href="#l61" class="line" id="l61">     61</a> /// A SQL transaction, wrapping an MVCC transaction.</code>
+<code><a href="#l62" class="line" id="l62">     62</a> pub struct Transaction&lt;E: storage::Engine + &#39;static&gt; {</code>
+<code><a href="#l63" class="line" id="l63">     63</a>     txn: mvcc::Transaction&lt;E&gt;,</code>
+<code><a href="#l64" class="line" id="l64">     64</a> }</code>
+<code><a href="#l65" class="line" id="l65">     65</a> </code>
+<code><a href="#l66" class="line" id="l66">     66</a> impl&lt;E: storage::Engine&gt; Transaction&lt;E&gt; {</code>
+<code><a href="#l67" class="line" id="l67">     67</a>     /// Creates a new SQL transaction using the given MVCC transaction.</code>
+<code><a href="#l68" class="line" id="l68">     68</a>     fn new(txn: mvcc::Transaction&lt;E&gt;) -&gt; Self {</code>
+<code><a href="#l69" class="line" id="l69">     69</a>         Self { txn }</code>
+<code><a href="#l70" class="line" id="l70">     70</a>     }</code>
+<code><a href="#l71" class="line" id="l71">     71</a> </code>
+<code><a href="#l72" class="line" id="l72">     72</a>     /// Returns the transaction&#39;s internal state.</code>
+<code><a href="#l73" class="line" id="l73">     73</a>     pub fn state(&amp;self) -&gt; &amp;mvcc::TransactionState {</code>
+<code><a href="#l74" class="line" id="l74">     74</a>         self.txn.state()</code>
+<code><a href="#l75" class="line" id="l75">     75</a>     }</code>
+<code><a href="#l76" class="line" id="l76">     76</a> </code>
+<code><a href="#l77" class="line" id="l77">     77</a>     /// Fetches the matching primary keys for the given secondary index value,</code>
+<code><a href="#l78" class="line" id="l78">     78</a>     /// or an empty set if there is none. The value must already be normalized.</code>
+<code><a href="#l79" class="line" id="l79">     79</a>     fn get_index(&amp;self, table: &amp;str, column: &amp;str, value: &amp;Value) -&gt; Result&lt;BTreeSet&lt;Value&gt;&gt; {</code>
+<code><a href="#l80" class="line" id="l80">     80</a>         debug_assert!(self.has_index(table, column)?, &quot;no index on {table}.{column}&quot;);</code>
+<code><a href="#l81" class="line" id="l81">     81</a>         debug_assert!(value.is_normalized(), &quot;value not normalized&quot;);</code>
+<code><a href="#l82" class="line" id="l82">     82</a>         Ok(self</code>
+<code><a href="#l83" class="line" id="l83">     83</a>             .txn</code>
+<code><a href="#l84" class="line" id="l84">     84</a>             .get(&amp;Key::Index(table.into(), column.into(), value.into()).encode())?</code>
+<code><a href="#l85" class="line" id="l85">     85</a>             .map(|v| BTreeSet::decode(&amp;v))</code>
+<code><a href="#l86" class="line" id="l86">     86</a>             .transpose()?</code>
+<code><a href="#l87" class="line" id="l87">     87</a>             .unwrap_or_default())</code>
+<code><a href="#l88" class="line" id="l88">     88</a>     }</code>
+<code><a href="#l89" class="line" id="l89">     89</a> </code>
+<code><a href="#l90" class="line" id="l90">     90</a>     /// Fetches a single row by primary key, or None if it doesn&#39;t exist. The key</code>
+<code><a href="#l91" class="line" id="l91">     91</a>     /// must already be normalized.</code>
+<code><a href="#l92" class="line" id="l92">     92</a>     fn get_row(&amp;self, table: &amp;str, id: &amp;Value) -&gt; Result&lt;Option&lt;Row&gt;&gt; {</code>
+<code><a href="#l93" class="line" id="l93">     93</a>         debug_assert!(id.is_normalized(), &quot;value not normalized&quot;);</code>
+<code><a href="#l94" class="line" id="l94">     94</a>         self.txn</code>
+<code><a href="#l95" class="line" id="l95">     95</a>             .get(&amp;Key::Row(table.into(), id.into()).encode())?</code>
+<code><a href="#l96" class="line" id="l96">     96</a>             .map(|v| Row::decode(&amp;v))</code>
+<code><a href="#l97" class="line" id="l97">     97</a>             .transpose()</code>
+<code><a href="#l98" class="line" id="l98">     98</a>     }</code>
+<code><a href="#l99" class="line" id="l99">     99</a> </code>
+<code><a href="#l100" class="line" id="l100">    100</a>     /// Returns true if the given secondary index exists.</code>
+<code><a href="#l101" class="line" id="l101">    101</a>     fn has_index(&amp;self, table: &amp;str, column: &amp;str) -&gt; Result&lt;bool&gt; {</code>
+<code><a href="#l102" class="line" id="l102">    102</a>         let table = self.must_get_table(table)?;</code>
+<code><a href="#l103" class="line" id="l103">    103</a>         Ok(table.columns.iter().find(|c| c.name == column).map(|c| c.index).unwrap_or(false))</code>
+<code><a href="#l104" class="line" id="l104">    104</a>     }</code>
+<code><a href="#l105" class="line" id="l105">    105</a> </code>
+<code><a href="#l106" class="line" id="l106">    106</a>     /// Stores a secondary index entry for the given column value, replacing the</code>
+<code><a href="#l107" class="line" id="l107">    107</a>     /// existing entry. The value and ids must already be normalized.</code>
+<code><a href="#l108" class="line" id="l108">    108</a>     fn set_index(</code>
+<code><a href="#l109" class="line" id="l109">    109</a>         &amp;self,</code>
+<code><a href="#l110" class="line" id="l110">    110</a>         table: &amp;str,</code>
+<code><a href="#l111" class="line" id="l111">    111</a>         column: &amp;str,</code>
+<code><a href="#l112" class="line" id="l112">    112</a>         value: &amp;Value,</code>
+<code><a href="#l113" class="line" id="l113">    113</a>         ids: BTreeSet&lt;Value&gt;,</code>
+<code><a href="#l114" class="line" id="l114">    114</a>     ) -&gt; Result&lt;()&gt; {</code>
+<code><a href="#l115" class="line" id="l115">    115</a>         debug_assert!(self.has_index(table, column)?, &quot;no index on {table}.{column}&quot;);</code>
+<code><a href="#l116" class="line" id="l116">    116</a>         debug_assert!(value.is_normalized(), &quot;value not normalized&quot;);</code>
+<code><a href="#l117" class="line" id="l117">    117</a>         debug_assert!(ids.iter().all(|v| v.is_normalized()), &quot;value not normalized&quot;);</code>
+<code><a href="#l118" class="line" id="l118">    118</a>         let key = Key::Index(table.into(), column.into(), value.into()).encode();</code>
+<code><a href="#l119" class="line" id="l119">    119</a>         if ids.is_empty() {</code>
+<code><a href="#l120" class="line" id="l120">    120</a>             self.txn.delete(&amp;key)</code>
+<code><a href="#l121" class="line" id="l121">    121</a>         } else {</code>
+<code><a href="#l122" class="line" id="l122">    122</a>             self.txn.set(&amp;key, ids.encode())</code>
+<code><a href="#l123" class="line" id="l123">    123</a>         }</code>
+<code><a href="#l124" class="line" id="l124">    124</a>     }</code>
+<code><a href="#l125" class="line" id="l125">    125</a> </code>
+<code><a href="#l126" class="line" id="l126">    126</a>     /// Returns all tables referencing a table, as (table, column index) pairs.</code>
+<code><a href="#l127" class="line" id="l127">    127</a>     /// This includes references from the table itself.</code>
+<code><a href="#l128" class="line" id="l128">    128</a>     fn table_references(&amp;self, table: &amp;str) -&gt; Result&lt;Vec&lt;(Table, Vec&lt;usize&gt;)&gt;&gt; {</code>
+<code><a href="#l129" class="line" id="l129">    129</a>         Ok(self</code>
+<code><a href="#l130" class="line" id="l130">    130</a>             .list_tables()?</code>
+<code><a href="#l131" class="line" id="l131">    131</a>             .into_iter()</code>
+<code><a href="#l132" class="line" id="l132">    132</a>             .map(|t| {</code>
+<code><a href="#l133" class="line" id="l133">    133</a>                 let references: Vec&lt;usize&gt; = t</code>
+<code><a href="#l134" class="line" id="l134">    134</a>                     .columns</code>
+<code><a href="#l135" class="line" id="l135">    135</a>                     .iter()</code>
+<code><a href="#l136" class="line" id="l136">    136</a>                     .enumerate()</code>
+<code><a href="#l137" class="line" id="l137">    137</a>                     .filter(|(_, c)| c.references.as_deref() == Some(table))</code>
+<code><a href="#l138" class="line" id="l138">    138</a>                     .map(|(i, _)| i)</code>
+<code><a href="#l139" class="line" id="l139">    139</a>                     .collect();</code>
+<code><a href="#l140" class="line" id="l140">    140</a>                 (t, references)</code>
+<code><a href="#l141" class="line" id="l141">    141</a>             })</code>
+<code><a href="#l142" class="line" id="l142">    142</a>             .filter(|(_, references)| !references.is_empty())</code>
+<code><a href="#l143" class="line" id="l143">    143</a>             .collect())</code>
+<code><a href="#l144" class="line" id="l144">    144</a>     }</code>
+<code><a href="#l145" class="line" id="l145">    145</a> }</code>
+<code><a href="#l146" class="line" id="l146">    146</a> </code>
+<code><a href="#l147" class="line" id="l147">    147</a> impl&lt;E: storage::Engine&gt; super::Transaction for Transaction&lt;E&gt; {</code>
+<code><a href="#l148" class="line" id="l148">    148</a>     fn state(&amp;self) -&gt; &amp;mvcc::TransactionState {</code>
+<code><a href="#l149" class="line" id="l149">    149</a>         self.txn.state()</code>
+<code><a href="#l150" class="line" id="l150">    150</a>     }</code>
+<code><a href="#l151" class="line" id="l151">    151</a> </code>
+<code><a href="#l152" class="line" id="l152">    152</a>     fn commit(self) -&gt; Result&lt;()&gt; {</code>
+<code><a href="#l153" class="line" id="l153">    153</a>         self.txn.commit()</code>
+<code><a href="#l154" class="line" id="l154">    154</a>     }</code>
+<code><a href="#l155" class="line" id="l155">    155</a> </code>
+<code><a href="#l156" class="line" id="l156">    156</a>     fn rollback(self) -&gt; Result&lt;()&gt; {</code>
+<code><a href="#l157" class="line" id="l157">    157</a>         self.txn.rollback()</code>
+<code><a href="#l158" class="line" id="l158">    158</a>     }</code>
+<code><a href="#l159" class="line" id="l159">    159</a> </code>
+<code><a href="#l160" class="line" id="l160">    160</a>     fn delete(&amp;self, table: &amp;str, ids: &amp;[Value]) -&gt; Result&lt;()&gt; {</code>
+<code><a href="#l161" class="line" id="l161">    161</a>         let table = self.must_get_table(table)?;</code>
+<code><a href="#l162" class="line" id="l162">    162</a>         let indexes = table.columns.iter().enumerate().filter(|(_, c)| c.index).collect_vec();</code>
+<code><a href="#l163" class="line" id="l163">    163</a> </code>
+<code><a href="#l164" class="line" id="l164">    164</a>         // Check for foreign key references to the deleted rows.</code>
+<code><a href="#l165" class="line" id="l165">    165</a>         for (source, refs) in self.table_references(&amp;table.name)? {</code>
+<code><a href="#l166" class="line" id="l166">    166</a>             let self_reference = source.name == table.name;</code>
+<code><a href="#l167" class="line" id="l167">    167</a>             for i in refs {</code>
+<code><a href="#l168" class="line" id="l168">    168</a>                 let column = &amp;source.columns[i];</code>
+<code><a href="#l169" class="line" id="l169">    169</a>                 let mut source_ids = if i == source.primary_key {</code>
+<code><a href="#l170" class="line" id="l170">    170</a>                     // If the reference is from a primary key column, do a lookup.</code>
+<code><a href="#l171" class="line" id="l171">    171</a>                     self.get(&amp;source.name, ids)?</code>
+<code><a href="#l172" class="line" id="l172">    172</a>                         .into_iter()</code>
+<code><a href="#l173" class="line" id="l173">    173</a>                         .map(|row| row.into_iter().nth(i).expect(&quot;short row&quot;))</code>
+<code><a href="#l174" class="line" id="l174">    174</a>                         .collect()</code>
+<code><a href="#l175" class="line" id="l175">    175</a>                 } else {</code>
+<code><a href="#l176" class="line" id="l176">    176</a>                     // Otherwise (commonly), do a secondary index lookup.</code>
+<code><a href="#l177" class="line" id="l177">    177</a>                     // All foreign keys have a secondary index.</code>
+<code><a href="#l178" class="line" id="l178">    178</a>                     self.lookup_index(&amp;source.name, &amp;column.name, ids)?</code>
+<code><a href="#l179" class="line" id="l179">    179</a>                 };</code>
+<code><a href="#l180" class="line" id="l180">    180</a>                 // We can ignore any references between the deleted rows,</code>
+<code><a href="#l181" class="line" id="l181">    181</a>                 // including a row referring to itself.</code>
+<code><a href="#l182" class="line" id="l182">    182</a>                 if self_reference {</code>
+<code><a href="#l183" class="line" id="l183">    183</a>                     for id in ids {</code>
+<code><a href="#l184" class="line" id="l184">    184</a>                         source_ids.remove(id);</code>
+<code><a href="#l185" class="line" id="l185">    185</a>                     }</code>
+<code><a href="#l186" class="line" id="l186">    186</a>                 }</code>
+<code><a href="#l187" class="line" id="l187">    187</a>                 // Error if the delete would violate referential integrity.</code>
+<code><a href="#l188" class="line" id="l188">    188</a>                 if let Some(source_id) = source_ids.first() {</code>
+<code><a href="#l189" class="line" id="l189">    189</a>                     let table = source.name;</code>
+<code><a href="#l190" class="line" id="l190">    190</a>                     let column = &amp;source.columns[source.primary_key].name;</code>
+<code><a href="#l191" class="line" id="l191">    191</a>                     return errinput!(&quot;row referenced by {table}.{column}={source_id}&quot;);</code>
+<code><a href="#l192" class="line" id="l192">    192</a>                 }</code>
+<code><a href="#l193" class="line" id="l193">    193</a>             }</code>
+<code><a href="#l194" class="line" id="l194">    194</a>         }</code>
+<code><a href="#l195" class="line" id="l195">    195</a> </code>
+<code><a href="#l196" class="line" id="l196">    196</a>         // Delete the rows.</code>
+<code><a href="#l197" class="line" id="l197">    197</a>         for id in ids {</code>
+<code><a href="#l198" class="line" id="l198">    198</a>             let id = id.normalize_ref();</code>
+<code><a href="#l199" class="line" id="l199">    199</a> </code>
+<code><a href="#l200" class="line" id="l200">    200</a>             // Update any index entries.</code>
+<code><a href="#l201" class="line" id="l201">    201</a>             if !indexes.is_empty() {</code>
+<code><a href="#l202" class="line" id="l202">    202</a>                 if let Some(row) = self.get_row(&amp;table.name, &amp;id)? {</code>
+<code><a href="#l203" class="line" id="l203">    203</a>                     for (i, column) in indexes.iter().copied() {</code>
+<code><a href="#l204" class="line" id="l204">    204</a>                         let mut index = self.get_index(&amp;table.name, &amp;column.name, &amp;row[i])?;</code>
+<code><a href="#l205" class="line" id="l205">    205</a>                         index.remove(&amp;id);</code>
+<code><a href="#l206" class="line" id="l206">    206</a>                         self.set_index(&amp;table.name, &amp;column.name, &amp;row[i], index)?;</code>
+<code><a href="#l207" class="line" id="l207">    207</a>                     }</code>
+<code><a href="#l208" class="line" id="l208">    208</a>                 }</code>
+<code><a href="#l209" class="line" id="l209">    209</a>             }</code>
+<code><a href="#l210" class="line" id="l210">    210</a> </code>
+<code><a href="#l211" class="line" id="l211">    211</a>             self.txn.delete(&amp;Key::Row((&amp;table.name).into(), id).encode())?;</code>
+<code><a href="#l212" class="line" id="l212">    212</a>         }</code>
+<code><a href="#l213" class="line" id="l213">    213</a>         Ok(())</code>
+<code><a href="#l214" class="line" id="l214">    214</a>     }</code>
+<code><a href="#l215" class="line" id="l215">    215</a> </code>
+<code><a href="#l216" class="line" id="l216">    216</a>     fn get(&amp;self, table: &amp;str, ids: &amp;[Value]) -&gt; Result&lt;Vec&lt;Row&gt;&gt; {</code>
+<code><a href="#l217" class="line" id="l217">    217</a>         ids.iter().filter_map(|id| self.get_row(table, &amp;id.normalize_ref()).transpose()).collect()</code>
+<code><a href="#l218" class="line" id="l218">    218</a>     }</code>
+<code><a href="#l219" class="line" id="l219">    219</a> </code>
+<code><a href="#l220" class="line" id="l220">    220</a>     fn insert(&amp;self, table: &amp;str, rows: Vec&lt;Row&gt;) -&gt; Result&lt;()&gt; {</code>
+<code><a href="#l221" class="line" id="l221">    221</a>         let table = self.must_get_table(table)?;</code>
+<code><a href="#l222" class="line" id="l222">    222</a>         for mut row in rows {</code>
+<code><a href="#l223" class="line" id="l223">    223</a>             // Normalize the row.</code>
+<code><a href="#l224" class="line" id="l224">    224</a>             row.iter_mut().for_each(|v| v.normalize());</code>
+<code><a href="#l225" class="line" id="l225">    225</a> </code>
+<code><a href="#l226" class="line" id="l226">    226</a>             // Insert the row.</code>
+<code><a href="#l227" class="line" id="l227">    227</a>             table.validate_row(&amp;row, false, self)?;</code>
+<code><a href="#l228" class="line" id="l228">    228</a>             let id = &amp;row[table.primary_key];</code>
+<code><a href="#l229" class="line" id="l229">    229</a>             self.txn.set(&amp;Key::Row((&amp;table.name).into(), id.into()).encode(), row.encode())?;</code>
+<code><a href="#l230" class="line" id="l230">    230</a> </code>
+<code><a href="#l231" class="line" id="l231">    231</a>             // Update any secondary indexes.</code>
+<code><a href="#l232" class="line" id="l232">    232</a>             for (i, column) in table.columns.iter().enumerate().filter(|(_, c)| c.index) {</code>
+<code><a href="#l233" class="line" id="l233">    233</a>                 let mut index = self.get_index(&amp;table.name, &amp;column.name, &amp;row[i])?;</code>
+<code><a href="#l234" class="line" id="l234">    234</a>                 index.insert(id.clone());</code>
+<code><a href="#l235" class="line" id="l235">    235</a>                 self.set_index(&amp;table.name, &amp;column.name, &amp;row[i], index)?;</code>
+<code><a href="#l236" class="line" id="l236">    236</a>             }</code>
+<code><a href="#l237" class="line" id="l237">    237</a>         }</code>
+<code><a href="#l238" class="line" id="l238">    238</a>         Ok(())</code>
+<code><a href="#l239" class="line" id="l239">    239</a>     }</code>
+<code><a href="#l240" class="line" id="l240">    240</a> </code>
+<code><a href="#l241" class="line" id="l241">    241</a>     fn lookup_index(&amp;self, table: &amp;str, column: &amp;str, values: &amp;[Value]) -&gt; Result&lt;BTreeSet&lt;Value&gt;&gt; {</code>
+<code><a href="#l242" class="line" id="l242">    242</a>         debug_assert!(self.has_index(table, column)?, &quot;no index on {table}.{column}&quot;);</code>
+<code><a href="#l243" class="line" id="l243">    243</a>         values</code>
+<code><a href="#l244" class="line" id="l244">    244</a>             .iter()</code>
+<code><a href="#l245" class="line" id="l245">    245</a>             .map(|v| self.get_index(table, column, &amp;v.normalize_ref()))</code>
+<code><a href="#l246" class="line" id="l246">    246</a>             .flatten_ok()</code>
+<code><a href="#l247" class="line" id="l247">    247</a>             .collect()</code>
+<code><a href="#l248" class="line" id="l248">    248</a>     }</code>
+<code><a href="#l249" class="line" id="l249">    249</a> </code>
+<code><a href="#l250" class="line" id="l250">    250</a>     fn scan(&amp;self, table: &amp;str, filter: Option&lt;Expression&gt;) -&gt; Result&lt;Rows&gt; {</code>
+<code><a href="#l251" class="line" id="l251">    251</a>         // TODO: this could be simpler if process_results() implemented Clone.</code>
+<code><a href="#l252" class="line" id="l252">    252</a>         let rows = self</code>
+<code><a href="#l253" class="line" id="l253">    253</a>             .txn</code>
+<code><a href="#l254" class="line" id="l254">    254</a>             .scan_prefix(&amp;KeyPrefix::Row(table.into()).encode())</code>
+<code><a href="#l255" class="line" id="l255">    255</a>             .map(|result| result.and_then(|(_, value)| Row::decode(&amp;value)));</code>
+<code><a href="#l256" class="line" id="l256">    256</a>         let Some(filter) = filter else {</code>
+<code><a href="#l257" class="line" id="l257">    257</a>             return Ok(Box::new(rows));</code>
+<code><a href="#l258" class="line" id="l258">    258</a>         };</code>
+<code><a href="#l259" class="line" id="l259">    259</a>         let rows = rows.filter_map(move |result| {</code>
+<code><a href="#l260" class="line" id="l260">    260</a>             result</code>
+<code><a href="#l261" class="line" id="l261">    261</a>                 .and_then(|row| match filter.evaluate(Some(&amp;row))? {</code>
+<code><a href="#l262" class="line" id="l262">    262</a>                     Value::Boolean(true) =&gt; Ok(Some(row)),</code>
+<code><a href="#l263" class="line" id="l263">    263</a>                     Value::Boolean(false) | Value::Null =&gt; Ok(None),</code>
+<code><a href="#l264" class="line" id="l264">    264</a>                     value =&gt; errinput!(&quot;filter returned {value}, expected boolean&quot;),</code>
+<code><a href="#l265" class="line" id="l265">    265</a>                 })</code>
+<code><a href="#l266" class="line" id="l266">    266</a>                 .transpose()</code>
+<code><a href="#l267" class="line" id="l267">    267</a>         });</code>
+<code><a href="#l268" class="line" id="l268">    268</a>         Ok(Box::new(rows))</code>
+<code><a href="#l269" class="line" id="l269">    269</a>     }</code>
+<code><a href="#l270" class="line" id="l270">    270</a> </code>
+<code><a href="#l271" class="line" id="l271">    271</a>     fn update(&amp;self, table: &amp;str, rows: BTreeMap&lt;Value, Row&gt;) -&gt; Result&lt;()&gt; {</code>
+<code><a href="#l272" class="line" id="l272">    272</a>         let table = self.must_get_table(table)?;</code>
+<code><a href="#l273" class="line" id="l273">    273</a>         for (mut id, mut row) in rows {</code>
+<code><a href="#l274" class="line" id="l274">    274</a>             // Normalize the ID and row.</code>
+<code><a href="#l275" class="line" id="l275">    275</a>             id.normalize();</code>
+<code><a href="#l276" class="line" id="l276">    276</a>             row.iter_mut().for_each(|v| v.normalize());</code>
+<code><a href="#l277" class="line" id="l277">    277</a> </code>
+<code><a href="#l278" class="line" id="l278">    278</a>             // If the primary key changes, we simply do a delete and insert.</code>
+<code><a href="#l279" class="line" id="l279">    279</a>             // This simplifies constraint validation.</code>
+<code><a href="#l280" class="line" id="l280">    280</a>             if id != row[table.primary_key] {</code>
+<code><a href="#l281" class="line" id="l281">    281</a>                 self.delete(&amp;table.name, &amp;[id])?;</code>
+<code><a href="#l282" class="line" id="l282">    282</a>                 self.insert(&amp;table.name, vec![row])?;</code>
+<code><a href="#l283" class="line" id="l283">    283</a>                 continue;</code>
+<code><a href="#l284" class="line" id="l284">    284</a>             }</code>
+<code><a href="#l285" class="line" id="l285">    285</a> </code>
+<code><a href="#l286" class="line" id="l286">    286</a>             // Validate the row, but don&#39;t write it yet since we may need to</code>
+<code><a href="#l287" class="line" id="l287">    287</a>             // read the existing value to update secondary indexes.</code>
+<code><a href="#l288" class="line" id="l288">    288</a>             table.validate_row(&amp;row, true, self)?;</code>
+<code><a href="#l289" class="line" id="l289">    289</a> </code>
+<code><a href="#l290" class="line" id="l290">    290</a>             // Update indexes, knowing that the primary key has not changed.</code>
+<code><a href="#l291" class="line" id="l291">    291</a>             let indexes = table.columns.iter().enumerate().filter(|(_, c)| c.index).collect_vec();</code>
+<code><a href="#l292" class="line" id="l292">    292</a>             if !indexes.is_empty() {</code>
+<code><a href="#l293" class="line" id="l293">    293</a>                 let old = self.get(&amp;table.name, &amp;[id.clone()])?.remove(0);</code>
+<code><a href="#l294" class="line" id="l294">    294</a>                 for (i, column) in indexes {</code>
+<code><a href="#l295" class="line" id="l295">    295</a>                     // If the value didn&#39;t change, we don&#39;t have to do anything.</code>
+<code><a href="#l296" class="line" id="l296">    296</a>                     if old[i] == row[i] {</code>
+<code><a href="#l297" class="line" id="l297">    297</a>                         continue;</code>
+<code><a href="#l298" class="line" id="l298">    298</a>                     }</code>
+<code><a href="#l299" class="line" id="l299">    299</a> </code>
+<code><a href="#l300" class="line" id="l300">    300</a>                     // Remove the old value from the index entry.</code>
+<code><a href="#l301" class="line" id="l301">    301</a>                     let mut index = self.get_index(&amp;table.name, &amp;column.name, &amp;old[i])?;</code>
+<code><a href="#l302" class="line" id="l302">    302</a>                     index.remove(&amp;id);</code>
+<code><a href="#l303" class="line" id="l303">    303</a>                     self.set_index(&amp;table.name, &amp;column.name, &amp;old[i], index)?;</code>
+<code><a href="#l304" class="line" id="l304">    304</a> </code>
+<code><a href="#l305" class="line" id="l305">    305</a>                     // Insert the new value into the index entry.</code>
+<code><a href="#l306" class="line" id="l306">    306</a>                     let mut index = self.get_index(&amp;table.name, &amp;column.name, &amp;row[i])?;</code>
+<code><a href="#l307" class="line" id="l307">    307</a>                     index.insert(id.clone());</code>
+<code><a href="#l308" class="line" id="l308">    308</a>                     self.set_index(&amp;table.name, &amp;column.name, &amp;row[i], index)?;</code>
+<code><a href="#l309" class="line" id="l309">    309</a>                 }</code>
+<code><a href="#l310" class="line" id="l310">    310</a>             }</code>
+<code><a href="#l311" class="line" id="l311">    311</a> </code>
+<code><a href="#l312" class="line" id="l312">    312</a>             // Update the row.</code>
+<code><a href="#l313" class="line" id="l313">    313</a>             self.txn.set(&amp;Key::Row((&amp;table.name).into(), (&amp;id).into()).encode(), row.encode())?;</code>
+<code><a href="#l314" class="line" id="l314">    314</a>         }</code>
+<code><a href="#l315" class="line" id="l315">    315</a>         Ok(())</code>
+<code><a href="#l316" class="line" id="l316">    316</a>     }</code>
+<code><a href="#l317" class="line" id="l317">    317</a> }</code>
+<code><a href="#l318" class="line" id="l318">    318</a> </code>
+<code><a href="#l319" class="line" id="l319">    319</a> impl&lt;E: storage::Engine&gt; Catalog for Transaction&lt;E&gt; {</code>
+<code><a href="#l320" class="line" id="l320">    320</a>     fn create_table(&amp;self, table: Table) -&gt; Result&lt;()&gt; {</code>
+<code><a href="#l321" class="line" id="l321">    321</a>         if self.get_table(&amp;table.name)?.is_some() {</code>
+<code><a href="#l322" class="line" id="l322">    322</a>             return errinput!(&quot;table {} already exists&quot;, table.name);</code>
+<code><a href="#l323" class="line" id="l323">    323</a>         }</code>
+<code><a href="#l324" class="line" id="l324">    324</a>         table.validate(self)?;</code>
+<code><a href="#l325" class="line" id="l325">    325</a>         self.txn.set(&amp;Key::Table((&amp;table.name).into()).encode(), table.encode())</code>
+<code><a href="#l326" class="line" id="l326">    326</a>     }</code>
+<code><a href="#l327" class="line" id="l327">    327</a> </code>
+<code><a href="#l328" class="line" id="l328">    328</a>     fn drop_table(&amp;self, table: &amp;str, if_exists: bool) -&gt; Result&lt;bool&gt; {</code>
+<code><a href="#l329" class="line" id="l329">    329</a>         let table = match self.get_table(table)? {</code>
+<code><a href="#l330" class="line" id="l330">    330</a>             Some(table) =&gt; table,</code>
+<code><a href="#l331" class="line" id="l331">    331</a>             None if if_exists =&gt; return Ok(false),</code>
+<code><a href="#l332" class="line" id="l332">    332</a>             None =&gt; return errinput!(&quot;table {table} does not exist&quot;),</code>
+<code><a href="#l333" class="line" id="l333">    333</a>         };</code>
+<code><a href="#l334" class="line" id="l334">    334</a> </code>
+<code><a href="#l335" class="line" id="l335">    335</a>         // Check for foreign key references.</code>
+<code><a href="#l336" class="line" id="l336">    336</a>         if let Some((source, refs)) =</code>
+<code><a href="#l337" class="line" id="l337">    337</a>             self.table_references(&amp;table.name)?.iter().find(|(t, _)| t.name != table.name)</code>
+<code><a href="#l338" class="line" id="l338">    338</a>         {</code>
+<code><a href="#l339" class="line" id="l339">    339</a>             return errinput!(</code>
+<code><a href="#l340" class="line" id="l340">    340</a>                 &quot;table {} is referenced from {}.{}&quot;,</code>
+<code><a href="#l341" class="line" id="l341">    341</a>                 table.name,</code>
+<code><a href="#l342" class="line" id="l342">    342</a>                 source.name,</code>
+<code><a href="#l343" class="line" id="l343">    343</a>                 source.columns[refs[0]].name</code>
+<code><a href="#l344" class="line" id="l344">    344</a>             );</code>
+<code><a href="#l345" class="line" id="l345">    345</a>         }</code>
+<code><a href="#l346" class="line" id="l346">    346</a> </code>
+<code><a href="#l347" class="line" id="l347">    347</a>         // Delete the table schema entry.</code>
+<code><a href="#l348" class="line" id="l348">    348</a>         self.txn.delete(&amp;Key::Table((&amp;table.name).into()).encode())?;</code>
+<code><a href="#l349" class="line" id="l349">    349</a> </code>
+<code><a href="#l350" class="line" id="l350">    350</a>         // Delete the table rows. storage::Engine doesn&#39;t support writing while</code>
+<code><a href="#l351" class="line" id="l351">    351</a>         // scanning, so we buffer all keys in a vector. We could also do this in</code>
+<code><a href="#l352" class="line" id="l352">    352</a>         // batches, although we&#39;d want to do the batching above Raft to avoid</code>
+<code><a href="#l353" class="line" id="l353">    353</a>         // blocking Raft processing for the duration of the drop.</code>
+<code><a href="#l354" class="line" id="l354">    354</a>         let prefix = &amp;KeyPrefix::Row((&amp;table.name).into()).encode();</code>
+<code><a href="#l355" class="line" id="l355">    355</a>         let keys: Vec&lt;Vec&lt;u8&gt;&gt; =</code>
+<code><a href="#l356" class="line" id="l356">    356</a>             self.txn.scan_prefix(prefix).map_ok(|(key, _)| key).try_collect()?;</code>
+<code><a href="#l357" class="line" id="l357">    357</a>         for key in keys {</code>
+<code><a href="#l358" class="line" id="l358">    358</a>             self.txn.delete(&amp;key)?;</code>
+<code><a href="#l359" class="line" id="l359">    359</a>         }</code>
+<code><a href="#l360" class="line" id="l360">    360</a> </code>
+<code><a href="#l361" class="line" id="l361">    361</a>         // Delete any secondary indexes.</code>
+<code><a href="#l362" class="line" id="l362">    362</a>         for column in table.columns.iter().filter(|c| c.index) {</code>
+<code><a href="#l363" class="line" id="l363">    363</a>             let prefix = &amp;KeyPrefix::Index((&amp;table.name).into(), (&amp;column.name).into()).encode();</code>
+<code><a href="#l364" class="line" id="l364">    364</a>             let keys: Vec&lt;_&gt; = self.txn.scan_prefix(prefix).map_ok(|(key, _)| key).try_collect()?;</code>
+<code><a href="#l365" class="line" id="l365">    365</a>             for key in keys {</code>
+<code><a href="#l366" class="line" id="l366">    366</a>                 self.txn.delete(&amp;key)?;</code>
+<code><a href="#l367" class="line" id="l367">    367</a>             }</code>
+<code><a href="#l368" class="line" id="l368">    368</a>         }</code>
+<code><a href="#l369" class="line" id="l369">    369</a>         Ok(true)</code>
+<code><a href="#l370" class="line" id="l370">    370</a>     }</code>
+<code><a href="#l371" class="line" id="l371">    371</a> </code>
+<code><a href="#l372" class="line" id="l372">    372</a>     fn get_table(&amp;self, table: &amp;str) -&gt; Result&lt;Option&lt;Table&gt;&gt; {</code>
+<code><a href="#l373" class="line" id="l373">    373</a>         self.txn.get(&amp;Key::Table(table.into()).encode())?.map(|v| Table::decode(&amp;v)).transpose()</code>
+<code><a href="#l374" class="line" id="l374">    374</a>     }</code>
+<code><a href="#l375" class="line" id="l375">    375</a> </code>
+<code><a href="#l376" class="line" id="l376">    376</a>     fn list_tables(&amp;self) -&gt; Result&lt;Vec&lt;Table&gt;&gt; {</code>
+<code><a href="#l377" class="line" id="l377">    377</a>         self.txn</code>
+<code><a href="#l378" class="line" id="l378">    378</a>             .scan_prefix(&amp;KeyPrefix::Table.encode())</code>
+<code><a href="#l379" class="line" id="l379">    379</a>             .map(|r| r.and_then(|(_, v)| Table::decode(&amp;v)))</code>
+<code><a href="#l380" class="line" id="l380">    380</a>             .collect()</code>
+<code><a href="#l381" class="line" id="l381">    381</a>     }</code>
+<code><a href="#l382" class="line" id="l382">    382</a> }</code>
+<code><a href="#l383" class="line" id="l383">    383</a> </code>
+<code><a href="#l384" class="line" id="l384">    384</a> /// SQL engine keys, using the KeyCode order-preserving encoding. For</code>
+<code><a href="#l385" class="line" id="l385">    385</a> /// simplicity, table and column names are used directly as identifiers in</code>
+<code><a href="#l386" class="line" id="l386">    386</a> /// keys, instead of e.g. numberic IDs. It is not possible to change</code>
+<code><a href="#l387" class="line" id="l387">    387</a> /// table/column names, so this is fine.</code>
+<code><a href="#l388" class="line" id="l388">    388</a> ///</code>
+<code><a href="#l389" class="line" id="l389">    389</a> /// Uses Cow to allow encoding borrowed values but decoding owned values.</code>
+<code><a href="#l390" class="line" id="l390">    390</a> #[derive(Debug, Deserialize, Serialize)]</code>
+<code><a href="#l391" class="line" id="l391">    391</a> pub enum Key&lt;&#39;a&gt; {</code>
+<code><a href="#l392" class="line" id="l392">    392</a>     /// A table schema by table name.</code>
+<code><a href="#l393" class="line" id="l393">    393</a>     Table(Cow&lt;&#39;a, str&gt;),</code>
+<code><a href="#l394" class="line" id="l394">    394</a>     /// An index entry, by table name, index name, and index value.</code>
+<code><a href="#l395" class="line" id="l395">    395</a>     Index(Cow&lt;&#39;a, str&gt;, Cow&lt;&#39;a, str&gt;, Cow&lt;&#39;a, Value&gt;),</code>
+<code><a href="#l396" class="line" id="l396">    396</a>     /// A table row, by table name and primary key value.</code>
+<code><a href="#l397" class="line" id="l397">    397</a>     Row(Cow&lt;&#39;a, str&gt;, Cow&lt;&#39;a, Value&gt;),</code>
+<code><a href="#l398" class="line" id="l398">    398</a> }</code>
+<code><a href="#l399" class="line" id="l399">    399</a> </code>
+<code><a href="#l400" class="line" id="l400">    400</a> impl&lt;&#39;a&gt; encoding::Key&lt;&#39;a&gt; for Key&lt;&#39;a&gt; {}</code>
+<code><a href="#l401" class="line" id="l401">    401</a> </code>
+<code><a href="#l402" class="line" id="l402">    402</a> /// Key prefixes, allowing prefix scans of specific parts of the keyspace. These</code>
+<code><a href="#l403" class="line" id="l403">    403</a> /// must match the keys -- in particular, the enum variant indexes must match.</code>
+<code><a href="#l404" class="line" id="l404">    404</a> #[derive(Deserialize, Serialize)]</code>
+<code><a href="#l405" class="line" id="l405">    405</a> enum KeyPrefix&lt;&#39;a&gt; {</code>
+<code><a href="#l406" class="line" id="l406">    406</a>     /// All table schemas.</code>
+<code><a href="#l407" class="line" id="l407">    407</a>     Table,</code>
+<code><a href="#l408" class="line" id="l408">    408</a>     /// An entire table index, by table and index name.</code>
+<code><a href="#l409" class="line" id="l409">    409</a>     Index(Cow&lt;&#39;a, str&gt;, Cow&lt;&#39;a, str&gt;),</code>
+<code><a href="#l410" class="line" id="l410">    410</a>     /// An entire table&#39;s rows, by table name.</code>
+<code><a href="#l411" class="line" id="l411">    411</a>     Row(Cow&lt;&#39;a, str&gt;),</code>
+<code><a href="#l412" class="line" id="l412">    412</a> }</code>
+<code><a href="#l413" class="line" id="l413">    413</a> </code>
+<code><a href="#l414" class="line" id="l414">    414</a> impl&lt;&#39;a&gt; encoding::Key&lt;&#39;a&gt; for KeyPrefix&lt;&#39;a&gt; {}</code>
 </pre>
 </div>
 </body>
