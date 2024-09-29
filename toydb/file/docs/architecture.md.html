@@ -12,688 +12,689 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Source+Code+Pro:ital,wght@0,200..900;1,200..900&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/default.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/base16/tender.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
 <script>hljs.highlightAll();</script>
-</head>
+<style>pre code.hljs {display: inline;padding: 0;} code.hljs {padding: 0;} .hljs {background: initial;}</style></head>
 <body>
 <table><tr><td><a href="../../../"><img src="../../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
 </span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<br>
 <a href="../../log.html">Log</a> | <a href="../../files.html">Files</a> | <a href="../../refs.html">Refs</a> | <a href="../../file/README.md.html">README</a> | <a href="../../file/LICENSE.html">LICENSE</a></td></tr></table>
 <hr/>
 <div id="content">
 <p> architecture.md (33594B)</p><hr/><pre id="blob">
-<code><a href="#l1" class="line" id="l1">      1</a> # toyDB Architecture</code>
-<code><a href="#l2" class="line" id="l2">      2</a> </code>
-<code><a href="#l3" class="line" id="l3">      3</a> At the highest level, toyDB consists of a cluster of nodes that execute SQL transactions against</code>
-<code><a href="#l4" class="line" id="l4">      4</a> a replicated state machine. Clients can connect to any node in the cluster and submit SQL</code>
-<code><a href="#l5" class="line" id="l5">      5</a> statements. It aims to provide</code>
-<code><a href="#l6" class="line" id="l6">      6</a> [linearizability](https://jepsen.io/consistency/models/linearizable) (i.e. strong consistency)</code>
-<code><a href="#l7" class="line" id="l7">      7</a> and [serializability](https://jepsen.io/consistency/models/serializable), but falls slightly</code>
-<code><a href="#l8" class="line" id="l8">      8</a> short as it currently only implements</code>
-<code><a href="#l9" class="line" id="l9">      9</a> [snapshot isolation](https://jepsen.io/consistency/models/snapshot-isolation).</code>
-<code><a href="#l10" class="line" id="l10">     10</a> </code>
-<code><a href="#l11" class="line" id="l11">     11</a> The [Raft algorithm](https://raft.github.io) is used for cluster consensus, which tolerates the</code>
-<code><a href="#l12" class="line" id="l12">     12</a> failure of any node as long as a majority of nodes are still available. One node is elected</code>
-<code><a href="#l13" class="line" id="l13">     13</a> leader, and replicates commands to the others which apply them to local copies of the state</code>
-<code><a href="#l14" class="line" id="l14">     14</a> machine. If the leader is lost, a new leader is elected and the cluster continues operation.</code>
-<code><a href="#l15" class="line" id="l15">     15</a> Client commands are automatically forwarded to the leader.</code>
-<code><a href="#l16" class="line" id="l16">     16</a> </code>
-<code><a href="#l17" class="line" id="l17">     17</a> This architecture guide will begin with a high-level overview of node components, before</code>
-<code><a href="#l18" class="line" id="l18">     18</a> discussing each component from the bottom up. Along the way, we will make note of tradeoffs and</code>
-<code><a href="#l19" class="line" id="l19">     19</a> design choices.</code>
-<code><a href="#l20" class="line" id="l20">     20</a> </code>
-<code><a href="#l21" class="line" id="l21">     21</a> - [Node Components](#node-components)</code>
-<code><a href="#l22" class="line" id="l22">     22</a> - [Storage Engine](#storage-engine)</code>
-<code><a href="#l23" class="line" id="l23">     23</a>   - [Key/Value Storage](#keyvalue-storage)</code>
-<code><a href="#l24" class="line" id="l24">     24</a>   - [MVCC Transactions](#mvcc-transactions)</code>
-<code><a href="#l25" class="line" id="l25">     25</a>   - [Log-structured Storage](#log-structured-storage)</code>
-<code><a href="#l26" class="line" id="l26">     26</a> - [Raft Consensus Engine](#raft-consensus-engine)</code>
-<code><a href="#l27" class="line" id="l27">     27</a> - [SQL Engine](#sql-engine)</code>
-<code><a href="#l28" class="line" id="l28">     28</a>   - [Types](#types)</code>
-<code><a href="#l29" class="line" id="l29">     29</a>   - [Schemas](#schemas)</code>
-<code><a href="#l30" class="line" id="l30">     30</a>   - [Storage](#storage)</code>
-<code><a href="#l31" class="line" id="l31">     31</a>   - [Parsing](#parsing)</code>
-<code><a href="#l32" class="line" id="l32">     32</a>   - [Planning](#planning)</code>
-<code><a href="#l33" class="line" id="l33">     33</a>   - [Execution](#execution)</code>
-<code><a href="#l34" class="line" id="l34">     34</a> - [Server](#server)</code>
-<code><a href="#l35" class="line" id="l35">     35</a> - [Client](#client)</code>
-<code><a href="#l36" class="line" id="l36">     36</a> </code>
-<code><a href="#l37" class="line" id="l37">     37</a> ## Node Components</code>
-<code><a href="#l38" class="line" id="l38">     38</a> </code>
-<code><a href="#l39" class="line" id="l39">     39</a> A toyDB node consists of three main components:</code>
-<code><a href="#l40" class="line" id="l40">     40</a> </code>
-<code><a href="#l41" class="line" id="l41">     41</a> * **Storage engine:** stores data and manages transactions, on disk and in memory.</code>
-<code><a href="#l42" class="line" id="l42">     42</a> </code>
-<code><a href="#l43" class="line" id="l43">     43</a> * **Raft consensus engine:** handles cluster coordination and state machine replication.</code>
-<code><a href="#l44" class="line" id="l44">     44</a> </code>
-<code><a href="#l45" class="line" id="l45">     45</a> * **SQL engine:** parses, plans, and executes SQL statements for clients.</code>
-<code><a href="#l46" class="line" id="l46">     46</a> </code>
-<code><a href="#l47" class="line" id="l47">     47</a> These components are integrated in the toyDB server, which handles network communication with</code>
-<code><a href="#l48" class="line" id="l48">     48</a> clients and other nodes. The following diagram illustrates its internal structure:</code>
-<code><a href="#l49" class="line" id="l49">     49</a> </code>
-<code><a href="#l50" class="line" id="l50">     50</a> ![toyDB architecture](./images/architecture.svg)</code>
-<code><a href="#l51" class="line" id="l51">     51</a> </code>
-<code><a href="#l52" class="line" id="l52">     52</a> At the bottom is a simple [key/value store](https://en.wikipedia.org/wiki/Key–value_database), </code>
-<code><a href="#l53" class="line" id="l53">     53</a> which stores all SQL data. This is wrapped inside an</code>
-<code><a href="#l54" class="line" id="l54">     54</a> [MVCC](https://en.wikipedia.org/wiki/Multiversion_concurrency_control) key/value store that adds </code>
-<code><a href="#l55" class="line" id="l55">     55</a> [ACID transactions](https://en.wikipedia.org/wiki/ACID). On top of that is a SQL storage engine,</code>
-<code><a href="#l56" class="line" id="l56">     56</a> providing basic [CRUD operations](https://en.wikipedia.org/wiki/Create,_read,_update_and_delete)</code>
-<code><a href="#l57" class="line" id="l57">     57</a> on tables, rows, and indexes. This makes up the node&#39;s core storage engine.</code>
-<code><a href="#l58" class="line" id="l58">     58</a> </code>
-<code><a href="#l59" class="line" id="l59">     59</a> The SQL storage engine is wrapped in a Raft state machine interface, allowing it to be managed</code>
-<code><a href="#l60" class="line" id="l60">     60</a> by the Raft consensus engine. The Raft node receives commands from clients and coordinates with</code>
-<code><a href="#l61" class="line" id="l61">     61</a> other Raft nodes to reach consensus on an ordered command log. Once commands are committed to</code>
-<code><a href="#l62" class="line" id="l62">     62</a> the log, they are applied to the local state machine.</code>
-<code><a href="#l63" class="line" id="l63">     63</a> </code>
-<code><a href="#l64" class="line" id="l64">     64</a> On top of the Raft engine is a Raft-based SQL storage engine, which implements the SQL storage</code>
-<code><a href="#l65" class="line" id="l65">     65</a> interface and submits commands to the Raft cluster. This allows the rest of the SQL layer to use</code>
-<code><a href="#l66" class="line" id="l66">     66</a> the Raft cluster as if it was local storage. The SQL engine manages client SQL sessions, which</code>
-<code><a href="#l67" class="line" id="l67">     67</a> take SQL queries as text, parse them, generate query plans, and execute them against the SQL</code>
-<code><a href="#l68" class="line" id="l68">     68</a> storage engine.</code>
-<code><a href="#l69" class="line" id="l69">     69</a> </code>
-<code><a href="#l70" class="line" id="l70">     70</a> Surrounding these components is the toyDB server, which in addition to network communication also</code>
-<code><a href="#l71" class="line" id="l71">     71</a> handles configuration, logging, and other process-level concerns.</code>
-<code><a href="#l72" class="line" id="l72">     72</a> </code>
-<code><a href="#l73" class="line" id="l73">     73</a> ## Storage Engine</code>
-<code><a href="#l74" class="line" id="l74">     74</a> </code>
-<code><a href="#l75" class="line" id="l75">     75</a> ToyDB uses a pluggable key/value storage engine, with the SQL and Raft storage engines configurable</code>
-<code><a href="#l76" class="line" id="l76">     76</a> via the `storage_sql` and `storage_raft` options respectively. The higher-level SQL storage engine </code>
-<code><a href="#l77" class="line" id="l77">     77</a> will be discussed separately in the [SQL section](#sql-engine).</code>
-<code><a href="#l78" class="line" id="l78">     78</a> </code>
-<code><a href="#l79" class="line" id="l79">     79</a> ### Key/Value Storage</code>
-<code><a href="#l80" class="line" id="l80">     80</a> </code>
-<code><a href="#l81" class="line" id="l81">     81</a> A key/value storage engine stores arbitrary key/value pairs as binary byte slices, and implements</code>
-<code><a href="#l82" class="line" id="l82">     82</a> the</code>
-<code><a href="#l83" class="line" id="l83">     83</a> [`storage::Engine`](https://github.com/erikgrinaker/toydb/blob/master/src/storage/engine.rs) </code>
-<code><a href="#l84" class="line" id="l84">     84</a> trait:</code>
-<code><a href="#l85" class="line" id="l85">     85</a> </code>
-<code><a href="#l86" class="line" id="l86">     86</a> ```rust</code>
-<code><a href="#l87" class="line" id="l87">     87</a> /// A key/value storage engine, where both keys and values are arbitrary byte</code>
-<code><a href="#l88" class="line" id="l88">     88</a> /// strings between 0 B and 2 GB, stored in lexicographical key order. Writes</code>
-<code><a href="#l89" class="line" id="l89">     89</a> /// are only guaranteed durable after calling flush().</code>
-<code><a href="#l90" class="line" id="l90">     90</a> ///</code>
-<code><a href="#l91" class="line" id="l91">     91</a> /// Only supports single-threaded use since all methods (including reads) take a</code>
-<code><a href="#l92" class="line" id="l92">     92</a> /// mutable reference -- serialized access can&#39;t be avoided anyway, since both</code>
-<code><a href="#l93" class="line" id="l93">     93</a> /// Raft execution and file access is serial.</code>
-<code><a href="#l94" class="line" id="l94">     94</a> pub trait Engine: std::fmt::Display + Send + Sync {</code>
-<code><a href="#l95" class="line" id="l95">     95</a>     /// The iterator returned by scan(). Traits can&#39;t return &quot;impl Trait&quot;, and</code>
-<code><a href="#l96" class="line" id="l96">     96</a>     /// we don&#39;t want to use trait objects, so the type must be specified.</code>
-<code><a href="#l97" class="line" id="l97">     97</a>     type ScanIterator&lt;&#39;a&gt;: DoubleEndedIterator&lt;Item = Result&lt;(Vec&lt;u8&gt;, Vec&lt;u8&gt;)&gt;&gt; + &#39;a</code>
-<code><a href="#l98" class="line" id="l98">     98</a>     where</code>
-<code><a href="#l99" class="line" id="l99">     99</a>         Self: &#39;a;</code>
-<code><a href="#l100" class="line" id="l100">    100</a> </code>
-<code><a href="#l101" class="line" id="l101">    101</a>     /// Deletes a key, or does nothing if it does not exist.</code>
-<code><a href="#l102" class="line" id="l102">    102</a>     fn delete(&amp;mut self, key: &amp;[u8]) -&gt; Result&lt;()&gt;;</code>
-<code><a href="#l103" class="line" id="l103">    103</a> </code>
-<code><a href="#l104" class="line" id="l104">    104</a>     /// Flushes any buffered data to the underlying storage medium.</code>
-<code><a href="#l105" class="line" id="l105">    105</a>     fn flush(&amp;mut self) -&gt; Result&lt;()&gt;;</code>
-<code><a href="#l106" class="line" id="l106">    106</a> </code>
-<code><a href="#l107" class="line" id="l107">    107</a>     /// Gets a value for a key, if it exists.</code>
-<code><a href="#l108" class="line" id="l108">    108</a>     fn get(&amp;mut self, key: &amp;[u8]) -&gt; Result&lt;Option&lt;Vec&lt;u8&gt;&gt;&gt;;</code>
-<code><a href="#l109" class="line" id="l109">    109</a> </code>
-<code><a href="#l110" class="line" id="l110">    110</a>     /// Iterates over an ordered range of key/value pairs.</code>
-<code><a href="#l111" class="line" id="l111">    111</a>     fn scan&lt;R: std::ops::RangeBounds&lt;Vec&lt;u8&gt;&gt;&gt;(&amp;mut self, range: R) -&gt; Self::ScanIterator&lt;&#39;_&gt;;</code>
-<code><a href="#l112" class="line" id="l112">    112</a> </code>
-<code><a href="#l113" class="line" id="l113">    113</a>     /// Sets a value for a key, replacing the existing value if any.</code>
-<code><a href="#l114" class="line" id="l114">    114</a>     fn set(&amp;mut self, key: &amp;[u8], value: Vec&lt;u8&gt;) -&gt; Result&lt;()&gt;;</code>
-<code><a href="#l115" class="line" id="l115">    115</a> }</code>
-<code><a href="#l116" class="line" id="l116">    116</a> ```</code>
-<code><a href="#l117" class="line" id="l117">    117</a> </code>
-<code><a href="#l118" class="line" id="l118">    118</a> The `get`, `set` and `delete` methods simply read and write key/value pairs, and `flush` ensures</code>
-<code><a href="#l119" class="line" id="l119">    119</a> any buffered data is written out to storage (e.g. via the `fsync` system call). `scan` iterates</code>
-<code><a href="#l120" class="line" id="l120">    120</a> over a key/value range _in order_, a property that is crucial to higher-level functionality (e.g.</code>
-<code><a href="#l121" class="line" id="l121">    121</a> SQL table scans) and has a couple of important implications:</code>
-<code><a href="#l122" class="line" id="l122">    122</a> </code>
-<code><a href="#l123" class="line" id="l123">    123</a> * Implementations should store data ordered by key, for performance.</code>
-<code><a href="#l124" class="line" id="l124">    124</a> </code>
-<code><a href="#l125" class="line" id="l125">    125</a> * Keys should use an order-preserving byte encoding, to allow range scans.</code>
-<code><a href="#l126" class="line" id="l126">    126</a> </code>
-<code><a href="#l127" class="line" id="l127">    127</a> The engine itself does not care what keys contain, but the storage module offers</code>
-<code><a href="#l128" class="line" id="l128">    128</a> an order-preserving key encoding called [KeyCode](https://github.com/erikgrinaker/toydb/blob/master/src/encoding/keycode.rs)</code>
-<code><a href="#l129" class="line" id="l129">    129</a> for use by higher layers. These storage layers often use composite keys made up</code>
-<code><a href="#l130" class="line" id="l130">    130</a> of several possibly variable-length values (e.g. an index key consists of table,</code>
-<code><a href="#l131" class="line" id="l131">    131</a> column, and value), and the natural ordering of each segment must be preserved,</code>
-<code><a href="#l132" class="line" id="l132">    132</a> a property satisfied by this encoding:</code>
-<code><a href="#l133" class="line" id="l133">    133</a> </code>
-<code><a href="#l134" class="line" id="l134">    134</a> * `bool`: `0x00` for `false`, `0x01` for `true`.</code>
-<code><a href="#l135" class="line" id="l135">    135</a> * `u64`: big-endian binary representation.</code>
-<code><a href="#l136" class="line" id="l136">    136</a> * `i64`: big-endian binary representation, with sign bit flipped.</code>
-<code><a href="#l137" class="line" id="l137">    137</a> * `f64`: big-endian binary representation, with sign bit flipped, and rest if negative.</code>
-<code><a href="#l138" class="line" id="l138">    138</a> * `Vec&lt;u8&gt;`: `0x00` is escaped as `0x00ff`, terminated with `0x0000`.</code>
-<code><a href="#l139" class="line" id="l139">    139</a> * `String`:  like `Vec&lt;u8&gt;`.</code>
-<code><a href="#l140" class="line" id="l140">    140</a> </code>
-<code><a href="#l141" class="line" id="l141">    141</a> Additionally, several container types are supported:</code>
-<code><a href="#l142" class="line" id="l142">    142</a> </code>
-<code><a href="#l143" class="line" id="l143">    143</a> * Tuple: concatenation of elements, with no surrounding structure.</code>
-<code><a href="#l144" class="line" id="l144">    144</a> * Array: like tuple.</code>
-<code><a href="#l145" class="line" id="l145">    145</a> * Vec: like tuple.</code>
-<code><a href="#l146" class="line" id="l146">    146</a> * Enum: the variant&#39;s enum index as a single `u8` byte, then contents.</code>
-<code><a href="#l147" class="line" id="l147">    147</a> * Value: like enum.</code>
-<code><a href="#l148" class="line" id="l148">    148</a> </code>
-<code><a href="#l149" class="line" id="l149">    149</a> The default key/value engine is</code>
-<code><a href="#l150" class="line" id="l150">    150</a> [`storage::BitCask`](https://github.com/erikgrinaker/toydb/blob/master/src/storage/bitcask.rs),</code>
-<code><a href="#l151" class="line" id="l151">    151</a> a very simple variant of Bitcask, an append-only log-structured storage engine.</code>
-<code><a href="#l152" class="line" id="l152">    152</a> All writes are appended to a log file, with an index mapping live keys to file</code>
-<code><a href="#l153" class="line" id="l153">    153</a> positions maintained in memory.  When the amount of garbage (replaced or deleted</code>
-<code><a href="#l154" class="line" id="l154">    154</a> keys) in the file exceeds 20%, a new log file is written containing only live</code>
-<code><a href="#l155" class="line" id="l155">    155</a> keys, replacing the old log file.</code>
-<code><a href="#l156" class="line" id="l156">    156</a> </code>
-<code><a href="#l157" class="line" id="l157">    157</a> #### Key/Value Tradeoffs</code>
-<code><a href="#l158" class="line" id="l158">    158</a> </code>
-<code><a href="#l159" class="line" id="l159">    159</a> **Keyset in memory:** BitCask requires the entire key set to fit in memory, and must also scan</code>
-<code><a href="#l160" class="line" id="l160">    160</a> the log file on startup to construct the key index.</code>
-<code><a href="#l161" class="line" id="l161">    161</a> </code>
-<code><a href="#l162" class="line" id="l162">    162</a> **Compaction volume:** unlike an LSM tree, this single-file BitCask</code>
-<code><a href="#l163" class="line" id="l163">    163</a> implementation requires rewriting the entire dataset during compactions, which</code>
-<code><a href="#l164" class="line" id="l164">    164</a> can produce significant write amplification over time.</code>
-<code><a href="#l165" class="line" id="l165">    165</a> </code>
-<code><a href="#l166" class="line" id="l166">    166</a> **Key encoding:** does not make use of any compression, e.g. variable-length integers, preferring</code>
-<code><a href="#l167" class="line" id="l167">    167</a> simplicity and correctness.</code>
-<code><a href="#l168" class="line" id="l168">    168</a> </code>
-<code><a href="#l169" class="line" id="l169">    169</a> ### MVCC Transactions</code>
-<code><a href="#l170" class="line" id="l170">    170</a> </code>
-<code><a href="#l171" class="line" id="l171">    171</a> [MVCC (Multi-Version Concurrency Control)](https://en.wikipedia.org/wiki/Multiversion_concurrency_control)</code>
-<code><a href="#l172" class="line" id="l172">    172</a> is a relatively simple concurrency control mechanism that provides</code>
-<code><a href="#l173" class="line" id="l173">    173</a> [ACID transactions](https://en.wikipedia.org/wiki/ACID) with</code>
-<code><a href="#l174" class="line" id="l174">    174</a> [snapshot isolation](https://en.wikipedia.org/wiki/Snapshot_isolation) without taking out locks or </code>
-<code><a href="#l175" class="line" id="l175">    175</a> having writes block reads. It also versions all data, allowing querying of historical data.</code>
-<code><a href="#l176" class="line" id="l176">    176</a> </code>
-<code><a href="#l177" class="line" id="l177">    177</a> toyDB implements MVCC at the storage layer as</code>
-<code><a href="#l178" class="line" id="l178">    178</a> [`storage::mvcc::MVCC`](https://github.com/erikgrinaker/toydb/blob/master/src/storage/mvcc.rs),</code>
-<code><a href="#l179" class="line" id="l179">    179</a> using any `storage::Engine` implementation for underlying storage. `begin` returns a new</code>
-<code><a href="#l180" class="line" id="l180">    180</a> transaction, which provides the usual key/value operations such as `get`, `set`, and `scan`.</code>
-<code><a href="#l181" class="line" id="l181">    181</a> Additionally, it has a `commit` method which persists the changes and makes them visible to</code>
-<code><a href="#l182" class="line" id="l182">    182</a> other transactions, and a `rollback` method which discards them.</code>
-<code><a href="#l183" class="line" id="l183">    183</a> </code>
-<code><a href="#l184" class="line" id="l184">    184</a> When a transaction begins, it fetches the next available version from `Key::NextVersion` and</code>
-<code><a href="#l185" class="line" id="l185">    185</a> increments it, then records itself as an active transaction via `Key::TxnActive(version)`. It also</code>
-<code><a href="#l186" class="line" id="l186">    186</a> takes a snapshot of the active set, containing the versions of all other active transactions as of</code>
-<code><a href="#l187" class="line" id="l187">    187</a> the transaction start, and saves it as `Key::TxnActiveSnapshot(id)`.</code>
-<code><a href="#l188" class="line" id="l188">    188</a> </code>
-<code><a href="#l189" class="line" id="l189">    189</a> Key/value pairs are saved as `Key::Version(key, version)`, where `key` is the user-provided key</code>
-<code><a href="#l190" class="line" id="l190">    190</a> and `version` is the transaction&#39;s version. The visibility of key/value pairs for a transaction is </code>
-<code><a href="#l191" class="line" id="l191">    191</a> given as follows:</code>
-<code><a href="#l192" class="line" id="l192">    192</a> </code>
-<code><a href="#l193" class="line" id="l193">    193</a> * For a given user key, do a reverse scan of `Key::Version(key, version)` starting at the current </code>
-<code><a href="#l194" class="line" id="l194">    194</a>   transaction&#39;s version.</code>
-<code><a href="#l195" class="line" id="l195">    195</a> </code>
-<code><a href="#l196" class="line" id="l196">    196</a> * Skip any records whose version is in the transaction&#39;s snapshot of the active set.</code>
-<code><a href="#l197" class="line" id="l197">    197</a> </code>
-<code><a href="#l198" class="line" id="l198">    198</a> * Return the first matching record, if any. This record may be either a `Some(value)` or a `None`</code>
-<code><a href="#l199" class="line" id="l199">    199</a>   if the key was deleted.</code>
-<code><a href="#l200" class="line" id="l200">    200</a> </code>
-<code><a href="#l201" class="line" id="l201">    201</a> When writing a key/value pair, the transaction first checks for any conflicts by scanning for a</code>
-<code><a href="#l202" class="line" id="l202">    202</a> `Key::Version(key, version)` which is not visible to it. If one is found, a serialization error</code>
-<code><a href="#l203" class="line" id="l203">    203</a> is returned and the client must retry the transaction. Otherwise, the transaction writes the new</code>
-<code><a href="#l204" class="line" id="l204">    204</a> record and keeps track of the change as `Key::TxnWrite(version, key)` in case it must roll back.</code>
-<code><a href="#l205" class="line" id="l205">    205</a> </code>
-<code><a href="#l206" class="line" id="l206">    206</a> When the transaction commits, it simply deletes its `Txn::Active(id)` record, thus making its</code>
-<code><a href="#l207" class="line" id="l207">    207</a> changes visible to any subsequent transactions. If the transaction instead rolls back, it</code>
-<code><a href="#l208" class="line" id="l208">    208</a> iterates over all `Key::TxnWrite(id, key)` entries and removes the written key/value records before</code>
-<code><a href="#l209" class="line" id="l209">    209</a> removing its `Txn::Active(id)` entry.</code>
-<code><a href="#l210" class="line" id="l210">    210</a> </code>
-<code><a href="#l211" class="line" id="l211">    211</a> This simple scheme is sufficient to provide ACID transaction guarantees with snapshot isolation:</code>
-<code><a href="#l212" class="line" id="l212">    212</a> commits are atomic, a transaction sees a consistent snapshot of the key/value store as of the</code>
-<code><a href="#l213" class="line" id="l213">    213</a> start of the transaction, and any write conflicts result in serialization errors which must be</code>
-<code><a href="#l214" class="line" id="l214">    214</a> retried.</code>
-<code><a href="#l215" class="line" id="l215">    215</a> </code>
-<code><a href="#l216" class="line" id="l216">    216</a> To satisfy time travel queries, a read-only transaction simply loads the `Key::TxnActiveSnapshot`</code>
-<code><a href="#l217" class="line" id="l217">    217</a> entry of a past transaction and applies the same visibility rules as for normal transactions.</code>
-<code><a href="#l218" class="line" id="l218">    218</a> </code>
-<code><a href="#l219" class="line" id="l219">    219</a> #### MVCC Tradeoffs</code>
-<code><a href="#l220" class="line" id="l220">    220</a> </code>
-<code><a href="#l221" class="line" id="l221">    221</a> **Serializability:** snapshot isolation is not fully serializable, since it exhibits</code>
-<code><a href="#l222" class="line" id="l222">    222</a> [write skew anomalies](http://justinjaffray.com/what-does-write-skew-look-like/). This would</code>
-<code><a href="#l223" class="line" id="l223">    223</a> require [serializable snapshot isolation](https://courses.cs.washington.edu/courses/cse444/08au/544M/READING-LIST/fekete-sigmod2008.pdf),</code>
-<code><a href="#l224" class="line" id="l224">    224</a> which was considered unnecessary for a first version - it may be implemented later.</code>
-<code><a href="#l225" class="line" id="l225">    225</a> </code>
-<code><a href="#l226" class="line" id="l226">    226</a> **Garbage collection:** old MVCC versions are never removed, leading to unbounded disk usage. </code>
-<code><a href="#l227" class="line" id="l227">    227</a> However, this also allows for complete data history, and simplifies the implementation.</code>
-<code><a href="#l228" class="line" id="l228">    228</a> </code>
-<code><a href="#l229" class="line" id="l229">    229</a> **Transaction ID overflow:** transaction IDs will overflow after 64 bits, but this is never going to</code>
-<code><a href="#l230" class="line" id="l230">    230</a> happen with toyDB.</code>
-<code><a href="#l231" class="line" id="l231">    231</a> </code>
-<code><a href="#l232" class="line" id="l232">    232</a> ## Raft Consensus Engine</code>
-<code><a href="#l233" class="line" id="l233">    233</a> </code>
-<code><a href="#l234" class="line" id="l234">    234</a> The Raft consensus protocol is explained well in the</code>
-<code><a href="#l235" class="line" id="l235">    235</a> [original Raft paper](https://raft.github.io/raft.pdf), and will not be repeated here - refer to</code>
-<code><a href="#l236" class="line" id="l236">    236</a> it for details. toyDB&#39;s implementation follows the paper fairly closely.</code>
-<code><a href="#l237" class="line" id="l237">    237</a> </code>
-<code><a href="#l238" class="line" id="l238">    238</a> The Raft node [`raft::Node`](https://github.com/erikgrinaker/toydb/tree/master/src/raft/node.rs) is</code>
-<code><a href="#l239" class="line" id="l239">    239</a> the core of the implementation, a finite state machine with enum variants for the node roles:</code>
-<code><a href="#l240" class="line" id="l240">    240</a> leader, follower, and candidate. This enum wraps the `RawNode` struct, which contains common</code>
-<code><a href="#l241" class="line" id="l241">    241</a> node functionality and is generic over the specific roles `Leader`, `Follower`, and `Candidate`</code>
-<code><a href="#l242" class="line" id="l242">    242</a> that implement the Raft protocol.</code>
-<code><a href="#l243" class="line" id="l243">    243</a> </code>
-<code><a href="#l244" class="line" id="l244">    244</a> Nodes are initialized with an ID and a list of peer IDs, and communicate by passing</code>
-<code><a href="#l245" class="line" id="l245">    245</a> [`raft::Message`](https://github.com/erikgrinaker/toydb/blob/master/src/raft/message.rs)</code>
-<code><a href="#l246" class="line" id="l246">    246</a> messages. Inbound messages are received via `Node.step()` calls, and outbound messages are sent</code>
-<code><a href="#l247" class="line" id="l247">    247</a> via an `mpsc` channel. Nodes also use a logical clock to keep track of e.g. election timeouts</code>
-<code><a href="#l248" class="line" id="l248">    248</a> and heartbeats, and the clock is ticked at regular intervals via `Node.tick()` calls. These</code>
-<code><a href="#l249" class="line" id="l249">    249</a> methods are synchronous and may cause state transitions, e.g. changing a candidate into a leader</code>
-<code><a href="#l250" class="line" id="l250">    250</a> when it receives the winning vote.</code>
-<code><a href="#l251" class="line" id="l251">    251</a> </code>
-<code><a href="#l252" class="line" id="l252">    252</a> Nodes have a command log [`raft::Log`](https://github.com/erikgrinaker/toydb/blob/master/src/raft/log.rs),</code>
-<code><a href="#l253" class="line" id="l253">    253</a> using a `storage::Engine` for storage, and a [`raft::State`](https://github.com/erikgrinaker/toydb/blob/master/src/raft/state.rs)</code>
-<code><a href="#l254" class="line" id="l254">    254</a> state machine (the SQL engine). When the leader receives a write request, it appends the command</code>
-<code><a href="#l255" class="line" id="l255">    255</a> to its local log and replicates it to followers. Once a quorum have replicated it, the command is</code>
-<code><a href="#l256" class="line" id="l256">    256</a> committed and applied to the state machine, and the result returned the the client. When the leader</code>
-<code><a href="#l257" class="line" id="l257">    257</a> receives a read request, it needs to ensure it is still the leader in order to satisfy </code>
-<code><a href="#l258" class="line" id="l258">    258</a> linearizability (a new leader could exist elsewhere resulting in a stale read). It increments a</code>
-<code><a href="#l259" class="line" id="l259">    259</a> read sequence number and broadcasts it via a Raft heartbeat. Once a quorum have confirmed the</code>
-<code><a href="#l260" class="line" id="l260">    260</a> leader at this sequence number, the read command is executed against the state machine and the</code>
-<code><a href="#l261" class="line" id="l261">    261</a> result returned to the client.</code>
-<code><a href="#l262" class="line" id="l262">    262</a> </code>
-<code><a href="#l263" class="line" id="l263">    263</a> The actual network communication is handled by the server process, which will be described in a</code>
-<code><a href="#l264" class="line" id="l264">    264</a> [separate section](#server).</code>
-<code><a href="#l265" class="line" id="l265">    265</a> </code>
-<code><a href="#l266" class="line" id="l266">    266</a> #### Raft Tradeoffs</code>
-<code><a href="#l267" class="line" id="l267">    267</a> </code>
-<code><a href="#l268" class="line" id="l268">    268</a> **Single-threaded state:** all state operations run in a single thread on the leader, preventing</code>
-<code><a href="#l269" class="line" id="l269">    269</a> horizontal scalability. Improvements here would require running multiple sharded Raft clusters,</code>
-<code><a href="#l270" class="line" id="l270">    270</a> which is out of scope for the project.</code>
-<code><a href="#l271" class="line" id="l271">    271</a> </code>
-<code><a href="#l272" class="line" id="l272">    272</a> **Synchronous application:** state machine application happens synchronously in the main Raft</code>
-<code><a href="#l273" class="line" id="l273">    273</a> thread. This is significantly simpler than asynchronous application, but may cause delays in</code>
-<code><a href="#l274" class="line" id="l274">    274</a> Raft processing.</code>
-<code><a href="#l275" class="line" id="l275">    275</a> </code>
-<code><a href="#l276" class="line" id="l276">    276</a> **Log replication:** only the simplest form of Raft log replication is implemented, without</code>
-<code><a href="#l277" class="line" id="l277">    277</a> state snapshots or rapid log replay. Lagging nodes will be very slow to catch up.</code>
-<code><a href="#l278" class="line" id="l278">    278</a> </code>
-<code><a href="#l279" class="line" id="l279">    279</a> **Cluster resizing:** the Raft cluster consists of a static set of nodes given at startup, resizing</code>
-<code><a href="#l280" class="line" id="l280">    280</a> it requires a complete cluster restart.</code>
-<code><a href="#l281" class="line" id="l281">    281</a> </code>
-<code><a href="#l282" class="line" id="l282">    282</a> ## SQL Engine</code>
-<code><a href="#l283" class="line" id="l283">    283</a> </code>
-<code><a href="#l284" class="line" id="l284">    284</a> The SQL engine builds on Raft and MVCC to provide a SQL interface to clients. Logically, the</code>
-<code><a href="#l285" class="line" id="l285">    285</a> life of a SQL query is as follows:</code>
-<code><a href="#l286" class="line" id="l286">    286</a> </code>
-<code><a href="#l287" class="line" id="l287">    287</a> &gt; Query → Lexer → Parser → Planner → Optimizer → Executor → Storage Engine</code>
-<code><a href="#l288" class="line" id="l288">    288</a> </code>
-<code><a href="#l289" class="line" id="l289">    289</a> We&#39;ll begin by looking at the basic SQL type and schema systems, as well as the SQL storage</code>
-<code><a href="#l290" class="line" id="l290">    290</a> engine and its session interface. Then we&#39;ll switch sides and look at how a query is executed,</code>
-<code><a href="#l291" class="line" id="l291">    291</a> starting at the front with the parser and following it until it&#39;s executed against the SQL</code>
-<code><a href="#l292" class="line" id="l292">    292</a> storage engine, completing the chain.</code>
-<code><a href="#l293" class="line" id="l293">    293</a> </code>
-<code><a href="#l294" class="line" id="l294">    294</a> ### Types</code>
-<code><a href="#l295" class="line" id="l295">    295</a> </code>
-<code><a href="#l296" class="line" id="l296">    296</a> toyDB has a very simple type system, with the</code>
-<code><a href="#l297" class="line" id="l297">    297</a> [`sql::DataType`](https://github.com/erikgrinaker/toydb/blob/master/src/sql/types/mod.rs) enum </code>
-<code><a href="#l298" class="line" id="l298">    298</a> specifying the available data types: `Boolean`, `Integer`, `Float`, and `String`.</code>
-<code><a href="#l299" class="line" id="l299">    299</a> </code>
-<code><a href="#l300" class="line" id="l300">    300</a> The [`sql::Value`](https://github.com/erikgrinaker/toydb/blob/master/src/sql/types/mod.rs) enum </code>
-<code><a href="#l301" class="line" id="l301">    301</a> represents a specific value using Rust&#39;s native type system, e.g. an integer value is </code>
-<code><a href="#l302" class="line" id="l302">    302</a> `Value::Integer(i64)`. This enum also specifies comparison, ordering, and formatting of values. The </code>
-<code><a href="#l303" class="line" id="l303">    303</a> special value `Value::Null` represents an unknown value of unknown type, following the rules of</code>
-<code><a href="#l304" class="line" id="l304">    304</a> [three-valued logic](https://en.wikipedia.org/wiki/Three-valued_logic).</code>
-<code><a href="#l305" class="line" id="l305">    305</a> </code>
-<code><a href="#l306" class="line" id="l306">    306</a> Values can be grouped into a `Row`, which is an alias for `Vec&lt;Value&gt;`. The type `Rows` is an alias</code>
-<code><a href="#l307" class="line" id="l307">    307</a> for a fallible row iterator, and `Column` is a result column containing a name.</code>
-<code><a href="#l308" class="line" id="l308">    308</a> </code>
-<code><a href="#l309" class="line" id="l309">    309</a> Expressions [`sql::Expression`](https://github.com/erikgrinaker/toydb/blob/master/src/sql/types/expression.rs)</code>
-<code><a href="#l310" class="line" id="l310">    310</a> represent operations on values. For example, `(1 + 2) * 3` is represented as:</code>
-<code><a href="#l311" class="line" id="l311">    311</a> </code>
-<code><a href="#l312" class="line" id="l312">    312</a> ```rust</code>
-<code><a href="#l313" class="line" id="l313">    313</a> Expression::Multiply(</code>
-<code><a href="#l314" class="line" id="l314">    314</a>     Expression::Add(</code>
-<code><a href="#l315" class="line" id="l315">    315</a>         Expression::Constant(Value::Integer(1)),</code>
-<code><a href="#l316" class="line" id="l316">    316</a>         Expression::Constant(Value::Integer(2)),</code>
-<code><a href="#l317" class="line" id="l317">    317</a>     ),</code>
-<code><a href="#l318" class="line" id="l318">    318</a>     Expression::Constant(Value::Integer(3)),</code>
-<code><a href="#l319" class="line" id="l319">    319</a> )</code>
-<code><a href="#l320" class="line" id="l320">    320</a> ```</code>
-<code><a href="#l321" class="line" id="l321">    321</a> </code>
-<code><a href="#l322" class="line" id="l322">    322</a> Calling `evaluate()` on the expression will recursively evaluate it, returning `Value::Integer(9)`.</code>
-<code><a href="#l323" class="line" id="l323">    323</a> </code>
-<code><a href="#l324" class="line" id="l324">    324</a> ### Schemas</code>
-<code><a href="#l325" class="line" id="l325">    325</a> </code>
-<code><a href="#l326" class="line" id="l326">    326</a> The schema defines the tables [`sql::Table`](https://github.com/erikgrinaker/toydb/blob/master/src/sql/schema.rs)</code>
-<code><a href="#l327" class="line" id="l327">    327</a> and columns [`sql::Column`](https://github.com/erikgrinaker/toydb/blob/master/src/sql/schema.rs)</code>
-<code><a href="#l328" class="line" id="l328">    328</a> in a toyDB database. Tables have a name and a list of columns, while a column has several</code>
-<code><a href="#l329" class="line" id="l329">    329</a> attributes such as name, data type, and various constraints. They also have methods to</code>
-<code><a href="#l330" class="line" id="l330">    330</a> validate rows and values, e.g. to make sure a value is of the correct type for a column</code>
-<code><a href="#l331" class="line" id="l331">    331</a> or to enforce referential integrity.</code>
-<code><a href="#l332" class="line" id="l332">    332</a> </code>
-<code><a href="#l333" class="line" id="l333">    333</a> The schema is stored and managed with [`sql::Catalog`](https://github.com/erikgrinaker/toydb/blob/master/src/sql/schema.rs),</code>
-<code><a href="#l334" class="line" id="l334">    334</a> a trait implemented by the SQL storage engine:</code>
-<code><a href="#l335" class="line" id="l335">    335</a> </code>
-<code><a href="#l336" class="line" id="l336">    336</a> ```rust</code>
-<code><a href="#l337" class="line" id="l337">    337</a> pub trait Catalog {</code>
-<code><a href="#l338" class="line" id="l338">    338</a>     /// Creates a new table.</code>
-<code><a href="#l339" class="line" id="l339">    339</a>     fn create_table(&amp;mut self, table: &amp;Table) -&gt; Result&lt;()&gt;;</code>
-<code><a href="#l340" class="line" id="l340">    340</a> </code>
-<code><a href="#l341" class="line" id="l341">    341</a>     /// Deletes a table, or errors if it does not exist.</code>
-<code><a href="#l342" class="line" id="l342">    342</a>     fn delete_table(&amp;mut self, table: &amp;str) -&gt; Result&lt;()&gt;;</code>
-<code><a href="#l343" class="line" id="l343">    343</a> </code>
-<code><a href="#l344" class="line" id="l344">    344</a>     /// Reads a table, if it exists.</code>
-<code><a href="#l345" class="line" id="l345">    345</a>     fn read_table(&amp;self, table: &amp;str) -&gt; Result&lt;Option&lt;Table&gt;&gt;;</code>
-<code><a href="#l346" class="line" id="l346">    346</a> </code>
-<code><a href="#l347" class="line" id="l347">    347</a>     /// Iterates over all tables.</code>
-<code><a href="#l348" class="line" id="l348">    348</a>     fn scan_tables(&amp;self) -&gt; Result&lt;Tables&gt;;</code>
-<code><a href="#l349" class="line" id="l349">    349</a> }</code>
-<code><a href="#l350" class="line" id="l350">    350</a> ```</code>
-<code><a href="#l351" class="line" id="l351">    351</a> </code>
-<code><a href="#l352" class="line" id="l352">    352</a> #### Schema Tradeoffs</code>
-<code><a href="#l353" class="line" id="l353">    353</a> </code>
-<code><a href="#l354" class="line" id="l354">    354</a> **Single database:** only a single, unnamed database is supported per toyDB cluster. This is</code>
-<code><a href="#l355" class="line" id="l355">    355</a> sufficient for toyDB&#39;s use-cases, and simplifies the implementation.</code>
-<code><a href="#l356" class="line" id="l356">    356</a> </code>
-<code><a href="#l357" class="line" id="l357">    357</a> **Schema changes:** schema changes other than creating or dropping tables is not supported. This</code>
-<code><a href="#l358" class="line" id="l358">    358</a> avoids complicated data migration logic, and allows using table/column names as storage identifiers </code>
-<code><a href="#l359" class="line" id="l359">    359</a> (since they can never change) without any additional indirection.</code>
-<code><a href="#l360" class="line" id="l360">    360</a> </code>
-<code><a href="#l361" class="line" id="l361">    361</a> ### Storage</code>
-<code><a href="#l362" class="line" id="l362">    362</a> </code>
-<code><a href="#l363" class="line" id="l363">    363</a> The SQL storage engine trait is [`sql::Engine`](https://github.com/erikgrinaker/toydb/blob/master/src/sql/engine/mod.rs):</code>
-<code><a href="#l364" class="line" id="l364">    364</a> </code>
-<code><a href="#l365" class="line" id="l365">    365</a> ```rust</code>
-<code><a href="#l366" class="line" id="l366">    366</a> pub trait Engine: Clone {</code>
-<code><a href="#l367" class="line" id="l367">    367</a>     type Transaction: Transaction;</code>
-<code><a href="#l368" class="line" id="l368">    368</a> </code>
-<code><a href="#l369" class="line" id="l369">    369</a>     /// Begins a transaction in the given mode.</code>
-<code><a href="#l370" class="line" id="l370">    370</a>     fn begin(&amp;self, mode: Mode) -&gt; Result&lt;Self::Transaction&gt;;</code>
-<code><a href="#l371" class="line" id="l371">    371</a> </code>
-<code><a href="#l372" class="line" id="l372">    372</a>     /// Resumes an active transaction with the given ID.</code>
-<code><a href="#l373" class="line" id="l373">    373</a>     fn resume(&amp;self, id: u64) -&gt; Result&lt;Self::Transaction&gt;;</code>
-<code><a href="#l374" class="line" id="l374">    374</a> </code>
-<code><a href="#l375" class="line" id="l375">    375</a>     /// Begins a SQL session for executing SQL statements.</code>
-<code><a href="#l376" class="line" id="l376">    376</a>     fn session(&amp;self) -&gt; Result&lt;Session&lt;Self&gt;&gt; {</code>
-<code><a href="#l377" class="line" id="l377">    377</a>         Ok(Session { engine: self.clone(), txn: None })</code>
-<code><a href="#l378" class="line" id="l378">    378</a>     }</code>
-<code><a href="#l379" class="line" id="l379">    379</a> }</code>
-<code><a href="#l380" class="line" id="l380">    380</a> ```</code>
-<code><a href="#l381" class="line" id="l381">    381</a> </code>
-<code><a href="#l382" class="line" id="l382">    382</a> The main use of the trait is to dispense `sql::Session` instances, individual client sessions which</code>
-<code><a href="#l383" class="line" id="l383">    383</a> execute SQL queries submitted as plain text and track transaction state. The actual storage</code>
-<code><a href="#l384" class="line" id="l384">    384</a> engine functionality is exposed via the `sql::Transaction` trait, representing an ACID transaction</code>
-<code><a href="#l385" class="line" id="l385">    385</a> providing basic CRUD (create, read, update, delete) operations for tables, rows, and indexes:</code>
-<code><a href="#l386" class="line" id="l386">    386</a> </code>
-<code><a href="#l387" class="line" id="l387">    387</a> ```rust</code>
-<code><a href="#l388" class="line" id="l388">    388</a> pub trait Transaction: Catalog {</code>
-<code><a href="#l389" class="line" id="l389">    389</a>     /// Commits the transaction.</code>
-<code><a href="#l390" class="line" id="l390">    390</a>     fn commit(self) -&gt; Result&lt;()&gt;;</code>
-<code><a href="#l391" class="line" id="l391">    391</a>     /// Rolls back the transaction.</code>
-<code><a href="#l392" class="line" id="l392">    392</a>     fn rollback(self) -&gt; Result&lt;()&gt;;</code>
-<code><a href="#l393" class="line" id="l393">    393</a> </code>
-<code><a href="#l394" class="line" id="l394">    394</a>     /// Creates a new table row.</code>
-<code><a href="#l395" class="line" id="l395">    395</a>     fn create(&amp;mut self, table: &amp;str, row: Row) -&gt; Result&lt;()&gt;;</code>
-<code><a href="#l396" class="line" id="l396">    396</a>     /// Deletes a table row.</code>
-<code><a href="#l397" class="line" id="l397">    397</a>     fn delete(&amp;mut self, table: &amp;str, id: &amp;Value) -&gt; Result&lt;()&gt;;</code>
-<code><a href="#l398" class="line" id="l398">    398</a>     /// Reads a table row, if it exists.</code>
-<code><a href="#l399" class="line" id="l399">    399</a>     fn read(&amp;self, table: &amp;str, id: &amp;Value) -&gt; Result&lt;Option&lt;Row&gt;&gt;;</code>
-<code><a href="#l400" class="line" id="l400">    400</a>     /// Scans a table&#39;s rows, optionally filtering by the given predicate expression.</code>
-<code><a href="#l401" class="line" id="l401">    401</a>     fn scan(&amp;self, table: &amp;str, filter: Option&lt;Expression&gt;) -&gt; Result&lt;Scan&gt;;</code>
-<code><a href="#l402" class="line" id="l402">    402</a>     /// Updates a table row.</code>
-<code><a href="#l403" class="line" id="l403">    403</a>     fn update(&amp;mut self, table: &amp;str, id: &amp;Value, row: Row) -&gt; Result&lt;()&gt;;</code>
-<code><a href="#l404" class="line" id="l404">    404</a> </code>
-<code><a href="#l405" class="line" id="l405">    405</a>     /// Reads an index entry, if it exists.</code>
-<code><a href="#l406" class="line" id="l406">    406</a>     fn read_index(&amp;self, table: &amp;str, column: &amp;str, value: &amp;Value) -&gt; Result&lt;HashSet&lt;Value&gt;&gt;;</code>
-<code><a href="#l407" class="line" id="l407">    407</a>     /// Scans a column&#39;s index entries.</code>
-<code><a href="#l408" class="line" id="l408">    408</a>     fn scan_index(&amp;self, table: &amp;str, column: &amp;str) -&gt; Result&lt;IndexScan&gt;;</code>
-<code><a href="#l409" class="line" id="l409">    409</a> }</code>
-<code><a href="#l410" class="line" id="l410">    410</a> ```</code>
-<code><a href="#l411" class="line" id="l411">    411</a> </code>
-<code><a href="#l412" class="line" id="l412">    412</a> The main SQL storage engine implementation is</code>
-<code><a href="#l413" class="line" id="l413">    413</a> [`sql::engine::KV`](https://github.com/erikgrinaker/toydb/blob/master/src/sql/engine/kv.rs), which </code>
-<code><a href="#l414" class="line" id="l414">    414</a> is built on top of an MVCC key/value store and its transaction functionality.</code>
-<code><a href="#l415" class="line" id="l415">    415</a> </code>
-<code><a href="#l416" class="line" id="l416">    416</a> The Raft SQL storage engine</code>
-<code><a href="#l417" class="line" id="l417">    417</a> [`sql::engine::Raft`](https://github.com/erikgrinaker/toydb/blob/master/src/sql/engine/raft.rs)</code>
-<code><a href="#l418" class="line" id="l418">    418</a> uses a Raft API client `raft::Client` to submit state machine commands specified by the enums </code>
-<code><a href="#l419" class="line" id="l419">    419</a> `Mutation` and `Query` to the local Raft node. It also provides a Raft state machine </code>
-<code><a href="#l420" class="line" id="l420">    420</a> `sql::engine::raft::State` which wraps a regular `sql::engine::KV` SQL storage engine and applies </code>
-<code><a href="#l421" class="line" id="l421">    421</a> state machine commands to it. Since the Raft SQL engine implements the `sql::Engine` trait, it can </code>
-<code><a href="#l422" class="line" id="l422">    422</a> be used interchangably with the local storage engine.</code>
-<code><a href="#l423" class="line" id="l423">    423</a> </code>
-<code><a href="#l424" class="line" id="l424">    424</a> #### Storage Tradeoffs</code>
-<code><a href="#l425" class="line" id="l425">    425</a> </code>
-<code><a href="#l426" class="line" id="l426">    426</a> **Raft result streaming:** result streaming is not implemented for Raft commands, so the Raft</code>
-<code><a href="#l427" class="line" id="l427">    427</a> SQL engine must buffer the entire result set in memory and serialize it before returning it to</code>
-<code><a href="#l428" class="line" id="l428">    428</a> the client - particularly expensive for table scans. Implementing streaming in Raft was considered </code>
-<code><a href="#l429" class="line" id="l429">    429</a> out of scope for the project.</code>
-<code><a href="#l430" class="line" id="l430">    430</a> </code>
-<code><a href="#l431" class="line" id="l431">    431</a> ### Parsing</code>
-<code><a href="#l432" class="line" id="l432">    432</a> </code>
-<code><a href="#l433" class="line" id="l433">    433</a> The SQL session [`sql::Session`](https://github.com/erikgrinaker/toydb/blob/master/src/sql/engine/mod.rs)</code>
-<code><a href="#l434" class="line" id="l434">    434</a> takes plain-text SQL queries via `execute()` and returns the result. The first step in this process </code>
-<code><a href="#l435" class="line" id="l435">    435</a> is to parse the query into an [abstract syntax tree](https://en.wikipedia.org/wiki/Abstract_syntax_tree)</code>
-<code><a href="#l436" class="line" id="l436">    436</a> (AST) which represents the query semantics. This happens as follows:</code>
-<code><a href="#l437" class="line" id="l437">    437</a> </code>
-<code><a href="#l438" class="line" id="l438">    438</a> &gt; SQL → Lexer → Tokens → Parser → AST</code>
-<code><a href="#l439" class="line" id="l439">    439</a> </code>
-<code><a href="#l440" class="line" id="l440">    440</a> The lexer</code>
-<code><a href="#l441" class="line" id="l441">    441</a> [`sql::Lexer`](https://github.com/erikgrinaker/toydb/blob/master/src/sql/parser/lexer.rs) takes</code>
-<code><a href="#l442" class="line" id="l442">    442</a> a SQL string, splits it into pieces, and classifies them as tokens `sql::Token`. It does not</code>
-<code><a href="#l443" class="line" id="l443">    443</a> care about the meaning of the tokens, but removes whitespace and tries to figure out if</code>
-<code><a href="#l444" class="line" id="l444">    444</a> something is a number, string, keyword, and so on. It also does some basic pre-processing, such as</code>
-<code><a href="#l445" class="line" id="l445">    445</a> interpreting string quotes, checking number formatting, and rejecting unknown keywords.</code>
-<code><a href="#l446" class="line" id="l446">    446</a> </code>
-<code><a href="#l447" class="line" id="l447">    447</a> For example, the following input string results in the listed tokens, even though the query is </code>
-<code><a href="#l448" class="line" id="l448">    448</a> invalid:</code>
-<code><a href="#l449" class="line" id="l449">    449</a> </code>
-<code><a href="#l450" class="line" id="l450">    450</a> &gt; `3.14 +UPDATE &#39;abc&#39;` → `Token::Number(&quot;3.14&quot;)` `Token::Plus` `Token::Keyword(Keyword::Update)` `Token::String(&quot;abc&quot;)`</code>
-<code><a href="#l451" class="line" id="l451">    451</a> </code>
-<code><a href="#l452" class="line" id="l452">    452</a> The parser [`sql::Parser`](https://github.com/erikgrinaker/toydb/blob/master/src/sql/parser/mod.rs)</code>
-<code><a href="#l453" class="line" id="l453">    453</a> iterates over the tokens generated by the lexer, interprets them, and builds an AST representing</code>
-<code><a href="#l454" class="line" id="l454">    454</a> the semantic query. For example, `SELECT name, 2020 - birthyear AS age FROM people` </code>
-<code><a href="#l455" class="line" id="l455">    455</a> results in the following AST:</code>
-<code><a href="#l456" class="line" id="l456">    456</a> </code>
-<code><a href="#l457" class="line" id="l457">    457</a> ```rust</code>
-<code><a href="#l458" class="line" id="l458">    458</a> ast::Statement::Select{</code>
-<code><a href="#l459" class="line" id="l459">    459</a>     select: vec![</code>
-<code><a href="#l460" class="line" id="l460">    460</a>         (ast::Expression::Field(None, &quot;name&quot;), None),</code>
-<code><a href="#l461" class="line" id="l461">    461</a>         (ast::Expression::Operation(</code>
-<code><a href="#l462" class="line" id="l462">    462</a>             ast::Operation::Subtract(</code>
-<code><a href="#l463" class="line" id="l463">    463</a>                 ast::Expression::Literal(ast::Literal::Integer(2020)),</code>
-<code><a href="#l464" class="line" id="l464">    464</a>                 ast::Expression::Field(None, &quot;birthyear&quot;),</code>
-<code><a href="#l465" class="line" id="l465">    465</a>             )</code>
-<code><a href="#l466" class="line" id="l466">    466</a>         ), Some(&quot;age&quot;)),</code>
-<code><a href="#l467" class="line" id="l467">    467</a>     ],</code>
-<code><a href="#l468" class="line" id="l468">    468</a>     from: vec![</code>
-<code><a href="#l469" class="line" id="l469">    469</a>         ast::FromItem::Table{name: &quot;people&quot;, alias: None},</code>
-<code><a href="#l470" class="line" id="l470">    470</a>     ],</code>
-<code><a href="#l471" class="line" id="l471">    471</a>     where: None,</code>
-<code><a href="#l472" class="line" id="l472">    472</a>     group_by: vec![],</code>
-<code><a href="#l473" class="line" id="l473">    473</a>     having: None,</code>
-<code><a href="#l474" class="line" id="l474">    474</a>     order: vec![],</code>
-<code><a href="#l475" class="line" id="l475">    475</a>     offset: None,</code>
-<code><a href="#l476" class="line" id="l476">    476</a>     limit: None,</code>
-<code><a href="#l477" class="line" id="l477">    477</a> }</code>
-<code><a href="#l478" class="line" id="l478">    478</a> ```</code>
-<code><a href="#l479" class="line" id="l479">    479</a> </code>
-<code><a href="#l480" class="line" id="l480">    480</a> The parser will interpret the SQL _syntax_, determining the type of query and its parameters,</code>
-<code><a href="#l481" class="line" id="l481">    481</a> returning an error for any invalid syntax. However, it has no idea if the table `people`</code>
-<code><a href="#l482" class="line" id="l482">    482</a> actually exists, or if the column `birthyear` is an integer - that is the job of the planner.</code>
-<code><a href="#l483" class="line" id="l483">    483</a> </code>
-<code><a href="#l484" class="line" id="l484">    484</a> Notably, the parser also parses expressions, such as `1 + 2 * 3`. This is non-trivial due to</code>
-<code><a href="#l485" class="line" id="l485">    485</a> precedence rules, i.e. `2 * 3` should be evaluated first, but not if there are parentheses</code>
-<code><a href="#l486" class="line" id="l486">    486</a> around `(1 + 2)`. The toyDB parser uses the</code>
-<code><a href="#l487" class="line" id="l487">    487</a> [precedence climbing algorithm](https://eli.thegreenplace.net/2012/08/02/parsing-expressions-by-precedence-climbing)</code>
-<code><a href="#l488" class="line" id="l488">    488</a> for this. Also note that AST expressions are different from SQL engine expressions, and do not map </code>
-<code><a href="#l489" class="line" id="l489">    489</a> one-to-one. This is clearest in the case of function calls, where the parser does not know (or </code>
-<code><a href="#l490" class="line" id="l490">    490</a> care) if a given function exists, it just parses a function call as an arbitrary function name and </code>
-<code><a href="#l491" class="line" id="l491">    491</a> arguments. The planner will translate this into actual expressions that can be evaluated.</code>
-<code><a href="#l492" class="line" id="l492">    492</a> </code>
-<code><a href="#l493" class="line" id="l493">    493</a> ### Planning</code>
-<code><a href="#l494" class="line" id="l494">    494</a> </code>
-<code><a href="#l495" class="line" id="l495">    495</a> The SQL planner [`sql::Planner`](https://github.com/erikgrinaker/toydb/blob/master/src/sql/plan/planner.rs)</code>
-<code><a href="#l496" class="line" id="l496">    496</a> takes the AST generated by the parser and builds a SQL execution plan</code>
-<code><a href="#l497" class="line" id="l497">    497</a> [`sql::Plan`](https://github.com/erikgrinaker/toydb/blob/master/src/sql/plan/mod.rs), which is an </code>
-<code><a href="#l498" class="line" id="l498">    498</a> abstract representation of the steps necessary to execute the query. For example, the following </code>
-<code><a href="#l499" class="line" id="l499">    499</a> shows a simple query and corresponding execution plan, formatted as `EXPLAIN` output:</code>
-<code><a href="#l500" class="line" id="l500">    500</a> </code>
-<code><a href="#l501" class="line" id="l501">    501</a> ```</code>
-<code><a href="#l502" class="line" id="l502">    502</a> SELECT id, title, rating * 100 FROM movies WHERE released &gt; 2010 ORDER BY rating DESC;</code>
-<code><a href="#l503" class="line" id="l503">    503</a> </code>
-<code><a href="#l504" class="line" id="l504">    504</a> Order: rating desc</code>
-<code><a href="#l505" class="line" id="l505">    505</a> └─ Projection: id, title, rating * 100</code>
-<code><a href="#l506" class="line" id="l506">    506</a>    └─ Filter: released &gt; 2010</code>
-<code><a href="#l507" class="line" id="l507">    507</a>       └─ Scan: movies</code>
-<code><a href="#l508" class="line" id="l508">    508</a> ```</code>
-<code><a href="#l509" class="line" id="l509">    509</a> </code>
-<code><a href="#l510" class="line" id="l510">    510</a> The plan nodes `sql::Node` in a query execution plan represent a</code>
-<code><a href="#l511" class="line" id="l511">    511</a> [relational algebra](https://en.wikipedia.org/wiki/Relational_algebra) operator, where the</code>
-<code><a href="#l512" class="line" id="l512">    512</a> output from one node flows as input into the next. In the example above, the query first does a</code>
-<code><a href="#l513" class="line" id="l513">    513</a> full table scan of the `movies` table, then applies the filter `released &gt; 2010` to the rows,</code>
-<code><a href="#l514" class="line" id="l514">    514</a> before projecting (formatting) the result and sorting it by `rating`.</code>
-<code><a href="#l515" class="line" id="l515">    515</a> </code>
-<code><a href="#l516" class="line" id="l516">    516</a> Most of the planning is fairly straightforward, translating AST nodes to plan nodes and expressions.</code>
-<code><a href="#l517" class="line" id="l517">    517</a> The trickiest part is resolving table and column names to result column indexes across multiple</code>
-<code><a href="#l518" class="line" id="l518">    518</a> layers of aliases, joins, and projections - this is handled with `sql::plan::Scope`, which keeps</code>
-<code><a href="#l519" class="line" id="l519">    519</a> track of what names are visible to the node being built and maps them to column indexes. Another</code>
-<code><a href="#l520" class="line" id="l520">    520</a> challenge is aggregate functions, which are implemented as a pre-projection of function</code>
-<code><a href="#l521" class="line" id="l521">    521</a> arguments and grouping/hidden columns, then an aggregation node, and finally a post-projection</code>
-<code><a href="#l522" class="line" id="l522">    522</a> evaluating the final aggregate expressions - like in the following example:</code>
-<code><a href="#l523" class="line" id="l523">    523</a> </code>
-<code><a href="#l524" class="line" id="l524">    524</a> ```</code>
-<code><a href="#l525" class="line" id="l525">    525</a> SELECT   g.name AS genre, MAX(rating * 100) - MIN(rating * 100)</code>
-<code><a href="#l526" class="line" id="l526">    526</a> FROM     movies m JOIN genres g ON m.genre_id = g.id</code>
-<code><a href="#l527" class="line" id="l527">    527</a> WHERE    m.released &gt; 2000</code>
-<code><a href="#l528" class="line" id="l528">    528</a> GROUP BY g.id, g.name</code>
-<code><a href="#l529" class="line" id="l529">    529</a> HAVING   MIN(rating) &gt; 7 </code>
-<code><a href="#l530" class="line" id="l530">    530</a> ORDER BY g.id ASC;</code>
-<code><a href="#l531" class="line" id="l531">    531</a> </code>
-<code><a href="#l532" class="line" id="l532">    532</a> Projection: #0, #1</code>
-<code><a href="#l533" class="line" id="l533">    533</a> └─ Order: g.id asc</code>
-<code><a href="#l534" class="line" id="l534">    534</a>    └─ Filter: #2 &gt; 7</code>
-<code><a href="#l535" class="line" id="l535">    535</a>       └─ Projection: genre, #0 - #1, #2, g.id</code>
-<code><a href="#l536" class="line" id="l536">    536</a>          └─ Aggregation: maximum, minimum, minimum</code>
-<code><a href="#l537" class="line" id="l537">    537</a>             └─ Projection: rating * 100, rating * 100, rating, g.id, g.name</code>
-<code><a href="#l538" class="line" id="l538">    538</a>                └─ Filter: m.released &gt; 2000</code>
-<code><a href="#l539" class="line" id="l539">    539</a>                   └─ NestedLoopJoin: inner on m.genre_id = g.id</code>
-<code><a href="#l540" class="line" id="l540">    540</a>                      ├─ Scan: movies as m</code>
-<code><a href="#l541" class="line" id="l541">    541</a>                      └─ Scan: genres as g</code>
-<code><a href="#l542" class="line" id="l542">    542</a> ```</code>
-<code><a href="#l543" class="line" id="l543">    543</a> </code>
-<code><a href="#l544" class="line" id="l544">    544</a> The planner generates a very naïve execution plan, primarily concerned with producing one that</code>
-<code><a href="#l545" class="line" id="l545">    545</a> is _correct_ but not necessarily _fast_. This means that it will always do full table scans,</code>
-<code><a href="#l546" class="line" id="l546">    546</a> always use [nested loop joins](https://en.wikipedia.org/wiki/Nested_loop_join), and so on. The plan </code>
-<code><a href="#l547" class="line" id="l547">    547</a> is then optimized by a series of optimizers implementing</code>
-<code><a href="#l548" class="line" id="l548">    548</a> [`sql::Optimizer`](https://github.com/erikgrinaker/toydb/blob/master/src/sql/plan/optimizer.rs):</code>
-<code><a href="#l549" class="line" id="l549">    549</a> </code>
-<code><a href="#l550" class="line" id="l550">    550</a> * `ConstantFolder`: pre-evaluates constant expressions to avoid having to re-evaluate them for each </code>
-<code><a href="#l551" class="line" id="l551">    551</a>   row.</code>
-<code><a href="#l552" class="line" id="l552">    552</a> </code>
-<code><a href="#l553" class="line" id="l553">    553</a> * `FilterPushdown`: pushes filters deeper into the query to reduce the number of rows evaluated by</code>
-<code><a href="#l554" class="line" id="l554">    554</a>   each node, e.g. by pushing single-table predicates all the way to the table scan node such that</code>
-<code><a href="#l555" class="line" id="l555">    555</a>   filtered nodes won&#39;t have to go across the Raft layer.</code>
-<code><a href="#l556" class="line" id="l556">    556</a> </code>
-<code><a href="#l557" class="line" id="l557">    557</a> * `IndexLookup`: transforms table scans into primary key or index lookups where possible.</code>
-<code><a href="#l558" class="line" id="l558">    558</a> </code>
-<code><a href="#l559" class="line" id="l559">    559</a> * `NoopCleaner`: attempts to remove noop operations, e.g. filter nodes that evaluate to a constant </code>
-<code><a href="#l560" class="line" id="l560">    560</a>   `TRUE` value.</code>
-<code><a href="#l561" class="line" id="l561">    561</a> </code>
-<code><a href="#l562" class="line" id="l562">    562</a> * `JoinType`: transforms nested loop joins into hash joins for equijoins (equality join predicate).</code>
-<code><a href="#l563" class="line" id="l563">    563</a> </code>
-<code><a href="#l564" class="line" id="l564">    564</a> Optimizers make heavy use of [boolean algebra](https://en.wikipedia.org/wiki/Boolean_algebra) to</code>
-<code><a href="#l565" class="line" id="l565">    565</a> transform expressions into forms that are more convenient to work with. For example, partial</code>
-<code><a href="#l566" class="line" id="l566">    566</a> filter pushdown (e.g. across join nodes) can only push down conjunctive clauses (i.e. AND parts),</code>
-<code><a href="#l567" class="line" id="l567">    567</a> so expressions are converted into</code>
-<code><a href="#l568" class="line" id="l568">    568</a> [conjunctive normal form](https://en.wikipedia.org/wiki/Conjunctive_normal_form) first such that</code>
-<code><a href="#l569" class="line" id="l569">    569</a> each part can be considered separately.</code>
-<code><a href="#l570" class="line" id="l570">    570</a> </code>
-<code><a href="#l571" class="line" id="l571">    571</a> Below is an example of a complex optimized plan where table scans have been replaced with</code>
-<code><a href="#l572" class="line" id="l572">    572</a> key and index lookups, filters have been pushed down into scan nodes, and nested loop joins have</code>
-<code><a href="#l573" class="line" id="l573">    573</a> been replaced by hash joins. It fetches science fiction movies released since 2000 by studios</code>
-<code><a href="#l574" class="line" id="l574">    574</a> that have released any movie with a rating of 8 or more:</code>
-<code><a href="#l575" class="line" id="l575">    575</a> </code>
-<code><a href="#l576" class="line" id="l576">    576</a> ```</code>
-<code><a href="#l577" class="line" id="l577">    577</a> SELECT   m.id, m.title, g.name AS genre, m.released, s.name AS studio</code>
-<code><a href="#l578" class="line" id="l578">    578</a> FROM     movies m JOIN genres g ON m.genre_id = g.id,</code>
-<code><a href="#l579" class="line" id="l579">    579</a>          studios s JOIN movies good ON good.studio_id = s.id AND good.rating &gt;= 8</code>
-<code><a href="#l580" class="line" id="l580">    580</a> WHERE    m.studio_id = s.id AND m.released &gt;= 2000 AND g.id = 1</code>
-<code><a href="#l581" class="line" id="l581">    581</a> ORDER BY m.title ASC;</code>
-<code><a href="#l582" class="line" id="l582">    582</a> </code>
-<code><a href="#l583" class="line" id="l583">    583</a> Order: m.title asc</code>
-<code><a href="#l584" class="line" id="l584">    584</a> └─ Projection: m.id, m.title, g.name, m.released, s.name</code>
-<code><a href="#l585" class="line" id="l585">    585</a>    └─ HashJoin: inner on m.studio_id = s.id</code>
-<code><a href="#l586" class="line" id="l586">    586</a>       ├─ HashJoin: inner on m.genre_id = g.id</code>
-<code><a href="#l587" class="line" id="l587">    587</a>       │  ├─ Filter: m.released &gt; 2000 OR m.released = 2000</code>
-<code><a href="#l588" class="line" id="l588">    588</a>       │  │  └─ IndexLookup: movies as m column genre_id (1)</code>
-<code><a href="#l589" class="line" id="l589">    589</a>       │  └─ KeyLookup: genres as g (1)</code>
-<code><a href="#l590" class="line" id="l590">    590</a>       └─ HashJoin: inner on s.id = good.studio_id</code>
-<code><a href="#l591" class="line" id="l591">    591</a>          ├─ Scan: studios as s</code>
-<code><a href="#l592" class="line" id="l592">    592</a>          └─ Scan: movies as good (good.rating &gt; 8 OR good.rating = 8)</code>
-<code><a href="#l593" class="line" id="l593">    593</a> ```</code>
-<code><a href="#l594" class="line" id="l594">    594</a> </code>
-<code><a href="#l595" class="line" id="l595">    595</a> #### Planning Tradeoffs</code>
-<code><a href="#l596" class="line" id="l596">    596</a> </code>
-<code><a href="#l597" class="line" id="l597">    597</a> **Type checking:** expression type conflicts are only detected at evaluation time, not during </code>
-<code><a href="#l598" class="line" id="l598">    598</a> planning.</code>
-<code><a href="#l599" class="line" id="l599">    599</a> </code>
-<code><a href="#l600" class="line" id="l600">    600</a> ### Execution</code>
-<code><a href="#l601" class="line" id="l601">    601</a> </code>
-<code><a href="#l602" class="line" id="l602">    602</a> Every SQL plan node has a corresponding executor, implementing the</code>
-<code><a href="#l603" class="line" id="l603">    603</a> [`sql::Executor`](https://github.com/erikgrinaker/toydb/blob/master/src/sql/execution/mod.rs) trait:</code>
-<code><a href="#l604" class="line" id="l604">    604</a> </code>
-<code><a href="#l605" class="line" id="l605">    605</a> ```rust</code>
-<code><a href="#l606" class="line" id="l606">    606</a> pub trait Executor&lt;T: Transaction&gt; {</code>
-<code><a href="#l607" class="line" id="l607">    607</a>     /// Executes the executor, consuming it and returning a result set</code>
-<code><a href="#l608" class="line" id="l608">    608</a>     fn execute(self: Box&lt;Self&gt;, txn: &amp;mut T) -&gt; Result&lt;ResultSet&gt;;</code>
-<code><a href="#l609" class="line" id="l609">    609</a> }</code>
-<code><a href="#l610" class="line" id="l610">    610</a> ```</code>
-<code><a href="#l611" class="line" id="l611">    611</a> </code>
-<code><a href="#l612" class="line" id="l612">    612</a> Executors are given a `sql::Transaction` to access the SQL storage engine, and return a </code>
-<code><a href="#l613" class="line" id="l613">    613</a> `sql::ResultSet` with the query result. Most often, the result is of type `sql::ResultSet::Query` </code>
-<code><a href="#l614" class="line" id="l614">    614</a> containing a list of columns and a row iterator. Most executors contain other executors that</code>
-<code><a href="#l615" class="line" id="l615">    615</a> they use as inputs, for example the `Filter` executor will often have a `Scan` executor as a source:</code>
-<code><a href="#l616" class="line" id="l616">    616</a> </code>
-<code><a href="#l617" class="line" id="l617">    617</a> ```rust</code>
-<code><a href="#l618" class="line" id="l618">    618</a> pub struct Filter&lt;T: Transaction&gt; {</code>
-<code><a href="#l619" class="line" id="l619">    619</a>     source: Box&lt;dyn Executor&lt;T&gt;&gt;,</code>
-<code><a href="#l620" class="line" id="l620">    620</a>     predicate: Expression,</code>
-<code><a href="#l621" class="line" id="l621">    621</a> }</code>
-<code><a href="#l622" class="line" id="l622">    622</a> ```</code>
-<code><a href="#l623" class="line" id="l623">    623</a> </code>
-<code><a href="#l624" class="line" id="l624">    624</a> Calling `execute` on a `sql::Plan` will build and execute the root node&#39;s executor, which in</code>
-<code><a href="#l625" class="line" id="l625">    625</a> turn will recursively call `execute` on its source executors (if any) and process their results.</code>
-<code><a href="#l626" class="line" id="l626">    626</a> Executors typically augment the source&#39;s returned row iterator using Rust&#39;s</code>
-<code><a href="#l627" class="line" id="l627">    627</a> [`Iterator`](https://doc.rust-lang.org/std/iter/trait.Iterator.html) functionality, e.g. by</code>
-<code><a href="#l628" class="line" id="l628">    628</a> calling `filter()` on it and returning a new iterator. The entire execution engine thus works in</code>
-<code><a href="#l629" class="line" id="l629">    629</a> a streaming fashion and leverages Rust&#39;s [zero-cost iterator</code>
-<code><a href="#l630" class="line" id="l630">    630</a> abstractions](https://doc.rust-lang.org/book/ch13-04-performance.html).</code>
-<code><a href="#l631" class="line" id="l631">    631</a> </code>
-<code><a href="#l632" class="line" id="l632">    632</a> Finally, the root `ResultSet` is returned to the client.</code>
-<code><a href="#l633" class="line" id="l633">    633</a> </code>
-<code><a href="#l634" class="line" id="l634">    634</a> ## Server</code>
-<code><a href="#l635" class="line" id="l635">    635</a> </code>
-<code><a href="#l636" class="line" id="l636">    636</a> The toyDB [`Server`](https://github.com/erikgrinaker/toydb/blob/master/src/server.rs) manages </code>
-<code><a href="#l637" class="line" id="l637">    637</a> network traffic for the Raft and SQL engines, using the [Tokio](https://tokio.rs) async executor. </code>
-<code><a href="#l638" class="line" id="l638">    638</a> It opens TCP listeners on port `9605` for SQL clients and  `9705` for Raft peers, both using </code>
-<code><a href="#l639" class="line" id="l639">    639</a> length-prefixed [Bincode](https://github.com/servo/bincode)-encoded message passing via</code>
-<code><a href="#l640" class="line" id="l640">    640</a> [Serde](https://serde.rs)-encoded Tokio streams as a protocol.</code>
-<code><a href="#l641" class="line" id="l641">    641</a> </code>
-<code><a href="#l642" class="line" id="l642">    642</a> The Raft server is split out to [`raft::Server`](https://github.com/erikgrinaker/toydb/blob/master/src/raft/server.rs),</code>
-<code><a href="#l643" class="line" id="l643">    643</a> which runs a main [event loop](https://en.wikipedia.org/wiki/Event_loop) routing Raft messages </code>
-<code><a href="#l644" class="line" id="l644">    644</a> between the local Raft node, TCP peers, and local state machine clients (i.e. the Raft SQL engine </code>
-<code><a href="#l645" class="line" id="l645">    645</a> wrapper), as well as ticking the Raft logical clock at regular intervals. It spawns separate Tokio </code>
-<code><a href="#l646" class="line" id="l646">    646</a> tasks that maintain outbound TCP connections to all Raft peers, while internal communication </code>
-<code><a href="#l647" class="line" id="l647">    647</a> happens via `mpsc`channels.</code>
-<code><a href="#l648" class="line" id="l648">    648</a> </code>
-<code><a href="#l649" class="line" id="l649">    649</a> The SQL server spawns a new Tokio task for each SQL client that connects, running a separate</code>
-<code><a href="#l650" class="line" id="l650">    650</a> SQL session from the SQL storage engine on top of Raft. It communicates with the client by passing</code>
-<code><a href="#l651" class="line" id="l651">    651</a> `server::Request` and `server::Response` messages that are translated to `sql::Session` calls.</code>
-<code><a href="#l652" class="line" id="l652">    652</a> </code>
-<code><a href="#l653" class="line" id="l653">    653</a> The main [`toydb`](https://github.com/erikgrinaker/toydb/blob/master/src/bin/toydb.rs) binary</code>
-<code><a href="#l654" class="line" id="l654">    654</a> simply initializes a toyDB server based on command-line arguments and configuration files, and then </code>
-<code><a href="#l655" class="line" id="l655">    655</a> runs it via the Tokio runtime.</code>
-<code><a href="#l656" class="line" id="l656">    656</a> </code>
-<code><a href="#l657" class="line" id="l657">    657</a> #### Server Tradeoffs</code>
-<code><a href="#l658" class="line" id="l658">    658</a> </code>
-<code><a href="#l659" class="line" id="l659">    659</a> **Security:** all network traffic is unauthenticated an in plaintext, as security was considered</code>
-<code><a href="#l660" class="line" id="l660">    660</a> out of scope for the project.</code>
-<code><a href="#l661" class="line" id="l661">    661</a> </code>
-<code><a href="#l662" class="line" id="l662">    662</a> ## Client</code>
-<code><a href="#l663" class="line" id="l663">    663</a> </code>
-<code><a href="#l664" class="line" id="l664">    664</a> The toyDB [`Client`](https://github.com/erikgrinaker/toydb/blob/master/src/client.rs) provides a </code>
-<code><a href="#l665" class="line" id="l665">    665</a> simple API for interacting with a server, mainly by executing SQL statements via `execute()` </code>
-<code><a href="#l666" class="line" id="l666">    666</a> returning `sql::ResultSet`.</code>
-<code><a href="#l667" class="line" id="l667">    667</a> </code>
-<code><a href="#l668" class="line" id="l668">    668</a> The [`toysql`](https://github.com/erikgrinaker/toydb/blob/master/src/bin/toysql.rs) command-line</code>
-<code><a href="#l669" class="line" id="l669">    669</a> client is a simple REPL client that connects to a server using the toyDB `Client` and continually </code>
-<code><a href="#l670" class="line" id="l670">    670</a> prompts the user for a SQL query to execute, displaying the returned result.</code>
+<a href="#l1" class="line" id="l1">      1</a><code> # toyDB Architecture</code>
+<a href="#l2" class="line" id="l2">      2</a><code> </code>
+<a href="#l3" class="line" id="l3">      3</a><code> At the highest level, toyDB consists of a cluster of nodes that execute SQL transactions against</code>
+<a href="#l4" class="line" id="l4">      4</a><code> a replicated state machine. Clients can connect to any node in the cluster and submit SQL</code>
+<a href="#l5" class="line" id="l5">      5</a><code> statements. It aims to provide</code>
+<a href="#l6" class="line" id="l6">      6</a><code> [linearizability](https://jepsen.io/consistency/models/linearizable) (i.e. strong consistency)</code>
+<a href="#l7" class="line" id="l7">      7</a><code> and [serializability](https://jepsen.io/consistency/models/serializable), but falls slightly</code>
+<a href="#l8" class="line" id="l8">      8</a><code> short as it currently only implements</code>
+<a href="#l9" class="line" id="l9">      9</a><code> [snapshot isolation](https://jepsen.io/consistency/models/snapshot-isolation).</code>
+<a href="#l10" class="line" id="l10">     10</a><code> </code>
+<a href="#l11" class="line" id="l11">     11</a><code> The [Raft algorithm](https://raft.github.io) is used for cluster consensus, which tolerates the</code>
+<a href="#l12" class="line" id="l12">     12</a><code> failure of any node as long as a majority of nodes are still available. One node is elected</code>
+<a href="#l13" class="line" id="l13">     13</a><code> leader, and replicates commands to the others which apply them to local copies of the state</code>
+<a href="#l14" class="line" id="l14">     14</a><code> machine. If the leader is lost, a new leader is elected and the cluster continues operation.</code>
+<a href="#l15" class="line" id="l15">     15</a><code> Client commands are automatically forwarded to the leader.</code>
+<a href="#l16" class="line" id="l16">     16</a><code> </code>
+<a href="#l17" class="line" id="l17">     17</a><code> This architecture guide will begin with a high-level overview of node components, before</code>
+<a href="#l18" class="line" id="l18">     18</a><code> discussing each component from the bottom up. Along the way, we will make note of tradeoffs and</code>
+<a href="#l19" class="line" id="l19">     19</a><code> design choices.</code>
+<a href="#l20" class="line" id="l20">     20</a><code> </code>
+<a href="#l21" class="line" id="l21">     21</a><code> - [Node Components](#node-components)</code>
+<a href="#l22" class="line" id="l22">     22</a><code> - [Storage Engine](#storage-engine)</code>
+<a href="#l23" class="line" id="l23">     23</a><code>   - [Key/Value Storage](#keyvalue-storage)</code>
+<a href="#l24" class="line" id="l24">     24</a><code>   - [MVCC Transactions](#mvcc-transactions)</code>
+<a href="#l25" class="line" id="l25">     25</a><code>   - [Log-structured Storage](#log-structured-storage)</code>
+<a href="#l26" class="line" id="l26">     26</a><code> - [Raft Consensus Engine](#raft-consensus-engine)</code>
+<a href="#l27" class="line" id="l27">     27</a><code> - [SQL Engine](#sql-engine)</code>
+<a href="#l28" class="line" id="l28">     28</a><code>   - [Types](#types)</code>
+<a href="#l29" class="line" id="l29">     29</a><code>   - [Schemas](#schemas)</code>
+<a href="#l30" class="line" id="l30">     30</a><code>   - [Storage](#storage)</code>
+<a href="#l31" class="line" id="l31">     31</a><code>   - [Parsing](#parsing)</code>
+<a href="#l32" class="line" id="l32">     32</a><code>   - [Planning](#planning)</code>
+<a href="#l33" class="line" id="l33">     33</a><code>   - [Execution](#execution)</code>
+<a href="#l34" class="line" id="l34">     34</a><code> - [Server](#server)</code>
+<a href="#l35" class="line" id="l35">     35</a><code> - [Client](#client)</code>
+<a href="#l36" class="line" id="l36">     36</a><code> </code>
+<a href="#l37" class="line" id="l37">     37</a><code> ## Node Components</code>
+<a href="#l38" class="line" id="l38">     38</a><code> </code>
+<a href="#l39" class="line" id="l39">     39</a><code> A toyDB node consists of three main components:</code>
+<a href="#l40" class="line" id="l40">     40</a><code> </code>
+<a href="#l41" class="line" id="l41">     41</a><code> * **Storage engine:** stores data and manages transactions, on disk and in memory.</code>
+<a href="#l42" class="line" id="l42">     42</a><code> </code>
+<a href="#l43" class="line" id="l43">     43</a><code> * **Raft consensus engine:** handles cluster coordination and state machine replication.</code>
+<a href="#l44" class="line" id="l44">     44</a><code> </code>
+<a href="#l45" class="line" id="l45">     45</a><code> * **SQL engine:** parses, plans, and executes SQL statements for clients.</code>
+<a href="#l46" class="line" id="l46">     46</a><code> </code>
+<a href="#l47" class="line" id="l47">     47</a><code> These components are integrated in the toyDB server, which handles network communication with</code>
+<a href="#l48" class="line" id="l48">     48</a><code> clients and other nodes. The following diagram illustrates its internal structure:</code>
+<a href="#l49" class="line" id="l49">     49</a><code> </code>
+<a href="#l50" class="line" id="l50">     50</a><code> ![toyDB architecture](./images/architecture.svg)</code>
+<a href="#l51" class="line" id="l51">     51</a><code> </code>
+<a href="#l52" class="line" id="l52">     52</a><code> At the bottom is a simple [key/value store](https://en.wikipedia.org/wiki/Key–value_database), </code>
+<a href="#l53" class="line" id="l53">     53</a><code> which stores all SQL data. This is wrapped inside an</code>
+<a href="#l54" class="line" id="l54">     54</a><code> [MVCC](https://en.wikipedia.org/wiki/Multiversion_concurrency_control) key/value store that adds </code>
+<a href="#l55" class="line" id="l55">     55</a><code> [ACID transactions](https://en.wikipedia.org/wiki/ACID). On top of that is a SQL storage engine,</code>
+<a href="#l56" class="line" id="l56">     56</a><code> providing basic [CRUD operations](https://en.wikipedia.org/wiki/Create,_read,_update_and_delete)</code>
+<a href="#l57" class="line" id="l57">     57</a><code> on tables, rows, and indexes. This makes up the node&#39;s core storage engine.</code>
+<a href="#l58" class="line" id="l58">     58</a><code> </code>
+<a href="#l59" class="line" id="l59">     59</a><code> The SQL storage engine is wrapped in a Raft state machine interface, allowing it to be managed</code>
+<a href="#l60" class="line" id="l60">     60</a><code> by the Raft consensus engine. The Raft node receives commands from clients and coordinates with</code>
+<a href="#l61" class="line" id="l61">     61</a><code> other Raft nodes to reach consensus on an ordered command log. Once commands are committed to</code>
+<a href="#l62" class="line" id="l62">     62</a><code> the log, they are applied to the local state machine.</code>
+<a href="#l63" class="line" id="l63">     63</a><code> </code>
+<a href="#l64" class="line" id="l64">     64</a><code> On top of the Raft engine is a Raft-based SQL storage engine, which implements the SQL storage</code>
+<a href="#l65" class="line" id="l65">     65</a><code> interface and submits commands to the Raft cluster. This allows the rest of the SQL layer to use</code>
+<a href="#l66" class="line" id="l66">     66</a><code> the Raft cluster as if it was local storage. The SQL engine manages client SQL sessions, which</code>
+<a href="#l67" class="line" id="l67">     67</a><code> take SQL queries as text, parse them, generate query plans, and execute them against the SQL</code>
+<a href="#l68" class="line" id="l68">     68</a><code> storage engine.</code>
+<a href="#l69" class="line" id="l69">     69</a><code> </code>
+<a href="#l70" class="line" id="l70">     70</a><code> Surrounding these components is the toyDB server, which in addition to network communication also</code>
+<a href="#l71" class="line" id="l71">     71</a><code> handles configuration, logging, and other process-level concerns.</code>
+<a href="#l72" class="line" id="l72">     72</a><code> </code>
+<a href="#l73" class="line" id="l73">     73</a><code> ## Storage Engine</code>
+<a href="#l74" class="line" id="l74">     74</a><code> </code>
+<a href="#l75" class="line" id="l75">     75</a><code> ToyDB uses a pluggable key/value storage engine, with the SQL and Raft storage engines configurable</code>
+<a href="#l76" class="line" id="l76">     76</a><code> via the `storage_sql` and `storage_raft` options respectively. The higher-level SQL storage engine </code>
+<a href="#l77" class="line" id="l77">     77</a><code> will be discussed separately in the [SQL section](#sql-engine).</code>
+<a href="#l78" class="line" id="l78">     78</a><code> </code>
+<a href="#l79" class="line" id="l79">     79</a><code> ### Key/Value Storage</code>
+<a href="#l80" class="line" id="l80">     80</a><code> </code>
+<a href="#l81" class="line" id="l81">     81</a><code> A key/value storage engine stores arbitrary key/value pairs as binary byte slices, and implements</code>
+<a href="#l82" class="line" id="l82">     82</a><code> the</code>
+<a href="#l83" class="line" id="l83">     83</a><code> [`storage::Engine`](https://github.com/erikgrinaker/toydb/blob/master/src/storage/engine.rs) </code>
+<a href="#l84" class="line" id="l84">     84</a><code> trait:</code>
+<a href="#l85" class="line" id="l85">     85</a><code> </code>
+<a href="#l86" class="line" id="l86">     86</a><code> ```rust</code>
+<a href="#l87" class="line" id="l87">     87</a><code> /// A key/value storage engine, where both keys and values are arbitrary byte</code>
+<a href="#l88" class="line" id="l88">     88</a><code> /// strings between 0 B and 2 GB, stored in lexicographical key order. Writes</code>
+<a href="#l89" class="line" id="l89">     89</a><code> /// are only guaranteed durable after calling flush().</code>
+<a href="#l90" class="line" id="l90">     90</a><code> ///</code>
+<a href="#l91" class="line" id="l91">     91</a><code> /// Only supports single-threaded use since all methods (including reads) take a</code>
+<a href="#l92" class="line" id="l92">     92</a><code> /// mutable reference -- serialized access can&#39;t be avoided anyway, since both</code>
+<a href="#l93" class="line" id="l93">     93</a><code> /// Raft execution and file access is serial.</code>
+<a href="#l94" class="line" id="l94">     94</a><code> pub trait Engine: std::fmt::Display + Send + Sync {</code>
+<a href="#l95" class="line" id="l95">     95</a><code>     /// The iterator returned by scan(). Traits can&#39;t return &quot;impl Trait&quot;, and</code>
+<a href="#l96" class="line" id="l96">     96</a><code>     /// we don&#39;t want to use trait objects, so the type must be specified.</code>
+<a href="#l97" class="line" id="l97">     97</a><code>     type ScanIterator&lt;&#39;a&gt;: DoubleEndedIterator&lt;Item = Result&lt;(Vec&lt;u8&gt;, Vec&lt;u8&gt;)&gt;&gt; + &#39;a</code>
+<a href="#l98" class="line" id="l98">     98</a><code>     where</code>
+<a href="#l99" class="line" id="l99">     99</a><code>         Self: &#39;a;</code>
+<a href="#l100" class="line" id="l100">    100</a><code> </code>
+<a href="#l101" class="line" id="l101">    101</a><code>     /// Deletes a key, or does nothing if it does not exist.</code>
+<a href="#l102" class="line" id="l102">    102</a><code>     fn delete(&amp;mut self, key: &amp;[u8]) -&gt; Result&lt;()&gt;;</code>
+<a href="#l103" class="line" id="l103">    103</a><code> </code>
+<a href="#l104" class="line" id="l104">    104</a><code>     /// Flushes any buffered data to the underlying storage medium.</code>
+<a href="#l105" class="line" id="l105">    105</a><code>     fn flush(&amp;mut self) -&gt; Result&lt;()&gt;;</code>
+<a href="#l106" class="line" id="l106">    106</a><code> </code>
+<a href="#l107" class="line" id="l107">    107</a><code>     /// Gets a value for a key, if it exists.</code>
+<a href="#l108" class="line" id="l108">    108</a><code>     fn get(&amp;mut self, key: &amp;[u8]) -&gt; Result&lt;Option&lt;Vec&lt;u8&gt;&gt;&gt;;</code>
+<a href="#l109" class="line" id="l109">    109</a><code> </code>
+<a href="#l110" class="line" id="l110">    110</a><code>     /// Iterates over an ordered range of key/value pairs.</code>
+<a href="#l111" class="line" id="l111">    111</a><code>     fn scan&lt;R: std::ops::RangeBounds&lt;Vec&lt;u8&gt;&gt;&gt;(&amp;mut self, range: R) -&gt; Self::ScanIterator&lt;&#39;_&gt;;</code>
+<a href="#l112" class="line" id="l112">    112</a><code> </code>
+<a href="#l113" class="line" id="l113">    113</a><code>     /// Sets a value for a key, replacing the existing value if any.</code>
+<a href="#l114" class="line" id="l114">    114</a><code>     fn set(&amp;mut self, key: &amp;[u8], value: Vec&lt;u8&gt;) -&gt; Result&lt;()&gt;;</code>
+<a href="#l115" class="line" id="l115">    115</a><code> }</code>
+<a href="#l116" class="line" id="l116">    116</a><code> ```</code>
+<a href="#l117" class="line" id="l117">    117</a><code> </code>
+<a href="#l118" class="line" id="l118">    118</a><code> The `get`, `set` and `delete` methods simply read and write key/value pairs, and `flush` ensures</code>
+<a href="#l119" class="line" id="l119">    119</a><code> any buffered data is written out to storage (e.g. via the `fsync` system call). `scan` iterates</code>
+<a href="#l120" class="line" id="l120">    120</a><code> over a key/value range _in order_, a property that is crucial to higher-level functionality (e.g.</code>
+<a href="#l121" class="line" id="l121">    121</a><code> SQL table scans) and has a couple of important implications:</code>
+<a href="#l122" class="line" id="l122">    122</a><code> </code>
+<a href="#l123" class="line" id="l123">    123</a><code> * Implementations should store data ordered by key, for performance.</code>
+<a href="#l124" class="line" id="l124">    124</a><code> </code>
+<a href="#l125" class="line" id="l125">    125</a><code> * Keys should use an order-preserving byte encoding, to allow range scans.</code>
+<a href="#l126" class="line" id="l126">    126</a><code> </code>
+<a href="#l127" class="line" id="l127">    127</a><code> The engine itself does not care what keys contain, but the storage module offers</code>
+<a href="#l128" class="line" id="l128">    128</a><code> an order-preserving key encoding called [KeyCode](https://github.com/erikgrinaker/toydb/blob/master/src/encoding/keycode.rs)</code>
+<a href="#l129" class="line" id="l129">    129</a><code> for use by higher layers. These storage layers often use composite keys made up</code>
+<a href="#l130" class="line" id="l130">    130</a><code> of several possibly variable-length values (e.g. an index key consists of table,</code>
+<a href="#l131" class="line" id="l131">    131</a><code> column, and value), and the natural ordering of each segment must be preserved,</code>
+<a href="#l132" class="line" id="l132">    132</a><code> a property satisfied by this encoding:</code>
+<a href="#l133" class="line" id="l133">    133</a><code> </code>
+<a href="#l134" class="line" id="l134">    134</a><code> * `bool`: `0x00` for `false`, `0x01` for `true`.</code>
+<a href="#l135" class="line" id="l135">    135</a><code> * `u64`: big-endian binary representation.</code>
+<a href="#l136" class="line" id="l136">    136</a><code> * `i64`: big-endian binary representation, with sign bit flipped.</code>
+<a href="#l137" class="line" id="l137">    137</a><code> * `f64`: big-endian binary representation, with sign bit flipped, and rest if negative.</code>
+<a href="#l138" class="line" id="l138">    138</a><code> * `Vec&lt;u8&gt;`: `0x00` is escaped as `0x00ff`, terminated with `0x0000`.</code>
+<a href="#l139" class="line" id="l139">    139</a><code> * `String`:  like `Vec&lt;u8&gt;`.</code>
+<a href="#l140" class="line" id="l140">    140</a><code> </code>
+<a href="#l141" class="line" id="l141">    141</a><code> Additionally, several container types are supported:</code>
+<a href="#l142" class="line" id="l142">    142</a><code> </code>
+<a href="#l143" class="line" id="l143">    143</a><code> * Tuple: concatenation of elements, with no surrounding structure.</code>
+<a href="#l144" class="line" id="l144">    144</a><code> * Array: like tuple.</code>
+<a href="#l145" class="line" id="l145">    145</a><code> * Vec: like tuple.</code>
+<a href="#l146" class="line" id="l146">    146</a><code> * Enum: the variant&#39;s enum index as a single `u8` byte, then contents.</code>
+<a href="#l147" class="line" id="l147">    147</a><code> * Value: like enum.</code>
+<a href="#l148" class="line" id="l148">    148</a><code> </code>
+<a href="#l149" class="line" id="l149">    149</a><code> The default key/value engine is</code>
+<a href="#l150" class="line" id="l150">    150</a><code> [`storage::BitCask`](https://github.com/erikgrinaker/toydb/blob/master/src/storage/bitcask.rs),</code>
+<a href="#l151" class="line" id="l151">    151</a><code> a very simple variant of Bitcask, an append-only log-structured storage engine.</code>
+<a href="#l152" class="line" id="l152">    152</a><code> All writes are appended to a log file, with an index mapping live keys to file</code>
+<a href="#l153" class="line" id="l153">    153</a><code> positions maintained in memory.  When the amount of garbage (replaced or deleted</code>
+<a href="#l154" class="line" id="l154">    154</a><code> keys) in the file exceeds 20%, a new log file is written containing only live</code>
+<a href="#l155" class="line" id="l155">    155</a><code> keys, replacing the old log file.</code>
+<a href="#l156" class="line" id="l156">    156</a><code> </code>
+<a href="#l157" class="line" id="l157">    157</a><code> #### Key/Value Tradeoffs</code>
+<a href="#l158" class="line" id="l158">    158</a><code> </code>
+<a href="#l159" class="line" id="l159">    159</a><code> **Keyset in memory:** BitCask requires the entire key set to fit in memory, and must also scan</code>
+<a href="#l160" class="line" id="l160">    160</a><code> the log file on startup to construct the key index.</code>
+<a href="#l161" class="line" id="l161">    161</a><code> </code>
+<a href="#l162" class="line" id="l162">    162</a><code> **Compaction volume:** unlike an LSM tree, this single-file BitCask</code>
+<a href="#l163" class="line" id="l163">    163</a><code> implementation requires rewriting the entire dataset during compactions, which</code>
+<a href="#l164" class="line" id="l164">    164</a><code> can produce significant write amplification over time.</code>
+<a href="#l165" class="line" id="l165">    165</a><code> </code>
+<a href="#l166" class="line" id="l166">    166</a><code> **Key encoding:** does not make use of any compression, e.g. variable-length integers, preferring</code>
+<a href="#l167" class="line" id="l167">    167</a><code> simplicity and correctness.</code>
+<a href="#l168" class="line" id="l168">    168</a><code> </code>
+<a href="#l169" class="line" id="l169">    169</a><code> ### MVCC Transactions</code>
+<a href="#l170" class="line" id="l170">    170</a><code> </code>
+<a href="#l171" class="line" id="l171">    171</a><code> [MVCC (Multi-Version Concurrency Control)](https://en.wikipedia.org/wiki/Multiversion_concurrency_control)</code>
+<a href="#l172" class="line" id="l172">    172</a><code> is a relatively simple concurrency control mechanism that provides</code>
+<a href="#l173" class="line" id="l173">    173</a><code> [ACID transactions](https://en.wikipedia.org/wiki/ACID) with</code>
+<a href="#l174" class="line" id="l174">    174</a><code> [snapshot isolation](https://en.wikipedia.org/wiki/Snapshot_isolation) without taking out locks or </code>
+<a href="#l175" class="line" id="l175">    175</a><code> having writes block reads. It also versions all data, allowing querying of historical data.</code>
+<a href="#l176" class="line" id="l176">    176</a><code> </code>
+<a href="#l177" class="line" id="l177">    177</a><code> toyDB implements MVCC at the storage layer as</code>
+<a href="#l178" class="line" id="l178">    178</a><code> [`storage::mvcc::MVCC`](https://github.com/erikgrinaker/toydb/blob/master/src/storage/mvcc.rs),</code>
+<a href="#l179" class="line" id="l179">    179</a><code> using any `storage::Engine` implementation for underlying storage. `begin` returns a new</code>
+<a href="#l180" class="line" id="l180">    180</a><code> transaction, which provides the usual key/value operations such as `get`, `set`, and `scan`.</code>
+<a href="#l181" class="line" id="l181">    181</a><code> Additionally, it has a `commit` method which persists the changes and makes them visible to</code>
+<a href="#l182" class="line" id="l182">    182</a><code> other transactions, and a `rollback` method which discards them.</code>
+<a href="#l183" class="line" id="l183">    183</a><code> </code>
+<a href="#l184" class="line" id="l184">    184</a><code> When a transaction begins, it fetches the next available version from `Key::NextVersion` and</code>
+<a href="#l185" class="line" id="l185">    185</a><code> increments it, then records itself as an active transaction via `Key::TxnActive(version)`. It also</code>
+<a href="#l186" class="line" id="l186">    186</a><code> takes a snapshot of the active set, containing the versions of all other active transactions as of</code>
+<a href="#l187" class="line" id="l187">    187</a><code> the transaction start, and saves it as `Key::TxnActiveSnapshot(id)`.</code>
+<a href="#l188" class="line" id="l188">    188</a><code> </code>
+<a href="#l189" class="line" id="l189">    189</a><code> Key/value pairs are saved as `Key::Version(key, version)`, where `key` is the user-provided key</code>
+<a href="#l190" class="line" id="l190">    190</a><code> and `version` is the transaction&#39;s version. The visibility of key/value pairs for a transaction is </code>
+<a href="#l191" class="line" id="l191">    191</a><code> given as follows:</code>
+<a href="#l192" class="line" id="l192">    192</a><code> </code>
+<a href="#l193" class="line" id="l193">    193</a><code> * For a given user key, do a reverse scan of `Key::Version(key, version)` starting at the current </code>
+<a href="#l194" class="line" id="l194">    194</a><code>   transaction&#39;s version.</code>
+<a href="#l195" class="line" id="l195">    195</a><code> </code>
+<a href="#l196" class="line" id="l196">    196</a><code> * Skip any records whose version is in the transaction&#39;s snapshot of the active set.</code>
+<a href="#l197" class="line" id="l197">    197</a><code> </code>
+<a href="#l198" class="line" id="l198">    198</a><code> * Return the first matching record, if any. This record may be either a `Some(value)` or a `None`</code>
+<a href="#l199" class="line" id="l199">    199</a><code>   if the key was deleted.</code>
+<a href="#l200" class="line" id="l200">    200</a><code> </code>
+<a href="#l201" class="line" id="l201">    201</a><code> When writing a key/value pair, the transaction first checks for any conflicts by scanning for a</code>
+<a href="#l202" class="line" id="l202">    202</a><code> `Key::Version(key, version)` which is not visible to it. If one is found, a serialization error</code>
+<a href="#l203" class="line" id="l203">    203</a><code> is returned and the client must retry the transaction. Otherwise, the transaction writes the new</code>
+<a href="#l204" class="line" id="l204">    204</a><code> record and keeps track of the change as `Key::TxnWrite(version, key)` in case it must roll back.</code>
+<a href="#l205" class="line" id="l205">    205</a><code> </code>
+<a href="#l206" class="line" id="l206">    206</a><code> When the transaction commits, it simply deletes its `Txn::Active(id)` record, thus making its</code>
+<a href="#l207" class="line" id="l207">    207</a><code> changes visible to any subsequent transactions. If the transaction instead rolls back, it</code>
+<a href="#l208" class="line" id="l208">    208</a><code> iterates over all `Key::TxnWrite(id, key)` entries and removes the written key/value records before</code>
+<a href="#l209" class="line" id="l209">    209</a><code> removing its `Txn::Active(id)` entry.</code>
+<a href="#l210" class="line" id="l210">    210</a><code> </code>
+<a href="#l211" class="line" id="l211">    211</a><code> This simple scheme is sufficient to provide ACID transaction guarantees with snapshot isolation:</code>
+<a href="#l212" class="line" id="l212">    212</a><code> commits are atomic, a transaction sees a consistent snapshot of the key/value store as of the</code>
+<a href="#l213" class="line" id="l213">    213</a><code> start of the transaction, and any write conflicts result in serialization errors which must be</code>
+<a href="#l214" class="line" id="l214">    214</a><code> retried.</code>
+<a href="#l215" class="line" id="l215">    215</a><code> </code>
+<a href="#l216" class="line" id="l216">    216</a><code> To satisfy time travel queries, a read-only transaction simply loads the `Key::TxnActiveSnapshot`</code>
+<a href="#l217" class="line" id="l217">    217</a><code> entry of a past transaction and applies the same visibility rules as for normal transactions.</code>
+<a href="#l218" class="line" id="l218">    218</a><code> </code>
+<a href="#l219" class="line" id="l219">    219</a><code> #### MVCC Tradeoffs</code>
+<a href="#l220" class="line" id="l220">    220</a><code> </code>
+<a href="#l221" class="line" id="l221">    221</a><code> **Serializability:** snapshot isolation is not fully serializable, since it exhibits</code>
+<a href="#l222" class="line" id="l222">    222</a><code> [write skew anomalies](http://justinjaffray.com/what-does-write-skew-look-like/). This would</code>
+<a href="#l223" class="line" id="l223">    223</a><code> require [serializable snapshot isolation](https://courses.cs.washington.edu/courses/cse444/08au/544M/READING-LIST/fekete-sigmod2008.pdf),</code>
+<a href="#l224" class="line" id="l224">    224</a><code> which was considered unnecessary for a first version - it may be implemented later.</code>
+<a href="#l225" class="line" id="l225">    225</a><code> </code>
+<a href="#l226" class="line" id="l226">    226</a><code> **Garbage collection:** old MVCC versions are never removed, leading to unbounded disk usage. </code>
+<a href="#l227" class="line" id="l227">    227</a><code> However, this also allows for complete data history, and simplifies the implementation.</code>
+<a href="#l228" class="line" id="l228">    228</a><code> </code>
+<a href="#l229" class="line" id="l229">    229</a><code> **Transaction ID overflow:** transaction IDs will overflow after 64 bits, but this is never going to</code>
+<a href="#l230" class="line" id="l230">    230</a><code> happen with toyDB.</code>
+<a href="#l231" class="line" id="l231">    231</a><code> </code>
+<a href="#l232" class="line" id="l232">    232</a><code> ## Raft Consensus Engine</code>
+<a href="#l233" class="line" id="l233">    233</a><code> </code>
+<a href="#l234" class="line" id="l234">    234</a><code> The Raft consensus protocol is explained well in the</code>
+<a href="#l235" class="line" id="l235">    235</a><code> [original Raft paper](https://raft.github.io/raft.pdf), and will not be repeated here - refer to</code>
+<a href="#l236" class="line" id="l236">    236</a><code> it for details. toyDB&#39;s implementation follows the paper fairly closely.</code>
+<a href="#l237" class="line" id="l237">    237</a><code> </code>
+<a href="#l238" class="line" id="l238">    238</a><code> The Raft node [`raft::Node`](https://github.com/erikgrinaker/toydb/tree/master/src/raft/node.rs) is</code>
+<a href="#l239" class="line" id="l239">    239</a><code> the core of the implementation, a finite state machine with enum variants for the node roles:</code>
+<a href="#l240" class="line" id="l240">    240</a><code> leader, follower, and candidate. This enum wraps the `RawNode` struct, which contains common</code>
+<a href="#l241" class="line" id="l241">    241</a><code> node functionality and is generic over the specific roles `Leader`, `Follower`, and `Candidate`</code>
+<a href="#l242" class="line" id="l242">    242</a><code> that implement the Raft protocol.</code>
+<a href="#l243" class="line" id="l243">    243</a><code> </code>
+<a href="#l244" class="line" id="l244">    244</a><code> Nodes are initialized with an ID and a list of peer IDs, and communicate by passing</code>
+<a href="#l245" class="line" id="l245">    245</a><code> [`raft::Message`](https://github.com/erikgrinaker/toydb/blob/master/src/raft/message.rs)</code>
+<a href="#l246" class="line" id="l246">    246</a><code> messages. Inbound messages are received via `Node.step()` calls, and outbound messages are sent</code>
+<a href="#l247" class="line" id="l247">    247</a><code> via an `mpsc` channel. Nodes also use a logical clock to keep track of e.g. election timeouts</code>
+<a href="#l248" class="line" id="l248">    248</a><code> and heartbeats, and the clock is ticked at regular intervals via `Node.tick()` calls. These</code>
+<a href="#l249" class="line" id="l249">    249</a><code> methods are synchronous and may cause state transitions, e.g. changing a candidate into a leader</code>
+<a href="#l250" class="line" id="l250">    250</a><code> when it receives the winning vote.</code>
+<a href="#l251" class="line" id="l251">    251</a><code> </code>
+<a href="#l252" class="line" id="l252">    252</a><code> Nodes have a command log [`raft::Log`](https://github.com/erikgrinaker/toydb/blob/master/src/raft/log.rs),</code>
+<a href="#l253" class="line" id="l253">    253</a><code> using a `storage::Engine` for storage, and a [`raft::State`](https://github.com/erikgrinaker/toydb/blob/master/src/raft/state.rs)</code>
+<a href="#l254" class="line" id="l254">    254</a><code> state machine (the SQL engine). When the leader receives a write request, it appends the command</code>
+<a href="#l255" class="line" id="l255">    255</a><code> to its local log and replicates it to followers. Once a quorum have replicated it, the command is</code>
+<a href="#l256" class="line" id="l256">    256</a><code> committed and applied to the state machine, and the result returned the the client. When the leader</code>
+<a href="#l257" class="line" id="l257">    257</a><code> receives a read request, it needs to ensure it is still the leader in order to satisfy </code>
+<a href="#l258" class="line" id="l258">    258</a><code> linearizability (a new leader could exist elsewhere resulting in a stale read). It increments a</code>
+<a href="#l259" class="line" id="l259">    259</a><code> read sequence number and broadcasts it via a Raft heartbeat. Once a quorum have confirmed the</code>
+<a href="#l260" class="line" id="l260">    260</a><code> leader at this sequence number, the read command is executed against the state machine and the</code>
+<a href="#l261" class="line" id="l261">    261</a><code> result returned to the client.</code>
+<a href="#l262" class="line" id="l262">    262</a><code> </code>
+<a href="#l263" class="line" id="l263">    263</a><code> The actual network communication is handled by the server process, which will be described in a</code>
+<a href="#l264" class="line" id="l264">    264</a><code> [separate section](#server).</code>
+<a href="#l265" class="line" id="l265">    265</a><code> </code>
+<a href="#l266" class="line" id="l266">    266</a><code> #### Raft Tradeoffs</code>
+<a href="#l267" class="line" id="l267">    267</a><code> </code>
+<a href="#l268" class="line" id="l268">    268</a><code> **Single-threaded state:** all state operations run in a single thread on the leader, preventing</code>
+<a href="#l269" class="line" id="l269">    269</a><code> horizontal scalability. Improvements here would require running multiple sharded Raft clusters,</code>
+<a href="#l270" class="line" id="l270">    270</a><code> which is out of scope for the project.</code>
+<a href="#l271" class="line" id="l271">    271</a><code> </code>
+<a href="#l272" class="line" id="l272">    272</a><code> **Synchronous application:** state machine application happens synchronously in the main Raft</code>
+<a href="#l273" class="line" id="l273">    273</a><code> thread. This is significantly simpler than asynchronous application, but may cause delays in</code>
+<a href="#l274" class="line" id="l274">    274</a><code> Raft processing.</code>
+<a href="#l275" class="line" id="l275">    275</a><code> </code>
+<a href="#l276" class="line" id="l276">    276</a><code> **Log replication:** only the simplest form of Raft log replication is implemented, without</code>
+<a href="#l277" class="line" id="l277">    277</a><code> state snapshots or rapid log replay. Lagging nodes will be very slow to catch up.</code>
+<a href="#l278" class="line" id="l278">    278</a><code> </code>
+<a href="#l279" class="line" id="l279">    279</a><code> **Cluster resizing:** the Raft cluster consists of a static set of nodes given at startup, resizing</code>
+<a href="#l280" class="line" id="l280">    280</a><code> it requires a complete cluster restart.</code>
+<a href="#l281" class="line" id="l281">    281</a><code> </code>
+<a href="#l282" class="line" id="l282">    282</a><code> ## SQL Engine</code>
+<a href="#l283" class="line" id="l283">    283</a><code> </code>
+<a href="#l284" class="line" id="l284">    284</a><code> The SQL engine builds on Raft and MVCC to provide a SQL interface to clients. Logically, the</code>
+<a href="#l285" class="line" id="l285">    285</a><code> life of a SQL query is as follows:</code>
+<a href="#l286" class="line" id="l286">    286</a><code> </code>
+<a href="#l287" class="line" id="l287">    287</a><code> &gt; Query → Lexer → Parser → Planner → Optimizer → Executor → Storage Engine</code>
+<a href="#l288" class="line" id="l288">    288</a><code> </code>
+<a href="#l289" class="line" id="l289">    289</a><code> We&#39;ll begin by looking at the basic SQL type and schema systems, as well as the SQL storage</code>
+<a href="#l290" class="line" id="l290">    290</a><code> engine and its session interface. Then we&#39;ll switch sides and look at how a query is executed,</code>
+<a href="#l291" class="line" id="l291">    291</a><code> starting at the front with the parser and following it until it&#39;s executed against the SQL</code>
+<a href="#l292" class="line" id="l292">    292</a><code> storage engine, completing the chain.</code>
+<a href="#l293" class="line" id="l293">    293</a><code> </code>
+<a href="#l294" class="line" id="l294">    294</a><code> ### Types</code>
+<a href="#l295" class="line" id="l295">    295</a><code> </code>
+<a href="#l296" class="line" id="l296">    296</a><code> toyDB has a very simple type system, with the</code>
+<a href="#l297" class="line" id="l297">    297</a><code> [`sql::DataType`](https://github.com/erikgrinaker/toydb/blob/master/src/sql/types/mod.rs) enum </code>
+<a href="#l298" class="line" id="l298">    298</a><code> specifying the available data types: `Boolean`, `Integer`, `Float`, and `String`.</code>
+<a href="#l299" class="line" id="l299">    299</a><code> </code>
+<a href="#l300" class="line" id="l300">    300</a><code> The [`sql::Value`](https://github.com/erikgrinaker/toydb/blob/master/src/sql/types/mod.rs) enum </code>
+<a href="#l301" class="line" id="l301">    301</a><code> represents a specific value using Rust&#39;s native type system, e.g. an integer value is </code>
+<a href="#l302" class="line" id="l302">    302</a><code> `Value::Integer(i64)`. This enum also specifies comparison, ordering, and formatting of values. The </code>
+<a href="#l303" class="line" id="l303">    303</a><code> special value `Value::Null` represents an unknown value of unknown type, following the rules of</code>
+<a href="#l304" class="line" id="l304">    304</a><code> [three-valued logic](https://en.wikipedia.org/wiki/Three-valued_logic).</code>
+<a href="#l305" class="line" id="l305">    305</a><code> </code>
+<a href="#l306" class="line" id="l306">    306</a><code> Values can be grouped into a `Row`, which is an alias for `Vec&lt;Value&gt;`. The type `Rows` is an alias</code>
+<a href="#l307" class="line" id="l307">    307</a><code> for a fallible row iterator, and `Column` is a result column containing a name.</code>
+<a href="#l308" class="line" id="l308">    308</a><code> </code>
+<a href="#l309" class="line" id="l309">    309</a><code> Expressions [`sql::Expression`](https://github.com/erikgrinaker/toydb/blob/master/src/sql/types/expression.rs)</code>
+<a href="#l310" class="line" id="l310">    310</a><code> represent operations on values. For example, `(1 + 2) * 3` is represented as:</code>
+<a href="#l311" class="line" id="l311">    311</a><code> </code>
+<a href="#l312" class="line" id="l312">    312</a><code> ```rust</code>
+<a href="#l313" class="line" id="l313">    313</a><code> Expression::Multiply(</code>
+<a href="#l314" class="line" id="l314">    314</a><code>     Expression::Add(</code>
+<a href="#l315" class="line" id="l315">    315</a><code>         Expression::Constant(Value::Integer(1)),</code>
+<a href="#l316" class="line" id="l316">    316</a><code>         Expression::Constant(Value::Integer(2)),</code>
+<a href="#l317" class="line" id="l317">    317</a><code>     ),</code>
+<a href="#l318" class="line" id="l318">    318</a><code>     Expression::Constant(Value::Integer(3)),</code>
+<a href="#l319" class="line" id="l319">    319</a><code> )</code>
+<a href="#l320" class="line" id="l320">    320</a><code> ```</code>
+<a href="#l321" class="line" id="l321">    321</a><code> </code>
+<a href="#l322" class="line" id="l322">    322</a><code> Calling `evaluate()` on the expression will recursively evaluate it, returning `Value::Integer(9)`.</code>
+<a href="#l323" class="line" id="l323">    323</a><code> </code>
+<a href="#l324" class="line" id="l324">    324</a><code> ### Schemas</code>
+<a href="#l325" class="line" id="l325">    325</a><code> </code>
+<a href="#l326" class="line" id="l326">    326</a><code> The schema defines the tables [`sql::Table`](https://github.com/erikgrinaker/toydb/blob/master/src/sql/schema.rs)</code>
+<a href="#l327" class="line" id="l327">    327</a><code> and columns [`sql::Column`](https://github.com/erikgrinaker/toydb/blob/master/src/sql/schema.rs)</code>
+<a href="#l328" class="line" id="l328">    328</a><code> in a toyDB database. Tables have a name and a list of columns, while a column has several</code>
+<a href="#l329" class="line" id="l329">    329</a><code> attributes such as name, data type, and various constraints. They also have methods to</code>
+<a href="#l330" class="line" id="l330">    330</a><code> validate rows and values, e.g. to make sure a value is of the correct type for a column</code>
+<a href="#l331" class="line" id="l331">    331</a><code> or to enforce referential integrity.</code>
+<a href="#l332" class="line" id="l332">    332</a><code> </code>
+<a href="#l333" class="line" id="l333">    333</a><code> The schema is stored and managed with [`sql::Catalog`](https://github.com/erikgrinaker/toydb/blob/master/src/sql/schema.rs),</code>
+<a href="#l334" class="line" id="l334">    334</a><code> a trait implemented by the SQL storage engine:</code>
+<a href="#l335" class="line" id="l335">    335</a><code> </code>
+<a href="#l336" class="line" id="l336">    336</a><code> ```rust</code>
+<a href="#l337" class="line" id="l337">    337</a><code> pub trait Catalog {</code>
+<a href="#l338" class="line" id="l338">    338</a><code>     /// Creates a new table.</code>
+<a href="#l339" class="line" id="l339">    339</a><code>     fn create_table(&amp;mut self, table: &amp;Table) -&gt; Result&lt;()&gt;;</code>
+<a href="#l340" class="line" id="l340">    340</a><code> </code>
+<a href="#l341" class="line" id="l341">    341</a><code>     /// Deletes a table, or errors if it does not exist.</code>
+<a href="#l342" class="line" id="l342">    342</a><code>     fn delete_table(&amp;mut self, table: &amp;str) -&gt; Result&lt;()&gt;;</code>
+<a href="#l343" class="line" id="l343">    343</a><code> </code>
+<a href="#l344" class="line" id="l344">    344</a><code>     /// Reads a table, if it exists.</code>
+<a href="#l345" class="line" id="l345">    345</a><code>     fn read_table(&amp;self, table: &amp;str) -&gt; Result&lt;Option&lt;Table&gt;&gt;;</code>
+<a href="#l346" class="line" id="l346">    346</a><code> </code>
+<a href="#l347" class="line" id="l347">    347</a><code>     /// Iterates over all tables.</code>
+<a href="#l348" class="line" id="l348">    348</a><code>     fn scan_tables(&amp;self) -&gt; Result&lt;Tables&gt;;</code>
+<a href="#l349" class="line" id="l349">    349</a><code> }</code>
+<a href="#l350" class="line" id="l350">    350</a><code> ```</code>
+<a href="#l351" class="line" id="l351">    351</a><code> </code>
+<a href="#l352" class="line" id="l352">    352</a><code> #### Schema Tradeoffs</code>
+<a href="#l353" class="line" id="l353">    353</a><code> </code>
+<a href="#l354" class="line" id="l354">    354</a><code> **Single database:** only a single, unnamed database is supported per toyDB cluster. This is</code>
+<a href="#l355" class="line" id="l355">    355</a><code> sufficient for toyDB&#39;s use-cases, and simplifies the implementation.</code>
+<a href="#l356" class="line" id="l356">    356</a><code> </code>
+<a href="#l357" class="line" id="l357">    357</a><code> **Schema changes:** schema changes other than creating or dropping tables is not supported. This</code>
+<a href="#l358" class="line" id="l358">    358</a><code> avoids complicated data migration logic, and allows using table/column names as storage identifiers </code>
+<a href="#l359" class="line" id="l359">    359</a><code> (since they can never change) without any additional indirection.</code>
+<a href="#l360" class="line" id="l360">    360</a><code> </code>
+<a href="#l361" class="line" id="l361">    361</a><code> ### Storage</code>
+<a href="#l362" class="line" id="l362">    362</a><code> </code>
+<a href="#l363" class="line" id="l363">    363</a><code> The SQL storage engine trait is [`sql::Engine`](https://github.com/erikgrinaker/toydb/blob/master/src/sql/engine/mod.rs):</code>
+<a href="#l364" class="line" id="l364">    364</a><code> </code>
+<a href="#l365" class="line" id="l365">    365</a><code> ```rust</code>
+<a href="#l366" class="line" id="l366">    366</a><code> pub trait Engine: Clone {</code>
+<a href="#l367" class="line" id="l367">    367</a><code>     type Transaction: Transaction;</code>
+<a href="#l368" class="line" id="l368">    368</a><code> </code>
+<a href="#l369" class="line" id="l369">    369</a><code>     /// Begins a transaction in the given mode.</code>
+<a href="#l370" class="line" id="l370">    370</a><code>     fn begin(&amp;self, mode: Mode) -&gt; Result&lt;Self::Transaction&gt;;</code>
+<a href="#l371" class="line" id="l371">    371</a><code> </code>
+<a href="#l372" class="line" id="l372">    372</a><code>     /// Resumes an active transaction with the given ID.</code>
+<a href="#l373" class="line" id="l373">    373</a><code>     fn resume(&amp;self, id: u64) -&gt; Result&lt;Self::Transaction&gt;;</code>
+<a href="#l374" class="line" id="l374">    374</a><code> </code>
+<a href="#l375" class="line" id="l375">    375</a><code>     /// Begins a SQL session for executing SQL statements.</code>
+<a href="#l376" class="line" id="l376">    376</a><code>     fn session(&amp;self) -&gt; Result&lt;Session&lt;Self&gt;&gt; {</code>
+<a href="#l377" class="line" id="l377">    377</a><code>         Ok(Session { engine: self.clone(), txn: None })</code>
+<a href="#l378" class="line" id="l378">    378</a><code>     }</code>
+<a href="#l379" class="line" id="l379">    379</a><code> }</code>
+<a href="#l380" class="line" id="l380">    380</a><code> ```</code>
+<a href="#l381" class="line" id="l381">    381</a><code> </code>
+<a href="#l382" class="line" id="l382">    382</a><code> The main use of the trait is to dispense `sql::Session` instances, individual client sessions which</code>
+<a href="#l383" class="line" id="l383">    383</a><code> execute SQL queries submitted as plain text and track transaction state. The actual storage</code>
+<a href="#l384" class="line" id="l384">    384</a><code> engine functionality is exposed via the `sql::Transaction` trait, representing an ACID transaction</code>
+<a href="#l385" class="line" id="l385">    385</a><code> providing basic CRUD (create, read, update, delete) operations for tables, rows, and indexes:</code>
+<a href="#l386" class="line" id="l386">    386</a><code> </code>
+<a href="#l387" class="line" id="l387">    387</a><code> ```rust</code>
+<a href="#l388" class="line" id="l388">    388</a><code> pub trait Transaction: Catalog {</code>
+<a href="#l389" class="line" id="l389">    389</a><code>     /// Commits the transaction.</code>
+<a href="#l390" class="line" id="l390">    390</a><code>     fn commit(self) -&gt; Result&lt;()&gt;;</code>
+<a href="#l391" class="line" id="l391">    391</a><code>     /// Rolls back the transaction.</code>
+<a href="#l392" class="line" id="l392">    392</a><code>     fn rollback(self) -&gt; Result&lt;()&gt;;</code>
+<a href="#l393" class="line" id="l393">    393</a><code> </code>
+<a href="#l394" class="line" id="l394">    394</a><code>     /// Creates a new table row.</code>
+<a href="#l395" class="line" id="l395">    395</a><code>     fn create(&amp;mut self, table: &amp;str, row: Row) -&gt; Result&lt;()&gt;;</code>
+<a href="#l396" class="line" id="l396">    396</a><code>     /// Deletes a table row.</code>
+<a href="#l397" class="line" id="l397">    397</a><code>     fn delete(&amp;mut self, table: &amp;str, id: &amp;Value) -&gt; Result&lt;()&gt;;</code>
+<a href="#l398" class="line" id="l398">    398</a><code>     /// Reads a table row, if it exists.</code>
+<a href="#l399" class="line" id="l399">    399</a><code>     fn read(&amp;self, table: &amp;str, id: &amp;Value) -&gt; Result&lt;Option&lt;Row&gt;&gt;;</code>
+<a href="#l400" class="line" id="l400">    400</a><code>     /// Scans a table&#39;s rows, optionally filtering by the given predicate expression.</code>
+<a href="#l401" class="line" id="l401">    401</a><code>     fn scan(&amp;self, table: &amp;str, filter: Option&lt;Expression&gt;) -&gt; Result&lt;Scan&gt;;</code>
+<a href="#l402" class="line" id="l402">    402</a><code>     /// Updates a table row.</code>
+<a href="#l403" class="line" id="l403">    403</a><code>     fn update(&amp;mut self, table: &amp;str, id: &amp;Value, row: Row) -&gt; Result&lt;()&gt;;</code>
+<a href="#l404" class="line" id="l404">    404</a><code> </code>
+<a href="#l405" class="line" id="l405">    405</a><code>     /// Reads an index entry, if it exists.</code>
+<a href="#l406" class="line" id="l406">    406</a><code>     fn read_index(&amp;self, table: &amp;str, column: &amp;str, value: &amp;Value) -&gt; Result&lt;HashSet&lt;Value&gt;&gt;;</code>
+<a href="#l407" class="line" id="l407">    407</a><code>     /// Scans a column&#39;s index entries.</code>
+<a href="#l408" class="line" id="l408">    408</a><code>     fn scan_index(&amp;self, table: &amp;str, column: &amp;str) -&gt; Result&lt;IndexScan&gt;;</code>
+<a href="#l409" class="line" id="l409">    409</a><code> }</code>
+<a href="#l410" class="line" id="l410">    410</a><code> ```</code>
+<a href="#l411" class="line" id="l411">    411</a><code> </code>
+<a href="#l412" class="line" id="l412">    412</a><code> The main SQL storage engine implementation is</code>
+<a href="#l413" class="line" id="l413">    413</a><code> [`sql::engine::KV`](https://github.com/erikgrinaker/toydb/blob/master/src/sql/engine/kv.rs), which </code>
+<a href="#l414" class="line" id="l414">    414</a><code> is built on top of an MVCC key/value store and its transaction functionality.</code>
+<a href="#l415" class="line" id="l415">    415</a><code> </code>
+<a href="#l416" class="line" id="l416">    416</a><code> The Raft SQL storage engine</code>
+<a href="#l417" class="line" id="l417">    417</a><code> [`sql::engine::Raft`](https://github.com/erikgrinaker/toydb/blob/master/src/sql/engine/raft.rs)</code>
+<a href="#l418" class="line" id="l418">    418</a><code> uses a Raft API client `raft::Client` to submit state machine commands specified by the enums </code>
+<a href="#l419" class="line" id="l419">    419</a><code> `Mutation` and `Query` to the local Raft node. It also provides a Raft state machine </code>
+<a href="#l420" class="line" id="l420">    420</a><code> `sql::engine::raft::State` which wraps a regular `sql::engine::KV` SQL storage engine and applies </code>
+<a href="#l421" class="line" id="l421">    421</a><code> state machine commands to it. Since the Raft SQL engine implements the `sql::Engine` trait, it can </code>
+<a href="#l422" class="line" id="l422">    422</a><code> be used interchangably with the local storage engine.</code>
+<a href="#l423" class="line" id="l423">    423</a><code> </code>
+<a href="#l424" class="line" id="l424">    424</a><code> #### Storage Tradeoffs</code>
+<a href="#l425" class="line" id="l425">    425</a><code> </code>
+<a href="#l426" class="line" id="l426">    426</a><code> **Raft result streaming:** result streaming is not implemented for Raft commands, so the Raft</code>
+<a href="#l427" class="line" id="l427">    427</a><code> SQL engine must buffer the entire result set in memory and serialize it before returning it to</code>
+<a href="#l428" class="line" id="l428">    428</a><code> the client - particularly expensive for table scans. Implementing streaming in Raft was considered </code>
+<a href="#l429" class="line" id="l429">    429</a><code> out of scope for the project.</code>
+<a href="#l430" class="line" id="l430">    430</a><code> </code>
+<a href="#l431" class="line" id="l431">    431</a><code> ### Parsing</code>
+<a href="#l432" class="line" id="l432">    432</a><code> </code>
+<a href="#l433" class="line" id="l433">    433</a><code> The SQL session [`sql::Session`](https://github.com/erikgrinaker/toydb/blob/master/src/sql/engine/mod.rs)</code>
+<a href="#l434" class="line" id="l434">    434</a><code> takes plain-text SQL queries via `execute()` and returns the result. The first step in this process </code>
+<a href="#l435" class="line" id="l435">    435</a><code> is to parse the query into an [abstract syntax tree](https://en.wikipedia.org/wiki/Abstract_syntax_tree)</code>
+<a href="#l436" class="line" id="l436">    436</a><code> (AST) which represents the query semantics. This happens as follows:</code>
+<a href="#l437" class="line" id="l437">    437</a><code> </code>
+<a href="#l438" class="line" id="l438">    438</a><code> &gt; SQL → Lexer → Tokens → Parser → AST</code>
+<a href="#l439" class="line" id="l439">    439</a><code> </code>
+<a href="#l440" class="line" id="l440">    440</a><code> The lexer</code>
+<a href="#l441" class="line" id="l441">    441</a><code> [`sql::Lexer`](https://github.com/erikgrinaker/toydb/blob/master/src/sql/parser/lexer.rs) takes</code>
+<a href="#l442" class="line" id="l442">    442</a><code> a SQL string, splits it into pieces, and classifies them as tokens `sql::Token`. It does not</code>
+<a href="#l443" class="line" id="l443">    443</a><code> care about the meaning of the tokens, but removes whitespace and tries to figure out if</code>
+<a href="#l444" class="line" id="l444">    444</a><code> something is a number, string, keyword, and so on. It also does some basic pre-processing, such as</code>
+<a href="#l445" class="line" id="l445">    445</a><code> interpreting string quotes, checking number formatting, and rejecting unknown keywords.</code>
+<a href="#l446" class="line" id="l446">    446</a><code> </code>
+<a href="#l447" class="line" id="l447">    447</a><code> For example, the following input string results in the listed tokens, even though the query is </code>
+<a href="#l448" class="line" id="l448">    448</a><code> invalid:</code>
+<a href="#l449" class="line" id="l449">    449</a><code> </code>
+<a href="#l450" class="line" id="l450">    450</a><code> &gt; `3.14 +UPDATE &#39;abc&#39;` → `Token::Number(&quot;3.14&quot;)` `Token::Plus` `Token::Keyword(Keyword::Update)` `Token::String(&quot;abc&quot;)`</code>
+<a href="#l451" class="line" id="l451">    451</a><code> </code>
+<a href="#l452" class="line" id="l452">    452</a><code> The parser [`sql::Parser`](https://github.com/erikgrinaker/toydb/blob/master/src/sql/parser/mod.rs)</code>
+<a href="#l453" class="line" id="l453">    453</a><code> iterates over the tokens generated by the lexer, interprets them, and builds an AST representing</code>
+<a href="#l454" class="line" id="l454">    454</a><code> the semantic query. For example, `SELECT name, 2020 - birthyear AS age FROM people` </code>
+<a href="#l455" class="line" id="l455">    455</a><code> results in the following AST:</code>
+<a href="#l456" class="line" id="l456">    456</a><code> </code>
+<a href="#l457" class="line" id="l457">    457</a><code> ```rust</code>
+<a href="#l458" class="line" id="l458">    458</a><code> ast::Statement::Select{</code>
+<a href="#l459" class="line" id="l459">    459</a><code>     select: vec![</code>
+<a href="#l460" class="line" id="l460">    460</a><code>         (ast::Expression::Field(None, &quot;name&quot;), None),</code>
+<a href="#l461" class="line" id="l461">    461</a><code>         (ast::Expression::Operation(</code>
+<a href="#l462" class="line" id="l462">    462</a><code>             ast::Operation::Subtract(</code>
+<a href="#l463" class="line" id="l463">    463</a><code>                 ast::Expression::Literal(ast::Literal::Integer(2020)),</code>
+<a href="#l464" class="line" id="l464">    464</a><code>                 ast::Expression::Field(None, &quot;birthyear&quot;),</code>
+<a href="#l465" class="line" id="l465">    465</a><code>             )</code>
+<a href="#l466" class="line" id="l466">    466</a><code>         ), Some(&quot;age&quot;)),</code>
+<a href="#l467" class="line" id="l467">    467</a><code>     ],</code>
+<a href="#l468" class="line" id="l468">    468</a><code>     from: vec![</code>
+<a href="#l469" class="line" id="l469">    469</a><code>         ast::FromItem::Table{name: &quot;people&quot;, alias: None},</code>
+<a href="#l470" class="line" id="l470">    470</a><code>     ],</code>
+<a href="#l471" class="line" id="l471">    471</a><code>     where: None,</code>
+<a href="#l472" class="line" id="l472">    472</a><code>     group_by: vec![],</code>
+<a href="#l473" class="line" id="l473">    473</a><code>     having: None,</code>
+<a href="#l474" class="line" id="l474">    474</a><code>     order: vec![],</code>
+<a href="#l475" class="line" id="l475">    475</a><code>     offset: None,</code>
+<a href="#l476" class="line" id="l476">    476</a><code>     limit: None,</code>
+<a href="#l477" class="line" id="l477">    477</a><code> }</code>
+<a href="#l478" class="line" id="l478">    478</a><code> ```</code>
+<a href="#l479" class="line" id="l479">    479</a><code> </code>
+<a href="#l480" class="line" id="l480">    480</a><code> The parser will interpret the SQL _syntax_, determining the type of query and its parameters,</code>
+<a href="#l481" class="line" id="l481">    481</a><code> returning an error for any invalid syntax. However, it has no idea if the table `people`</code>
+<a href="#l482" class="line" id="l482">    482</a><code> actually exists, or if the column `birthyear` is an integer - that is the job of the planner.</code>
+<a href="#l483" class="line" id="l483">    483</a><code> </code>
+<a href="#l484" class="line" id="l484">    484</a><code> Notably, the parser also parses expressions, such as `1 + 2 * 3`. This is non-trivial due to</code>
+<a href="#l485" class="line" id="l485">    485</a><code> precedence rules, i.e. `2 * 3` should be evaluated first, but not if there are parentheses</code>
+<a href="#l486" class="line" id="l486">    486</a><code> around `(1 + 2)`. The toyDB parser uses the</code>
+<a href="#l487" class="line" id="l487">    487</a><code> [precedence climbing algorithm](https://eli.thegreenplace.net/2012/08/02/parsing-expressions-by-precedence-climbing)</code>
+<a href="#l488" class="line" id="l488">    488</a><code> for this. Also note that AST expressions are different from SQL engine expressions, and do not map </code>
+<a href="#l489" class="line" id="l489">    489</a><code> one-to-one. This is clearest in the case of function calls, where the parser does not know (or </code>
+<a href="#l490" class="line" id="l490">    490</a><code> care) if a given function exists, it just parses a function call as an arbitrary function name and </code>
+<a href="#l491" class="line" id="l491">    491</a><code> arguments. The planner will translate this into actual expressions that can be evaluated.</code>
+<a href="#l492" class="line" id="l492">    492</a><code> </code>
+<a href="#l493" class="line" id="l493">    493</a><code> ### Planning</code>
+<a href="#l494" class="line" id="l494">    494</a><code> </code>
+<a href="#l495" class="line" id="l495">    495</a><code> The SQL planner [`sql::Planner`](https://github.com/erikgrinaker/toydb/blob/master/src/sql/plan/planner.rs)</code>
+<a href="#l496" class="line" id="l496">    496</a><code> takes the AST generated by the parser and builds a SQL execution plan</code>
+<a href="#l497" class="line" id="l497">    497</a><code> [`sql::Plan`](https://github.com/erikgrinaker/toydb/blob/master/src/sql/plan/mod.rs), which is an </code>
+<a href="#l498" class="line" id="l498">    498</a><code> abstract representation of the steps necessary to execute the query. For example, the following </code>
+<a href="#l499" class="line" id="l499">    499</a><code> shows a simple query and corresponding execution plan, formatted as `EXPLAIN` output:</code>
+<a href="#l500" class="line" id="l500">    500</a><code> </code>
+<a href="#l501" class="line" id="l501">    501</a><code> ```</code>
+<a href="#l502" class="line" id="l502">    502</a><code> SELECT id, title, rating * 100 FROM movies WHERE released &gt; 2010 ORDER BY rating DESC;</code>
+<a href="#l503" class="line" id="l503">    503</a><code> </code>
+<a href="#l504" class="line" id="l504">    504</a><code> Order: rating desc</code>
+<a href="#l505" class="line" id="l505">    505</a><code> └─ Projection: id, title, rating * 100</code>
+<a href="#l506" class="line" id="l506">    506</a><code>    └─ Filter: released &gt; 2010</code>
+<a href="#l507" class="line" id="l507">    507</a><code>       └─ Scan: movies</code>
+<a href="#l508" class="line" id="l508">    508</a><code> ```</code>
+<a href="#l509" class="line" id="l509">    509</a><code> </code>
+<a href="#l510" class="line" id="l510">    510</a><code> The plan nodes `sql::Node` in a query execution plan represent a</code>
+<a href="#l511" class="line" id="l511">    511</a><code> [relational algebra](https://en.wikipedia.org/wiki/Relational_algebra) operator, where the</code>
+<a href="#l512" class="line" id="l512">    512</a><code> output from one node flows as input into the next. In the example above, the query first does a</code>
+<a href="#l513" class="line" id="l513">    513</a><code> full table scan of the `movies` table, then applies the filter `released &gt; 2010` to the rows,</code>
+<a href="#l514" class="line" id="l514">    514</a><code> before projecting (formatting) the result and sorting it by `rating`.</code>
+<a href="#l515" class="line" id="l515">    515</a><code> </code>
+<a href="#l516" class="line" id="l516">    516</a><code> Most of the planning is fairly straightforward, translating AST nodes to plan nodes and expressions.</code>
+<a href="#l517" class="line" id="l517">    517</a><code> The trickiest part is resolving table and column names to result column indexes across multiple</code>
+<a href="#l518" class="line" id="l518">    518</a><code> layers of aliases, joins, and projections - this is handled with `sql::plan::Scope`, which keeps</code>
+<a href="#l519" class="line" id="l519">    519</a><code> track of what names are visible to the node being built and maps them to column indexes. Another</code>
+<a href="#l520" class="line" id="l520">    520</a><code> challenge is aggregate functions, which are implemented as a pre-projection of function</code>
+<a href="#l521" class="line" id="l521">    521</a><code> arguments and grouping/hidden columns, then an aggregation node, and finally a post-projection</code>
+<a href="#l522" class="line" id="l522">    522</a><code> evaluating the final aggregate expressions - like in the following example:</code>
+<a href="#l523" class="line" id="l523">    523</a><code> </code>
+<a href="#l524" class="line" id="l524">    524</a><code> ```</code>
+<a href="#l525" class="line" id="l525">    525</a><code> SELECT   g.name AS genre, MAX(rating * 100) - MIN(rating * 100)</code>
+<a href="#l526" class="line" id="l526">    526</a><code> FROM     movies m JOIN genres g ON m.genre_id = g.id</code>
+<a href="#l527" class="line" id="l527">    527</a><code> WHERE    m.released &gt; 2000</code>
+<a href="#l528" class="line" id="l528">    528</a><code> GROUP BY g.id, g.name</code>
+<a href="#l529" class="line" id="l529">    529</a><code> HAVING   MIN(rating) &gt; 7 </code>
+<a href="#l530" class="line" id="l530">    530</a><code> ORDER BY g.id ASC;</code>
+<a href="#l531" class="line" id="l531">    531</a><code> </code>
+<a href="#l532" class="line" id="l532">    532</a><code> Projection: #0, #1</code>
+<a href="#l533" class="line" id="l533">    533</a><code> └─ Order: g.id asc</code>
+<a href="#l534" class="line" id="l534">    534</a><code>    └─ Filter: #2 &gt; 7</code>
+<a href="#l535" class="line" id="l535">    535</a><code>       └─ Projection: genre, #0 - #1, #2, g.id</code>
+<a href="#l536" class="line" id="l536">    536</a><code>          └─ Aggregation: maximum, minimum, minimum</code>
+<a href="#l537" class="line" id="l537">    537</a><code>             └─ Projection: rating * 100, rating * 100, rating, g.id, g.name</code>
+<a href="#l538" class="line" id="l538">    538</a><code>                └─ Filter: m.released &gt; 2000</code>
+<a href="#l539" class="line" id="l539">    539</a><code>                   └─ NestedLoopJoin: inner on m.genre_id = g.id</code>
+<a href="#l540" class="line" id="l540">    540</a><code>                      ├─ Scan: movies as m</code>
+<a href="#l541" class="line" id="l541">    541</a><code>                      └─ Scan: genres as g</code>
+<a href="#l542" class="line" id="l542">    542</a><code> ```</code>
+<a href="#l543" class="line" id="l543">    543</a><code> </code>
+<a href="#l544" class="line" id="l544">    544</a><code> The planner generates a very naïve execution plan, primarily concerned with producing one that</code>
+<a href="#l545" class="line" id="l545">    545</a><code> is _correct_ but not necessarily _fast_. This means that it will always do full table scans,</code>
+<a href="#l546" class="line" id="l546">    546</a><code> always use [nested loop joins](https://en.wikipedia.org/wiki/Nested_loop_join), and so on. The plan </code>
+<a href="#l547" class="line" id="l547">    547</a><code> is then optimized by a series of optimizers implementing</code>
+<a href="#l548" class="line" id="l548">    548</a><code> [`sql::Optimizer`](https://github.com/erikgrinaker/toydb/blob/master/src/sql/plan/optimizer.rs):</code>
+<a href="#l549" class="line" id="l549">    549</a><code> </code>
+<a href="#l550" class="line" id="l550">    550</a><code> * `ConstantFolder`: pre-evaluates constant expressions to avoid having to re-evaluate them for each </code>
+<a href="#l551" class="line" id="l551">    551</a><code>   row.</code>
+<a href="#l552" class="line" id="l552">    552</a><code> </code>
+<a href="#l553" class="line" id="l553">    553</a><code> * `FilterPushdown`: pushes filters deeper into the query to reduce the number of rows evaluated by</code>
+<a href="#l554" class="line" id="l554">    554</a><code>   each node, e.g. by pushing single-table predicates all the way to the table scan node such that</code>
+<a href="#l555" class="line" id="l555">    555</a><code>   filtered nodes won&#39;t have to go across the Raft layer.</code>
+<a href="#l556" class="line" id="l556">    556</a><code> </code>
+<a href="#l557" class="line" id="l557">    557</a><code> * `IndexLookup`: transforms table scans into primary key or index lookups where possible.</code>
+<a href="#l558" class="line" id="l558">    558</a><code> </code>
+<a href="#l559" class="line" id="l559">    559</a><code> * `NoopCleaner`: attempts to remove noop operations, e.g. filter nodes that evaluate to a constant </code>
+<a href="#l560" class="line" id="l560">    560</a><code>   `TRUE` value.</code>
+<a href="#l561" class="line" id="l561">    561</a><code> </code>
+<a href="#l562" class="line" id="l562">    562</a><code> * `JoinType`: transforms nested loop joins into hash joins for equijoins (equality join predicate).</code>
+<a href="#l563" class="line" id="l563">    563</a><code> </code>
+<a href="#l564" class="line" id="l564">    564</a><code> Optimizers make heavy use of [boolean algebra](https://en.wikipedia.org/wiki/Boolean_algebra) to</code>
+<a href="#l565" class="line" id="l565">    565</a><code> transform expressions into forms that are more convenient to work with. For example, partial</code>
+<a href="#l566" class="line" id="l566">    566</a><code> filter pushdown (e.g. across join nodes) can only push down conjunctive clauses (i.e. AND parts),</code>
+<a href="#l567" class="line" id="l567">    567</a><code> so expressions are converted into</code>
+<a href="#l568" class="line" id="l568">    568</a><code> [conjunctive normal form](https://en.wikipedia.org/wiki/Conjunctive_normal_form) first such that</code>
+<a href="#l569" class="line" id="l569">    569</a><code> each part can be considered separately.</code>
+<a href="#l570" class="line" id="l570">    570</a><code> </code>
+<a href="#l571" class="line" id="l571">    571</a><code> Below is an example of a complex optimized plan where table scans have been replaced with</code>
+<a href="#l572" class="line" id="l572">    572</a><code> key and index lookups, filters have been pushed down into scan nodes, and nested loop joins have</code>
+<a href="#l573" class="line" id="l573">    573</a><code> been replaced by hash joins. It fetches science fiction movies released since 2000 by studios</code>
+<a href="#l574" class="line" id="l574">    574</a><code> that have released any movie with a rating of 8 or more:</code>
+<a href="#l575" class="line" id="l575">    575</a><code> </code>
+<a href="#l576" class="line" id="l576">    576</a><code> ```</code>
+<a href="#l577" class="line" id="l577">    577</a><code> SELECT   m.id, m.title, g.name AS genre, m.released, s.name AS studio</code>
+<a href="#l578" class="line" id="l578">    578</a><code> FROM     movies m JOIN genres g ON m.genre_id = g.id,</code>
+<a href="#l579" class="line" id="l579">    579</a><code>          studios s JOIN movies good ON good.studio_id = s.id AND good.rating &gt;= 8</code>
+<a href="#l580" class="line" id="l580">    580</a><code> WHERE    m.studio_id = s.id AND m.released &gt;= 2000 AND g.id = 1</code>
+<a href="#l581" class="line" id="l581">    581</a><code> ORDER BY m.title ASC;</code>
+<a href="#l582" class="line" id="l582">    582</a><code> </code>
+<a href="#l583" class="line" id="l583">    583</a><code> Order: m.title asc</code>
+<a href="#l584" class="line" id="l584">    584</a><code> └─ Projection: m.id, m.title, g.name, m.released, s.name</code>
+<a href="#l585" class="line" id="l585">    585</a><code>    └─ HashJoin: inner on m.studio_id = s.id</code>
+<a href="#l586" class="line" id="l586">    586</a><code>       ├─ HashJoin: inner on m.genre_id = g.id</code>
+<a href="#l587" class="line" id="l587">    587</a><code>       │  ├─ Filter: m.released &gt; 2000 OR m.released = 2000</code>
+<a href="#l588" class="line" id="l588">    588</a><code>       │  │  └─ IndexLookup: movies as m column genre_id (1)</code>
+<a href="#l589" class="line" id="l589">    589</a><code>       │  └─ KeyLookup: genres as g (1)</code>
+<a href="#l590" class="line" id="l590">    590</a><code>       └─ HashJoin: inner on s.id = good.studio_id</code>
+<a href="#l591" class="line" id="l591">    591</a><code>          ├─ Scan: studios as s</code>
+<a href="#l592" class="line" id="l592">    592</a><code>          └─ Scan: movies as good (good.rating &gt; 8 OR good.rating = 8)</code>
+<a href="#l593" class="line" id="l593">    593</a><code> ```</code>
+<a href="#l594" class="line" id="l594">    594</a><code> </code>
+<a href="#l595" class="line" id="l595">    595</a><code> #### Planning Tradeoffs</code>
+<a href="#l596" class="line" id="l596">    596</a><code> </code>
+<a href="#l597" class="line" id="l597">    597</a><code> **Type checking:** expression type conflicts are only detected at evaluation time, not during </code>
+<a href="#l598" class="line" id="l598">    598</a><code> planning.</code>
+<a href="#l599" class="line" id="l599">    599</a><code> </code>
+<a href="#l600" class="line" id="l600">    600</a><code> ### Execution</code>
+<a href="#l601" class="line" id="l601">    601</a><code> </code>
+<a href="#l602" class="line" id="l602">    602</a><code> Every SQL plan node has a corresponding executor, implementing the</code>
+<a href="#l603" class="line" id="l603">    603</a><code> [`sql::Executor`](https://github.com/erikgrinaker/toydb/blob/master/src/sql/execution/mod.rs) trait:</code>
+<a href="#l604" class="line" id="l604">    604</a><code> </code>
+<a href="#l605" class="line" id="l605">    605</a><code> ```rust</code>
+<a href="#l606" class="line" id="l606">    606</a><code> pub trait Executor&lt;T: Transaction&gt; {</code>
+<a href="#l607" class="line" id="l607">    607</a><code>     /// Executes the executor, consuming it and returning a result set</code>
+<a href="#l608" class="line" id="l608">    608</a><code>     fn execute(self: Box&lt;Self&gt;, txn: &amp;mut T) -&gt; Result&lt;ResultSet&gt;;</code>
+<a href="#l609" class="line" id="l609">    609</a><code> }</code>
+<a href="#l610" class="line" id="l610">    610</a><code> ```</code>
+<a href="#l611" class="line" id="l611">    611</a><code> </code>
+<a href="#l612" class="line" id="l612">    612</a><code> Executors are given a `sql::Transaction` to access the SQL storage engine, and return a </code>
+<a href="#l613" class="line" id="l613">    613</a><code> `sql::ResultSet` with the query result. Most often, the result is of type `sql::ResultSet::Query` </code>
+<a href="#l614" class="line" id="l614">    614</a><code> containing a list of columns and a row iterator. Most executors contain other executors that</code>
+<a href="#l615" class="line" id="l615">    615</a><code> they use as inputs, for example the `Filter` executor will often have a `Scan` executor as a source:</code>
+<a href="#l616" class="line" id="l616">    616</a><code> </code>
+<a href="#l617" class="line" id="l617">    617</a><code> ```rust</code>
+<a href="#l618" class="line" id="l618">    618</a><code> pub struct Filter&lt;T: Transaction&gt; {</code>
+<a href="#l619" class="line" id="l619">    619</a><code>     source: Box&lt;dyn Executor&lt;T&gt;&gt;,</code>
+<a href="#l620" class="line" id="l620">    620</a><code>     predicate: Expression,</code>
+<a href="#l621" class="line" id="l621">    621</a><code> }</code>
+<a href="#l622" class="line" id="l622">    622</a><code> ```</code>
+<a href="#l623" class="line" id="l623">    623</a><code> </code>
+<a href="#l624" class="line" id="l624">    624</a><code> Calling `execute` on a `sql::Plan` will build and execute the root node&#39;s executor, which in</code>
+<a href="#l625" class="line" id="l625">    625</a><code> turn will recursively call `execute` on its source executors (if any) and process their results.</code>
+<a href="#l626" class="line" id="l626">    626</a><code> Executors typically augment the source&#39;s returned row iterator using Rust&#39;s</code>
+<a href="#l627" class="line" id="l627">    627</a><code> [`Iterator`](https://doc.rust-lang.org/std/iter/trait.Iterator.html) functionality, e.g. by</code>
+<a href="#l628" class="line" id="l628">    628</a><code> calling `filter()` on it and returning a new iterator. The entire execution engine thus works in</code>
+<a href="#l629" class="line" id="l629">    629</a><code> a streaming fashion and leverages Rust&#39;s [zero-cost iterator</code>
+<a href="#l630" class="line" id="l630">    630</a><code> abstractions](https://doc.rust-lang.org/book/ch13-04-performance.html).</code>
+<a href="#l631" class="line" id="l631">    631</a><code> </code>
+<a href="#l632" class="line" id="l632">    632</a><code> Finally, the root `ResultSet` is returned to the client.</code>
+<a href="#l633" class="line" id="l633">    633</a><code> </code>
+<a href="#l634" class="line" id="l634">    634</a><code> ## Server</code>
+<a href="#l635" class="line" id="l635">    635</a><code> </code>
+<a href="#l636" class="line" id="l636">    636</a><code> The toyDB [`Server`](https://github.com/erikgrinaker/toydb/blob/master/src/server.rs) manages </code>
+<a href="#l637" class="line" id="l637">    637</a><code> network traffic for the Raft and SQL engines, using the [Tokio](https://tokio.rs) async executor. </code>
+<a href="#l638" class="line" id="l638">    638</a><code> It opens TCP listeners on port `9605` for SQL clients and  `9705` for Raft peers, both using </code>
+<a href="#l639" class="line" id="l639">    639</a><code> length-prefixed [Bincode](https://github.com/servo/bincode)-encoded message passing via</code>
+<a href="#l640" class="line" id="l640">    640</a><code> [Serde](https://serde.rs)-encoded Tokio streams as a protocol.</code>
+<a href="#l641" class="line" id="l641">    641</a><code> </code>
+<a href="#l642" class="line" id="l642">    642</a><code> The Raft server is split out to [`raft::Server`](https://github.com/erikgrinaker/toydb/blob/master/src/raft/server.rs),</code>
+<a href="#l643" class="line" id="l643">    643</a><code> which runs a main [event loop](https://en.wikipedia.org/wiki/Event_loop) routing Raft messages </code>
+<a href="#l644" class="line" id="l644">    644</a><code> between the local Raft node, TCP peers, and local state machine clients (i.e. the Raft SQL engine </code>
+<a href="#l645" class="line" id="l645">    645</a><code> wrapper), as well as ticking the Raft logical clock at regular intervals. It spawns separate Tokio </code>
+<a href="#l646" class="line" id="l646">    646</a><code> tasks that maintain outbound TCP connections to all Raft peers, while internal communication </code>
+<a href="#l647" class="line" id="l647">    647</a><code> happens via `mpsc`channels.</code>
+<a href="#l648" class="line" id="l648">    648</a><code> </code>
+<a href="#l649" class="line" id="l649">    649</a><code> The SQL server spawns a new Tokio task for each SQL client that connects, running a separate</code>
+<a href="#l650" class="line" id="l650">    650</a><code> SQL session from the SQL storage engine on top of Raft. It communicates with the client by passing</code>
+<a href="#l651" class="line" id="l651">    651</a><code> `server::Request` and `server::Response` messages that are translated to `sql::Session` calls.</code>
+<a href="#l652" class="line" id="l652">    652</a><code> </code>
+<a href="#l653" class="line" id="l653">    653</a><code> The main [`toydb`](https://github.com/erikgrinaker/toydb/blob/master/src/bin/toydb.rs) binary</code>
+<a href="#l654" class="line" id="l654">    654</a><code> simply initializes a toyDB server based on command-line arguments and configuration files, and then </code>
+<a href="#l655" class="line" id="l655">    655</a><code> runs it via the Tokio runtime.</code>
+<a href="#l656" class="line" id="l656">    656</a><code> </code>
+<a href="#l657" class="line" id="l657">    657</a><code> #### Server Tradeoffs</code>
+<a href="#l658" class="line" id="l658">    658</a><code> </code>
+<a href="#l659" class="line" id="l659">    659</a><code> **Security:** all network traffic is unauthenticated an in plaintext, as security was considered</code>
+<a href="#l660" class="line" id="l660">    660</a><code> out of scope for the project.</code>
+<a href="#l661" class="line" id="l661">    661</a><code> </code>
+<a href="#l662" class="line" id="l662">    662</a><code> ## Client</code>
+<a href="#l663" class="line" id="l663">    663</a><code> </code>
+<a href="#l664" class="line" id="l664">    664</a><code> The toyDB [`Client`](https://github.com/erikgrinaker/toydb/blob/master/src/client.rs) provides a </code>
+<a href="#l665" class="line" id="l665">    665</a><code> simple API for interacting with a server, mainly by executing SQL statements via `execute()` </code>
+<a href="#l666" class="line" id="l666">    666</a><code> returning `sql::ResultSet`.</code>
+<a href="#l667" class="line" id="l667">    667</a><code> </code>
+<a href="#l668" class="line" id="l668">    668</a><code> The [`toysql`](https://github.com/erikgrinaker/toydb/blob/master/src/bin/toysql.rs) command-line</code>
+<a href="#l669" class="line" id="l669">    669</a><code> client is a simple REPL client that connects to a server using the toyDB `Client` and continually </code>
+<a href="#l670" class="line" id="l670">    670</a><code> prompts the user for a SQL query to execute, displaying the returned result.</code>
 </pre>
 </div>
 </body>

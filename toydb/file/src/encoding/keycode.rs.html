@@ -12,786 +12,787 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Source+Code+Pro:ital,wght@0,200..900;1,200..900&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/default.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/base16/tender.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
 <script>hljs.highlightAll();</script>
-</head>
+<style>pre code.hljs {display: inline;padding: 0;} code.hljs {padding: 0;} .hljs {background: initial;}</style></head>
 <body>
 <table><tr><td><a href="../../../../"><img src="../../../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
 </span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<br>
 <a href="../../../log.html">Log</a> | <a href="../../../files.html">Files</a> | <a href="../../../refs.html">Refs</a> | <a href="../../../file/README.md.html">README</a> | <a href="../../../file/LICENSE.html">LICENSE</a></td></tr></table>
 <hr/>
 <div id="content">
 <p> keycode.rs (24886B)</p><hr/><pre id="blob">
-<code><a href="#l1" class="line" id="l1">      1</a> //! KeyCode is a lexicographical order-preserving binary encoding for use with</code>
-<code><a href="#l2" class="line" id="l2">      2</a> //! keys. It is designed for simplicity, not efficiency (i.e. it does not use</code>
-<code><a href="#l3" class="line" id="l3">      3</a> //! varints or other compression methods).</code>
-<code><a href="#l4" class="line" id="l4">      4</a> //!</code>
-<code><a href="#l5" class="line" id="l5">      5</a> //! Ordering is important because it allows limited scans across specific parts</code>
-<code><a href="#l6" class="line" id="l6">      6</a> //! of the keyspace, e.g. scanning an individual table or using an index range</code>
-<code><a href="#l7" class="line" id="l7">      7</a> //! predicate like WHERE id &lt; 100. It also avoids sorting in some cases where</code>
-<code><a href="#l8" class="line" id="l8">      8</a> //! the keys are already in the desired order, e.g. in the Raft log.</code>
-<code><a href="#l9" class="line" id="l9">      9</a> //!</code>
-<code><a href="#l10" class="line" id="l10">     10</a> //! The encoding is not self-describing: the caller must provide a concrete type</code>
-<code><a href="#l11" class="line" id="l11">     11</a> //! to decode into, and the binary key must conform to its structure.</code>
-<code><a href="#l12" class="line" id="l12">     12</a> //!</code>
-<code><a href="#l13" class="line" id="l13">     13</a> //! KeyCode supports a subset of primitive data types, encoded as follows:</code>
-<code><a href="#l14" class="line" id="l14">     14</a> //!</code>
-<code><a href="#l15" class="line" id="l15">     15</a> //! bool:    0x00 for false, 0x01 for true.</code>
-<code><a href="#l16" class="line" id="l16">     16</a> //! u64:     Big-endian binary representation.</code>
-<code><a href="#l17" class="line" id="l17">     17</a> //! i64:     Big-endian binary representation, with sign bit flipped.</code>
-<code><a href="#l18" class="line" id="l18">     18</a> //! f64:     Big-endian binary representation, with sign bit flipped, and rest if negative.</code>
-<code><a href="#l19" class="line" id="l19">     19</a> //! Vec&lt;u8&gt;: 0x00 is escaped as 0x00ff, terminated with 0x0000.</code>
-<code><a href="#l20" class="line" id="l20">     20</a> //! String:  Like Vec&lt;u8&gt;.</code>
-<code><a href="#l21" class="line" id="l21">     21</a> //!</code>
-<code><a href="#l22" class="line" id="l22">     22</a> //! Additionally, several container types are supported:</code>
-<code><a href="#l23" class="line" id="l23">     23</a> //!</code>
-<code><a href="#l24" class="line" id="l24">     24</a> //! Tuple:  Concatenation of elements, with no surrounding structure.</code>
-<code><a href="#l25" class="line" id="l25">     25</a> //! Array:  Like tuple.</code>
-<code><a href="#l26" class="line" id="l26">     26</a> //! Vec:    Like tuple.</code>
-<code><a href="#l27" class="line" id="l27">     27</a> //! Enum:   The variant&#39;s enum index as a single u8 byte.</code>
-<code><a href="#l28" class="line" id="l28">     28</a> //!</code>
-<code><a href="#l29" class="line" id="l29">     29</a> //! SQL Value enums are encoded according to the above scheme, i.e. a single</code>
-<code><a href="#l30" class="line" id="l30">     30</a> //! byte identifying the enum variant by index, then the primitive value.</code>
-<code><a href="#l31" class="line" id="l31">     31</a> //!</code>
-<code><a href="#l32" class="line" id="l32">     32</a> //! The canonical key reprentation is an enum -- for example:</code>
-<code><a href="#l33" class="line" id="l33">     33</a> //!</code>
-<code><a href="#l34" class="line" id="l34">     34</a> //! ```</code>
-<code><a href="#l35" class="line" id="l35">     35</a> //! #[derive(Debug, Deserialize, Serialize)]</code>
-<code><a href="#l36" class="line" id="l36">     36</a> //! enum Key {</code>
-<code><a href="#l37" class="line" id="l37">     37</a> //!     Foo,</code>
-<code><a href="#l38" class="line" id="l38">     38</a> //!     Bar(String),</code>
-<code><a href="#l39" class="line" id="l39">     39</a> //!     Baz(bool, u64, #[serde(with = &quot;serde_bytes&quot;)] Vec&lt;u8&gt;),</code>
-<code><a href="#l40" class="line" id="l40">     40</a> //! }</code>
-<code><a href="#l41" class="line" id="l41">     41</a> //! ```</code>
-<code><a href="#l42" class="line" id="l42">     42</a> //!</code>
-<code><a href="#l43" class="line" id="l43">     43</a> //! Unfortunately, byte vectors and slices such as Vec&lt;u8&gt; must be wrapped with</code>
-<code><a href="#l44" class="line" id="l44">     44</a> //! serde_bytes::ByteBuf or use the #[serde(with=&quot;serde_bytes&quot;)] attribute. See</code>
-<code><a href="#l45" class="line" id="l45">     45</a> //! https://github.com/serde-rs/bytes</code>
-<code><a href="#l46" class="line" id="l46">     46</a> </code>
-<code><a href="#l47" class="line" id="l47">     47</a> use crate::errdata;</code>
-<code><a href="#l48" class="line" id="l48">     48</a> use crate::error::{Error, Result};</code>
-<code><a href="#l49" class="line" id="l49">     49</a> </code>
-<code><a href="#l50" class="line" id="l50">     50</a> use serde::{de, de::IntoDeserializer as _, ser};</code>
-<code><a href="#l51" class="line" id="l51">     51</a> </code>
-<code><a href="#l52" class="line" id="l52">     52</a> /// Serializes a key to a binary KeyCode representation.</code>
-<code><a href="#l53" class="line" id="l53">     53</a> ///</code>
-<code><a href="#l54" class="line" id="l54">     54</a> /// In the common case, the encoded key is borrowed for a storage engine call</code>
-<code><a href="#l55" class="line" id="l55">     55</a> /// and then thrown away. We could avoid a bunch of allocations by taking a</code>
-<code><a href="#l56" class="line" id="l56">     56</a> /// reusable byte vector to encode into and return a reference to it, but we</code>
-<code><a href="#l57" class="line" id="l57">     57</a> /// keep it simple.</code>
-<code><a href="#l58" class="line" id="l58">     58</a> pub fn serialize&lt;T: ser::Serialize&gt;(key: &amp;T) -&gt; Vec&lt;u8&gt; {</code>
-<code><a href="#l59" class="line" id="l59">     59</a>     let mut serializer = Serializer { output: Vec::new() };</code>
-<code><a href="#l60" class="line" id="l60">     60</a>     // Panic on serialization failures, as this is typically an issue with the</code>
-<code><a href="#l61" class="line" id="l61">     61</a>     // provided data structure.</code>
-<code><a href="#l62" class="line" id="l62">     62</a>     key.serialize(&amp;mut serializer).expect(&quot;keycode serialization failed&quot;);</code>
-<code><a href="#l63" class="line" id="l63">     63</a>     serializer.output</code>
-<code><a href="#l64" class="line" id="l64">     64</a> }</code>
-<code><a href="#l65" class="line" id="l65">     65</a> </code>
-<code><a href="#l66" class="line" id="l66">     66</a> /// Deserializes a key from a binary KeyCode representation.</code>
-<code><a href="#l67" class="line" id="l67">     67</a> pub fn deserialize&lt;&#39;a, T: de::Deserialize&lt;&#39;a&gt;&gt;(input: &amp;&#39;a [u8]) -&gt; Result&lt;T&gt; {</code>
-<code><a href="#l68" class="line" id="l68">     68</a>     let mut deserializer = Deserializer::from_bytes(input);</code>
-<code><a href="#l69" class="line" id="l69">     69</a>     let t = T::deserialize(&amp;mut deserializer)?;</code>
-<code><a href="#l70" class="line" id="l70">     70</a>     if !deserializer.input.is_empty() {</code>
-<code><a href="#l71" class="line" id="l71">     71</a>         return errdata!(</code>
-<code><a href="#l72" class="line" id="l72">     72</a>             &quot;unexpected trailing bytes {:x?} at end of key {input:x?}&quot;,</code>
-<code><a href="#l73" class="line" id="l73">     73</a>             deserializer.input,</code>
-<code><a href="#l74" class="line" id="l74">     74</a>         );</code>
-<code><a href="#l75" class="line" id="l75">     75</a>     }</code>
-<code><a href="#l76" class="line" id="l76">     76</a>     Ok(t)</code>
-<code><a href="#l77" class="line" id="l77">     77</a> }</code>
-<code><a href="#l78" class="line" id="l78">     78</a> </code>
-<code><a href="#l79" class="line" id="l79">     79</a> /// Generates a key range for a key prefix, used e.g. for prefix scans.</code>
-<code><a href="#l80" class="line" id="l80">     80</a> ///</code>
-<code><a href="#l81" class="line" id="l81">     81</a> /// The exclusive end bound is generated by adding 1 to the value of the last</code>
-<code><a href="#l82" class="line" id="l82">     82</a> /// byte. If the last byte(s) is 0xff (so adding 1 would overflow), we instead</code>
-<code><a href="#l83" class="line" id="l83">     83</a> /// find the latest non-0xff byte, increment that, and truncate the rest. If all</code>
-<code><a href="#l84" class="line" id="l84">     84</a> /// bytes are 0xff, we scan to the end of the range, since there can&#39;t be other</code>
-<code><a href="#l85" class="line" id="l85">     85</a> /// prefixes after it.</code>
-<code><a href="#l86" class="line" id="l86">     86</a> pub fn prefix_range(prefix: &amp;[u8]) -&gt; (std::ops::Bound&lt;Vec&lt;u8&gt;&gt;, std::ops::Bound&lt;Vec&lt;u8&gt;&gt;) {</code>
-<code><a href="#l87" class="line" id="l87">     87</a>     let start = std::ops::Bound::Included(prefix.to_vec());</code>
-<code><a href="#l88" class="line" id="l88">     88</a>     let end = match prefix.iter().rposition(|b| *b != 0xff) {</code>
-<code><a href="#l89" class="line" id="l89">     89</a>         Some(i) =&gt; std::ops::Bound::Excluded(</code>
-<code><a href="#l90" class="line" id="l90">     90</a>             prefix.iter().take(i).copied().chain(std::iter::once(prefix[i] + 1)).collect(),</code>
-<code><a href="#l91" class="line" id="l91">     91</a>         ),</code>
-<code><a href="#l92" class="line" id="l92">     92</a>         None =&gt; std::ops::Bound::Unbounded,</code>
-<code><a href="#l93" class="line" id="l93">     93</a>     };</code>
-<code><a href="#l94" class="line" id="l94">     94</a>     (start, end)</code>
-<code><a href="#l95" class="line" id="l95">     95</a> }</code>
-<code><a href="#l96" class="line" id="l96">     96</a> </code>
-<code><a href="#l97" class="line" id="l97">     97</a> /// Serializes keys as binary byte vectors.</code>
-<code><a href="#l98" class="line" id="l98">     98</a> struct Serializer {</code>
-<code><a href="#l99" class="line" id="l99">     99</a>     output: Vec&lt;u8&gt;,</code>
-<code><a href="#l100" class="line" id="l100">    100</a> }</code>
-<code><a href="#l101" class="line" id="l101">    101</a> </code>
-<code><a href="#l102" class="line" id="l102">    102</a> impl&lt;&#39;a&gt; ser::Serializer for &amp;&#39;a mut Serializer {</code>
-<code><a href="#l103" class="line" id="l103">    103</a>     type Ok = ();</code>
-<code><a href="#l104" class="line" id="l104">    104</a>     type Error = Error;</code>
-<code><a href="#l105" class="line" id="l105">    105</a> </code>
-<code><a href="#l106" class="line" id="l106">    106</a>     type SerializeSeq = Self;</code>
-<code><a href="#l107" class="line" id="l107">    107</a>     type SerializeTuple = Self;</code>
-<code><a href="#l108" class="line" id="l108">    108</a>     type SerializeTupleVariant = Self;</code>
-<code><a href="#l109" class="line" id="l109">    109</a>     type SerializeTupleStruct = ser::Impossible&lt;(), Error&gt;;</code>
-<code><a href="#l110" class="line" id="l110">    110</a>     type SerializeMap = ser::Impossible&lt;(), Error&gt;;</code>
-<code><a href="#l111" class="line" id="l111">    111</a>     type SerializeStruct = ser::Impossible&lt;(), Error&gt;;</code>
-<code><a href="#l112" class="line" id="l112">    112</a>     type SerializeStructVariant = ser::Impossible&lt;(), Error&gt;;</code>
-<code><a href="#l113" class="line" id="l113">    113</a> </code>
-<code><a href="#l114" class="line" id="l114">    114</a>     /// bool simply uses 1 for true and 0 for false.</code>
-<code><a href="#l115" class="line" id="l115">    115</a>     fn serialize_bool(self, v: bool) -&gt; Result&lt;()&gt; {</code>
-<code><a href="#l116" class="line" id="l116">    116</a>         self.output.push(if v { 1 } else { 0 });</code>
-<code><a href="#l117" class="line" id="l117">    117</a>         Ok(())</code>
-<code><a href="#l118" class="line" id="l118">    118</a>     }</code>
-<code><a href="#l119" class="line" id="l119">    119</a> </code>
-<code><a href="#l120" class="line" id="l120">    120</a>     fn serialize_i8(self, _: i8) -&gt; Result&lt;()&gt; {</code>
-<code><a href="#l121" class="line" id="l121">    121</a>         unimplemented!()</code>
-<code><a href="#l122" class="line" id="l122">    122</a>     }</code>
-<code><a href="#l123" class="line" id="l123">    123</a> </code>
-<code><a href="#l124" class="line" id="l124">    124</a>     fn serialize_i16(self, _: i16) -&gt; Result&lt;()&gt; {</code>
-<code><a href="#l125" class="line" id="l125">    125</a>         unimplemented!()</code>
-<code><a href="#l126" class="line" id="l126">    126</a>     }</code>
-<code><a href="#l127" class="line" id="l127">    127</a> </code>
-<code><a href="#l128" class="line" id="l128">    128</a>     fn serialize_i32(self, _: i32) -&gt; Result&lt;()&gt; {</code>
-<code><a href="#l129" class="line" id="l129">    129</a>         unimplemented!()</code>
-<code><a href="#l130" class="line" id="l130">    130</a>     }</code>
-<code><a href="#l131" class="line" id="l131">    131</a> </code>
-<code><a href="#l132" class="line" id="l132">    132</a>     /// i64 uses the big-endian two&#39;s completement encoding, but flips the</code>
-<code><a href="#l133" class="line" id="l133">    133</a>     /// left-most sign bit such that negative numbers are ordered before</code>
-<code><a href="#l134" class="line" id="l134">    134</a>     /// positive numbers.</code>
-<code><a href="#l135" class="line" id="l135">    135</a>     ///</code>
-<code><a href="#l136" class="line" id="l136">    136</a>     /// The relative ordering of the remaining bits is already correct: -1, the</code>
-<code><a href="#l137" class="line" id="l137">    137</a>     /// largest negative integer, is encoded as 01111111...11111111, ordered</code>
-<code><a href="#l138" class="line" id="l138">    138</a>     /// after all other negative integers but before positive integers.</code>
-<code><a href="#l139" class="line" id="l139">    139</a>     fn serialize_i64(self, v: i64) -&gt; Result&lt;()&gt; {</code>
-<code><a href="#l140" class="line" id="l140">    140</a>         let mut bytes = v.to_be_bytes();</code>
-<code><a href="#l141" class="line" id="l141">    141</a>         bytes[0] ^= 1 &lt;&lt; 7; // flip sign bit</code>
-<code><a href="#l142" class="line" id="l142">    142</a>         self.output.extend(bytes);</code>
-<code><a href="#l143" class="line" id="l143">    143</a>         Ok(())</code>
-<code><a href="#l144" class="line" id="l144">    144</a>     }</code>
-<code><a href="#l145" class="line" id="l145">    145</a> </code>
-<code><a href="#l146" class="line" id="l146">    146</a>     fn serialize_u8(self, _: u8) -&gt; Result&lt;()&gt; {</code>
-<code><a href="#l147" class="line" id="l147">    147</a>         unimplemented!()</code>
-<code><a href="#l148" class="line" id="l148">    148</a>     }</code>
-<code><a href="#l149" class="line" id="l149">    149</a> </code>
-<code><a href="#l150" class="line" id="l150">    150</a>     fn serialize_u16(self, _: u16) -&gt; Result&lt;()&gt; {</code>
-<code><a href="#l151" class="line" id="l151">    151</a>         unimplemented!()</code>
-<code><a href="#l152" class="line" id="l152">    152</a>     }</code>
-<code><a href="#l153" class="line" id="l153">    153</a> </code>
-<code><a href="#l154" class="line" id="l154">    154</a>     fn serialize_u32(self, _: u32) -&gt; Result&lt;()&gt; {</code>
-<code><a href="#l155" class="line" id="l155">    155</a>         unimplemented!()</code>
-<code><a href="#l156" class="line" id="l156">    156</a>     }</code>
-<code><a href="#l157" class="line" id="l157">    157</a> </code>
-<code><a href="#l158" class="line" id="l158">    158</a>     /// u64 simply uses the big-endian encoding.</code>
-<code><a href="#l159" class="line" id="l159">    159</a>     fn serialize_u64(self, v: u64) -&gt; Result&lt;()&gt; {</code>
-<code><a href="#l160" class="line" id="l160">    160</a>         self.output.extend(v.to_be_bytes());</code>
-<code><a href="#l161" class="line" id="l161">    161</a>         Ok(())</code>
-<code><a href="#l162" class="line" id="l162">    162</a>     }</code>
-<code><a href="#l163" class="line" id="l163">    163</a> </code>
-<code><a href="#l164" class="line" id="l164">    164</a>     fn serialize_f32(self, _: f32) -&gt; Result&lt;()&gt; {</code>
-<code><a href="#l165" class="line" id="l165">    165</a>         unimplemented!()</code>
-<code><a href="#l166" class="line" id="l166">    166</a>     }</code>
-<code><a href="#l167" class="line" id="l167">    167</a> </code>
-<code><a href="#l168" class="line" id="l168">    168</a>     /// f64 is encoded in big-endian form, but it flips the sign bit to order</code>
-<code><a href="#l169" class="line" id="l169">    169</a>     /// positive numbers after negative numbers, and also flips all other bits</code>
-<code><a href="#l170" class="line" id="l170">    170</a>     /// for negative numbers to order them from smallest to greatest. NaN is</code>
-<code><a href="#l171" class="line" id="l171">    171</a>     /// ordered at the end.</code>
-<code><a href="#l172" class="line" id="l172">    172</a>     fn serialize_f64(self, v: f64) -&gt; Result&lt;()&gt; {</code>
-<code><a href="#l173" class="line" id="l173">    173</a>         let mut bytes = v.to_be_bytes();</code>
-<code><a href="#l174" class="line" id="l174">    174</a>         if bytes[0] &amp; 1 &lt;&lt; 7 == 0 {</code>
-<code><a href="#l175" class="line" id="l175">    175</a>             bytes[0] ^= 1 &lt;&lt; 7; // positive, flip sign bit</code>
-<code><a href="#l176" class="line" id="l176">    176</a>         } else {</code>
-<code><a href="#l177" class="line" id="l177">    177</a>             bytes.iter_mut().for_each(|b| *b = !*b); // negative, flip all bits</code>
-<code><a href="#l178" class="line" id="l178">    178</a>         }</code>
-<code><a href="#l179" class="line" id="l179">    179</a>         self.output.extend(bytes);</code>
-<code><a href="#l180" class="line" id="l180">    180</a>         Ok(())</code>
-<code><a href="#l181" class="line" id="l181">    181</a>     }</code>
-<code><a href="#l182" class="line" id="l182">    182</a> </code>
-<code><a href="#l183" class="line" id="l183">    183</a>     fn serialize_char(self, _: char) -&gt; Result&lt;()&gt; {</code>
-<code><a href="#l184" class="line" id="l184">    184</a>         unimplemented!()</code>
-<code><a href="#l185" class="line" id="l185">    185</a>     }</code>
-<code><a href="#l186" class="line" id="l186">    186</a> </code>
-<code><a href="#l187" class="line" id="l187">    187</a>     // Strings are encoded like bytes.</code>
-<code><a href="#l188" class="line" id="l188">    188</a>     fn serialize_str(self, v: &amp;str) -&gt; Result&lt;()&gt; {</code>
-<code><a href="#l189" class="line" id="l189">    189</a>         self.serialize_bytes(v.as_bytes())</code>
-<code><a href="#l190" class="line" id="l190">    190</a>     }</code>
-<code><a href="#l191" class="line" id="l191">    191</a> </code>
-<code><a href="#l192" class="line" id="l192">    192</a>     // Byte slices are terminated by 0x0000, escaping 0x00 as 0x00ff.</code>
-<code><a href="#l193" class="line" id="l193">    193</a>     // Prefix-length encoding can&#39;t be used, since it violates ordering.</code>
-<code><a href="#l194" class="line" id="l194">    194</a>     fn serialize_bytes(self, v: &amp;[u8]) -&gt; Result&lt;()&gt; {</code>
-<code><a href="#l195" class="line" id="l195">    195</a>         self.output.extend(</code>
-<code><a href="#l196" class="line" id="l196">    196</a>             v.iter()</code>
-<code><a href="#l197" class="line" id="l197">    197</a>                 .flat_map(|b| match b {</code>
-<code><a href="#l198" class="line" id="l198">    198</a>                     0x00 =&gt; vec![0x00, 0xff],</code>
-<code><a href="#l199" class="line" id="l199">    199</a>                     b =&gt; vec![*b],</code>
-<code><a href="#l200" class="line" id="l200">    200</a>                 })</code>
-<code><a href="#l201" class="line" id="l201">    201</a>                 .chain([0x00, 0x00]),</code>
-<code><a href="#l202" class="line" id="l202">    202</a>         );</code>
-<code><a href="#l203" class="line" id="l203">    203</a>         Ok(())</code>
-<code><a href="#l204" class="line" id="l204">    204</a>     }</code>
-<code><a href="#l205" class="line" id="l205">    205</a> </code>
-<code><a href="#l206" class="line" id="l206">    206</a>     fn serialize_none(self) -&gt; Result&lt;()&gt; {</code>
-<code><a href="#l207" class="line" id="l207">    207</a>         unimplemented!()</code>
-<code><a href="#l208" class="line" id="l208">    208</a>     }</code>
-<code><a href="#l209" class="line" id="l209">    209</a> </code>
-<code><a href="#l210" class="line" id="l210">    210</a>     fn serialize_some&lt;T: ser::Serialize + ?Sized&gt;(self, _: &amp;T) -&gt; Result&lt;()&gt; {</code>
-<code><a href="#l211" class="line" id="l211">    211</a>         unimplemented!()</code>
-<code><a href="#l212" class="line" id="l212">    212</a>     }</code>
-<code><a href="#l213" class="line" id="l213">    213</a> </code>
-<code><a href="#l214" class="line" id="l214">    214</a>     fn serialize_unit(self) -&gt; Result&lt;()&gt; {</code>
-<code><a href="#l215" class="line" id="l215">    215</a>         unimplemented!()</code>
-<code><a href="#l216" class="line" id="l216">    216</a>     }</code>
-<code><a href="#l217" class="line" id="l217">    217</a> </code>
-<code><a href="#l218" class="line" id="l218">    218</a>     fn serialize_unit_struct(self, _: &amp;&#39;static str) -&gt; Result&lt;()&gt; {</code>
-<code><a href="#l219" class="line" id="l219">    219</a>         unimplemented!()</code>
-<code><a href="#l220" class="line" id="l220">    220</a>     }</code>
-<code><a href="#l221" class="line" id="l221">    221</a> </code>
-<code><a href="#l222" class="line" id="l222">    222</a>     /// Enum variants are serialized using their index, as a single byte.</code>
-<code><a href="#l223" class="line" id="l223">    223</a>     fn serialize_unit_variant(self, _: &amp;&#39;static str, index: u32, _: &amp;&#39;static str) -&gt; Result&lt;()&gt; {</code>
-<code><a href="#l224" class="line" id="l224">    224</a>         self.output.push(u8::try_from(index)?);</code>
-<code><a href="#l225" class="line" id="l225">    225</a>         Ok(())</code>
-<code><a href="#l226" class="line" id="l226">    226</a>     }</code>
-<code><a href="#l227" class="line" id="l227">    227</a> </code>
-<code><a href="#l228" class="line" id="l228">    228</a>     fn serialize_newtype_struct&lt;T: ser::Serialize + ?Sized&gt;(</code>
-<code><a href="#l229" class="line" id="l229">    229</a>         self,</code>
-<code><a href="#l230" class="line" id="l230">    230</a>         _: &amp;&#39;static str,</code>
-<code><a href="#l231" class="line" id="l231">    231</a>         _: &amp;T,</code>
-<code><a href="#l232" class="line" id="l232">    232</a>     ) -&gt; Result&lt;()&gt; {</code>
-<code><a href="#l233" class="line" id="l233">    233</a>         unimplemented!()</code>
-<code><a href="#l234" class="line" id="l234">    234</a>     }</code>
-<code><a href="#l235" class="line" id="l235">    235</a> </code>
-<code><a href="#l236" class="line" id="l236">    236</a>     /// Newtype variants are serialized using the variant index and inner type.</code>
-<code><a href="#l237" class="line" id="l237">    237</a>     fn serialize_newtype_variant&lt;T: ser::Serialize + ?Sized&gt;(</code>
-<code><a href="#l238" class="line" id="l238">    238</a>         self,</code>
-<code><a href="#l239" class="line" id="l239">    239</a>         name: &amp;&#39;static str,</code>
-<code><a href="#l240" class="line" id="l240">    240</a>         index: u32,</code>
-<code><a href="#l241" class="line" id="l241">    241</a>         variant: &amp;&#39;static str,</code>
-<code><a href="#l242" class="line" id="l242">    242</a>         value: &amp;T,</code>
-<code><a href="#l243" class="line" id="l243">    243</a>     ) -&gt; Result&lt;()&gt; {</code>
-<code><a href="#l244" class="line" id="l244">    244</a>         self.serialize_unit_variant(name, index, variant)?;</code>
-<code><a href="#l245" class="line" id="l245">    245</a>         value.serialize(self)</code>
-<code><a href="#l246" class="line" id="l246">    246</a>     }</code>
-<code><a href="#l247" class="line" id="l247">    247</a> </code>
-<code><a href="#l248" class="line" id="l248">    248</a>     /// Sequences are serialized as the concatenation of the serialized elements.</code>
-<code><a href="#l249" class="line" id="l249">    249</a>     fn serialize_seq(self, _: Option&lt;usize&gt;) -&gt; Result&lt;Self::SerializeSeq&gt; {</code>
-<code><a href="#l250" class="line" id="l250">    250</a>         Ok(self)</code>
-<code><a href="#l251" class="line" id="l251">    251</a>     }</code>
-<code><a href="#l252" class="line" id="l252">    252</a> </code>
-<code><a href="#l253" class="line" id="l253">    253</a>     /// Tuples are serialized as the concatenation of the serialized elements.</code>
-<code><a href="#l254" class="line" id="l254">    254</a>     fn serialize_tuple(self, _: usize) -&gt; Result&lt;Self::SerializeTuple&gt; {</code>
-<code><a href="#l255" class="line" id="l255">    255</a>         Ok(self)</code>
-<code><a href="#l256" class="line" id="l256">    256</a>     }</code>
-<code><a href="#l257" class="line" id="l257">    257</a> </code>
-<code><a href="#l258" class="line" id="l258">    258</a>     fn serialize_tuple_struct(</code>
-<code><a href="#l259" class="line" id="l259">    259</a>         self,</code>
-<code><a href="#l260" class="line" id="l260">    260</a>         _: &amp;&#39;static str,</code>
-<code><a href="#l261" class="line" id="l261">    261</a>         _: usize,</code>
-<code><a href="#l262" class="line" id="l262">    262</a>     ) -&gt; Result&lt;Self::SerializeTupleStruct&gt; {</code>
-<code><a href="#l263" class="line" id="l263">    263</a>         unimplemented!()</code>
-<code><a href="#l264" class="line" id="l264">    264</a>     }</code>
-<code><a href="#l265" class="line" id="l265">    265</a> </code>
-<code><a href="#l266" class="line" id="l266">    266</a>     /// Tuple variants are serialized using the variant index and the</code>
-<code><a href="#l267" class="line" id="l267">    267</a>     /// concatenation of the serialized elements.</code>
-<code><a href="#l268" class="line" id="l268">    268</a>     fn serialize_tuple_variant(</code>
-<code><a href="#l269" class="line" id="l269">    269</a>         self,</code>
-<code><a href="#l270" class="line" id="l270">    270</a>         name: &amp;&#39;static str,</code>
-<code><a href="#l271" class="line" id="l271">    271</a>         index: u32,</code>
-<code><a href="#l272" class="line" id="l272">    272</a>         variant: &amp;&#39;static str,</code>
-<code><a href="#l273" class="line" id="l273">    273</a>         _: usize,</code>
-<code><a href="#l274" class="line" id="l274">    274</a>     ) -&gt; Result&lt;Self::SerializeTupleVariant&gt; {</code>
-<code><a href="#l275" class="line" id="l275">    275</a>         self.serialize_unit_variant(name, index, variant)?;</code>
-<code><a href="#l276" class="line" id="l276">    276</a>         Ok(self)</code>
-<code><a href="#l277" class="line" id="l277">    277</a>     }</code>
-<code><a href="#l278" class="line" id="l278">    278</a> </code>
-<code><a href="#l279" class="line" id="l279">    279</a>     fn serialize_map(self, _: Option&lt;usize&gt;) -&gt; Result&lt;Self::SerializeMap&gt; {</code>
-<code><a href="#l280" class="line" id="l280">    280</a>         unimplemented!()</code>
-<code><a href="#l281" class="line" id="l281">    281</a>     }</code>
-<code><a href="#l282" class="line" id="l282">    282</a> </code>
-<code><a href="#l283" class="line" id="l283">    283</a>     fn serialize_struct(self, _: &amp;&#39;static str, _: usize) -&gt; Result&lt;Self::SerializeStruct&gt; {</code>
-<code><a href="#l284" class="line" id="l284">    284</a>         unimplemented!()</code>
-<code><a href="#l285" class="line" id="l285">    285</a>     }</code>
-<code><a href="#l286" class="line" id="l286">    286</a> </code>
-<code><a href="#l287" class="line" id="l287">    287</a>     fn serialize_struct_variant(</code>
-<code><a href="#l288" class="line" id="l288">    288</a>         self,</code>
-<code><a href="#l289" class="line" id="l289">    289</a>         _: &amp;&#39;static str,</code>
-<code><a href="#l290" class="line" id="l290">    290</a>         _: u32,</code>
-<code><a href="#l291" class="line" id="l291">    291</a>         _: &amp;&#39;static str,</code>
-<code><a href="#l292" class="line" id="l292">    292</a>         _: usize,</code>
-<code><a href="#l293" class="line" id="l293">    293</a>     ) -&gt; Result&lt;Self::SerializeStructVariant&gt; {</code>
-<code><a href="#l294" class="line" id="l294">    294</a>         unimplemented!()</code>
-<code><a href="#l295" class="line" id="l295">    295</a>     }</code>
-<code><a href="#l296" class="line" id="l296">    296</a> }</code>
-<code><a href="#l297" class="line" id="l297">    297</a> </code>
-<code><a href="#l298" class="line" id="l298">    298</a> /// Sequences simply concatenate the serialized elements, with no external structure.</code>
-<code><a href="#l299" class="line" id="l299">    299</a> impl&lt;&#39;a&gt; ser::SerializeSeq for &amp;&#39;a mut Serializer {</code>
-<code><a href="#l300" class="line" id="l300">    300</a>     type Ok = ();</code>
-<code><a href="#l301" class="line" id="l301">    301</a>     type Error = Error;</code>
-<code><a href="#l302" class="line" id="l302">    302</a> </code>
-<code><a href="#l303" class="line" id="l303">    303</a>     fn serialize_element&lt;T: ser::Serialize + ?Sized&gt;(&amp;mut self, value: &amp;T) -&gt; Result&lt;()&gt; {</code>
-<code><a href="#l304" class="line" id="l304">    304</a>         value.serialize(&amp;mut **self)</code>
-<code><a href="#l305" class="line" id="l305">    305</a>     }</code>
-<code><a href="#l306" class="line" id="l306">    306</a> </code>
-<code><a href="#l307" class="line" id="l307">    307</a>     fn end(self) -&gt; Result&lt;()&gt; {</code>
-<code><a href="#l308" class="line" id="l308">    308</a>         Ok(())</code>
-<code><a href="#l309" class="line" id="l309">    309</a>     }</code>
-<code><a href="#l310" class="line" id="l310">    310</a> }</code>
-<code><a href="#l311" class="line" id="l311">    311</a> </code>
-<code><a href="#l312" class="line" id="l312">    312</a> /// Tuples, like sequences, simply concatenate the serialized elements.</code>
-<code><a href="#l313" class="line" id="l313">    313</a> impl&lt;&#39;a&gt; ser::SerializeTuple for &amp;&#39;a mut Serializer {</code>
-<code><a href="#l314" class="line" id="l314">    314</a>     type Ok = ();</code>
-<code><a href="#l315" class="line" id="l315">    315</a>     type Error = Error;</code>
-<code><a href="#l316" class="line" id="l316">    316</a> </code>
-<code><a href="#l317" class="line" id="l317">    317</a>     fn serialize_element&lt;T: ser::Serialize + ?Sized&gt;(&amp;mut self, value: &amp;T) -&gt; Result&lt;()&gt; {</code>
-<code><a href="#l318" class="line" id="l318">    318</a>         value.serialize(&amp;mut **self)</code>
-<code><a href="#l319" class="line" id="l319">    319</a>     }</code>
-<code><a href="#l320" class="line" id="l320">    320</a> </code>
-<code><a href="#l321" class="line" id="l321">    321</a>     fn end(self) -&gt; Result&lt;()&gt; {</code>
-<code><a href="#l322" class="line" id="l322">    322</a>         Ok(())</code>
-<code><a href="#l323" class="line" id="l323">    323</a>     }</code>
-<code><a href="#l324" class="line" id="l324">    324</a> }</code>
-<code><a href="#l325" class="line" id="l325">    325</a> </code>
-<code><a href="#l326" class="line" id="l326">    326</a> /// Tuples, like sequences, simply concatenate the serialized elements.</code>
-<code><a href="#l327" class="line" id="l327">    327</a> impl&lt;&#39;a&gt; ser::SerializeTupleVariant for &amp;&#39;a mut Serializer {</code>
-<code><a href="#l328" class="line" id="l328">    328</a>     type Ok = ();</code>
-<code><a href="#l329" class="line" id="l329">    329</a>     type Error = Error;</code>
-<code><a href="#l330" class="line" id="l330">    330</a> </code>
-<code><a href="#l331" class="line" id="l331">    331</a>     fn serialize_field&lt;T: ser::Serialize + ?Sized&gt;(&amp;mut self, value: &amp;T) -&gt; Result&lt;()&gt; {</code>
-<code><a href="#l332" class="line" id="l332">    332</a>         value.serialize(&amp;mut **self)</code>
-<code><a href="#l333" class="line" id="l333">    333</a>     }</code>
-<code><a href="#l334" class="line" id="l334">    334</a> </code>
-<code><a href="#l335" class="line" id="l335">    335</a>     fn end(self) -&gt; Result&lt;()&gt; {</code>
-<code><a href="#l336" class="line" id="l336">    336</a>         Ok(())</code>
-<code><a href="#l337" class="line" id="l337">    337</a>     }</code>
-<code><a href="#l338" class="line" id="l338">    338</a> }</code>
-<code><a href="#l339" class="line" id="l339">    339</a> </code>
-<code><a href="#l340" class="line" id="l340">    340</a> /// Deserializes keys from byte slices into a given type. The format is not</code>
-<code><a href="#l341" class="line" id="l341">    341</a> /// self-describing, so the caller must provide a concrete type to deserialize</code>
-<code><a href="#l342" class="line" id="l342">    342</a> /// into.</code>
-<code><a href="#l343" class="line" id="l343">    343</a> pub struct Deserializer&lt;&#39;de&gt; {</code>
-<code><a href="#l344" class="line" id="l344">    344</a>     input: &amp;&#39;de [u8],</code>
-<code><a href="#l345" class="line" id="l345">    345</a> }</code>
-<code><a href="#l346" class="line" id="l346">    346</a> </code>
-<code><a href="#l347" class="line" id="l347">    347</a> impl&lt;&#39;de&gt; Deserializer&lt;&#39;de&gt; {</code>
-<code><a href="#l348" class="line" id="l348">    348</a>     /// Creates a deserializer for a byte slice.</code>
-<code><a href="#l349" class="line" id="l349">    349</a>     pub fn from_bytes(input: &amp;&#39;de [u8]) -&gt; Self {</code>
-<code><a href="#l350" class="line" id="l350">    350</a>         Deserializer { input }</code>
-<code><a href="#l351" class="line" id="l351">    351</a>     }</code>
-<code><a href="#l352" class="line" id="l352">    352</a> </code>
-<code><a href="#l353" class="line" id="l353">    353</a>     /// Chops off and returns the next len bytes of the byte slice, or errors if</code>
-<code><a href="#l354" class="line" id="l354">    354</a>     /// there aren&#39;t enough bytes left.</code>
-<code><a href="#l355" class="line" id="l355">    355</a>     fn take_bytes(&amp;mut self, len: usize) -&gt; Result&lt;&amp;[u8]&gt; {</code>
-<code><a href="#l356" class="line" id="l356">    356</a>         if self.input.len() &lt; len {</code>
-<code><a href="#l357" class="line" id="l357">    357</a>             return errdata!(&quot;insufficient bytes, expected {len} bytes for {:x?}&quot;, self.input);</code>
-<code><a href="#l358" class="line" id="l358">    358</a>         }</code>
-<code><a href="#l359" class="line" id="l359">    359</a>         let bytes = &amp;self.input[..len];</code>
-<code><a href="#l360" class="line" id="l360">    360</a>         self.input = &amp;self.input[len..];</code>
-<code><a href="#l361" class="line" id="l361">    361</a>         Ok(bytes)</code>
-<code><a href="#l362" class="line" id="l362">    362</a>     }</code>
-<code><a href="#l363" class="line" id="l363">    363</a> </code>
-<code><a href="#l364" class="line" id="l364">    364</a>     /// Decodes and chops off the next encoded byte slice.</code>
-<code><a href="#l365" class="line" id="l365">    365</a>     fn decode_next_bytes(&amp;mut self) -&gt; Result&lt;Vec&lt;u8&gt;&gt; {</code>
-<code><a href="#l366" class="line" id="l366">    366</a>         // We can&#39;t easily share state between Iterator.scan() and</code>
-<code><a href="#l367" class="line" id="l367">    367</a>         // Iterator.filter() when processing escape sequences, so use a</code>
-<code><a href="#l368" class="line" id="l368">    368</a>         // straightforward loop.</code>
-<code><a href="#l369" class="line" id="l369">    369</a>         let mut decoded = Vec::new();</code>
-<code><a href="#l370" class="line" id="l370">    370</a>         let mut iter = self.input.iter().enumerate();</code>
-<code><a href="#l371" class="line" id="l371">    371</a>         let taken = loop {</code>
-<code><a href="#l372" class="line" id="l372">    372</a>             match iter.next() {</code>
-<code><a href="#l373" class="line" id="l373">    373</a>                 Some((_, 0x00)) =&gt; match iter.next() {</code>
-<code><a href="#l374" class="line" id="l374">    374</a>                     Some((i, 0x00)) =&gt; break i + 1,        // terminator</code>
-<code><a href="#l375" class="line" id="l375">    375</a>                     Some((_, 0xff)) =&gt; decoded.push(0x00), // escaped 0x00</code>
-<code><a href="#l376" class="line" id="l376">    376</a>                     _ =&gt; return errdata!(&quot;invalid escape sequence&quot;),</code>
-<code><a href="#l377" class="line" id="l377">    377</a>                 },</code>
-<code><a href="#l378" class="line" id="l378">    378</a>                 Some((_, b)) =&gt; decoded.push(*b),</code>
-<code><a href="#l379" class="line" id="l379">    379</a>                 None =&gt; return errdata!(&quot;unexpected end of input&quot;),</code>
-<code><a href="#l380" class="line" id="l380">    380</a>             }</code>
-<code><a href="#l381" class="line" id="l381">    381</a>         };</code>
-<code><a href="#l382" class="line" id="l382">    382</a>         self.input = &amp;self.input[taken..];</code>
-<code><a href="#l383" class="line" id="l383">    383</a>         Ok(decoded)</code>
-<code><a href="#l384" class="line" id="l384">    384</a>     }</code>
-<code><a href="#l385" class="line" id="l385">    385</a> }</code>
-<code><a href="#l386" class="line" id="l386">    386</a> </code>
-<code><a href="#l387" class="line" id="l387">    387</a> /// For details on serialization formats, see Serializer.</code>
-<code><a href="#l388" class="line" id="l388">    388</a> impl&lt;&#39;de, &#39;a&gt; de::Deserializer&lt;&#39;de&gt; for &amp;&#39;a mut Deserializer&lt;&#39;de&gt; {</code>
-<code><a href="#l389" class="line" id="l389">    389</a>     type Error = Error;</code>
-<code><a href="#l390" class="line" id="l390">    390</a> </code>
-<code><a href="#l391" class="line" id="l391">    391</a>     fn deserialize_any&lt;V: de::Visitor&lt;&#39;de&gt;&gt;(self, _: V) -&gt; Result&lt;V::Value&gt; {</code>
-<code><a href="#l392" class="line" id="l392">    392</a>         panic!(&quot;must provide type, KeyCode is not self-describing&quot;)</code>
-<code><a href="#l393" class="line" id="l393">    393</a>     }</code>
-<code><a href="#l394" class="line" id="l394">    394</a> </code>
-<code><a href="#l395" class="line" id="l395">    395</a>     fn deserialize_bool&lt;V: de::Visitor&lt;&#39;de&gt;&gt;(self, visitor: V) -&gt; Result&lt;V::Value&gt; {</code>
-<code><a href="#l396" class="line" id="l396">    396</a>         visitor.visit_bool(match self.take_bytes(1)?[0] {</code>
-<code><a href="#l397" class="line" id="l397">    397</a>             0x00 =&gt; false,</code>
-<code><a href="#l398" class="line" id="l398">    398</a>             0x01 =&gt; true,</code>
-<code><a href="#l399" class="line" id="l399">    399</a>             b =&gt; return errdata!(&quot;Invalid boolean value {b:?}&quot;),</code>
-<code><a href="#l400" class="line" id="l400">    400</a>         })</code>
-<code><a href="#l401" class="line" id="l401">    401</a>     }</code>
-<code><a href="#l402" class="line" id="l402">    402</a> </code>
-<code><a href="#l403" class="line" id="l403">    403</a>     fn deserialize_i8&lt;V: de::Visitor&lt;&#39;de&gt;&gt;(self, _: V) -&gt; Result&lt;V::Value&gt; {</code>
-<code><a href="#l404" class="line" id="l404">    404</a>         unimplemented!()</code>
-<code><a href="#l405" class="line" id="l405">    405</a>     }</code>
-<code><a href="#l406" class="line" id="l406">    406</a> </code>
-<code><a href="#l407" class="line" id="l407">    407</a>     fn deserialize_i16&lt;V: de::Visitor&lt;&#39;de&gt;&gt;(self, _: V) -&gt; Result&lt;V::Value&gt; {</code>
-<code><a href="#l408" class="line" id="l408">    408</a>         unimplemented!()</code>
-<code><a href="#l409" class="line" id="l409">    409</a>     }</code>
-<code><a href="#l410" class="line" id="l410">    410</a> </code>
-<code><a href="#l411" class="line" id="l411">    411</a>     fn deserialize_i32&lt;V: de::Visitor&lt;&#39;de&gt;&gt;(self, _: V) -&gt; Result&lt;V::Value&gt; {</code>
-<code><a href="#l412" class="line" id="l412">    412</a>         unimplemented!()</code>
-<code><a href="#l413" class="line" id="l413">    413</a>     }</code>
-<code><a href="#l414" class="line" id="l414">    414</a> </code>
-<code><a href="#l415" class="line" id="l415">    415</a>     fn deserialize_i64&lt;V: de::Visitor&lt;&#39;de&gt;&gt;(self, visitor: V) -&gt; Result&lt;V::Value&gt; {</code>
-<code><a href="#l416" class="line" id="l416">    416</a>         let mut bytes = self.take_bytes(8)?.to_vec();</code>
-<code><a href="#l417" class="line" id="l417">    417</a>         bytes[0] ^= 1 &lt;&lt; 7; // flip sign bit</code>
-<code><a href="#l418" class="line" id="l418">    418</a>         visitor.visit_i64(i64::from_be_bytes(bytes.as_slice().try_into()?))</code>
-<code><a href="#l419" class="line" id="l419">    419</a>     }</code>
-<code><a href="#l420" class="line" id="l420">    420</a> </code>
-<code><a href="#l421" class="line" id="l421">    421</a>     fn deserialize_u8&lt;V: de::Visitor&lt;&#39;de&gt;&gt;(self, _: V) -&gt; Result&lt;V::Value&gt; {</code>
-<code><a href="#l422" class="line" id="l422">    422</a>         unimplemented!()</code>
-<code><a href="#l423" class="line" id="l423">    423</a>     }</code>
-<code><a href="#l424" class="line" id="l424">    424</a> </code>
-<code><a href="#l425" class="line" id="l425">    425</a>     fn deserialize_u16&lt;V: de::Visitor&lt;&#39;de&gt;&gt;(self, _: V) -&gt; Result&lt;V::Value&gt; {</code>
-<code><a href="#l426" class="line" id="l426">    426</a>         unimplemented!()</code>
-<code><a href="#l427" class="line" id="l427">    427</a>     }</code>
-<code><a href="#l428" class="line" id="l428">    428</a> </code>
-<code><a href="#l429" class="line" id="l429">    429</a>     fn deserialize_u32&lt;V: de::Visitor&lt;&#39;de&gt;&gt;(self, _: V) -&gt; Result&lt;V::Value&gt; {</code>
-<code><a href="#l430" class="line" id="l430">    430</a>         unimplemented!()</code>
-<code><a href="#l431" class="line" id="l431">    431</a>     }</code>
-<code><a href="#l432" class="line" id="l432">    432</a> </code>
-<code><a href="#l433" class="line" id="l433">    433</a>     fn deserialize_u64&lt;V: de::Visitor&lt;&#39;de&gt;&gt;(self, visitor: V) -&gt; Result&lt;V::Value&gt; {</code>
-<code><a href="#l434" class="line" id="l434">    434</a>         visitor.visit_u64(u64::from_be_bytes(self.take_bytes(8)?.try_into()?))</code>
-<code><a href="#l435" class="line" id="l435">    435</a>     }</code>
-<code><a href="#l436" class="line" id="l436">    436</a> </code>
-<code><a href="#l437" class="line" id="l437">    437</a>     fn deserialize_f32&lt;V: de::Visitor&lt;&#39;de&gt;&gt;(self, _: V) -&gt; Result&lt;V::Value&gt; {</code>
-<code><a href="#l438" class="line" id="l438">    438</a>         unimplemented!()</code>
-<code><a href="#l439" class="line" id="l439">    439</a>     }</code>
-<code><a href="#l440" class="line" id="l440">    440</a> </code>
-<code><a href="#l441" class="line" id="l441">    441</a>     fn deserialize_f64&lt;V: de::Visitor&lt;&#39;de&gt;&gt;(self, visitor: V) -&gt; Result&lt;V::Value&gt; {</code>
-<code><a href="#l442" class="line" id="l442">    442</a>         let mut bytes = self.take_bytes(8)?.to_vec();</code>
-<code><a href="#l443" class="line" id="l443">    443</a>         if bytes[0] &gt;&gt; 7 &amp; 1 == 1 {</code>
-<code><a href="#l444" class="line" id="l444">    444</a>             bytes[0] ^= 1 &lt;&lt; 7; // positive, flip sign bit</code>
-<code><a href="#l445" class="line" id="l445">    445</a>         } else {</code>
-<code><a href="#l446" class="line" id="l446">    446</a>             bytes.iter_mut().for_each(|b| *b = !*b); // negative, flip all bits</code>
-<code><a href="#l447" class="line" id="l447">    447</a>         }</code>
-<code><a href="#l448" class="line" id="l448">    448</a>         visitor.visit_f64(f64::from_be_bytes(bytes.as_slice().try_into()?))</code>
-<code><a href="#l449" class="line" id="l449">    449</a>     }</code>
-<code><a href="#l450" class="line" id="l450">    450</a> </code>
-<code><a href="#l451" class="line" id="l451">    451</a>     fn deserialize_char&lt;V: de::Visitor&lt;&#39;de&gt;&gt;(self, _: V) -&gt; Result&lt;V::Value&gt; {</code>
-<code><a href="#l452" class="line" id="l452">    452</a>         unimplemented!()</code>
-<code><a href="#l453" class="line" id="l453">    453</a>     }</code>
-<code><a href="#l454" class="line" id="l454">    454</a> </code>
-<code><a href="#l455" class="line" id="l455">    455</a>     fn deserialize_str&lt;V: de::Visitor&lt;&#39;de&gt;&gt;(self, visitor: V) -&gt; Result&lt;V::Value&gt; {</code>
-<code><a href="#l456" class="line" id="l456">    456</a>         let bytes = self.decode_next_bytes()?;</code>
-<code><a href="#l457" class="line" id="l457">    457</a>         visitor.visit_str(&amp;String::from_utf8(bytes)?)</code>
-<code><a href="#l458" class="line" id="l458">    458</a>     }</code>
-<code><a href="#l459" class="line" id="l459">    459</a> </code>
-<code><a href="#l460" class="line" id="l460">    460</a>     fn deserialize_string&lt;V: de::Visitor&lt;&#39;de&gt;&gt;(self, visitor: V) -&gt; Result&lt;V::Value&gt; {</code>
-<code><a href="#l461" class="line" id="l461">    461</a>         let bytes = self.decode_next_bytes()?;</code>
-<code><a href="#l462" class="line" id="l462">    462</a>         visitor.visit_string(String::from_utf8(bytes)?)</code>
-<code><a href="#l463" class="line" id="l463">    463</a>     }</code>
-<code><a href="#l464" class="line" id="l464">    464</a> </code>
-<code><a href="#l465" class="line" id="l465">    465</a>     fn deserialize_bytes&lt;V: de::Visitor&lt;&#39;de&gt;&gt;(self, visitor: V) -&gt; Result&lt;V::Value&gt; {</code>
-<code><a href="#l466" class="line" id="l466">    466</a>         let bytes = self.decode_next_bytes()?;</code>
-<code><a href="#l467" class="line" id="l467">    467</a>         visitor.visit_bytes(&amp;bytes)</code>
-<code><a href="#l468" class="line" id="l468">    468</a>     }</code>
-<code><a href="#l469" class="line" id="l469">    469</a> </code>
-<code><a href="#l470" class="line" id="l470">    470</a>     fn deserialize_byte_buf&lt;V: de::Visitor&lt;&#39;de&gt;&gt;(self, visitor: V) -&gt; Result&lt;V::Value&gt; {</code>
-<code><a href="#l471" class="line" id="l471">    471</a>         let bytes = self.decode_next_bytes()?;</code>
-<code><a href="#l472" class="line" id="l472">    472</a>         visitor.visit_byte_buf(bytes)</code>
-<code><a href="#l473" class="line" id="l473">    473</a>     }</code>
-<code><a href="#l474" class="line" id="l474">    474</a> </code>
-<code><a href="#l475" class="line" id="l475">    475</a>     fn deserialize_option&lt;V: de::Visitor&lt;&#39;de&gt;&gt;(self, _: V) -&gt; Result&lt;V::Value&gt; {</code>
-<code><a href="#l476" class="line" id="l476">    476</a>         unimplemented!()</code>
-<code><a href="#l477" class="line" id="l477">    477</a>     }</code>
-<code><a href="#l478" class="line" id="l478">    478</a> </code>
-<code><a href="#l479" class="line" id="l479">    479</a>     fn deserialize_unit&lt;V: de::Visitor&lt;&#39;de&gt;&gt;(self, _: V) -&gt; Result&lt;V::Value&gt; {</code>
-<code><a href="#l480" class="line" id="l480">    480</a>         unimplemented!()</code>
-<code><a href="#l481" class="line" id="l481">    481</a>     }</code>
-<code><a href="#l482" class="line" id="l482">    482</a> </code>
-<code><a href="#l483" class="line" id="l483">    483</a>     fn deserialize_unit_struct&lt;V: de::Visitor&lt;&#39;de&gt;&gt;(</code>
-<code><a href="#l484" class="line" id="l484">    484</a>         self,</code>
-<code><a href="#l485" class="line" id="l485">    485</a>         _: &amp;&#39;static str,</code>
-<code><a href="#l486" class="line" id="l486">    486</a>         _: V,</code>
-<code><a href="#l487" class="line" id="l487">    487</a>     ) -&gt; Result&lt;V::Value&gt; {</code>
-<code><a href="#l488" class="line" id="l488">    488</a>         unimplemented!()</code>
-<code><a href="#l489" class="line" id="l489">    489</a>     }</code>
-<code><a href="#l490" class="line" id="l490">    490</a> </code>
-<code><a href="#l491" class="line" id="l491">    491</a>     fn deserialize_newtype_struct&lt;V: de::Visitor&lt;&#39;de&gt;&gt;(</code>
-<code><a href="#l492" class="line" id="l492">    492</a>         self,</code>
-<code><a href="#l493" class="line" id="l493">    493</a>         _: &amp;&#39;static str,</code>
-<code><a href="#l494" class="line" id="l494">    494</a>         _: V,</code>
-<code><a href="#l495" class="line" id="l495">    495</a>     ) -&gt; Result&lt;V::Value&gt; {</code>
-<code><a href="#l496" class="line" id="l496">    496</a>         unimplemented!()</code>
-<code><a href="#l497" class="line" id="l497">    497</a>     }</code>
-<code><a href="#l498" class="line" id="l498">    498</a> </code>
-<code><a href="#l499" class="line" id="l499">    499</a>     fn deserialize_seq&lt;V: de::Visitor&lt;&#39;de&gt;&gt;(self, visitor: V) -&gt; Result&lt;V::Value&gt; {</code>
-<code><a href="#l500" class="line" id="l500">    500</a>         visitor.visit_seq(self)</code>
-<code><a href="#l501" class="line" id="l501">    501</a>     }</code>
-<code><a href="#l502" class="line" id="l502">    502</a> </code>
-<code><a href="#l503" class="line" id="l503">    503</a>     fn deserialize_tuple&lt;V: de::Visitor&lt;&#39;de&gt;&gt;(self, _: usize, visitor: V) -&gt; Result&lt;V::Value&gt; {</code>
-<code><a href="#l504" class="line" id="l504">    504</a>         visitor.visit_seq(self)</code>
-<code><a href="#l505" class="line" id="l505">    505</a>     }</code>
-<code><a href="#l506" class="line" id="l506">    506</a> </code>
-<code><a href="#l507" class="line" id="l507">    507</a>     fn deserialize_tuple_struct&lt;V: de::Visitor&lt;&#39;de&gt;&gt;(</code>
-<code><a href="#l508" class="line" id="l508">    508</a>         self,</code>
-<code><a href="#l509" class="line" id="l509">    509</a>         _: &amp;&#39;static str,</code>
-<code><a href="#l510" class="line" id="l510">    510</a>         _: usize,</code>
-<code><a href="#l511" class="line" id="l511">    511</a>         _: V,</code>
-<code><a href="#l512" class="line" id="l512">    512</a>     ) -&gt; Result&lt;V::Value&gt; {</code>
-<code><a href="#l513" class="line" id="l513">    513</a>         unimplemented!()</code>
-<code><a href="#l514" class="line" id="l514">    514</a>     }</code>
-<code><a href="#l515" class="line" id="l515">    515</a> </code>
-<code><a href="#l516" class="line" id="l516">    516</a>     fn deserialize_map&lt;V: de::Visitor&lt;&#39;de&gt;&gt;(self, _: V) -&gt; Result&lt;V::Value&gt; {</code>
-<code><a href="#l517" class="line" id="l517">    517</a>         unimplemented!()</code>
-<code><a href="#l518" class="line" id="l518">    518</a>     }</code>
-<code><a href="#l519" class="line" id="l519">    519</a> </code>
-<code><a href="#l520" class="line" id="l520">    520</a>     fn deserialize_struct&lt;V: de::Visitor&lt;&#39;de&gt;&gt;(</code>
-<code><a href="#l521" class="line" id="l521">    521</a>         self,</code>
-<code><a href="#l522" class="line" id="l522">    522</a>         _: &amp;&#39;static str,</code>
-<code><a href="#l523" class="line" id="l523">    523</a>         _: &amp;&#39;static [&amp;&#39;static str],</code>
-<code><a href="#l524" class="line" id="l524">    524</a>         _: V,</code>
-<code><a href="#l525" class="line" id="l525">    525</a>     ) -&gt; Result&lt;V::Value&gt; {</code>
-<code><a href="#l526" class="line" id="l526">    526</a>         unimplemented!()</code>
-<code><a href="#l527" class="line" id="l527">    527</a>     }</code>
-<code><a href="#l528" class="line" id="l528">    528</a> </code>
-<code><a href="#l529" class="line" id="l529">    529</a>     fn deserialize_enum&lt;V: de::Visitor&lt;&#39;de&gt;&gt;(</code>
-<code><a href="#l530" class="line" id="l530">    530</a>         self,</code>
-<code><a href="#l531" class="line" id="l531">    531</a>         _: &amp;&#39;static str,</code>
-<code><a href="#l532" class="line" id="l532">    532</a>         _: &amp;&#39;static [&amp;&#39;static str],</code>
-<code><a href="#l533" class="line" id="l533">    533</a>         visitor: V,</code>
-<code><a href="#l534" class="line" id="l534">    534</a>     ) -&gt; Result&lt;V::Value&gt; {</code>
-<code><a href="#l535" class="line" id="l535">    535</a>         visitor.visit_enum(self)</code>
-<code><a href="#l536" class="line" id="l536">    536</a>     }</code>
-<code><a href="#l537" class="line" id="l537">    537</a> </code>
-<code><a href="#l538" class="line" id="l538">    538</a>     fn deserialize_identifier&lt;V: de::Visitor&lt;&#39;de&gt;&gt;(self, _: V) -&gt; Result&lt;V::Value&gt; {</code>
-<code><a href="#l539" class="line" id="l539">    539</a>         unimplemented!()</code>
-<code><a href="#l540" class="line" id="l540">    540</a>     }</code>
-<code><a href="#l541" class="line" id="l541">    541</a> </code>
-<code><a href="#l542" class="line" id="l542">    542</a>     fn deserialize_ignored_any&lt;V: de::Visitor&lt;&#39;de&gt;&gt;(self, _: V) -&gt; Result&lt;V::Value&gt; {</code>
-<code><a href="#l543" class="line" id="l543">    543</a>         unimplemented!()</code>
-<code><a href="#l544" class="line" id="l544">    544</a>     }</code>
-<code><a href="#l545" class="line" id="l545">    545</a> }</code>
-<code><a href="#l546" class="line" id="l546">    546</a> </code>
-<code><a href="#l547" class="line" id="l547">    547</a> /// Sequences are simply deserialized until the byte slice is exhausted.</code>
-<code><a href="#l548" class="line" id="l548">    548</a> impl&lt;&#39;de&gt; de::SeqAccess&lt;&#39;de&gt; for Deserializer&lt;&#39;de&gt; {</code>
-<code><a href="#l549" class="line" id="l549">    549</a>     type Error = Error;</code>
-<code><a href="#l550" class="line" id="l550">    550</a> </code>
-<code><a href="#l551" class="line" id="l551">    551</a>     fn next_element_seed&lt;T: de::DeserializeSeed&lt;&#39;de&gt;&gt;(</code>
-<code><a href="#l552" class="line" id="l552">    552</a>         &amp;mut self,</code>
-<code><a href="#l553" class="line" id="l553">    553</a>         seed: T,</code>
-<code><a href="#l554" class="line" id="l554">    554</a>     ) -&gt; Result&lt;Option&lt;T::Value&gt;&gt; {</code>
-<code><a href="#l555" class="line" id="l555">    555</a>         if self.input.is_empty() {</code>
-<code><a href="#l556" class="line" id="l556">    556</a>             return Ok(None);</code>
-<code><a href="#l557" class="line" id="l557">    557</a>         }</code>
-<code><a href="#l558" class="line" id="l558">    558</a>         seed.deserialize(self).map(Some)</code>
-<code><a href="#l559" class="line" id="l559">    559</a>     }</code>
-<code><a href="#l560" class="line" id="l560">    560</a> }</code>
-<code><a href="#l561" class="line" id="l561">    561</a> </code>
-<code><a href="#l562" class="line" id="l562">    562</a> /// Enum variants are deserialized by their index.</code>
-<code><a href="#l563" class="line" id="l563">    563</a> impl&lt;&#39;de&gt; de::EnumAccess&lt;&#39;de&gt; for &amp;mut Deserializer&lt;&#39;de&gt; {</code>
-<code><a href="#l564" class="line" id="l564">    564</a>     type Error = Error;</code>
-<code><a href="#l565" class="line" id="l565">    565</a>     type Variant = Self;</code>
-<code><a href="#l566" class="line" id="l566">    566</a> </code>
-<code><a href="#l567" class="line" id="l567">    567</a>     fn variant_seed&lt;V: de::DeserializeSeed&lt;&#39;de&gt;&gt;(</code>
-<code><a href="#l568" class="line" id="l568">    568</a>         self,</code>
-<code><a href="#l569" class="line" id="l569">    569</a>         seed: V,</code>
-<code><a href="#l570" class="line" id="l570">    570</a>     ) -&gt; Result&lt;(V::Value, Self::Variant)&gt; {</code>
-<code><a href="#l571" class="line" id="l571">    571</a>         let index = self.take_bytes(1)?[0] as u32;</code>
-<code><a href="#l572" class="line" id="l572">    572</a>         let value: Result&lt;_&gt; = seed.deserialize(index.into_deserializer());</code>
-<code><a href="#l573" class="line" id="l573">    573</a>         Ok((value?, self))</code>
-<code><a href="#l574" class="line" id="l574">    574</a>     }</code>
-<code><a href="#l575" class="line" id="l575">    575</a> }</code>
-<code><a href="#l576" class="line" id="l576">    576</a> </code>
-<code><a href="#l577" class="line" id="l577">    577</a> /// Enum variant contents are deserialized as sequences.</code>
-<code><a href="#l578" class="line" id="l578">    578</a> impl&lt;&#39;de&gt; de::VariantAccess&lt;&#39;de&gt; for &amp;mut Deserializer&lt;&#39;de&gt; {</code>
-<code><a href="#l579" class="line" id="l579">    579</a>     type Error = Error;</code>
-<code><a href="#l580" class="line" id="l580">    580</a> </code>
-<code><a href="#l581" class="line" id="l581">    581</a>     fn unit_variant(self) -&gt; Result&lt;()&gt; {</code>
-<code><a href="#l582" class="line" id="l582">    582</a>         Ok(())</code>
-<code><a href="#l583" class="line" id="l583">    583</a>     }</code>
-<code><a href="#l584" class="line" id="l584">    584</a> </code>
-<code><a href="#l585" class="line" id="l585">    585</a>     fn newtype_variant_seed&lt;T: de::DeserializeSeed&lt;&#39;de&gt;&gt;(self, seed: T) -&gt; Result&lt;T::Value&gt; {</code>
-<code><a href="#l586" class="line" id="l586">    586</a>         seed.deserialize(&amp;mut *self)</code>
-<code><a href="#l587" class="line" id="l587">    587</a>     }</code>
-<code><a href="#l588" class="line" id="l588">    588</a> </code>
-<code><a href="#l589" class="line" id="l589">    589</a>     fn tuple_variant&lt;V: de::Visitor&lt;&#39;de&gt;&gt;(self, _: usize, visitor: V) -&gt; Result&lt;V::Value&gt; {</code>
-<code><a href="#l590" class="line" id="l590">    590</a>         visitor.visit_seq(self)</code>
-<code><a href="#l591" class="line" id="l591">    591</a>     }</code>
-<code><a href="#l592" class="line" id="l592">    592</a> </code>
-<code><a href="#l593" class="line" id="l593">    593</a>     fn struct_variant&lt;V: de::Visitor&lt;&#39;de&gt;&gt;(</code>
-<code><a href="#l594" class="line" id="l594">    594</a>         self,</code>
-<code><a href="#l595" class="line" id="l595">    595</a>         _: &amp;&#39;static [&amp;&#39;static str],</code>
-<code><a href="#l596" class="line" id="l596">    596</a>         _: V,</code>
-<code><a href="#l597" class="line" id="l597">    597</a>     ) -&gt; Result&lt;V::Value&gt; {</code>
-<code><a href="#l598" class="line" id="l598">    598</a>         unimplemented!()</code>
-<code><a href="#l599" class="line" id="l599">    599</a>     }</code>
-<code><a href="#l600" class="line" id="l600">    600</a> }</code>
-<code><a href="#l601" class="line" id="l601">    601</a> </code>
-<code><a href="#l602" class="line" id="l602">    602</a> #[cfg(test)]</code>
-<code><a href="#l603" class="line" id="l603">    603</a> mod tests {</code>
-<code><a href="#l604" class="line" id="l604">    604</a>     use super::*;</code>
-<code><a href="#l605" class="line" id="l605">    605</a>     use crate::sql::types::Value;</code>
-<code><a href="#l606" class="line" id="l606">    606</a>     use paste::paste;</code>
-<code><a href="#l607" class="line" id="l607">    607</a>     use serde::{Deserialize, Serialize};</code>
-<code><a href="#l608" class="line" id="l608">    608</a>     use serde_bytes::ByteBuf;</code>
-<code><a href="#l609" class="line" id="l609">    609</a>     use std::borrow::Cow;</code>
-<code><a href="#l610" class="line" id="l610">    610</a>     use std::f64::consts::PI;</code>
-<code><a href="#l611" class="line" id="l611">    611</a> </code>
-<code><a href="#l612" class="line" id="l612">    612</a>     #[derive(Debug, Deserialize, Serialize, PartialEq)]</code>
-<code><a href="#l613" class="line" id="l613">    613</a>     enum Key&lt;&#39;a&gt; {</code>
-<code><a href="#l614" class="line" id="l614">    614</a>         Unit,</code>
-<code><a href="#l615" class="line" id="l615">    615</a>         NewType(String),</code>
-<code><a href="#l616" class="line" id="l616">    616</a>         Tuple(bool, #[serde(with = &quot;serde_bytes&quot;)] Vec&lt;u8&gt;, u64),</code>
-<code><a href="#l617" class="line" id="l617">    617</a>         Cow(</code>
-<code><a href="#l618" class="line" id="l618">    618</a>             #[serde(with = &quot;serde_bytes&quot;)]</code>
-<code><a href="#l619" class="line" id="l619">    619</a>             #[serde(borrow)]</code>
-<code><a href="#l620" class="line" id="l620">    620</a>             Cow&lt;&#39;a, [u8]&gt;,</code>
-<code><a href="#l621" class="line" id="l621">    621</a>             bool,</code>
-<code><a href="#l622" class="line" id="l622">    622</a>             #[serde(borrow)] Cow&lt;&#39;a, str&gt;,</code>
-<code><a href="#l623" class="line" id="l623">    623</a>         ),</code>
-<code><a href="#l624" class="line" id="l624">    624</a>     }</code>
-<code><a href="#l625" class="line" id="l625">    625</a> </code>
-<code><a href="#l626" class="line" id="l626">    626</a>     /// Assert that serializing a value yields the expected byte sequence (as a</code>
-<code><a href="#l627" class="line" id="l627">    627</a>     /// hex-encoded string), and that deserializing it yields the original value.</code>
-<code><a href="#l628" class="line" id="l628">    628</a>     macro_rules! test_serialize_deserialize {</code>
-<code><a href="#l629" class="line" id="l629">    629</a>         ( $( $name:ident: $input:expr =&gt; $expect:literal, )* ) =&gt; {</code>
-<code><a href="#l630" class="line" id="l630">    630</a>         $(</code>
-<code><a href="#l631" class="line" id="l631">    631</a>             #[test]</code>
-<code><a href="#l632" class="line" id="l632">    632</a>             fn $name() -&gt; Result&lt;()&gt; {</code>
-<code><a href="#l633" class="line" id="l633">    633</a>                 let mut input = $input;</code>
-<code><a href="#l634" class="line" id="l634">    634</a>                 let expect = $expect;</code>
-<code><a href="#l635" class="line" id="l635">    635</a>                 let output = serialize(&amp;input);</code>
-<code><a href="#l636" class="line" id="l636">    636</a>                 assert_eq!(hex::encode(&amp;output), expect, &quot;encode failed&quot;);</code>
-<code><a href="#l637" class="line" id="l637">    637</a> </code>
-<code><a href="#l638" class="line" id="l638">    638</a>                 let expect = input;</code>
-<code><a href="#l639" class="line" id="l639">    639</a>                 input = deserialize(&amp;output)?; // reuse input variable for proper type</code>
-<code><a href="#l640" class="line" id="l640">    640</a>                 assert_eq!(input, expect, &quot;decode failed&quot;);</code>
-<code><a href="#l641" class="line" id="l641">    641</a>                 Ok(())</code>
-<code><a href="#l642" class="line" id="l642">    642</a>             }</code>
-<code><a href="#l643" class="line" id="l643">    643</a>         )*</code>
-<code><a href="#l644" class="line" id="l644">    644</a>         };</code>
-<code><a href="#l645" class="line" id="l645">    645</a>     }</code>
-<code><a href="#l646" class="line" id="l646">    646</a> </code>
-<code><a href="#l647" class="line" id="l647">    647</a>     /// Assert that deserializing invalid inputs results in errors. Takes byte</code>
-<code><a href="#l648" class="line" id="l648">    648</a>     /// slices (as hex-encoded strings) and the type to deserialize into.</code>
-<code><a href="#l649" class="line" id="l649">    649</a>     macro_rules! test_deserialize_error {</code>
-<code><a href="#l650" class="line" id="l650">    650</a>         ( $( $name:ident: $input:literal as $type:ty, )* ) =&gt; {</code>
-<code><a href="#l651" class="line" id="l651">    651</a>         paste! {</code>
-<code><a href="#l652" class="line" id="l652">    652</a>         $(</code>
-<code><a href="#l653" class="line" id="l653">    653</a>             #[test]</code>
-<code><a href="#l654" class="line" id="l654">    654</a>             #[should_panic]</code>
-<code><a href="#l655" class="line" id="l655">    655</a>             fn [&lt; $name _deserialize_error &gt;]() {</code>
-<code><a href="#l656" class="line" id="l656">    656</a>                 let bytes = hex::decode($input).unwrap();</code>
-<code><a href="#l657" class="line" id="l657">    657</a>                 deserialize::&lt;$type&gt;(&amp;bytes).unwrap();</code>
-<code><a href="#l658" class="line" id="l658">    658</a>             }</code>
-<code><a href="#l659" class="line" id="l659">    659</a>         )*</code>
-<code><a href="#l660" class="line" id="l660">    660</a>         }</code>
-<code><a href="#l661" class="line" id="l661">    661</a>         };</code>
-<code><a href="#l662" class="line" id="l662">    662</a>     }</code>
-<code><a href="#l663" class="line" id="l663">    663</a> </code>
-<code><a href="#l664" class="line" id="l664">    664</a>     // Assert that serializing a value results in an error.</code>
-<code><a href="#l665" class="line" id="l665">    665</a>     macro_rules! test_serialize_error {</code>
-<code><a href="#l666" class="line" id="l666">    666</a>         ( $( $name:ident: $input:expr, )* ) =&gt; {</code>
-<code><a href="#l667" class="line" id="l667">    667</a>         paste! {</code>
-<code><a href="#l668" class="line" id="l668">    668</a>         $(</code>
-<code><a href="#l669" class="line" id="l669">    669</a>             #[test]</code>
-<code><a href="#l670" class="line" id="l670">    670</a>             #[should_panic]</code>
-<code><a href="#l671" class="line" id="l671">    671</a>             fn [&lt; $name _serialize_error &gt;]() {</code>
-<code><a href="#l672" class="line" id="l672">    672</a>                 let input = $input;</code>
-<code><a href="#l673" class="line" id="l673">    673</a>                 serialize(&amp;input);</code>
-<code><a href="#l674" class="line" id="l674">    674</a>             }</code>
-<code><a href="#l675" class="line" id="l675">    675</a>         )*</code>
-<code><a href="#l676" class="line" id="l676">    676</a>         }</code>
-<code><a href="#l677" class="line" id="l677">    677</a>         };</code>
-<code><a href="#l678" class="line" id="l678">    678</a>     }</code>
-<code><a href="#l679" class="line" id="l679">    679</a> </code>
-<code><a href="#l680" class="line" id="l680">    680</a>     test_serialize_deserialize! {</code>
-<code><a href="#l681" class="line" id="l681">    681</a>         bool_false: false =&gt; &quot;00&quot;,</code>
-<code><a href="#l682" class="line" id="l682">    682</a>         bool_true: true =&gt; &quot;01&quot;,</code>
-<code><a href="#l683" class="line" id="l683">    683</a> </code>
-<code><a href="#l684" class="line" id="l684">    684</a>         f64_min: f64::MIN =&gt; &quot;0010000000000000&quot;,</code>
-<code><a href="#l685" class="line" id="l685">    685</a>         f64_neg_inf: f64::NEG_INFINITY =&gt; &quot;000fffffffffffff&quot;,</code>
-<code><a href="#l686" class="line" id="l686">    686</a>         f64_neg_pi: -PI =&gt; &quot;3ff6de04abbbd2e7&quot;,</code>
-<code><a href="#l687" class="line" id="l687">    687</a>         f64_neg_zero: -0f64 =&gt; &quot;7fffffffffffffff&quot;,</code>
-<code><a href="#l688" class="line" id="l688">    688</a>         f64_zero: 0f64 =&gt; &quot;8000000000000000&quot;,</code>
-<code><a href="#l689" class="line" id="l689">    689</a>         f64_pi: PI =&gt; &quot;c00921fb54442d18&quot;,</code>
-<code><a href="#l690" class="line" id="l690">    690</a>         f64_max: f64::MAX =&gt; &quot;ffefffffffffffff&quot;,</code>
-<code><a href="#l691" class="line" id="l691">    691</a>         f64_inf: f64::INFINITY =&gt; &quot;fff0000000000000&quot;,</code>
-<code><a href="#l692" class="line" id="l692">    692</a>         // We don&#39;t test NAN here, since NAN != NAN.</code>
-<code><a href="#l693" class="line" id="l693">    693</a> </code>
-<code><a href="#l694" class="line" id="l694">    694</a>         i64_min: i64::MIN =&gt; &quot;0000000000000000&quot;,</code>
-<code><a href="#l695" class="line" id="l695">    695</a>         i64_neg_65535: -65535i64 =&gt; &quot;7fffffffffff0001&quot;,</code>
-<code><a href="#l696" class="line" id="l696">    696</a>         i64_neg_1: -1i64 =&gt; &quot;7fffffffffffffff&quot;,</code>
-<code><a href="#l697" class="line" id="l697">    697</a>         i64_0: 0i64 =&gt; &quot;8000000000000000&quot;,</code>
-<code><a href="#l698" class="line" id="l698">    698</a>         i64_1: 1i64 =&gt; &quot;8000000000000001&quot;,</code>
-<code><a href="#l699" class="line" id="l699">    699</a>         i64_65535: 65535i64 =&gt; &quot;800000000000ffff&quot;,</code>
-<code><a href="#l700" class="line" id="l700">    700</a>         i64_max: i64::MAX =&gt; &quot;ffffffffffffffff&quot;,</code>
-<code><a href="#l701" class="line" id="l701">    701</a> </code>
-<code><a href="#l702" class="line" id="l702">    702</a>         u64_min: u64::MIN =&gt; &quot;0000000000000000&quot;,</code>
-<code><a href="#l703" class="line" id="l703">    703</a>         u64_1: 1_u64 =&gt; &quot;0000000000000001&quot;,</code>
-<code><a href="#l704" class="line" id="l704">    704</a>         u64_65535: 65535_u64 =&gt; &quot;000000000000ffff&quot;,</code>
-<code><a href="#l705" class="line" id="l705">    705</a>         u64_max: u64::MAX =&gt; &quot;ffffffffffffffff&quot;,</code>
-<code><a href="#l706" class="line" id="l706">    706</a> </code>
-<code><a href="#l707" class="line" id="l707">    707</a>         bytes: ByteBuf::from(vec![0x01, 0xff]) =&gt; &quot;01ff0000&quot;,</code>
-<code><a href="#l708" class="line" id="l708">    708</a>         bytes_empty: ByteBuf::new() =&gt; &quot;0000&quot;,</code>
-<code><a href="#l709" class="line" id="l709">    709</a>         bytes_escape: ByteBuf::from(vec![0x00, 0x01, 0x02]) =&gt; &quot;00ff01020000&quot;,</code>
-<code><a href="#l710" class="line" id="l710">    710</a> </code>
-<code><a href="#l711" class="line" id="l711">    711</a>         string: &quot;foo&quot;.to_string() =&gt; &quot;666f6f0000&quot;,</code>
-<code><a href="#l712" class="line" id="l712">    712</a>         string_empty: &quot;&quot;.to_string() =&gt; &quot;0000&quot;,</code>
-<code><a href="#l713" class="line" id="l713">    713</a>         string_escape: &quot;foo\x00bar&quot;.to_string() =&gt; &quot;666f6f00ff6261720000&quot;,</code>
-<code><a href="#l714" class="line" id="l714">    714</a>         string_utf8: &quot;👋&quot;.to_string() =&gt; &quot;f09f918b0000&quot;,</code>
-<code><a href="#l715" class="line" id="l715">    715</a> </code>
-<code><a href="#l716" class="line" id="l716">    716</a>         tuple: (true, u64::MAX, ByteBuf::from(vec![0x00, 0x01])) =&gt; &quot;01ffffffffffffffff00ff010000&quot;,</code>
-<code><a href="#l717" class="line" id="l717">    717</a>         array_bool: [false, true, false] =&gt; &quot;000100&quot;,</code>
-<code><a href="#l718" class="line" id="l718">    718</a>         vec_bool: vec![false, true, false] =&gt; &quot;000100&quot;,</code>
-<code><a href="#l719" class="line" id="l719">    719</a>         vec_u64: vec![u64::MIN, u64::MAX, 65535_u64] =&gt; &quot;0000000000000000ffffffffffffffff000000000000ffff&quot;,</code>
-<code><a href="#l720" class="line" id="l720">    720</a> </code>
-<code><a href="#l721" class="line" id="l721">    721</a>         enum_unit: Key::Unit =&gt; &quot;00&quot;,</code>
-<code><a href="#l722" class="line" id="l722">    722</a>         enum_newtype: Key::NewType(&quot;foo&quot;.to_string()) =&gt; &quot;01666f6f0000&quot;,</code>
-<code><a href="#l723" class="line" id="l723">    723</a>         enum_tuple: Key::Tuple(false, vec![0x00, 0x01], u64::MAX) =&gt; &quot;020000ff010000ffffffffffffffff&quot;,</code>
-<code><a href="#l724" class="line" id="l724">    724</a>         enum_cow: Key::Cow(vec![0x00, 0x01].into(), false, String::from(&quot;foo&quot;).into()) =&gt; &quot;0300ff01000000666f6f0000&quot;,</code>
-<code><a href="#l725" class="line" id="l725">    725</a>         enum_cow_borrow: Key::Cow([0x00, 0x01].as_slice().into(), false, &quot;foo&quot;.into()) =&gt; &quot;0300ff01000000666f6f0000&quot;,</code>
-<code><a href="#l726" class="line" id="l726">    726</a> </code>
-<code><a href="#l727" class="line" id="l727">    727</a>         value_null: Value::Null =&gt; &quot;00&quot;,</code>
-<code><a href="#l728" class="line" id="l728">    728</a>         value_bool: Value::Boolean(true) =&gt; &quot;0101&quot;,</code>
-<code><a href="#l729" class="line" id="l729">    729</a>         value_int: Value::Integer(-1) =&gt; &quot;027fffffffffffffff&quot;,</code>
-<code><a href="#l730" class="line" id="l730">    730</a>         value_float: Value::Float(PI) =&gt; &quot;03c00921fb54442d18&quot;,</code>
-<code><a href="#l731" class="line" id="l731">    731</a>         value_string: Value::String(&quot;foo&quot;.to_string()) =&gt; &quot;04666f6f0000&quot;,</code>
-<code><a href="#l732" class="line" id="l732">    732</a>     }</code>
-<code><a href="#l733" class="line" id="l733">    733</a> </code>
-<code><a href="#l734" class="line" id="l734">    734</a>     test_serialize_error! {</code>
-<code><a href="#l735" class="line" id="l735">    735</a>         char: &#39;a&#39;,</code>
-<code><a href="#l736" class="line" id="l736">    736</a>         f32: 0f32,</code>
-<code><a href="#l737" class="line" id="l737">    737</a>         i8: 0i8,</code>
-<code><a href="#l738" class="line" id="l738">    738</a>         i16: 0i16,</code>
-<code><a href="#l739" class="line" id="l739">    739</a>         i32: 0i32,</code>
-<code><a href="#l740" class="line" id="l740">    740</a>         i128: 0i128,</code>
-<code><a href="#l741" class="line" id="l741">    741</a>         u8: 0u8,</code>
-<code><a href="#l742" class="line" id="l742">    742</a>         u16: 0u16,</code>
-<code><a href="#l743" class="line" id="l743">    743</a>         u32: 0u32,</code>
-<code><a href="#l744" class="line" id="l744">    744</a>         u128: 0u128,</code>
-<code><a href="#l745" class="line" id="l745">    745</a>         some: Some(true),</code>
-<code><a href="#l746" class="line" id="l746">    746</a>         none: Option::&lt;bool&gt;::None,</code>
-<code><a href="#l747" class="line" id="l747">    747</a>         vec_u8: vec![0u8],</code>
-<code><a href="#l748" class="line" id="l748">    748</a>     }</code>
-<code><a href="#l749" class="line" id="l749">    749</a> </code>
-<code><a href="#l750" class="line" id="l750">    750</a>     test_deserialize_error! {</code>
-<code><a href="#l751" class="line" id="l751">    751</a>         bool_empty: &quot;&quot; as bool,</code>
-<code><a href="#l752" class="line" id="l752">    752</a>         bool_2: &quot;02&quot; as bool,</code>
-<code><a href="#l753" class="line" id="l753">    753</a>         char: &quot;61&quot; as char,</code>
-<code><a href="#l754" class="line" id="l754">    754</a>         f32: &quot;00000000&quot; as f32,</code>
-<code><a href="#l755" class="line" id="l755">    755</a>         i8: &quot;00&quot; as i8,</code>
-<code><a href="#l756" class="line" id="l756">    756</a>         i16: &quot;0000&quot; as i16,</code>
-<code><a href="#l757" class="line" id="l757">    757</a>         i32: &quot;00000000&quot; as i32,</code>
-<code><a href="#l758" class="line" id="l758">    758</a>         i128: &quot;00000000000000000000000000000000&quot; as i128,</code>
-<code><a href="#l759" class="line" id="l759">    759</a>         u16: &quot;0000&quot; as u16,</code>
-<code><a href="#l760" class="line" id="l760">    760</a>         u32: &quot;00000000&quot; as u32,</code>
-<code><a href="#l761" class="line" id="l761">    761</a>         u64_partial: &quot;0000&quot; as u64,</code>
-<code><a href="#l762" class="line" id="l762">    762</a>         u128: &quot;00000000000000000000000000000000&quot; as u128,</code>
-<code><a href="#l763" class="line" id="l763">    763</a>         option: &quot;00&quot; as Option::&lt;bool&gt;,</code>
-<code><a href="#l764" class="line" id="l764">    764</a>         string_utf8_invalid: &quot;c0&quot; as String,</code>
-<code><a href="#l765" class="line" id="l765">    765</a>         tuple_partial: &quot;0001&quot; as (bool, bool, bool),</code>
-<code><a href="#l766" class="line" id="l766">    766</a>         vec_u8: &quot;0000&quot; as Vec&lt;u8&gt;,</code>
-<code><a href="#l767" class="line" id="l767">    767</a>     }</code>
-<code><a href="#l768" class="line" id="l768">    768</a> }</code>
+<a href="#l1" class="line" id="l1">      1</a><code> //! KeyCode is a lexicographical order-preserving binary encoding for use with</code>
+<a href="#l2" class="line" id="l2">      2</a><code> //! keys. It is designed for simplicity, not efficiency (i.e. it does not use</code>
+<a href="#l3" class="line" id="l3">      3</a><code> //! varints or other compression methods).</code>
+<a href="#l4" class="line" id="l4">      4</a><code> //!</code>
+<a href="#l5" class="line" id="l5">      5</a><code> //! Ordering is important because it allows limited scans across specific parts</code>
+<a href="#l6" class="line" id="l6">      6</a><code> //! of the keyspace, e.g. scanning an individual table or using an index range</code>
+<a href="#l7" class="line" id="l7">      7</a><code> //! predicate like WHERE id &lt; 100. It also avoids sorting in some cases where</code>
+<a href="#l8" class="line" id="l8">      8</a><code> //! the keys are already in the desired order, e.g. in the Raft log.</code>
+<a href="#l9" class="line" id="l9">      9</a><code> //!</code>
+<a href="#l10" class="line" id="l10">     10</a><code> //! The encoding is not self-describing: the caller must provide a concrete type</code>
+<a href="#l11" class="line" id="l11">     11</a><code> //! to decode into, and the binary key must conform to its structure.</code>
+<a href="#l12" class="line" id="l12">     12</a><code> //!</code>
+<a href="#l13" class="line" id="l13">     13</a><code> //! KeyCode supports a subset of primitive data types, encoded as follows:</code>
+<a href="#l14" class="line" id="l14">     14</a><code> //!</code>
+<a href="#l15" class="line" id="l15">     15</a><code> //! bool:    0x00 for false, 0x01 for true.</code>
+<a href="#l16" class="line" id="l16">     16</a><code> //! u64:     Big-endian binary representation.</code>
+<a href="#l17" class="line" id="l17">     17</a><code> //! i64:     Big-endian binary representation, with sign bit flipped.</code>
+<a href="#l18" class="line" id="l18">     18</a><code> //! f64:     Big-endian binary representation, with sign bit flipped, and rest if negative.</code>
+<a href="#l19" class="line" id="l19">     19</a><code> //! Vec&lt;u8&gt;: 0x00 is escaped as 0x00ff, terminated with 0x0000.</code>
+<a href="#l20" class="line" id="l20">     20</a><code> //! String:  Like Vec&lt;u8&gt;.</code>
+<a href="#l21" class="line" id="l21">     21</a><code> //!</code>
+<a href="#l22" class="line" id="l22">     22</a><code> //! Additionally, several container types are supported:</code>
+<a href="#l23" class="line" id="l23">     23</a><code> //!</code>
+<a href="#l24" class="line" id="l24">     24</a><code> //! Tuple:  Concatenation of elements, with no surrounding structure.</code>
+<a href="#l25" class="line" id="l25">     25</a><code> //! Array:  Like tuple.</code>
+<a href="#l26" class="line" id="l26">     26</a><code> //! Vec:    Like tuple.</code>
+<a href="#l27" class="line" id="l27">     27</a><code> //! Enum:   The variant&#39;s enum index as a single u8 byte.</code>
+<a href="#l28" class="line" id="l28">     28</a><code> //!</code>
+<a href="#l29" class="line" id="l29">     29</a><code> //! SQL Value enums are encoded according to the above scheme, i.e. a single</code>
+<a href="#l30" class="line" id="l30">     30</a><code> //! byte identifying the enum variant by index, then the primitive value.</code>
+<a href="#l31" class="line" id="l31">     31</a><code> //!</code>
+<a href="#l32" class="line" id="l32">     32</a><code> //! The canonical key reprentation is an enum -- for example:</code>
+<a href="#l33" class="line" id="l33">     33</a><code> //!</code>
+<a href="#l34" class="line" id="l34">     34</a><code> //! ```</code>
+<a href="#l35" class="line" id="l35">     35</a><code> //! #[derive(Debug, Deserialize, Serialize)]</code>
+<a href="#l36" class="line" id="l36">     36</a><code> //! enum Key {</code>
+<a href="#l37" class="line" id="l37">     37</a><code> //!     Foo,</code>
+<a href="#l38" class="line" id="l38">     38</a><code> //!     Bar(String),</code>
+<a href="#l39" class="line" id="l39">     39</a><code> //!     Baz(bool, u64, #[serde(with = &quot;serde_bytes&quot;)] Vec&lt;u8&gt;),</code>
+<a href="#l40" class="line" id="l40">     40</a><code> //! }</code>
+<a href="#l41" class="line" id="l41">     41</a><code> //! ```</code>
+<a href="#l42" class="line" id="l42">     42</a><code> //!</code>
+<a href="#l43" class="line" id="l43">     43</a><code> //! Unfortunately, byte vectors and slices such as Vec&lt;u8&gt; must be wrapped with</code>
+<a href="#l44" class="line" id="l44">     44</a><code> //! serde_bytes::ByteBuf or use the #[serde(with=&quot;serde_bytes&quot;)] attribute. See</code>
+<a href="#l45" class="line" id="l45">     45</a><code> //! https://github.com/serde-rs/bytes</code>
+<a href="#l46" class="line" id="l46">     46</a><code> </code>
+<a href="#l47" class="line" id="l47">     47</a><code> use crate::errdata;</code>
+<a href="#l48" class="line" id="l48">     48</a><code> use crate::error::{Error, Result};</code>
+<a href="#l49" class="line" id="l49">     49</a><code> </code>
+<a href="#l50" class="line" id="l50">     50</a><code> use serde::{de, de::IntoDeserializer as _, ser};</code>
+<a href="#l51" class="line" id="l51">     51</a><code> </code>
+<a href="#l52" class="line" id="l52">     52</a><code> /// Serializes a key to a binary KeyCode representation.</code>
+<a href="#l53" class="line" id="l53">     53</a><code> ///</code>
+<a href="#l54" class="line" id="l54">     54</a><code> /// In the common case, the encoded key is borrowed for a storage engine call</code>
+<a href="#l55" class="line" id="l55">     55</a><code> /// and then thrown away. We could avoid a bunch of allocations by taking a</code>
+<a href="#l56" class="line" id="l56">     56</a><code> /// reusable byte vector to encode into and return a reference to it, but we</code>
+<a href="#l57" class="line" id="l57">     57</a><code> /// keep it simple.</code>
+<a href="#l58" class="line" id="l58">     58</a><code> pub fn serialize&lt;T: ser::Serialize&gt;(key: &amp;T) -&gt; Vec&lt;u8&gt; {</code>
+<a href="#l59" class="line" id="l59">     59</a><code>     let mut serializer = Serializer { output: Vec::new() };</code>
+<a href="#l60" class="line" id="l60">     60</a><code>     // Panic on serialization failures, as this is typically an issue with the</code>
+<a href="#l61" class="line" id="l61">     61</a><code>     // provided data structure.</code>
+<a href="#l62" class="line" id="l62">     62</a><code>     key.serialize(&amp;mut serializer).expect(&quot;keycode serialization failed&quot;);</code>
+<a href="#l63" class="line" id="l63">     63</a><code>     serializer.output</code>
+<a href="#l64" class="line" id="l64">     64</a><code> }</code>
+<a href="#l65" class="line" id="l65">     65</a><code> </code>
+<a href="#l66" class="line" id="l66">     66</a><code> /// Deserializes a key from a binary KeyCode representation.</code>
+<a href="#l67" class="line" id="l67">     67</a><code> pub fn deserialize&lt;&#39;a, T: de::Deserialize&lt;&#39;a&gt;&gt;(input: &amp;&#39;a [u8]) -&gt; Result&lt;T&gt; {</code>
+<a href="#l68" class="line" id="l68">     68</a><code>     let mut deserializer = Deserializer::from_bytes(input);</code>
+<a href="#l69" class="line" id="l69">     69</a><code>     let t = T::deserialize(&amp;mut deserializer)?;</code>
+<a href="#l70" class="line" id="l70">     70</a><code>     if !deserializer.input.is_empty() {</code>
+<a href="#l71" class="line" id="l71">     71</a><code>         return errdata!(</code>
+<a href="#l72" class="line" id="l72">     72</a><code>             &quot;unexpected trailing bytes {:x?} at end of key {input:x?}&quot;,</code>
+<a href="#l73" class="line" id="l73">     73</a><code>             deserializer.input,</code>
+<a href="#l74" class="line" id="l74">     74</a><code>         );</code>
+<a href="#l75" class="line" id="l75">     75</a><code>     }</code>
+<a href="#l76" class="line" id="l76">     76</a><code>     Ok(t)</code>
+<a href="#l77" class="line" id="l77">     77</a><code> }</code>
+<a href="#l78" class="line" id="l78">     78</a><code> </code>
+<a href="#l79" class="line" id="l79">     79</a><code> /// Generates a key range for a key prefix, used e.g. for prefix scans.</code>
+<a href="#l80" class="line" id="l80">     80</a><code> ///</code>
+<a href="#l81" class="line" id="l81">     81</a><code> /// The exclusive end bound is generated by adding 1 to the value of the last</code>
+<a href="#l82" class="line" id="l82">     82</a><code> /// byte. If the last byte(s) is 0xff (so adding 1 would overflow), we instead</code>
+<a href="#l83" class="line" id="l83">     83</a><code> /// find the latest non-0xff byte, increment that, and truncate the rest. If all</code>
+<a href="#l84" class="line" id="l84">     84</a><code> /// bytes are 0xff, we scan to the end of the range, since there can&#39;t be other</code>
+<a href="#l85" class="line" id="l85">     85</a><code> /// prefixes after it.</code>
+<a href="#l86" class="line" id="l86">     86</a><code> pub fn prefix_range(prefix: &amp;[u8]) -&gt; (std::ops::Bound&lt;Vec&lt;u8&gt;&gt;, std::ops::Bound&lt;Vec&lt;u8&gt;&gt;) {</code>
+<a href="#l87" class="line" id="l87">     87</a><code>     let start = std::ops::Bound::Included(prefix.to_vec());</code>
+<a href="#l88" class="line" id="l88">     88</a><code>     let end = match prefix.iter().rposition(|b| *b != 0xff) {</code>
+<a href="#l89" class="line" id="l89">     89</a><code>         Some(i) =&gt; std::ops::Bound::Excluded(</code>
+<a href="#l90" class="line" id="l90">     90</a><code>             prefix.iter().take(i).copied().chain(std::iter::once(prefix[i] + 1)).collect(),</code>
+<a href="#l91" class="line" id="l91">     91</a><code>         ),</code>
+<a href="#l92" class="line" id="l92">     92</a><code>         None =&gt; std::ops::Bound::Unbounded,</code>
+<a href="#l93" class="line" id="l93">     93</a><code>     };</code>
+<a href="#l94" class="line" id="l94">     94</a><code>     (start, end)</code>
+<a href="#l95" class="line" id="l95">     95</a><code> }</code>
+<a href="#l96" class="line" id="l96">     96</a><code> </code>
+<a href="#l97" class="line" id="l97">     97</a><code> /// Serializes keys as binary byte vectors.</code>
+<a href="#l98" class="line" id="l98">     98</a><code> struct Serializer {</code>
+<a href="#l99" class="line" id="l99">     99</a><code>     output: Vec&lt;u8&gt;,</code>
+<a href="#l100" class="line" id="l100">    100</a><code> }</code>
+<a href="#l101" class="line" id="l101">    101</a><code> </code>
+<a href="#l102" class="line" id="l102">    102</a><code> impl&lt;&#39;a&gt; ser::Serializer for &amp;&#39;a mut Serializer {</code>
+<a href="#l103" class="line" id="l103">    103</a><code>     type Ok = ();</code>
+<a href="#l104" class="line" id="l104">    104</a><code>     type Error = Error;</code>
+<a href="#l105" class="line" id="l105">    105</a><code> </code>
+<a href="#l106" class="line" id="l106">    106</a><code>     type SerializeSeq = Self;</code>
+<a href="#l107" class="line" id="l107">    107</a><code>     type SerializeTuple = Self;</code>
+<a href="#l108" class="line" id="l108">    108</a><code>     type SerializeTupleVariant = Self;</code>
+<a href="#l109" class="line" id="l109">    109</a><code>     type SerializeTupleStruct = ser::Impossible&lt;(), Error&gt;;</code>
+<a href="#l110" class="line" id="l110">    110</a><code>     type SerializeMap = ser::Impossible&lt;(), Error&gt;;</code>
+<a href="#l111" class="line" id="l111">    111</a><code>     type SerializeStruct = ser::Impossible&lt;(), Error&gt;;</code>
+<a href="#l112" class="line" id="l112">    112</a><code>     type SerializeStructVariant = ser::Impossible&lt;(), Error&gt;;</code>
+<a href="#l113" class="line" id="l113">    113</a><code> </code>
+<a href="#l114" class="line" id="l114">    114</a><code>     /// bool simply uses 1 for true and 0 for false.</code>
+<a href="#l115" class="line" id="l115">    115</a><code>     fn serialize_bool(self, v: bool) -&gt; Result&lt;()&gt; {</code>
+<a href="#l116" class="line" id="l116">    116</a><code>         self.output.push(if v { 1 } else { 0 });</code>
+<a href="#l117" class="line" id="l117">    117</a><code>         Ok(())</code>
+<a href="#l118" class="line" id="l118">    118</a><code>     }</code>
+<a href="#l119" class="line" id="l119">    119</a><code> </code>
+<a href="#l120" class="line" id="l120">    120</a><code>     fn serialize_i8(self, _: i8) -&gt; Result&lt;()&gt; {</code>
+<a href="#l121" class="line" id="l121">    121</a><code>         unimplemented!()</code>
+<a href="#l122" class="line" id="l122">    122</a><code>     }</code>
+<a href="#l123" class="line" id="l123">    123</a><code> </code>
+<a href="#l124" class="line" id="l124">    124</a><code>     fn serialize_i16(self, _: i16) -&gt; Result&lt;()&gt; {</code>
+<a href="#l125" class="line" id="l125">    125</a><code>         unimplemented!()</code>
+<a href="#l126" class="line" id="l126">    126</a><code>     }</code>
+<a href="#l127" class="line" id="l127">    127</a><code> </code>
+<a href="#l128" class="line" id="l128">    128</a><code>     fn serialize_i32(self, _: i32) -&gt; Result&lt;()&gt; {</code>
+<a href="#l129" class="line" id="l129">    129</a><code>         unimplemented!()</code>
+<a href="#l130" class="line" id="l130">    130</a><code>     }</code>
+<a href="#l131" class="line" id="l131">    131</a><code> </code>
+<a href="#l132" class="line" id="l132">    132</a><code>     /// i64 uses the big-endian two&#39;s completement encoding, but flips the</code>
+<a href="#l133" class="line" id="l133">    133</a><code>     /// left-most sign bit such that negative numbers are ordered before</code>
+<a href="#l134" class="line" id="l134">    134</a><code>     /// positive numbers.</code>
+<a href="#l135" class="line" id="l135">    135</a><code>     ///</code>
+<a href="#l136" class="line" id="l136">    136</a><code>     /// The relative ordering of the remaining bits is already correct: -1, the</code>
+<a href="#l137" class="line" id="l137">    137</a><code>     /// largest negative integer, is encoded as 01111111...11111111, ordered</code>
+<a href="#l138" class="line" id="l138">    138</a><code>     /// after all other negative integers but before positive integers.</code>
+<a href="#l139" class="line" id="l139">    139</a><code>     fn serialize_i64(self, v: i64) -&gt; Result&lt;()&gt; {</code>
+<a href="#l140" class="line" id="l140">    140</a><code>         let mut bytes = v.to_be_bytes();</code>
+<a href="#l141" class="line" id="l141">    141</a><code>         bytes[0] ^= 1 &lt;&lt; 7; // flip sign bit</code>
+<a href="#l142" class="line" id="l142">    142</a><code>         self.output.extend(bytes);</code>
+<a href="#l143" class="line" id="l143">    143</a><code>         Ok(())</code>
+<a href="#l144" class="line" id="l144">    144</a><code>     }</code>
+<a href="#l145" class="line" id="l145">    145</a><code> </code>
+<a href="#l146" class="line" id="l146">    146</a><code>     fn serialize_u8(self, _: u8) -&gt; Result&lt;()&gt; {</code>
+<a href="#l147" class="line" id="l147">    147</a><code>         unimplemented!()</code>
+<a href="#l148" class="line" id="l148">    148</a><code>     }</code>
+<a href="#l149" class="line" id="l149">    149</a><code> </code>
+<a href="#l150" class="line" id="l150">    150</a><code>     fn serialize_u16(self, _: u16) -&gt; Result&lt;()&gt; {</code>
+<a href="#l151" class="line" id="l151">    151</a><code>         unimplemented!()</code>
+<a href="#l152" class="line" id="l152">    152</a><code>     }</code>
+<a href="#l153" class="line" id="l153">    153</a><code> </code>
+<a href="#l154" class="line" id="l154">    154</a><code>     fn serialize_u32(self, _: u32) -&gt; Result&lt;()&gt; {</code>
+<a href="#l155" class="line" id="l155">    155</a><code>         unimplemented!()</code>
+<a href="#l156" class="line" id="l156">    156</a><code>     }</code>
+<a href="#l157" class="line" id="l157">    157</a><code> </code>
+<a href="#l158" class="line" id="l158">    158</a><code>     /// u64 simply uses the big-endian encoding.</code>
+<a href="#l159" class="line" id="l159">    159</a><code>     fn serialize_u64(self, v: u64) -&gt; Result&lt;()&gt; {</code>
+<a href="#l160" class="line" id="l160">    160</a><code>         self.output.extend(v.to_be_bytes());</code>
+<a href="#l161" class="line" id="l161">    161</a><code>         Ok(())</code>
+<a href="#l162" class="line" id="l162">    162</a><code>     }</code>
+<a href="#l163" class="line" id="l163">    163</a><code> </code>
+<a href="#l164" class="line" id="l164">    164</a><code>     fn serialize_f32(self, _: f32) -&gt; Result&lt;()&gt; {</code>
+<a href="#l165" class="line" id="l165">    165</a><code>         unimplemented!()</code>
+<a href="#l166" class="line" id="l166">    166</a><code>     }</code>
+<a href="#l167" class="line" id="l167">    167</a><code> </code>
+<a href="#l168" class="line" id="l168">    168</a><code>     /// f64 is encoded in big-endian form, but it flips the sign bit to order</code>
+<a href="#l169" class="line" id="l169">    169</a><code>     /// positive numbers after negative numbers, and also flips all other bits</code>
+<a href="#l170" class="line" id="l170">    170</a><code>     /// for negative numbers to order them from smallest to greatest. NaN is</code>
+<a href="#l171" class="line" id="l171">    171</a><code>     /// ordered at the end.</code>
+<a href="#l172" class="line" id="l172">    172</a><code>     fn serialize_f64(self, v: f64) -&gt; Result&lt;()&gt; {</code>
+<a href="#l173" class="line" id="l173">    173</a><code>         let mut bytes = v.to_be_bytes();</code>
+<a href="#l174" class="line" id="l174">    174</a><code>         if bytes[0] &amp; 1 &lt;&lt; 7 == 0 {</code>
+<a href="#l175" class="line" id="l175">    175</a><code>             bytes[0] ^= 1 &lt;&lt; 7; // positive, flip sign bit</code>
+<a href="#l176" class="line" id="l176">    176</a><code>         } else {</code>
+<a href="#l177" class="line" id="l177">    177</a><code>             bytes.iter_mut().for_each(|b| *b = !*b); // negative, flip all bits</code>
+<a href="#l178" class="line" id="l178">    178</a><code>         }</code>
+<a href="#l179" class="line" id="l179">    179</a><code>         self.output.extend(bytes);</code>
+<a href="#l180" class="line" id="l180">    180</a><code>         Ok(())</code>
+<a href="#l181" class="line" id="l181">    181</a><code>     }</code>
+<a href="#l182" class="line" id="l182">    182</a><code> </code>
+<a href="#l183" class="line" id="l183">    183</a><code>     fn serialize_char(self, _: char) -&gt; Result&lt;()&gt; {</code>
+<a href="#l184" class="line" id="l184">    184</a><code>         unimplemented!()</code>
+<a href="#l185" class="line" id="l185">    185</a><code>     }</code>
+<a href="#l186" class="line" id="l186">    186</a><code> </code>
+<a href="#l187" class="line" id="l187">    187</a><code>     // Strings are encoded like bytes.</code>
+<a href="#l188" class="line" id="l188">    188</a><code>     fn serialize_str(self, v: &amp;str) -&gt; Result&lt;()&gt; {</code>
+<a href="#l189" class="line" id="l189">    189</a><code>         self.serialize_bytes(v.as_bytes())</code>
+<a href="#l190" class="line" id="l190">    190</a><code>     }</code>
+<a href="#l191" class="line" id="l191">    191</a><code> </code>
+<a href="#l192" class="line" id="l192">    192</a><code>     // Byte slices are terminated by 0x0000, escaping 0x00 as 0x00ff.</code>
+<a href="#l193" class="line" id="l193">    193</a><code>     // Prefix-length encoding can&#39;t be used, since it violates ordering.</code>
+<a href="#l194" class="line" id="l194">    194</a><code>     fn serialize_bytes(self, v: &amp;[u8]) -&gt; Result&lt;()&gt; {</code>
+<a href="#l195" class="line" id="l195">    195</a><code>         self.output.extend(</code>
+<a href="#l196" class="line" id="l196">    196</a><code>             v.iter()</code>
+<a href="#l197" class="line" id="l197">    197</a><code>                 .flat_map(|b| match b {</code>
+<a href="#l198" class="line" id="l198">    198</a><code>                     0x00 =&gt; vec![0x00, 0xff],</code>
+<a href="#l199" class="line" id="l199">    199</a><code>                     b =&gt; vec![*b],</code>
+<a href="#l200" class="line" id="l200">    200</a><code>                 })</code>
+<a href="#l201" class="line" id="l201">    201</a><code>                 .chain([0x00, 0x00]),</code>
+<a href="#l202" class="line" id="l202">    202</a><code>         );</code>
+<a href="#l203" class="line" id="l203">    203</a><code>         Ok(())</code>
+<a href="#l204" class="line" id="l204">    204</a><code>     }</code>
+<a href="#l205" class="line" id="l205">    205</a><code> </code>
+<a href="#l206" class="line" id="l206">    206</a><code>     fn serialize_none(self) -&gt; Result&lt;()&gt; {</code>
+<a href="#l207" class="line" id="l207">    207</a><code>         unimplemented!()</code>
+<a href="#l208" class="line" id="l208">    208</a><code>     }</code>
+<a href="#l209" class="line" id="l209">    209</a><code> </code>
+<a href="#l210" class="line" id="l210">    210</a><code>     fn serialize_some&lt;T: ser::Serialize + ?Sized&gt;(self, _: &amp;T) -&gt; Result&lt;()&gt; {</code>
+<a href="#l211" class="line" id="l211">    211</a><code>         unimplemented!()</code>
+<a href="#l212" class="line" id="l212">    212</a><code>     }</code>
+<a href="#l213" class="line" id="l213">    213</a><code> </code>
+<a href="#l214" class="line" id="l214">    214</a><code>     fn serialize_unit(self) -&gt; Result&lt;()&gt; {</code>
+<a href="#l215" class="line" id="l215">    215</a><code>         unimplemented!()</code>
+<a href="#l216" class="line" id="l216">    216</a><code>     }</code>
+<a href="#l217" class="line" id="l217">    217</a><code> </code>
+<a href="#l218" class="line" id="l218">    218</a><code>     fn serialize_unit_struct(self, _: &amp;&#39;static str) -&gt; Result&lt;()&gt; {</code>
+<a href="#l219" class="line" id="l219">    219</a><code>         unimplemented!()</code>
+<a href="#l220" class="line" id="l220">    220</a><code>     }</code>
+<a href="#l221" class="line" id="l221">    221</a><code> </code>
+<a href="#l222" class="line" id="l222">    222</a><code>     /// Enum variants are serialized using their index, as a single byte.</code>
+<a href="#l223" class="line" id="l223">    223</a><code>     fn serialize_unit_variant(self, _: &amp;&#39;static str, index: u32, _: &amp;&#39;static str) -&gt; Result&lt;()&gt; {</code>
+<a href="#l224" class="line" id="l224">    224</a><code>         self.output.push(u8::try_from(index)?);</code>
+<a href="#l225" class="line" id="l225">    225</a><code>         Ok(())</code>
+<a href="#l226" class="line" id="l226">    226</a><code>     }</code>
+<a href="#l227" class="line" id="l227">    227</a><code> </code>
+<a href="#l228" class="line" id="l228">    228</a><code>     fn serialize_newtype_struct&lt;T: ser::Serialize + ?Sized&gt;(</code>
+<a href="#l229" class="line" id="l229">    229</a><code>         self,</code>
+<a href="#l230" class="line" id="l230">    230</a><code>         _: &amp;&#39;static str,</code>
+<a href="#l231" class="line" id="l231">    231</a><code>         _: &amp;T,</code>
+<a href="#l232" class="line" id="l232">    232</a><code>     ) -&gt; Result&lt;()&gt; {</code>
+<a href="#l233" class="line" id="l233">    233</a><code>         unimplemented!()</code>
+<a href="#l234" class="line" id="l234">    234</a><code>     }</code>
+<a href="#l235" class="line" id="l235">    235</a><code> </code>
+<a href="#l236" class="line" id="l236">    236</a><code>     /// Newtype variants are serialized using the variant index and inner type.</code>
+<a href="#l237" class="line" id="l237">    237</a><code>     fn serialize_newtype_variant&lt;T: ser::Serialize + ?Sized&gt;(</code>
+<a href="#l238" class="line" id="l238">    238</a><code>         self,</code>
+<a href="#l239" class="line" id="l239">    239</a><code>         name: &amp;&#39;static str,</code>
+<a href="#l240" class="line" id="l240">    240</a><code>         index: u32,</code>
+<a href="#l241" class="line" id="l241">    241</a><code>         variant: &amp;&#39;static str,</code>
+<a href="#l242" class="line" id="l242">    242</a><code>         value: &amp;T,</code>
+<a href="#l243" class="line" id="l243">    243</a><code>     ) -&gt; Result&lt;()&gt; {</code>
+<a href="#l244" class="line" id="l244">    244</a><code>         self.serialize_unit_variant(name, index, variant)?;</code>
+<a href="#l245" class="line" id="l245">    245</a><code>         value.serialize(self)</code>
+<a href="#l246" class="line" id="l246">    246</a><code>     }</code>
+<a href="#l247" class="line" id="l247">    247</a><code> </code>
+<a href="#l248" class="line" id="l248">    248</a><code>     /// Sequences are serialized as the concatenation of the serialized elements.</code>
+<a href="#l249" class="line" id="l249">    249</a><code>     fn serialize_seq(self, _: Option&lt;usize&gt;) -&gt; Result&lt;Self::SerializeSeq&gt; {</code>
+<a href="#l250" class="line" id="l250">    250</a><code>         Ok(self)</code>
+<a href="#l251" class="line" id="l251">    251</a><code>     }</code>
+<a href="#l252" class="line" id="l252">    252</a><code> </code>
+<a href="#l253" class="line" id="l253">    253</a><code>     /// Tuples are serialized as the concatenation of the serialized elements.</code>
+<a href="#l254" class="line" id="l254">    254</a><code>     fn serialize_tuple(self, _: usize) -&gt; Result&lt;Self::SerializeTuple&gt; {</code>
+<a href="#l255" class="line" id="l255">    255</a><code>         Ok(self)</code>
+<a href="#l256" class="line" id="l256">    256</a><code>     }</code>
+<a href="#l257" class="line" id="l257">    257</a><code> </code>
+<a href="#l258" class="line" id="l258">    258</a><code>     fn serialize_tuple_struct(</code>
+<a href="#l259" class="line" id="l259">    259</a><code>         self,</code>
+<a href="#l260" class="line" id="l260">    260</a><code>         _: &amp;&#39;static str,</code>
+<a href="#l261" class="line" id="l261">    261</a><code>         _: usize,</code>
+<a href="#l262" class="line" id="l262">    262</a><code>     ) -&gt; Result&lt;Self::SerializeTupleStruct&gt; {</code>
+<a href="#l263" class="line" id="l263">    263</a><code>         unimplemented!()</code>
+<a href="#l264" class="line" id="l264">    264</a><code>     }</code>
+<a href="#l265" class="line" id="l265">    265</a><code> </code>
+<a href="#l266" class="line" id="l266">    266</a><code>     /// Tuple variants are serialized using the variant index and the</code>
+<a href="#l267" class="line" id="l267">    267</a><code>     /// concatenation of the serialized elements.</code>
+<a href="#l268" class="line" id="l268">    268</a><code>     fn serialize_tuple_variant(</code>
+<a href="#l269" class="line" id="l269">    269</a><code>         self,</code>
+<a href="#l270" class="line" id="l270">    270</a><code>         name: &amp;&#39;static str,</code>
+<a href="#l271" class="line" id="l271">    271</a><code>         index: u32,</code>
+<a href="#l272" class="line" id="l272">    272</a><code>         variant: &amp;&#39;static str,</code>
+<a href="#l273" class="line" id="l273">    273</a><code>         _: usize,</code>
+<a href="#l274" class="line" id="l274">    274</a><code>     ) -&gt; Result&lt;Self::SerializeTupleVariant&gt; {</code>
+<a href="#l275" class="line" id="l275">    275</a><code>         self.serialize_unit_variant(name, index, variant)?;</code>
+<a href="#l276" class="line" id="l276">    276</a><code>         Ok(self)</code>
+<a href="#l277" class="line" id="l277">    277</a><code>     }</code>
+<a href="#l278" class="line" id="l278">    278</a><code> </code>
+<a href="#l279" class="line" id="l279">    279</a><code>     fn serialize_map(self, _: Option&lt;usize&gt;) -&gt; Result&lt;Self::SerializeMap&gt; {</code>
+<a href="#l280" class="line" id="l280">    280</a><code>         unimplemented!()</code>
+<a href="#l281" class="line" id="l281">    281</a><code>     }</code>
+<a href="#l282" class="line" id="l282">    282</a><code> </code>
+<a href="#l283" class="line" id="l283">    283</a><code>     fn serialize_struct(self, _: &amp;&#39;static str, _: usize) -&gt; Result&lt;Self::SerializeStruct&gt; {</code>
+<a href="#l284" class="line" id="l284">    284</a><code>         unimplemented!()</code>
+<a href="#l285" class="line" id="l285">    285</a><code>     }</code>
+<a href="#l286" class="line" id="l286">    286</a><code> </code>
+<a href="#l287" class="line" id="l287">    287</a><code>     fn serialize_struct_variant(</code>
+<a href="#l288" class="line" id="l288">    288</a><code>         self,</code>
+<a href="#l289" class="line" id="l289">    289</a><code>         _: &amp;&#39;static str,</code>
+<a href="#l290" class="line" id="l290">    290</a><code>         _: u32,</code>
+<a href="#l291" class="line" id="l291">    291</a><code>         _: &amp;&#39;static str,</code>
+<a href="#l292" class="line" id="l292">    292</a><code>         _: usize,</code>
+<a href="#l293" class="line" id="l293">    293</a><code>     ) -&gt; Result&lt;Self::SerializeStructVariant&gt; {</code>
+<a href="#l294" class="line" id="l294">    294</a><code>         unimplemented!()</code>
+<a href="#l295" class="line" id="l295">    295</a><code>     }</code>
+<a href="#l296" class="line" id="l296">    296</a><code> }</code>
+<a href="#l297" class="line" id="l297">    297</a><code> </code>
+<a href="#l298" class="line" id="l298">    298</a><code> /// Sequences simply concatenate the serialized elements, with no external structure.</code>
+<a href="#l299" class="line" id="l299">    299</a><code> impl&lt;&#39;a&gt; ser::SerializeSeq for &amp;&#39;a mut Serializer {</code>
+<a href="#l300" class="line" id="l300">    300</a><code>     type Ok = ();</code>
+<a href="#l301" class="line" id="l301">    301</a><code>     type Error = Error;</code>
+<a href="#l302" class="line" id="l302">    302</a><code> </code>
+<a href="#l303" class="line" id="l303">    303</a><code>     fn serialize_element&lt;T: ser::Serialize + ?Sized&gt;(&amp;mut self, value: &amp;T) -&gt; Result&lt;()&gt; {</code>
+<a href="#l304" class="line" id="l304">    304</a><code>         value.serialize(&amp;mut **self)</code>
+<a href="#l305" class="line" id="l305">    305</a><code>     }</code>
+<a href="#l306" class="line" id="l306">    306</a><code> </code>
+<a href="#l307" class="line" id="l307">    307</a><code>     fn end(self) -&gt; Result&lt;()&gt; {</code>
+<a href="#l308" class="line" id="l308">    308</a><code>         Ok(())</code>
+<a href="#l309" class="line" id="l309">    309</a><code>     }</code>
+<a href="#l310" class="line" id="l310">    310</a><code> }</code>
+<a href="#l311" class="line" id="l311">    311</a><code> </code>
+<a href="#l312" class="line" id="l312">    312</a><code> /// Tuples, like sequences, simply concatenate the serialized elements.</code>
+<a href="#l313" class="line" id="l313">    313</a><code> impl&lt;&#39;a&gt; ser::SerializeTuple for &amp;&#39;a mut Serializer {</code>
+<a href="#l314" class="line" id="l314">    314</a><code>     type Ok = ();</code>
+<a href="#l315" class="line" id="l315">    315</a><code>     type Error = Error;</code>
+<a href="#l316" class="line" id="l316">    316</a><code> </code>
+<a href="#l317" class="line" id="l317">    317</a><code>     fn serialize_element&lt;T: ser::Serialize + ?Sized&gt;(&amp;mut self, value: &amp;T) -&gt; Result&lt;()&gt; {</code>
+<a href="#l318" class="line" id="l318">    318</a><code>         value.serialize(&amp;mut **self)</code>
+<a href="#l319" class="line" id="l319">    319</a><code>     }</code>
+<a href="#l320" class="line" id="l320">    320</a><code> </code>
+<a href="#l321" class="line" id="l321">    321</a><code>     fn end(self) -&gt; Result&lt;()&gt; {</code>
+<a href="#l322" class="line" id="l322">    322</a><code>         Ok(())</code>
+<a href="#l323" class="line" id="l323">    323</a><code>     }</code>
+<a href="#l324" class="line" id="l324">    324</a><code> }</code>
+<a href="#l325" class="line" id="l325">    325</a><code> </code>
+<a href="#l326" class="line" id="l326">    326</a><code> /// Tuples, like sequences, simply concatenate the serialized elements.</code>
+<a href="#l327" class="line" id="l327">    327</a><code> impl&lt;&#39;a&gt; ser::SerializeTupleVariant for &amp;&#39;a mut Serializer {</code>
+<a href="#l328" class="line" id="l328">    328</a><code>     type Ok = ();</code>
+<a href="#l329" class="line" id="l329">    329</a><code>     type Error = Error;</code>
+<a href="#l330" class="line" id="l330">    330</a><code> </code>
+<a href="#l331" class="line" id="l331">    331</a><code>     fn serialize_field&lt;T: ser::Serialize + ?Sized&gt;(&amp;mut self, value: &amp;T) -&gt; Result&lt;()&gt; {</code>
+<a href="#l332" class="line" id="l332">    332</a><code>         value.serialize(&amp;mut **self)</code>
+<a href="#l333" class="line" id="l333">    333</a><code>     }</code>
+<a href="#l334" class="line" id="l334">    334</a><code> </code>
+<a href="#l335" class="line" id="l335">    335</a><code>     fn end(self) -&gt; Result&lt;()&gt; {</code>
+<a href="#l336" class="line" id="l336">    336</a><code>         Ok(())</code>
+<a href="#l337" class="line" id="l337">    337</a><code>     }</code>
+<a href="#l338" class="line" id="l338">    338</a><code> }</code>
+<a href="#l339" class="line" id="l339">    339</a><code> </code>
+<a href="#l340" class="line" id="l340">    340</a><code> /// Deserializes keys from byte slices into a given type. The format is not</code>
+<a href="#l341" class="line" id="l341">    341</a><code> /// self-describing, so the caller must provide a concrete type to deserialize</code>
+<a href="#l342" class="line" id="l342">    342</a><code> /// into.</code>
+<a href="#l343" class="line" id="l343">    343</a><code> pub struct Deserializer&lt;&#39;de&gt; {</code>
+<a href="#l344" class="line" id="l344">    344</a><code>     input: &amp;&#39;de [u8],</code>
+<a href="#l345" class="line" id="l345">    345</a><code> }</code>
+<a href="#l346" class="line" id="l346">    346</a><code> </code>
+<a href="#l347" class="line" id="l347">    347</a><code> impl&lt;&#39;de&gt; Deserializer&lt;&#39;de&gt; {</code>
+<a href="#l348" class="line" id="l348">    348</a><code>     /// Creates a deserializer for a byte slice.</code>
+<a href="#l349" class="line" id="l349">    349</a><code>     pub fn from_bytes(input: &amp;&#39;de [u8]) -&gt; Self {</code>
+<a href="#l350" class="line" id="l350">    350</a><code>         Deserializer { input }</code>
+<a href="#l351" class="line" id="l351">    351</a><code>     }</code>
+<a href="#l352" class="line" id="l352">    352</a><code> </code>
+<a href="#l353" class="line" id="l353">    353</a><code>     /// Chops off and returns the next len bytes of the byte slice, or errors if</code>
+<a href="#l354" class="line" id="l354">    354</a><code>     /// there aren&#39;t enough bytes left.</code>
+<a href="#l355" class="line" id="l355">    355</a><code>     fn take_bytes(&amp;mut self, len: usize) -&gt; Result&lt;&amp;[u8]&gt; {</code>
+<a href="#l356" class="line" id="l356">    356</a><code>         if self.input.len() &lt; len {</code>
+<a href="#l357" class="line" id="l357">    357</a><code>             return errdata!(&quot;insufficient bytes, expected {len} bytes for {:x?}&quot;, self.input);</code>
+<a href="#l358" class="line" id="l358">    358</a><code>         }</code>
+<a href="#l359" class="line" id="l359">    359</a><code>         let bytes = &amp;self.input[..len];</code>
+<a href="#l360" class="line" id="l360">    360</a><code>         self.input = &amp;self.input[len..];</code>
+<a href="#l361" class="line" id="l361">    361</a><code>         Ok(bytes)</code>
+<a href="#l362" class="line" id="l362">    362</a><code>     }</code>
+<a href="#l363" class="line" id="l363">    363</a><code> </code>
+<a href="#l364" class="line" id="l364">    364</a><code>     /// Decodes and chops off the next encoded byte slice.</code>
+<a href="#l365" class="line" id="l365">    365</a><code>     fn decode_next_bytes(&amp;mut self) -&gt; Result&lt;Vec&lt;u8&gt;&gt; {</code>
+<a href="#l366" class="line" id="l366">    366</a><code>         // We can&#39;t easily share state between Iterator.scan() and</code>
+<a href="#l367" class="line" id="l367">    367</a><code>         // Iterator.filter() when processing escape sequences, so use a</code>
+<a href="#l368" class="line" id="l368">    368</a><code>         // straightforward loop.</code>
+<a href="#l369" class="line" id="l369">    369</a><code>         let mut decoded = Vec::new();</code>
+<a href="#l370" class="line" id="l370">    370</a><code>         let mut iter = self.input.iter().enumerate();</code>
+<a href="#l371" class="line" id="l371">    371</a><code>         let taken = loop {</code>
+<a href="#l372" class="line" id="l372">    372</a><code>             match iter.next() {</code>
+<a href="#l373" class="line" id="l373">    373</a><code>                 Some((_, 0x00)) =&gt; match iter.next() {</code>
+<a href="#l374" class="line" id="l374">    374</a><code>                     Some((i, 0x00)) =&gt; break i + 1,        // terminator</code>
+<a href="#l375" class="line" id="l375">    375</a><code>                     Some((_, 0xff)) =&gt; decoded.push(0x00), // escaped 0x00</code>
+<a href="#l376" class="line" id="l376">    376</a><code>                     _ =&gt; return errdata!(&quot;invalid escape sequence&quot;),</code>
+<a href="#l377" class="line" id="l377">    377</a><code>                 },</code>
+<a href="#l378" class="line" id="l378">    378</a><code>                 Some((_, b)) =&gt; decoded.push(*b),</code>
+<a href="#l379" class="line" id="l379">    379</a><code>                 None =&gt; return errdata!(&quot;unexpected end of input&quot;),</code>
+<a href="#l380" class="line" id="l380">    380</a><code>             }</code>
+<a href="#l381" class="line" id="l381">    381</a><code>         };</code>
+<a href="#l382" class="line" id="l382">    382</a><code>         self.input = &amp;self.input[taken..];</code>
+<a href="#l383" class="line" id="l383">    383</a><code>         Ok(decoded)</code>
+<a href="#l384" class="line" id="l384">    384</a><code>     }</code>
+<a href="#l385" class="line" id="l385">    385</a><code> }</code>
+<a href="#l386" class="line" id="l386">    386</a><code> </code>
+<a href="#l387" class="line" id="l387">    387</a><code> /// For details on serialization formats, see Serializer.</code>
+<a href="#l388" class="line" id="l388">    388</a><code> impl&lt;&#39;de, &#39;a&gt; de::Deserializer&lt;&#39;de&gt; for &amp;&#39;a mut Deserializer&lt;&#39;de&gt; {</code>
+<a href="#l389" class="line" id="l389">    389</a><code>     type Error = Error;</code>
+<a href="#l390" class="line" id="l390">    390</a><code> </code>
+<a href="#l391" class="line" id="l391">    391</a><code>     fn deserialize_any&lt;V: de::Visitor&lt;&#39;de&gt;&gt;(self, _: V) -&gt; Result&lt;V::Value&gt; {</code>
+<a href="#l392" class="line" id="l392">    392</a><code>         panic!(&quot;must provide type, KeyCode is not self-describing&quot;)</code>
+<a href="#l393" class="line" id="l393">    393</a><code>     }</code>
+<a href="#l394" class="line" id="l394">    394</a><code> </code>
+<a href="#l395" class="line" id="l395">    395</a><code>     fn deserialize_bool&lt;V: de::Visitor&lt;&#39;de&gt;&gt;(self, visitor: V) -&gt; Result&lt;V::Value&gt; {</code>
+<a href="#l396" class="line" id="l396">    396</a><code>         visitor.visit_bool(match self.take_bytes(1)?[0] {</code>
+<a href="#l397" class="line" id="l397">    397</a><code>             0x00 =&gt; false,</code>
+<a href="#l398" class="line" id="l398">    398</a><code>             0x01 =&gt; true,</code>
+<a href="#l399" class="line" id="l399">    399</a><code>             b =&gt; return errdata!(&quot;Invalid boolean value {b:?}&quot;),</code>
+<a href="#l400" class="line" id="l400">    400</a><code>         })</code>
+<a href="#l401" class="line" id="l401">    401</a><code>     }</code>
+<a href="#l402" class="line" id="l402">    402</a><code> </code>
+<a href="#l403" class="line" id="l403">    403</a><code>     fn deserialize_i8&lt;V: de::Visitor&lt;&#39;de&gt;&gt;(self, _: V) -&gt; Result&lt;V::Value&gt; {</code>
+<a href="#l404" class="line" id="l404">    404</a><code>         unimplemented!()</code>
+<a href="#l405" class="line" id="l405">    405</a><code>     }</code>
+<a href="#l406" class="line" id="l406">    406</a><code> </code>
+<a href="#l407" class="line" id="l407">    407</a><code>     fn deserialize_i16&lt;V: de::Visitor&lt;&#39;de&gt;&gt;(self, _: V) -&gt; Result&lt;V::Value&gt; {</code>
+<a href="#l408" class="line" id="l408">    408</a><code>         unimplemented!()</code>
+<a href="#l409" class="line" id="l409">    409</a><code>     }</code>
+<a href="#l410" class="line" id="l410">    410</a><code> </code>
+<a href="#l411" class="line" id="l411">    411</a><code>     fn deserialize_i32&lt;V: de::Visitor&lt;&#39;de&gt;&gt;(self, _: V) -&gt; Result&lt;V::Value&gt; {</code>
+<a href="#l412" class="line" id="l412">    412</a><code>         unimplemented!()</code>
+<a href="#l413" class="line" id="l413">    413</a><code>     }</code>
+<a href="#l414" class="line" id="l414">    414</a><code> </code>
+<a href="#l415" class="line" id="l415">    415</a><code>     fn deserialize_i64&lt;V: de::Visitor&lt;&#39;de&gt;&gt;(self, visitor: V) -&gt; Result&lt;V::Value&gt; {</code>
+<a href="#l416" class="line" id="l416">    416</a><code>         let mut bytes = self.take_bytes(8)?.to_vec();</code>
+<a href="#l417" class="line" id="l417">    417</a><code>         bytes[0] ^= 1 &lt;&lt; 7; // flip sign bit</code>
+<a href="#l418" class="line" id="l418">    418</a><code>         visitor.visit_i64(i64::from_be_bytes(bytes.as_slice().try_into()?))</code>
+<a href="#l419" class="line" id="l419">    419</a><code>     }</code>
+<a href="#l420" class="line" id="l420">    420</a><code> </code>
+<a href="#l421" class="line" id="l421">    421</a><code>     fn deserialize_u8&lt;V: de::Visitor&lt;&#39;de&gt;&gt;(self, _: V) -&gt; Result&lt;V::Value&gt; {</code>
+<a href="#l422" class="line" id="l422">    422</a><code>         unimplemented!()</code>
+<a href="#l423" class="line" id="l423">    423</a><code>     }</code>
+<a href="#l424" class="line" id="l424">    424</a><code> </code>
+<a href="#l425" class="line" id="l425">    425</a><code>     fn deserialize_u16&lt;V: de::Visitor&lt;&#39;de&gt;&gt;(self, _: V) -&gt; Result&lt;V::Value&gt; {</code>
+<a href="#l426" class="line" id="l426">    426</a><code>         unimplemented!()</code>
+<a href="#l427" class="line" id="l427">    427</a><code>     }</code>
+<a href="#l428" class="line" id="l428">    428</a><code> </code>
+<a href="#l429" class="line" id="l429">    429</a><code>     fn deserialize_u32&lt;V: de::Visitor&lt;&#39;de&gt;&gt;(self, _: V) -&gt; Result&lt;V::Value&gt; {</code>
+<a href="#l430" class="line" id="l430">    430</a><code>         unimplemented!()</code>
+<a href="#l431" class="line" id="l431">    431</a><code>     }</code>
+<a href="#l432" class="line" id="l432">    432</a><code> </code>
+<a href="#l433" class="line" id="l433">    433</a><code>     fn deserialize_u64&lt;V: de::Visitor&lt;&#39;de&gt;&gt;(self, visitor: V) -&gt; Result&lt;V::Value&gt; {</code>
+<a href="#l434" class="line" id="l434">    434</a><code>         visitor.visit_u64(u64::from_be_bytes(self.take_bytes(8)?.try_into()?))</code>
+<a href="#l435" class="line" id="l435">    435</a><code>     }</code>
+<a href="#l436" class="line" id="l436">    436</a><code> </code>
+<a href="#l437" class="line" id="l437">    437</a><code>     fn deserialize_f32&lt;V: de::Visitor&lt;&#39;de&gt;&gt;(self, _: V) -&gt; Result&lt;V::Value&gt; {</code>
+<a href="#l438" class="line" id="l438">    438</a><code>         unimplemented!()</code>
+<a href="#l439" class="line" id="l439">    439</a><code>     }</code>
+<a href="#l440" class="line" id="l440">    440</a><code> </code>
+<a href="#l441" class="line" id="l441">    441</a><code>     fn deserialize_f64&lt;V: de::Visitor&lt;&#39;de&gt;&gt;(self, visitor: V) -&gt; Result&lt;V::Value&gt; {</code>
+<a href="#l442" class="line" id="l442">    442</a><code>         let mut bytes = self.take_bytes(8)?.to_vec();</code>
+<a href="#l443" class="line" id="l443">    443</a><code>         if bytes[0] &gt;&gt; 7 &amp; 1 == 1 {</code>
+<a href="#l444" class="line" id="l444">    444</a><code>             bytes[0] ^= 1 &lt;&lt; 7; // positive, flip sign bit</code>
+<a href="#l445" class="line" id="l445">    445</a><code>         } else {</code>
+<a href="#l446" class="line" id="l446">    446</a><code>             bytes.iter_mut().for_each(|b| *b = !*b); // negative, flip all bits</code>
+<a href="#l447" class="line" id="l447">    447</a><code>         }</code>
+<a href="#l448" class="line" id="l448">    448</a><code>         visitor.visit_f64(f64::from_be_bytes(bytes.as_slice().try_into()?))</code>
+<a href="#l449" class="line" id="l449">    449</a><code>     }</code>
+<a href="#l450" class="line" id="l450">    450</a><code> </code>
+<a href="#l451" class="line" id="l451">    451</a><code>     fn deserialize_char&lt;V: de::Visitor&lt;&#39;de&gt;&gt;(self, _: V) -&gt; Result&lt;V::Value&gt; {</code>
+<a href="#l452" class="line" id="l452">    452</a><code>         unimplemented!()</code>
+<a href="#l453" class="line" id="l453">    453</a><code>     }</code>
+<a href="#l454" class="line" id="l454">    454</a><code> </code>
+<a href="#l455" class="line" id="l455">    455</a><code>     fn deserialize_str&lt;V: de::Visitor&lt;&#39;de&gt;&gt;(self, visitor: V) -&gt; Result&lt;V::Value&gt; {</code>
+<a href="#l456" class="line" id="l456">    456</a><code>         let bytes = self.decode_next_bytes()?;</code>
+<a href="#l457" class="line" id="l457">    457</a><code>         visitor.visit_str(&amp;String::from_utf8(bytes)?)</code>
+<a href="#l458" class="line" id="l458">    458</a><code>     }</code>
+<a href="#l459" class="line" id="l459">    459</a><code> </code>
+<a href="#l460" class="line" id="l460">    460</a><code>     fn deserialize_string&lt;V: de::Visitor&lt;&#39;de&gt;&gt;(self, visitor: V) -&gt; Result&lt;V::Value&gt; {</code>
+<a href="#l461" class="line" id="l461">    461</a><code>         let bytes = self.decode_next_bytes()?;</code>
+<a href="#l462" class="line" id="l462">    462</a><code>         visitor.visit_string(String::from_utf8(bytes)?)</code>
+<a href="#l463" class="line" id="l463">    463</a><code>     }</code>
+<a href="#l464" class="line" id="l464">    464</a><code> </code>
+<a href="#l465" class="line" id="l465">    465</a><code>     fn deserialize_bytes&lt;V: de::Visitor&lt;&#39;de&gt;&gt;(self, visitor: V) -&gt; Result&lt;V::Value&gt; {</code>
+<a href="#l466" class="line" id="l466">    466</a><code>         let bytes = self.decode_next_bytes()?;</code>
+<a href="#l467" class="line" id="l467">    467</a><code>         visitor.visit_bytes(&amp;bytes)</code>
+<a href="#l468" class="line" id="l468">    468</a><code>     }</code>
+<a href="#l469" class="line" id="l469">    469</a><code> </code>
+<a href="#l470" class="line" id="l470">    470</a><code>     fn deserialize_byte_buf&lt;V: de::Visitor&lt;&#39;de&gt;&gt;(self, visitor: V) -&gt; Result&lt;V::Value&gt; {</code>
+<a href="#l471" class="line" id="l471">    471</a><code>         let bytes = self.decode_next_bytes()?;</code>
+<a href="#l472" class="line" id="l472">    472</a><code>         visitor.visit_byte_buf(bytes)</code>
+<a href="#l473" class="line" id="l473">    473</a><code>     }</code>
+<a href="#l474" class="line" id="l474">    474</a><code> </code>
+<a href="#l475" class="line" id="l475">    475</a><code>     fn deserialize_option&lt;V: de::Visitor&lt;&#39;de&gt;&gt;(self, _: V) -&gt; Result&lt;V::Value&gt; {</code>
+<a href="#l476" class="line" id="l476">    476</a><code>         unimplemented!()</code>
+<a href="#l477" class="line" id="l477">    477</a><code>     }</code>
+<a href="#l478" class="line" id="l478">    478</a><code> </code>
+<a href="#l479" class="line" id="l479">    479</a><code>     fn deserialize_unit&lt;V: de::Visitor&lt;&#39;de&gt;&gt;(self, _: V) -&gt; Result&lt;V::Value&gt; {</code>
+<a href="#l480" class="line" id="l480">    480</a><code>         unimplemented!()</code>
+<a href="#l481" class="line" id="l481">    481</a><code>     }</code>
+<a href="#l482" class="line" id="l482">    482</a><code> </code>
+<a href="#l483" class="line" id="l483">    483</a><code>     fn deserialize_unit_struct&lt;V: de::Visitor&lt;&#39;de&gt;&gt;(</code>
+<a href="#l484" class="line" id="l484">    484</a><code>         self,</code>
+<a href="#l485" class="line" id="l485">    485</a><code>         _: &amp;&#39;static str,</code>
+<a href="#l486" class="line" id="l486">    486</a><code>         _: V,</code>
+<a href="#l487" class="line" id="l487">    487</a><code>     ) -&gt; Result&lt;V::Value&gt; {</code>
+<a href="#l488" class="line" id="l488">    488</a><code>         unimplemented!()</code>
+<a href="#l489" class="line" id="l489">    489</a><code>     }</code>
+<a href="#l490" class="line" id="l490">    490</a><code> </code>
+<a href="#l491" class="line" id="l491">    491</a><code>     fn deserialize_newtype_struct&lt;V: de::Visitor&lt;&#39;de&gt;&gt;(</code>
+<a href="#l492" class="line" id="l492">    492</a><code>         self,</code>
+<a href="#l493" class="line" id="l493">    493</a><code>         _: &amp;&#39;static str,</code>
+<a href="#l494" class="line" id="l494">    494</a><code>         _: V,</code>
+<a href="#l495" class="line" id="l495">    495</a><code>     ) -&gt; Result&lt;V::Value&gt; {</code>
+<a href="#l496" class="line" id="l496">    496</a><code>         unimplemented!()</code>
+<a href="#l497" class="line" id="l497">    497</a><code>     }</code>
+<a href="#l498" class="line" id="l498">    498</a><code> </code>
+<a href="#l499" class="line" id="l499">    499</a><code>     fn deserialize_seq&lt;V: de::Visitor&lt;&#39;de&gt;&gt;(self, visitor: V) -&gt; Result&lt;V::Value&gt; {</code>
+<a href="#l500" class="line" id="l500">    500</a><code>         visitor.visit_seq(self)</code>
+<a href="#l501" class="line" id="l501">    501</a><code>     }</code>
+<a href="#l502" class="line" id="l502">    502</a><code> </code>
+<a href="#l503" class="line" id="l503">    503</a><code>     fn deserialize_tuple&lt;V: de::Visitor&lt;&#39;de&gt;&gt;(self, _: usize, visitor: V) -&gt; Result&lt;V::Value&gt; {</code>
+<a href="#l504" class="line" id="l504">    504</a><code>         visitor.visit_seq(self)</code>
+<a href="#l505" class="line" id="l505">    505</a><code>     }</code>
+<a href="#l506" class="line" id="l506">    506</a><code> </code>
+<a href="#l507" class="line" id="l507">    507</a><code>     fn deserialize_tuple_struct&lt;V: de::Visitor&lt;&#39;de&gt;&gt;(</code>
+<a href="#l508" class="line" id="l508">    508</a><code>         self,</code>
+<a href="#l509" class="line" id="l509">    509</a><code>         _: &amp;&#39;static str,</code>
+<a href="#l510" class="line" id="l510">    510</a><code>         _: usize,</code>
+<a href="#l511" class="line" id="l511">    511</a><code>         _: V,</code>
+<a href="#l512" class="line" id="l512">    512</a><code>     ) -&gt; Result&lt;V::Value&gt; {</code>
+<a href="#l513" class="line" id="l513">    513</a><code>         unimplemented!()</code>
+<a href="#l514" class="line" id="l514">    514</a><code>     }</code>
+<a href="#l515" class="line" id="l515">    515</a><code> </code>
+<a href="#l516" class="line" id="l516">    516</a><code>     fn deserialize_map&lt;V: de::Visitor&lt;&#39;de&gt;&gt;(self, _: V) -&gt; Result&lt;V::Value&gt; {</code>
+<a href="#l517" class="line" id="l517">    517</a><code>         unimplemented!()</code>
+<a href="#l518" class="line" id="l518">    518</a><code>     }</code>
+<a href="#l519" class="line" id="l519">    519</a><code> </code>
+<a href="#l520" class="line" id="l520">    520</a><code>     fn deserialize_struct&lt;V: de::Visitor&lt;&#39;de&gt;&gt;(</code>
+<a href="#l521" class="line" id="l521">    521</a><code>         self,</code>
+<a href="#l522" class="line" id="l522">    522</a><code>         _: &amp;&#39;static str,</code>
+<a href="#l523" class="line" id="l523">    523</a><code>         _: &amp;&#39;static [&amp;&#39;static str],</code>
+<a href="#l524" class="line" id="l524">    524</a><code>         _: V,</code>
+<a href="#l525" class="line" id="l525">    525</a><code>     ) -&gt; Result&lt;V::Value&gt; {</code>
+<a href="#l526" class="line" id="l526">    526</a><code>         unimplemented!()</code>
+<a href="#l527" class="line" id="l527">    527</a><code>     }</code>
+<a href="#l528" class="line" id="l528">    528</a><code> </code>
+<a href="#l529" class="line" id="l529">    529</a><code>     fn deserialize_enum&lt;V: de::Visitor&lt;&#39;de&gt;&gt;(</code>
+<a href="#l530" class="line" id="l530">    530</a><code>         self,</code>
+<a href="#l531" class="line" id="l531">    531</a><code>         _: &amp;&#39;static str,</code>
+<a href="#l532" class="line" id="l532">    532</a><code>         _: &amp;&#39;static [&amp;&#39;static str],</code>
+<a href="#l533" class="line" id="l533">    533</a><code>         visitor: V,</code>
+<a href="#l534" class="line" id="l534">    534</a><code>     ) -&gt; Result&lt;V::Value&gt; {</code>
+<a href="#l535" class="line" id="l535">    535</a><code>         visitor.visit_enum(self)</code>
+<a href="#l536" class="line" id="l536">    536</a><code>     }</code>
+<a href="#l537" class="line" id="l537">    537</a><code> </code>
+<a href="#l538" class="line" id="l538">    538</a><code>     fn deserialize_identifier&lt;V: de::Visitor&lt;&#39;de&gt;&gt;(self, _: V) -&gt; Result&lt;V::Value&gt; {</code>
+<a href="#l539" class="line" id="l539">    539</a><code>         unimplemented!()</code>
+<a href="#l540" class="line" id="l540">    540</a><code>     }</code>
+<a href="#l541" class="line" id="l541">    541</a><code> </code>
+<a href="#l542" class="line" id="l542">    542</a><code>     fn deserialize_ignored_any&lt;V: de::Visitor&lt;&#39;de&gt;&gt;(self, _: V) -&gt; Result&lt;V::Value&gt; {</code>
+<a href="#l543" class="line" id="l543">    543</a><code>         unimplemented!()</code>
+<a href="#l544" class="line" id="l544">    544</a><code>     }</code>
+<a href="#l545" class="line" id="l545">    545</a><code> }</code>
+<a href="#l546" class="line" id="l546">    546</a><code> </code>
+<a href="#l547" class="line" id="l547">    547</a><code> /// Sequences are simply deserialized until the byte slice is exhausted.</code>
+<a href="#l548" class="line" id="l548">    548</a><code> impl&lt;&#39;de&gt; de::SeqAccess&lt;&#39;de&gt; for Deserializer&lt;&#39;de&gt; {</code>
+<a href="#l549" class="line" id="l549">    549</a><code>     type Error = Error;</code>
+<a href="#l550" class="line" id="l550">    550</a><code> </code>
+<a href="#l551" class="line" id="l551">    551</a><code>     fn next_element_seed&lt;T: de::DeserializeSeed&lt;&#39;de&gt;&gt;(</code>
+<a href="#l552" class="line" id="l552">    552</a><code>         &amp;mut self,</code>
+<a href="#l553" class="line" id="l553">    553</a><code>         seed: T,</code>
+<a href="#l554" class="line" id="l554">    554</a><code>     ) -&gt; Result&lt;Option&lt;T::Value&gt;&gt; {</code>
+<a href="#l555" class="line" id="l555">    555</a><code>         if self.input.is_empty() {</code>
+<a href="#l556" class="line" id="l556">    556</a><code>             return Ok(None);</code>
+<a href="#l557" class="line" id="l557">    557</a><code>         }</code>
+<a href="#l558" class="line" id="l558">    558</a><code>         seed.deserialize(self).map(Some)</code>
+<a href="#l559" class="line" id="l559">    559</a><code>     }</code>
+<a href="#l560" class="line" id="l560">    560</a><code> }</code>
+<a href="#l561" class="line" id="l561">    561</a><code> </code>
+<a href="#l562" class="line" id="l562">    562</a><code> /// Enum variants are deserialized by their index.</code>
+<a href="#l563" class="line" id="l563">    563</a><code> impl&lt;&#39;de&gt; de::EnumAccess&lt;&#39;de&gt; for &amp;mut Deserializer&lt;&#39;de&gt; {</code>
+<a href="#l564" class="line" id="l564">    564</a><code>     type Error = Error;</code>
+<a href="#l565" class="line" id="l565">    565</a><code>     type Variant = Self;</code>
+<a href="#l566" class="line" id="l566">    566</a><code> </code>
+<a href="#l567" class="line" id="l567">    567</a><code>     fn variant_seed&lt;V: de::DeserializeSeed&lt;&#39;de&gt;&gt;(</code>
+<a href="#l568" class="line" id="l568">    568</a><code>         self,</code>
+<a href="#l569" class="line" id="l569">    569</a><code>         seed: V,</code>
+<a href="#l570" class="line" id="l570">    570</a><code>     ) -&gt; Result&lt;(V::Value, Self::Variant)&gt; {</code>
+<a href="#l571" class="line" id="l571">    571</a><code>         let index = self.take_bytes(1)?[0] as u32;</code>
+<a href="#l572" class="line" id="l572">    572</a><code>         let value: Result&lt;_&gt; = seed.deserialize(index.into_deserializer());</code>
+<a href="#l573" class="line" id="l573">    573</a><code>         Ok((value?, self))</code>
+<a href="#l574" class="line" id="l574">    574</a><code>     }</code>
+<a href="#l575" class="line" id="l575">    575</a><code> }</code>
+<a href="#l576" class="line" id="l576">    576</a><code> </code>
+<a href="#l577" class="line" id="l577">    577</a><code> /// Enum variant contents are deserialized as sequences.</code>
+<a href="#l578" class="line" id="l578">    578</a><code> impl&lt;&#39;de&gt; de::VariantAccess&lt;&#39;de&gt; for &amp;mut Deserializer&lt;&#39;de&gt; {</code>
+<a href="#l579" class="line" id="l579">    579</a><code>     type Error = Error;</code>
+<a href="#l580" class="line" id="l580">    580</a><code> </code>
+<a href="#l581" class="line" id="l581">    581</a><code>     fn unit_variant(self) -&gt; Result&lt;()&gt; {</code>
+<a href="#l582" class="line" id="l582">    582</a><code>         Ok(())</code>
+<a href="#l583" class="line" id="l583">    583</a><code>     }</code>
+<a href="#l584" class="line" id="l584">    584</a><code> </code>
+<a href="#l585" class="line" id="l585">    585</a><code>     fn newtype_variant_seed&lt;T: de::DeserializeSeed&lt;&#39;de&gt;&gt;(self, seed: T) -&gt; Result&lt;T::Value&gt; {</code>
+<a href="#l586" class="line" id="l586">    586</a><code>         seed.deserialize(&amp;mut *self)</code>
+<a href="#l587" class="line" id="l587">    587</a><code>     }</code>
+<a href="#l588" class="line" id="l588">    588</a><code> </code>
+<a href="#l589" class="line" id="l589">    589</a><code>     fn tuple_variant&lt;V: de::Visitor&lt;&#39;de&gt;&gt;(self, _: usize, visitor: V) -&gt; Result&lt;V::Value&gt; {</code>
+<a href="#l590" class="line" id="l590">    590</a><code>         visitor.visit_seq(self)</code>
+<a href="#l591" class="line" id="l591">    591</a><code>     }</code>
+<a href="#l592" class="line" id="l592">    592</a><code> </code>
+<a href="#l593" class="line" id="l593">    593</a><code>     fn struct_variant&lt;V: de::Visitor&lt;&#39;de&gt;&gt;(</code>
+<a href="#l594" class="line" id="l594">    594</a><code>         self,</code>
+<a href="#l595" class="line" id="l595">    595</a><code>         _: &amp;&#39;static [&amp;&#39;static str],</code>
+<a href="#l596" class="line" id="l596">    596</a><code>         _: V,</code>
+<a href="#l597" class="line" id="l597">    597</a><code>     ) -&gt; Result&lt;V::Value&gt; {</code>
+<a href="#l598" class="line" id="l598">    598</a><code>         unimplemented!()</code>
+<a href="#l599" class="line" id="l599">    599</a><code>     }</code>
+<a href="#l600" class="line" id="l600">    600</a><code> }</code>
+<a href="#l601" class="line" id="l601">    601</a><code> </code>
+<a href="#l602" class="line" id="l602">    602</a><code> #[cfg(test)]</code>
+<a href="#l603" class="line" id="l603">    603</a><code> mod tests {</code>
+<a href="#l604" class="line" id="l604">    604</a><code>     use super::*;</code>
+<a href="#l605" class="line" id="l605">    605</a><code>     use crate::sql::types::Value;</code>
+<a href="#l606" class="line" id="l606">    606</a><code>     use paste::paste;</code>
+<a href="#l607" class="line" id="l607">    607</a><code>     use serde::{Deserialize, Serialize};</code>
+<a href="#l608" class="line" id="l608">    608</a><code>     use serde_bytes::ByteBuf;</code>
+<a href="#l609" class="line" id="l609">    609</a><code>     use std::borrow::Cow;</code>
+<a href="#l610" class="line" id="l610">    610</a><code>     use std::f64::consts::PI;</code>
+<a href="#l611" class="line" id="l611">    611</a><code> </code>
+<a href="#l612" class="line" id="l612">    612</a><code>     #[derive(Debug, Deserialize, Serialize, PartialEq)]</code>
+<a href="#l613" class="line" id="l613">    613</a><code>     enum Key&lt;&#39;a&gt; {</code>
+<a href="#l614" class="line" id="l614">    614</a><code>         Unit,</code>
+<a href="#l615" class="line" id="l615">    615</a><code>         NewType(String),</code>
+<a href="#l616" class="line" id="l616">    616</a><code>         Tuple(bool, #[serde(with = &quot;serde_bytes&quot;)] Vec&lt;u8&gt;, u64),</code>
+<a href="#l617" class="line" id="l617">    617</a><code>         Cow(</code>
+<a href="#l618" class="line" id="l618">    618</a><code>             #[serde(with = &quot;serde_bytes&quot;)]</code>
+<a href="#l619" class="line" id="l619">    619</a><code>             #[serde(borrow)]</code>
+<a href="#l620" class="line" id="l620">    620</a><code>             Cow&lt;&#39;a, [u8]&gt;,</code>
+<a href="#l621" class="line" id="l621">    621</a><code>             bool,</code>
+<a href="#l622" class="line" id="l622">    622</a><code>             #[serde(borrow)] Cow&lt;&#39;a, str&gt;,</code>
+<a href="#l623" class="line" id="l623">    623</a><code>         ),</code>
+<a href="#l624" class="line" id="l624">    624</a><code>     }</code>
+<a href="#l625" class="line" id="l625">    625</a><code> </code>
+<a href="#l626" class="line" id="l626">    626</a><code>     /// Assert that serializing a value yields the expected byte sequence (as a</code>
+<a href="#l627" class="line" id="l627">    627</a><code>     /// hex-encoded string), and that deserializing it yields the original value.</code>
+<a href="#l628" class="line" id="l628">    628</a><code>     macro_rules! test_serialize_deserialize {</code>
+<a href="#l629" class="line" id="l629">    629</a><code>         ( $( $name:ident: $input:expr =&gt; $expect:literal, )* ) =&gt; {</code>
+<a href="#l630" class="line" id="l630">    630</a><code>         $(</code>
+<a href="#l631" class="line" id="l631">    631</a><code>             #[test]</code>
+<a href="#l632" class="line" id="l632">    632</a><code>             fn $name() -&gt; Result&lt;()&gt; {</code>
+<a href="#l633" class="line" id="l633">    633</a><code>                 let mut input = $input;</code>
+<a href="#l634" class="line" id="l634">    634</a><code>                 let expect = $expect;</code>
+<a href="#l635" class="line" id="l635">    635</a><code>                 let output = serialize(&amp;input);</code>
+<a href="#l636" class="line" id="l636">    636</a><code>                 assert_eq!(hex::encode(&amp;output), expect, &quot;encode failed&quot;);</code>
+<a href="#l637" class="line" id="l637">    637</a><code> </code>
+<a href="#l638" class="line" id="l638">    638</a><code>                 let expect = input;</code>
+<a href="#l639" class="line" id="l639">    639</a><code>                 input = deserialize(&amp;output)?; // reuse input variable for proper type</code>
+<a href="#l640" class="line" id="l640">    640</a><code>                 assert_eq!(input, expect, &quot;decode failed&quot;);</code>
+<a href="#l641" class="line" id="l641">    641</a><code>                 Ok(())</code>
+<a href="#l642" class="line" id="l642">    642</a><code>             }</code>
+<a href="#l643" class="line" id="l643">    643</a><code>         )*</code>
+<a href="#l644" class="line" id="l644">    644</a><code>         };</code>
+<a href="#l645" class="line" id="l645">    645</a><code>     }</code>
+<a href="#l646" class="line" id="l646">    646</a><code> </code>
+<a href="#l647" class="line" id="l647">    647</a><code>     /// Assert that deserializing invalid inputs results in errors. Takes byte</code>
+<a href="#l648" class="line" id="l648">    648</a><code>     /// slices (as hex-encoded strings) and the type to deserialize into.</code>
+<a href="#l649" class="line" id="l649">    649</a><code>     macro_rules! test_deserialize_error {</code>
+<a href="#l650" class="line" id="l650">    650</a><code>         ( $( $name:ident: $input:literal as $type:ty, )* ) =&gt; {</code>
+<a href="#l651" class="line" id="l651">    651</a><code>         paste! {</code>
+<a href="#l652" class="line" id="l652">    652</a><code>         $(</code>
+<a href="#l653" class="line" id="l653">    653</a><code>             #[test]</code>
+<a href="#l654" class="line" id="l654">    654</a><code>             #[should_panic]</code>
+<a href="#l655" class="line" id="l655">    655</a><code>             fn [&lt; $name _deserialize_error &gt;]() {</code>
+<a href="#l656" class="line" id="l656">    656</a><code>                 let bytes = hex::decode($input).unwrap();</code>
+<a href="#l657" class="line" id="l657">    657</a><code>                 deserialize::&lt;$type&gt;(&amp;bytes).unwrap();</code>
+<a href="#l658" class="line" id="l658">    658</a><code>             }</code>
+<a href="#l659" class="line" id="l659">    659</a><code>         )*</code>
+<a href="#l660" class="line" id="l660">    660</a><code>         }</code>
+<a href="#l661" class="line" id="l661">    661</a><code>         };</code>
+<a href="#l662" class="line" id="l662">    662</a><code>     }</code>
+<a href="#l663" class="line" id="l663">    663</a><code> </code>
+<a href="#l664" class="line" id="l664">    664</a><code>     // Assert that serializing a value results in an error.</code>
+<a href="#l665" class="line" id="l665">    665</a><code>     macro_rules! test_serialize_error {</code>
+<a href="#l666" class="line" id="l666">    666</a><code>         ( $( $name:ident: $input:expr, )* ) =&gt; {</code>
+<a href="#l667" class="line" id="l667">    667</a><code>         paste! {</code>
+<a href="#l668" class="line" id="l668">    668</a><code>         $(</code>
+<a href="#l669" class="line" id="l669">    669</a><code>             #[test]</code>
+<a href="#l670" class="line" id="l670">    670</a><code>             #[should_panic]</code>
+<a href="#l671" class="line" id="l671">    671</a><code>             fn [&lt; $name _serialize_error &gt;]() {</code>
+<a href="#l672" class="line" id="l672">    672</a><code>                 let input = $input;</code>
+<a href="#l673" class="line" id="l673">    673</a><code>                 serialize(&amp;input);</code>
+<a href="#l674" class="line" id="l674">    674</a><code>             }</code>
+<a href="#l675" class="line" id="l675">    675</a><code>         )*</code>
+<a href="#l676" class="line" id="l676">    676</a><code>         }</code>
+<a href="#l677" class="line" id="l677">    677</a><code>         };</code>
+<a href="#l678" class="line" id="l678">    678</a><code>     }</code>
+<a href="#l679" class="line" id="l679">    679</a><code> </code>
+<a href="#l680" class="line" id="l680">    680</a><code>     test_serialize_deserialize! {</code>
+<a href="#l681" class="line" id="l681">    681</a><code>         bool_false: false =&gt; &quot;00&quot;,</code>
+<a href="#l682" class="line" id="l682">    682</a><code>         bool_true: true =&gt; &quot;01&quot;,</code>
+<a href="#l683" class="line" id="l683">    683</a><code> </code>
+<a href="#l684" class="line" id="l684">    684</a><code>         f64_min: f64::MIN =&gt; &quot;0010000000000000&quot;,</code>
+<a href="#l685" class="line" id="l685">    685</a><code>         f64_neg_inf: f64::NEG_INFINITY =&gt; &quot;000fffffffffffff&quot;,</code>
+<a href="#l686" class="line" id="l686">    686</a><code>         f64_neg_pi: -PI =&gt; &quot;3ff6de04abbbd2e7&quot;,</code>
+<a href="#l687" class="line" id="l687">    687</a><code>         f64_neg_zero: -0f64 =&gt; &quot;7fffffffffffffff&quot;,</code>
+<a href="#l688" class="line" id="l688">    688</a><code>         f64_zero: 0f64 =&gt; &quot;8000000000000000&quot;,</code>
+<a href="#l689" class="line" id="l689">    689</a><code>         f64_pi: PI =&gt; &quot;c00921fb54442d18&quot;,</code>
+<a href="#l690" class="line" id="l690">    690</a><code>         f64_max: f64::MAX =&gt; &quot;ffefffffffffffff&quot;,</code>
+<a href="#l691" class="line" id="l691">    691</a><code>         f64_inf: f64::INFINITY =&gt; &quot;fff0000000000000&quot;,</code>
+<a href="#l692" class="line" id="l692">    692</a><code>         // We don&#39;t test NAN here, since NAN != NAN.</code>
+<a href="#l693" class="line" id="l693">    693</a><code> </code>
+<a href="#l694" class="line" id="l694">    694</a><code>         i64_min: i64::MIN =&gt; &quot;0000000000000000&quot;,</code>
+<a href="#l695" class="line" id="l695">    695</a><code>         i64_neg_65535: -65535i64 =&gt; &quot;7fffffffffff0001&quot;,</code>
+<a href="#l696" class="line" id="l696">    696</a><code>         i64_neg_1: -1i64 =&gt; &quot;7fffffffffffffff&quot;,</code>
+<a href="#l697" class="line" id="l697">    697</a><code>         i64_0: 0i64 =&gt; &quot;8000000000000000&quot;,</code>
+<a href="#l698" class="line" id="l698">    698</a><code>         i64_1: 1i64 =&gt; &quot;8000000000000001&quot;,</code>
+<a href="#l699" class="line" id="l699">    699</a><code>         i64_65535: 65535i64 =&gt; &quot;800000000000ffff&quot;,</code>
+<a href="#l700" class="line" id="l700">    700</a><code>         i64_max: i64::MAX =&gt; &quot;ffffffffffffffff&quot;,</code>
+<a href="#l701" class="line" id="l701">    701</a><code> </code>
+<a href="#l702" class="line" id="l702">    702</a><code>         u64_min: u64::MIN =&gt; &quot;0000000000000000&quot;,</code>
+<a href="#l703" class="line" id="l703">    703</a><code>         u64_1: 1_u64 =&gt; &quot;0000000000000001&quot;,</code>
+<a href="#l704" class="line" id="l704">    704</a><code>         u64_65535: 65535_u64 =&gt; &quot;000000000000ffff&quot;,</code>
+<a href="#l705" class="line" id="l705">    705</a><code>         u64_max: u64::MAX =&gt; &quot;ffffffffffffffff&quot;,</code>
+<a href="#l706" class="line" id="l706">    706</a><code> </code>
+<a href="#l707" class="line" id="l707">    707</a><code>         bytes: ByteBuf::from(vec![0x01, 0xff]) =&gt; &quot;01ff0000&quot;,</code>
+<a href="#l708" class="line" id="l708">    708</a><code>         bytes_empty: ByteBuf::new() =&gt; &quot;0000&quot;,</code>
+<a href="#l709" class="line" id="l709">    709</a><code>         bytes_escape: ByteBuf::from(vec![0x00, 0x01, 0x02]) =&gt; &quot;00ff01020000&quot;,</code>
+<a href="#l710" class="line" id="l710">    710</a><code> </code>
+<a href="#l711" class="line" id="l711">    711</a><code>         string: &quot;foo&quot;.to_string() =&gt; &quot;666f6f0000&quot;,</code>
+<a href="#l712" class="line" id="l712">    712</a><code>         string_empty: &quot;&quot;.to_string() =&gt; &quot;0000&quot;,</code>
+<a href="#l713" class="line" id="l713">    713</a><code>         string_escape: &quot;foo\x00bar&quot;.to_string() =&gt; &quot;666f6f00ff6261720000&quot;,</code>
+<a href="#l714" class="line" id="l714">    714</a><code>         string_utf8: &quot;👋&quot;.to_string() =&gt; &quot;f09f918b0000&quot;,</code>
+<a href="#l715" class="line" id="l715">    715</a><code> </code>
+<a href="#l716" class="line" id="l716">    716</a><code>         tuple: (true, u64::MAX, ByteBuf::from(vec![0x00, 0x01])) =&gt; &quot;01ffffffffffffffff00ff010000&quot;,</code>
+<a href="#l717" class="line" id="l717">    717</a><code>         array_bool: [false, true, false] =&gt; &quot;000100&quot;,</code>
+<a href="#l718" class="line" id="l718">    718</a><code>         vec_bool: vec![false, true, false] =&gt; &quot;000100&quot;,</code>
+<a href="#l719" class="line" id="l719">    719</a><code>         vec_u64: vec![u64::MIN, u64::MAX, 65535_u64] =&gt; &quot;0000000000000000ffffffffffffffff000000000000ffff&quot;,</code>
+<a href="#l720" class="line" id="l720">    720</a><code> </code>
+<a href="#l721" class="line" id="l721">    721</a><code>         enum_unit: Key::Unit =&gt; &quot;00&quot;,</code>
+<a href="#l722" class="line" id="l722">    722</a><code>         enum_newtype: Key::NewType(&quot;foo&quot;.to_string()) =&gt; &quot;01666f6f0000&quot;,</code>
+<a href="#l723" class="line" id="l723">    723</a><code>         enum_tuple: Key::Tuple(false, vec![0x00, 0x01], u64::MAX) =&gt; &quot;020000ff010000ffffffffffffffff&quot;,</code>
+<a href="#l724" class="line" id="l724">    724</a><code>         enum_cow: Key::Cow(vec![0x00, 0x01].into(), false, String::from(&quot;foo&quot;).into()) =&gt; &quot;0300ff01000000666f6f0000&quot;,</code>
+<a href="#l725" class="line" id="l725">    725</a><code>         enum_cow_borrow: Key::Cow([0x00, 0x01].as_slice().into(), false, &quot;foo&quot;.into()) =&gt; &quot;0300ff01000000666f6f0000&quot;,</code>
+<a href="#l726" class="line" id="l726">    726</a><code> </code>
+<a href="#l727" class="line" id="l727">    727</a><code>         value_null: Value::Null =&gt; &quot;00&quot;,</code>
+<a href="#l728" class="line" id="l728">    728</a><code>         value_bool: Value::Boolean(true) =&gt; &quot;0101&quot;,</code>
+<a href="#l729" class="line" id="l729">    729</a><code>         value_int: Value::Integer(-1) =&gt; &quot;027fffffffffffffff&quot;,</code>
+<a href="#l730" class="line" id="l730">    730</a><code>         value_float: Value::Float(PI) =&gt; &quot;03c00921fb54442d18&quot;,</code>
+<a href="#l731" class="line" id="l731">    731</a><code>         value_string: Value::String(&quot;foo&quot;.to_string()) =&gt; &quot;04666f6f0000&quot;,</code>
+<a href="#l732" class="line" id="l732">    732</a><code>     }</code>
+<a href="#l733" class="line" id="l733">    733</a><code> </code>
+<a href="#l734" class="line" id="l734">    734</a><code>     test_serialize_error! {</code>
+<a href="#l735" class="line" id="l735">    735</a><code>         char: &#39;a&#39;,</code>
+<a href="#l736" class="line" id="l736">    736</a><code>         f32: 0f32,</code>
+<a href="#l737" class="line" id="l737">    737</a><code>         i8: 0i8,</code>
+<a href="#l738" class="line" id="l738">    738</a><code>         i16: 0i16,</code>
+<a href="#l739" class="line" id="l739">    739</a><code>         i32: 0i32,</code>
+<a href="#l740" class="line" id="l740">    740</a><code>         i128: 0i128,</code>
+<a href="#l741" class="line" id="l741">    741</a><code>         u8: 0u8,</code>
+<a href="#l742" class="line" id="l742">    742</a><code>         u16: 0u16,</code>
+<a href="#l743" class="line" id="l743">    743</a><code>         u32: 0u32,</code>
+<a href="#l744" class="line" id="l744">    744</a><code>         u128: 0u128,</code>
+<a href="#l745" class="line" id="l745">    745</a><code>         some: Some(true),</code>
+<a href="#l746" class="line" id="l746">    746</a><code>         none: Option::&lt;bool&gt;::None,</code>
+<a href="#l747" class="line" id="l747">    747</a><code>         vec_u8: vec![0u8],</code>
+<a href="#l748" class="line" id="l748">    748</a><code>     }</code>
+<a href="#l749" class="line" id="l749">    749</a><code> </code>
+<a href="#l750" class="line" id="l750">    750</a><code>     test_deserialize_error! {</code>
+<a href="#l751" class="line" id="l751">    751</a><code>         bool_empty: &quot;&quot; as bool,</code>
+<a href="#l752" class="line" id="l752">    752</a><code>         bool_2: &quot;02&quot; as bool,</code>
+<a href="#l753" class="line" id="l753">    753</a><code>         char: &quot;61&quot; as char,</code>
+<a href="#l754" class="line" id="l754">    754</a><code>         f32: &quot;00000000&quot; as f32,</code>
+<a href="#l755" class="line" id="l755">    755</a><code>         i8: &quot;00&quot; as i8,</code>
+<a href="#l756" class="line" id="l756">    756</a><code>         i16: &quot;0000&quot; as i16,</code>
+<a href="#l757" class="line" id="l757">    757</a><code>         i32: &quot;00000000&quot; as i32,</code>
+<a href="#l758" class="line" id="l758">    758</a><code>         i128: &quot;00000000000000000000000000000000&quot; as i128,</code>
+<a href="#l759" class="line" id="l759">    759</a><code>         u16: &quot;0000&quot; as u16,</code>
+<a href="#l760" class="line" id="l760">    760</a><code>         u32: &quot;00000000&quot; as u32,</code>
+<a href="#l761" class="line" id="l761">    761</a><code>         u64_partial: &quot;0000&quot; as u64,</code>
+<a href="#l762" class="line" id="l762">    762</a><code>         u128: &quot;00000000000000000000000000000000&quot; as u128,</code>
+<a href="#l763" class="line" id="l763">    763</a><code>         option: &quot;00&quot; as Option::&lt;bool&gt;,</code>
+<a href="#l764" class="line" id="l764">    764</a><code>         string_utf8_invalid: &quot;c0&quot; as String,</code>
+<a href="#l765" class="line" id="l765">    765</a><code>         tuple_partial: &quot;0001&quot; as (bool, bool, bool),</code>
+<a href="#l766" class="line" id="l766">    766</a><code>         vec_u8: &quot;0000&quot; as Vec&lt;u8&gt;,</code>
+<a href="#l767" class="line" id="l767">    767</a><code>     }</code>
+<a href="#l768" class="line" id="l768">    768</a><code> }</code>
 </pre>
 </div>
 </body>

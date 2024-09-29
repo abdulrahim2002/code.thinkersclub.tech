@@ -12,382 +12,383 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Source+Code+Pro:ital,wght@0,200..900;1,200..900&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/default.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/base16/tender.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
 <script>hljs.highlightAll();</script>
-</head>
+<style>pre code.hljs {display: inline;padding: 0;} code.hljs {padding: 0;} .hljs {background: initial;}</style></head>
 <body>
 <table><tr><td><a href="../../../../../"><img src="../../../../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
 </span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<br>
 <a href="../../../../log.html">Log</a> | <a href="../../../../files.html">Files</a> | <a href="../../../../refs.html">Refs</a> | <a href="../../../../file/README.md.html">README</a> | <a href="../../../../file/LICENSE.html">LICENSE</a></td></tr></table>
 <hr/>
 <div id="content">
 <p> optimizer.rs (15948B)</p><hr/><pre id="blob">
-<code><a href="#l1" class="line" id="l1">      1</a> use super::Node;</code>
-<code><a href="#l2" class="line" id="l2">      2</a> use crate::error::Result;</code>
-<code><a href="#l3" class="line" id="l3">      3</a> use crate::sql::types::{Expression, Label, Value};</code>
-<code><a href="#l4" class="line" id="l4">      4</a> </code>
-<code><a href="#l5" class="line" id="l5">      5</a> use std::collections::HashMap;</code>
-<code><a href="#l6" class="line" id="l6">      6</a> </code>
-<code><a href="#l7" class="line" id="l7">      7</a> /// A plan optimizer, which recursively transforms a plan node to make plan</code>
-<code><a href="#l8" class="line" id="l8">      8</a> /// execution more efficient where possible.</code>
-<code><a href="#l9" class="line" id="l9">      9</a> pub type Optimizer = fn(Node) -&gt; Result&lt;Node&gt;;</code>
-<code><a href="#l10" class="line" id="l10">     10</a> </code>
-<code><a href="#l11" class="line" id="l11">     11</a> /// The set of optimizers, and the order in which they are applied.</code>
-<code><a href="#l12" class="line" id="l12">     12</a> pub static OPTIMIZERS: &amp;[(&amp;str, Optimizer)] = &amp;[</code>
-<code><a href="#l13" class="line" id="l13">     13</a>     (&quot;Constant folding&quot;, fold_constants),</code>
-<code><a href="#l14" class="line" id="l14">     14</a>     (&quot;Filter pushdown&quot;, push_filters),</code>
-<code><a href="#l15" class="line" id="l15">     15</a>     (&quot;Index lookup&quot;, index_lookup),</code>
-<code><a href="#l16" class="line" id="l16">     16</a>     (&quot;Join type&quot;, join_type),</code>
-<code><a href="#l17" class="line" id="l17">     17</a>     (&quot;Short circuit&quot;, short_circuit),</code>
-<code><a href="#l18" class="line" id="l18">     18</a> ];</code>
-<code><a href="#l19" class="line" id="l19">     19</a> </code>
-<code><a href="#l20" class="line" id="l20">     20</a> /// Folds constant (sub)expressions by pre-evaluating them, instead of</code>
-<code><a href="#l21" class="line" id="l21">     21</a> /// re-evaluating then for every row during execution.</code>
-<code><a href="#l22" class="line" id="l22">     22</a> pub fn fold_constants(node: Node) -&gt; Result&lt;Node&gt; {</code>
-<code><a href="#l23" class="line" id="l23">     23</a>     use Expression::*;</code>
-<code><a href="#l24" class="line" id="l24">     24</a>     use Value::*;</code>
-<code><a href="#l25" class="line" id="l25">     25</a> </code>
-<code><a href="#l26" class="line" id="l26">     26</a>     // Transform expressions. Called after descending, to perform logical</code>
-<code><a href="#l27" class="line" id="l27">     27</a>     // short-circuiting on child expressions that have already been folded, and</code>
-<code><a href="#l28" class="line" id="l28">     28</a>     // to reduce the quadratic cost when an expression contains a column.</code>
-<code><a href="#l29" class="line" id="l29">     29</a>     let xform = |mut expr: Expression| {</code>
-<code><a href="#l30" class="line" id="l30">     30</a>         // If the expression is constant, evaluate it.</code>
-<code><a href="#l31" class="line" id="l31">     31</a>         //</code>
-<code><a href="#l32" class="line" id="l32">     32</a>         // This is a very simple approach, which doesn&#39;t handle more complex</code>
-<code><a href="#l33" class="line" id="l33">     33</a>         // cases such as 1 + a - 2 (which would require rearranging the</code>
-<code><a href="#l34" class="line" id="l34">     34</a>         // expression as 1 - 2 + a to evaluate the 1 - 2 branch).</code>
-<code><a href="#l35" class="line" id="l35">     35</a>         //</code>
-<code><a href="#l36" class="line" id="l36">     36</a>         // TODO: consider doing something better.</code>
-<code><a href="#l37" class="line" id="l37">     37</a>         if !expr.contains(&amp;|expr| matches!(expr, Column(_))) {</code>
-<code><a href="#l38" class="line" id="l38">     38</a>             return expr.evaluate(None).map(Constant);</code>
-<code><a href="#l39" class="line" id="l39">     39</a>         }</code>
-<code><a href="#l40" class="line" id="l40">     40</a> </code>
-<code><a href="#l41" class="line" id="l41">     41</a>         // If the expression is a logical operator, and one of the sides is</code>
-<code><a href="#l42" class="line" id="l42">     42</a>         // known, we may be able to short-circuit it.</code>
-<code><a href="#l43" class="line" id="l43">     43</a>         expr = match expr {</code>
-<code><a href="#l44" class="line" id="l44">     44</a>             And(lhs, rhs) =&gt; match (*lhs, *rhs) {</code>
-<code><a href="#l45" class="line" id="l45">     45</a>                 // If either side of an AND is false, the AND is false.</code>
-<code><a href="#l46" class="line" id="l46">     46</a>                 (Constant(Boolean(false)), _) | (_, Constant(Boolean(false))) =&gt; {</code>
-<code><a href="#l47" class="line" id="l47">     47</a>                     Constant(Boolean(false))</code>
-<code><a href="#l48" class="line" id="l48">     48</a>                 }</code>
-<code><a href="#l49" class="line" id="l49">     49</a>                 // If either side of an AND is true, the AND is redundant.</code>
-<code><a href="#l50" class="line" id="l50">     50</a>                 (Constant(Boolean(true)), expr) | (expr, Constant(Boolean(true))) =&gt; expr,</code>
-<code><a href="#l51" class="line" id="l51">     51</a>                 (lhs, rhs) =&gt; And(lhs.into(), rhs.into()),</code>
-<code><a href="#l52" class="line" id="l52">     52</a>             },</code>
-<code><a href="#l53" class="line" id="l53">     53</a>             Or(lhs, rhs) =&gt; match (*lhs, *rhs) {</code>
-<code><a href="#l54" class="line" id="l54">     54</a>                 // If either side of an OR is true, the OR is true.</code>
-<code><a href="#l55" class="line" id="l55">     55</a>                 (Constant(Boolean(true)), _) | (_, Constant(Boolean(true))) =&gt; {</code>
-<code><a href="#l56" class="line" id="l56">     56</a>                     Constant(Boolean(true))</code>
-<code><a href="#l57" class="line" id="l57">     57</a>                 }</code>
-<code><a href="#l58" class="line" id="l58">     58</a>                 // If either side of an OR is false, the OR is redundant.</code>
-<code><a href="#l59" class="line" id="l59">     59</a>                 (Constant(Boolean(false)), expr) | (expr, Constant(Boolean(false))) =&gt; expr,</code>
-<code><a href="#l60" class="line" id="l60">     60</a>                 (lhs, rhs) =&gt; Or(lhs.into(), rhs.into()),</code>
-<code><a href="#l61" class="line" id="l61">     61</a>             },</code>
-<code><a href="#l62" class="line" id="l62">     62</a>             expr =&gt; expr,</code>
-<code><a href="#l63" class="line" id="l63">     63</a>         };</code>
-<code><a href="#l64" class="line" id="l64">     64</a>         Ok(expr)</code>
-<code><a href="#l65" class="line" id="l65">     65</a>     };</code>
-<code><a href="#l66" class="line" id="l66">     66</a> </code>
-<code><a href="#l67" class="line" id="l67">     67</a>     node.transform(&amp;|node| node.transform_expressions(&amp;Ok, &amp;xform), &amp;Ok)</code>
-<code><a href="#l68" class="line" id="l68">     68</a> }</code>
-<code><a href="#l69" class="line" id="l69">     69</a> </code>
-<code><a href="#l70" class="line" id="l70">     70</a> /// Pushes filter predicates down into child nodes where possible. In</code>
-<code><a href="#l71" class="line" id="l71">     71</a> /// particular, this can allow filtering during storage scans (below Raft),</code>
-<code><a href="#l72" class="line" id="l72">     72</a> /// instead of reading and transmitting all rows then filtering.</code>
-<code><a href="#l73" class="line" id="l73">     73</a> pub fn push_filters(node: Node) -&gt; Result&lt;Node&gt; {</code>
-<code><a href="#l74" class="line" id="l74">     74</a>     /// Pushes an expression into a node if possible. Otherwise, returns the the</code>
-<code><a href="#l75" class="line" id="l75">     75</a>     /// unpushed expression.</code>
-<code><a href="#l76" class="line" id="l76">     76</a>     fn push_into(expr: Expression, target: &amp;mut Node) -&gt; Option&lt;Expression&gt; {</code>
-<code><a href="#l77" class="line" id="l77">     77</a>         match target {</code>
-<code><a href="#l78" class="line" id="l78">     78</a>             Node::Filter { predicate, .. } =&gt; {</code>
-<code><a href="#l79" class="line" id="l79">     79</a>                 // Temporarily swap the predicate to take ownership.</code>
-<code><a href="#l80" class="line" id="l80">     80</a>                 let rhs = std::mem::replace(predicate, Expression::Constant(Value::Null));</code>
-<code><a href="#l81" class="line" id="l81">     81</a>                 *predicate = Expression::And(expr.into(), rhs.into());</code>
-<code><a href="#l82" class="line" id="l82">     82</a>             }</code>
-<code><a href="#l83" class="line" id="l83">     83</a>             Node::NestedLoopJoin { predicate, .. } =&gt; {</code>
-<code><a href="#l84" class="line" id="l84">     84</a>                 *predicate = match predicate.take() {</code>
-<code><a href="#l85" class="line" id="l85">     85</a>                     Some(predicate) =&gt; Some(Expression::And(expr.into(), predicate.into())),</code>
-<code><a href="#l86" class="line" id="l86">     86</a>                     None =&gt; Some(expr),</code>
-<code><a href="#l87" class="line" id="l87">     87</a>                 };</code>
-<code><a href="#l88" class="line" id="l88">     88</a>             }</code>
-<code><a href="#l89" class="line" id="l89">     89</a>             Node::Scan { filter, .. } =&gt; {</code>
-<code><a href="#l90" class="line" id="l90">     90</a>                 *filter = match filter.take() {</code>
-<code><a href="#l91" class="line" id="l91">     91</a>                     Some(filter) =&gt; Some(Expression::And(expr.into(), filter.into())),</code>
-<code><a href="#l92" class="line" id="l92">     92</a>                     None =&gt; Some(expr),</code>
-<code><a href="#l93" class="line" id="l93">     93</a>                 };</code>
-<code><a href="#l94" class="line" id="l94">     94</a>             }</code>
-<code><a href="#l95" class="line" id="l95">     95</a>             // We don&#39;t handle HashJoin here, since we assume the join_type()</code>
-<code><a href="#l96" class="line" id="l96">     96</a>             // optimizer runs after this.</code>
-<code><a href="#l97" class="line" id="l97">     97</a>             Node::HashJoin { .. } =&gt; panic!(&quot;filter pushdown must run before join optimizer&quot;),</code>
-<code><a href="#l98" class="line" id="l98">     98</a>             // Unable to push down, just return the original expression.</code>
-<code><a href="#l99" class="line" id="l99">     99</a>             _ =&gt; return Some(expr),</code>
-<code><a href="#l100" class="line" id="l100">    100</a>         }</code>
-<code><a href="#l101" class="line" id="l101">    101</a>         None</code>
-<code><a href="#l102" class="line" id="l102">    102</a>     }</code>
-<code><a href="#l103" class="line" id="l103">    103</a> </code>
-<code><a href="#l104" class="line" id="l104">    104</a>     /// Pushes down a filter node if possible.</code>
-<code><a href="#l105" class="line" id="l105">    105</a>     fn push_filter(node: Node) -&gt; Node {</code>
-<code><a href="#l106" class="line" id="l106">    106</a>         let Node::Filter { mut source, predicate } = node else { return node };</code>
-<code><a href="#l107" class="line" id="l107">    107</a>         // Attempt to push the filter into the source.</code>
-<code><a href="#l108" class="line" id="l108">    108</a>         if let Some(predicate) = push_into(predicate, &amp;mut source) {</code>
-<code><a href="#l109" class="line" id="l109">    109</a>             // Push failed, return the original filter node.</code>
-<code><a href="#l110" class="line" id="l110">    110</a>             return Node::Filter { source, predicate };</code>
-<code><a href="#l111" class="line" id="l111">    111</a>         }</code>
-<code><a href="#l112" class="line" id="l112">    112</a>         // Push succeded, return the source that was pushed into. When we</code>
-<code><a href="#l113" class="line" id="l113">    113</a>         // replace this filter node with the source node, Node.transform() will</code>
-<code><a href="#l114" class="line" id="l114">    114</a>         // skip the source node since it now takes the place of the original</code>
-<code><a href="#l115" class="line" id="l115">    115</a>         // filter node. Transform the source manually.</code>
-<code><a href="#l116" class="line" id="l116">    116</a>         xform(*source)</code>
-<code><a href="#l117" class="line" id="l117">    117</a>     }</code>
-<code><a href="#l118" class="line" id="l118">    118</a> </code>
-<code><a href="#l119" class="line" id="l119">    119</a>     // Pushes down parts of a join predicate into the left or right sources</code>
-<code><a href="#l120" class="line" id="l120">    120</a>     // where possible.</code>
-<code><a href="#l121" class="line" id="l121">    121</a>     fn push_join(node: Node) -&gt; Node {</code>
-<code><a href="#l122" class="line" id="l122">    122</a>         let Node::NestedLoopJoin { mut left, mut right, predicate: Some(predicate), outer } = node</code>
-<code><a href="#l123" class="line" id="l123">    123</a>         else {</code>
-<code><a href="#l124" class="line" id="l124">    124</a>             return node;</code>
-<code><a href="#l125" class="line" id="l125">    125</a>         };</code>
-<code><a href="#l126" class="line" id="l126">    126</a>         // Convert the predicate into conjunctive normal form (an AND vector).</code>
-<code><a href="#l127" class="line" id="l127">    127</a>         let cnf = predicate.into_cnf_vec();</code>
-<code><a href="#l128" class="line" id="l128">    128</a> </code>
-<code><a href="#l129" class="line" id="l129">    129</a>         // Push down expressions that don&#39;t reference both sources. Constant</code>
-<code><a href="#l130" class="line" id="l130">    130</a>         // expressions can be pushed down into both.</code>
-<code><a href="#l131" class="line" id="l131">    131</a>         let (mut push_left, mut push_right, mut predicate) = (Vec::new(), Vec::new(), Vec::new());</code>
-<code><a href="#l132" class="line" id="l132">    132</a>         for expr in cnf {</code>
-<code><a href="#l133" class="line" id="l133">    133</a>             let (mut ref_left, mut ref_right) = (false, false);</code>
-<code><a href="#l134" class="line" id="l134">    134</a>             expr.walk(&amp;mut |expr| {</code>
-<code><a href="#l135" class="line" id="l135">    135</a>                 if let Expression::Column(index) = expr {</code>
-<code><a href="#l136" class="line" id="l136">    136</a>                     ref_left = ref_left || *index &lt; left.columns();</code>
-<code><a href="#l137" class="line" id="l137">    137</a>                     ref_right = ref_right || *index &gt;= left.columns();</code>
-<code><a href="#l138" class="line" id="l138">    138</a>                 }</code>
-<code><a href="#l139" class="line" id="l139">    139</a>                 !(ref_left &amp;&amp; ref_right) // exit once both are referenced</code>
-<code><a href="#l140" class="line" id="l140">    140</a>             });</code>
-<code><a href="#l141" class="line" id="l141">    141</a>             match (ref_left, ref_right) {</code>
-<code><a href="#l142" class="line" id="l142">    142</a>                 (true, true) =&gt; predicate.push(expr),</code>
-<code><a href="#l143" class="line" id="l143">    143</a>                 (true, false) =&gt; push_left.push(expr),</code>
-<code><a href="#l144" class="line" id="l144">    144</a>                 (false, true) =&gt; push_right.push(expr),</code>
-<code><a href="#l145" class="line" id="l145">    145</a>                 (false, false) =&gt; {</code>
-<code><a href="#l146" class="line" id="l146">    146</a>                     push_left.push(expr.clone());</code>
-<code><a href="#l147" class="line" id="l147">    147</a>                     push_right.push(expr);</code>
-<code><a href="#l148" class="line" id="l148">    148</a>                 }</code>
-<code><a href="#l149" class="line" id="l149">    149</a>             }</code>
-<code><a href="#l150" class="line" id="l150">    150</a>         }</code>
-<code><a href="#l151" class="line" id="l151">    151</a> </code>
-<code><a href="#l152" class="line" id="l152">    152</a>         // In the remaining cross-source expressions, look for equijoins where</code>
-<code><a href="#l153" class="line" id="l153">    153</a>         // one side also has constant value lookups. In this case we can copy</code>
-<code><a href="#l154" class="line" id="l154">    154</a>         // the constant lookups to the other side, to allow index lookups. This</code>
-<code><a href="#l155" class="line" id="l155">    155</a>         // commonly happens when joining a foreign key (which is indexed) on a</code>
-<code><a href="#l156" class="line" id="l156">    156</a>         // primary key, and we want to make use of the foreign key index, e.g.:</code>
-<code><a href="#l157" class="line" id="l157">    157</a>         //</code>
-<code><a href="#l158" class="line" id="l158">    158</a>         // SELECT m.name, g.name FROM movies m JOIN genres g ON m.genre_id = g.id AND g.id = 7;</code>
-<code><a href="#l159" class="line" id="l159">    159</a>         let left_lookups: HashMap&lt;usize, usize&gt; = push_left // column → push_left index</code>
-<code><a href="#l160" class="line" id="l160">    160</a>             .iter()</code>
-<code><a href="#l161" class="line" id="l161">    161</a>             .enumerate()</code>
-<code><a href="#l162" class="line" id="l162">    162</a>             .filter_map(|(i, expr)| expr.is_column_lookup().map(|column| (column, i)))</code>
-<code><a href="#l163" class="line" id="l163">    163</a>             .collect();</code>
-<code><a href="#l164" class="line" id="l164">    164</a>         let right_lookups: HashMap&lt;usize, usize&gt; = push_right // column → push_right index</code>
-<code><a href="#l165" class="line" id="l165">    165</a>             .iter()</code>
-<code><a href="#l166" class="line" id="l166">    166</a>             .enumerate()</code>
-<code><a href="#l167" class="line" id="l167">    167</a>             .filter_map(|(i, expr)| expr.is_column_lookup().map(|column| (column, i)))</code>
-<code><a href="#l168" class="line" id="l168">    168</a>             .collect();</code>
-<code><a href="#l169" class="line" id="l169">    169</a> </code>
-<code><a href="#l170" class="line" id="l170">    170</a>         for expr in &amp;predicate {</code>
-<code><a href="#l171" class="line" id="l171">    171</a>             // Find equijoins.</code>
-<code><a href="#l172" class="line" id="l172">    172</a>             let Expression::Equal(lhs, rhs) = expr else { continue };</code>
-<code><a href="#l173" class="line" id="l173">    173</a>             let Expression::Column(mut l) = **lhs else { continue };</code>
-<code><a href="#l174" class="line" id="l174">    174</a>             let Expression::Column(mut r) = **rhs else { continue };</code>
-<code><a href="#l175" class="line" id="l175">    175</a> </code>
-<code><a href="#l176" class="line" id="l176">    176</a>             // The lhs may be a reference to the right source; swap them.</code>
-<code><a href="#l177" class="line" id="l177">    177</a>             if l &gt; r {</code>
-<code><a href="#l178" class="line" id="l178">    178</a>                 (l, r) = (r, l)</code>
-<code><a href="#l179" class="line" id="l179">    179</a>             }</code>
-<code><a href="#l180" class="line" id="l180">    180</a> </code>
-<code><a href="#l181" class="line" id="l181">    181</a>             // Check if either side is a column lookup, and copy it over.</code>
-<code><a href="#l182" class="line" id="l182">    182</a>             if let Some(expr) = left_lookups.get(&amp;l).map(|i| push_left[*i].clone()) {</code>
-<code><a href="#l183" class="line" id="l183">    183</a>                 push_right.push(expr.replace_column(l, r));</code>
-<code><a href="#l184" class="line" id="l184">    184</a>             }</code>
-<code><a href="#l185" class="line" id="l185">    185</a>             if let Some(expr) = right_lookups.get(&amp;r).map(|i| push_right[*i].clone()) {</code>
-<code><a href="#l186" class="line" id="l186">    186</a>                 push_left.push(expr.replace_column(r, l));</code>
-<code><a href="#l187" class="line" id="l187">    187</a>             }</code>
-<code><a href="#l188" class="line" id="l188">    188</a>         }</code>
-<code><a href="#l189" class="line" id="l189">    189</a> </code>
-<code><a href="#l190" class="line" id="l190">    190</a>         // Push predicates down into the sources if possible.</code>
-<code><a href="#l191" class="line" id="l191">    191</a>         if let Some(expr) = Expression::and_vec(push_left) {</code>
-<code><a href="#l192" class="line" id="l192">    192</a>             if let Some(expr) = push_into(expr, &amp;mut left) {</code>
-<code><a href="#l193" class="line" id="l193">    193</a>                 // Pushdown failed, put it back into the join predicate.</code>
-<code><a href="#l194" class="line" id="l194">    194</a>                 predicate.push(expr)</code>
-<code><a href="#l195" class="line" id="l195">    195</a>             }</code>
-<code><a href="#l196" class="line" id="l196">    196</a>         }</code>
-<code><a href="#l197" class="line" id="l197">    197</a> </code>
-<code><a href="#l198" class="line" id="l198">    198</a>         if let Some(mut expr) = Expression::and_vec(push_right) {</code>
-<code><a href="#l199" class="line" id="l199">    199</a>             // Right columns have indexes in the joined row; shift them left.</code>
-<code><a href="#l200" class="line" id="l200">    200</a>             expr = expr.shift_column(-(left.columns() as isize));</code>
-<code><a href="#l201" class="line" id="l201">    201</a>             if let Some(mut expr) = push_into(expr, &amp;mut right) {</code>
-<code><a href="#l202" class="line" id="l202">    202</a>                 // Pushdown failed, undo the column index shift.</code>
-<code><a href="#l203" class="line" id="l203">    203</a>                 expr = expr.shift_column(left.columns() as isize);</code>
-<code><a href="#l204" class="line" id="l204">    204</a>                 predicate.push(expr)</code>
-<code><a href="#l205" class="line" id="l205">    205</a>             }</code>
-<code><a href="#l206" class="line" id="l206">    206</a>         }</code>
-<code><a href="#l207" class="line" id="l207">    207</a> </code>
-<code><a href="#l208" class="line" id="l208">    208</a>         // Leave any remaining predicates in the join node.</code>
-<code><a href="#l209" class="line" id="l209">    209</a>         let predicate = Expression::and_vec(predicate);</code>
-<code><a href="#l210" class="line" id="l210">    210</a>         Node::NestedLoopJoin { left, right, predicate, outer }</code>
-<code><a href="#l211" class="line" id="l211">    211</a>     }</code>
-<code><a href="#l212" class="line" id="l212">    212</a> </code>
-<code><a href="#l213" class="line" id="l213">    213</a>     /// Applies pushdown transformations to a node.</code>
-<code><a href="#l214" class="line" id="l214">    214</a>     fn xform(node: Node) -&gt; Node {</code>
-<code><a href="#l215" class="line" id="l215">    215</a>         push_join(push_filter(node))</code>
-<code><a href="#l216" class="line" id="l216">    216</a>     }</code>
-<code><a href="#l217" class="line" id="l217">    217</a> </code>
-<code><a href="#l218" class="line" id="l218">    218</a>     // Push down before descending, so we can keep recursively pushing down.</code>
-<code><a href="#l219" class="line" id="l219">    219</a>     node.transform(&amp;|node| Ok(xform(node)), &amp;Ok)</code>
-<code><a href="#l220" class="line" id="l220">    220</a> }</code>
-<code><a href="#l221" class="line" id="l221">    221</a> </code>
-<code><a href="#l222" class="line" id="l222">    222</a> /// Uses an index or primary key lookup for a filter when possible.</code>
-<code><a href="#l223" class="line" id="l223">    223</a> pub fn index_lookup(node: Node) -&gt; Result&lt;Node&gt; {</code>
-<code><a href="#l224" class="line" id="l224">    224</a>     let transform = |mut node| {</code>
-<code><a href="#l225" class="line" id="l225">    225</a>         // Only handle scan filters. filter_pushdown() must have pushed filters</code>
-<code><a href="#l226" class="line" id="l226">    226</a>         // into scan nodes first.</code>
-<code><a href="#l227" class="line" id="l227">    227</a>         let Node::Scan { table, alias, filter: Some(filter) } = node else { return node };</code>
-<code><a href="#l228" class="line" id="l228">    228</a> </code>
-<code><a href="#l229" class="line" id="l229">    229</a>         // Convert the filter into conjunctive normal form (a list of ANDs).</code>
-<code><a href="#l230" class="line" id="l230">    230</a>         let mut cnf = filter.clone().into_cnf_vec();</code>
-<code><a href="#l231" class="line" id="l231">    231</a> </code>
-<code><a href="#l232" class="line" id="l232">    232</a>         // Find the first expression that&#39;s either a primary key or secondary</code>
-<code><a href="#l233" class="line" id="l233">    233</a>         // index lookup. We could be more clever here, but this is fine.</code>
-<code><a href="#l234" class="line" id="l234">    234</a>         let Some((i, column)) = cnf.iter().enumerate().find_map(|(i, expr)| {</code>
-<code><a href="#l235" class="line" id="l235">    235</a>             expr.is_column_lookup()</code>
-<code><a href="#l236" class="line" id="l236">    236</a>                 .filter(|c| *c == table.primary_key || table.columns[*c].index)</code>
-<code><a href="#l237" class="line" id="l237">    237</a>                 .map(|column| (i, column))</code>
-<code><a href="#l238" class="line" id="l238">    238</a>         }) else {</code>
-<code><a href="#l239" class="line" id="l239">    239</a>             return Node::Scan { table, alias, filter: Some(filter) };</code>
-<code><a href="#l240" class="line" id="l240">    240</a>         };</code>
-<code><a href="#l241" class="line" id="l241">    241</a> </code>
-<code><a href="#l242" class="line" id="l242">    242</a>         // Extract the lookup values and expression from the cnf vector.</code>
-<code><a href="#l243" class="line" id="l243">    243</a>         let values = cnf.remove(i).into_column_values(column);</code>
-<code><a href="#l244" class="line" id="l244">    244</a> </code>
-<code><a href="#l245" class="line" id="l245">    245</a>         // Build the primary key or secondary index lookup node.</code>
-<code><a href="#l246" class="line" id="l246">    246</a>         if column == table.primary_key {</code>
-<code><a href="#l247" class="line" id="l247">    247</a>             node = Node::KeyLookup { table, keys: values, alias };</code>
-<code><a href="#l248" class="line" id="l248">    248</a>         } else {</code>
-<code><a href="#l249" class="line" id="l249">    249</a>             node = Node::IndexLookup { table, column, values, alias };</code>
-<code><a href="#l250" class="line" id="l250">    250</a>         }</code>
-<code><a href="#l251" class="line" id="l251">    251</a> </code>
-<code><a href="#l252" class="line" id="l252">    252</a>         // If there&#39;s any remaining CNF expressions, add a filter node for them.</code>
-<code><a href="#l253" class="line" id="l253">    253</a>         if let Some(predicate) = Expression::and_vec(cnf) {</code>
-<code><a href="#l254" class="line" id="l254">    254</a>             node = Node::Filter { source: Box::new(node), predicate };</code>
-<code><a href="#l255" class="line" id="l255">    255</a>         }</code>
-<code><a href="#l256" class="line" id="l256">    256</a> </code>
-<code><a href="#l257" class="line" id="l257">    257</a>         node</code>
-<code><a href="#l258" class="line" id="l258">    258</a>     };</code>
-<code><a href="#l259" class="line" id="l259">    259</a>     node.transform(&amp;Ok, &amp;|n| Ok(transform(n)))</code>
-<code><a href="#l260" class="line" id="l260">    260</a> }</code>
-<code><a href="#l261" class="line" id="l261">    261</a> </code>
-<code><a href="#l262" class="line" id="l262">    262</a> /// Uses a hash join instead of a nested loop join for single-column equijoins.</code>
-<code><a href="#l263" class="line" id="l263">    263</a> pub fn join_type(node: Node) -&gt; Result&lt;Node&gt; {</code>
-<code><a href="#l264" class="line" id="l264">    264</a>     let xform = |node| match node {</code>
-<code><a href="#l265" class="line" id="l265">    265</a>         Node::NestedLoopJoin {</code>
-<code><a href="#l266" class="line" id="l266">    266</a>             left,</code>
-<code><a href="#l267" class="line" id="l267">    267</a>             right,</code>
-<code><a href="#l268" class="line" id="l268">    268</a>             predicate: Some(Expression::Equal(lhs, rhs)),</code>
-<code><a href="#l269" class="line" id="l269">    269</a>             outer,</code>
-<code><a href="#l270" class="line" id="l270">    270</a>         } =&gt; match (*lhs, *rhs) {</code>
-<code><a href="#l271" class="line" id="l271">    271</a>             (Expression::Column(mut left_column), Expression::Column(mut right_column)) =&gt; {</code>
-<code><a href="#l272" class="line" id="l272">    272</a>                 // The LHS column may be a column in the right table; swap them.</code>
-<code><a href="#l273" class="line" id="l273">    273</a>                 if right_column &lt; left_column {</code>
-<code><a href="#l274" class="line" id="l274">    274</a>                     (left_column, right_column) = (right_column, left_column);</code>
-<code><a href="#l275" class="line" id="l275">    275</a>                 }</code>
-<code><a href="#l276" class="line" id="l276">    276</a>                 // The NestedLoopJoin predicate uses column indexes in the</code>
-<code><a href="#l277" class="line" id="l277">    277</a>                 // joined row, while the HashJoin uses column indexes in each</code>
-<code><a href="#l278" class="line" id="l278">    278</a>                 // individual table. Adjust the RHS column reference.</code>
-<code><a href="#l279" class="line" id="l279">    279</a>                 right_column -= left.columns();</code>
-<code><a href="#l280" class="line" id="l280">    280</a>                 Node::HashJoin { left, left_column, right, right_column, outer }</code>
-<code><a href="#l281" class="line" id="l281">    281</a>             }</code>
-<code><a href="#l282" class="line" id="l282">    282</a>             (lhs, rhs) =&gt; {</code>
-<code><a href="#l283" class="line" id="l283">    283</a>                 let predicate = Some(Expression::Equal(lhs.into(), rhs.into()));</code>
-<code><a href="#l284" class="line" id="l284">    284</a>                 Node::NestedLoopJoin { left, right, predicate, outer }</code>
-<code><a href="#l285" class="line" id="l285">    285</a>             }</code>
-<code><a href="#l286" class="line" id="l286">    286</a>         },</code>
-<code><a href="#l287" class="line" id="l287">    287</a>         node =&gt; node,</code>
-<code><a href="#l288" class="line" id="l288">    288</a>     };</code>
-<code><a href="#l289" class="line" id="l289">    289</a>     node.transform(&amp;|node| Ok(xform(node)), &amp;Ok)</code>
-<code><a href="#l290" class="line" id="l290">    290</a> }</code>
-<code><a href="#l291" class="line" id="l291">    291</a> </code>
-<code><a href="#l292" class="line" id="l292">    292</a> /// Short-circuits useless nodes and expressions, by removing them and/or</code>
-<code><a href="#l293" class="line" id="l293">    293</a> /// replacing them with Nothing nodes that yield no rows.</code>
-<code><a href="#l294" class="line" id="l294">    294</a> pub fn short_circuit(node: Node) -&gt; Result&lt;Node&gt; {</code>
-<code><a href="#l295" class="line" id="l295">    295</a>     use Expression::*;</code>
-<code><a href="#l296" class="line" id="l296">    296</a>     use Value::*;</code>
-<code><a href="#l297" class="line" id="l297">    297</a> </code>
-<code><a href="#l298" class="line" id="l298">    298</a>     /// Creates a Nothing node with the columns of the original node.</code>
-<code><a href="#l299" class="line" id="l299">    299</a>     fn nothing(node: &amp;Node) -&gt; Node {</code>
-<code><a href="#l300" class="line" id="l300">    300</a>         let columns = (0..node.columns()).map(|i| node.column_label(i)).collect();</code>
-<code><a href="#l301" class="line" id="l301">    301</a>         Node::Nothing { columns }</code>
-<code><a href="#l302" class="line" id="l302">    302</a>     }</code>
-<code><a href="#l303" class="line" id="l303">    303</a> </code>
-<code><a href="#l304" class="line" id="l304">    304</a>     let xform = |node| match node {</code>
-<code><a href="#l305" class="line" id="l305">    305</a>         // Filter nodes that always yield true are unnecessary: remove them.</code>
-<code><a href="#l306" class="line" id="l306">    306</a>         Node::Filter { source, predicate: Constant(Boolean(true)) } =&gt; *source,</code>
-<code><a href="#l307" class="line" id="l307">    307</a> </code>
-<code><a href="#l308" class="line" id="l308">    308</a>         // Predicates that always yield true are unnecessary: remove them.</code>
-<code><a href="#l309" class="line" id="l309">    309</a>         Node::Scan { table, filter: Some(Constant(Boolean(true))), alias } =&gt; {</code>
-<code><a href="#l310" class="line" id="l310">    310</a>             Node::Scan { table, filter: None, alias }</code>
-<code><a href="#l311" class="line" id="l311">    311</a>         }</code>
-<code><a href="#l312" class="line" id="l312">    312</a>         Node::NestedLoopJoin { left, right, predicate: Some(Constant(Boolean(true))), outer } =&gt; {</code>
-<code><a href="#l313" class="line" id="l313">    313</a>             Node::NestedLoopJoin { left, right, predicate: None, outer }</code>
-<code><a href="#l314" class="line" id="l314">    314</a>         }</code>
-<code><a href="#l315" class="line" id="l315">    315</a> </code>
-<code><a href="#l316" class="line" id="l316">    316</a>         // Short-circuit nodes that can&#39;t produce anything by replacing them</code>
-<code><a href="#l317" class="line" id="l317">    317</a>         // with a Nothing node, retaining the columns.</code>
-<code><a href="#l318" class="line" id="l318">    318</a>         ref node @ Node::Filter { predicate: Constant(Boolean(false) | Null), .. } =&gt; nothing(node),</code>
-<code><a href="#l319" class="line" id="l319">    319</a>         ref node @ Node::IndexLookup { ref values, .. } if values.is_empty() =&gt; nothing(node),</code>
-<code><a href="#l320" class="line" id="l320">    320</a>         ref node @ Node::KeyLookup { ref keys, .. } if keys.is_empty() =&gt; nothing(node),</code>
-<code><a href="#l321" class="line" id="l321">    321</a>         ref node @ Node::Limit { limit: 0, .. } =&gt; nothing(node),</code>
-<code><a href="#l322" class="line" id="l322">    322</a>         ref node @ Node::NestedLoopJoin {</code>
-<code><a href="#l323" class="line" id="l323">    323</a>             predicate: Some(Constant(Boolean(false) | Null)), ..</code>
-<code><a href="#l324" class="line" id="l324">    324</a>         } =&gt; nothing(node),</code>
-<code><a href="#l325" class="line" id="l325">    325</a>         ref node @ Node::Scan { filter: Some(Constant(Boolean(false) | Null)), .. } =&gt; {</code>
-<code><a href="#l326" class="line" id="l326">    326</a>             nothing(node)</code>
-<code><a href="#l327" class="line" id="l327">    327</a>         }</code>
-<code><a href="#l328" class="line" id="l328">    328</a>         ref node @ Node::Values { ref rows } if rows.is_empty() =&gt; nothing(node),</code>
-<code><a href="#l329" class="line" id="l329">    329</a> </code>
-<code><a href="#l330" class="line" id="l330">    330</a>         // Short-circuit nodes that pull from a Nothing node.</code>
-<code><a href="#l331" class="line" id="l331">    331</a>         //</code>
-<code><a href="#l332" class="line" id="l332">    332</a>         // NB: does not short-circuit aggregation, since an aggregation over 0</code>
-<code><a href="#l333" class="line" id="l333">    333</a>         // rows should produce a result.</code>
-<code><a href="#l334" class="line" id="l334">    334</a>         ref node @ (Node::Filter { ref source, .. }</code>
-<code><a href="#l335" class="line" id="l335">    335</a>         | Node::HashJoin { left: ref source, .. }</code>
-<code><a href="#l336" class="line" id="l336">    336</a>         | Node::HashJoin { right: ref source, .. }</code>
-<code><a href="#l337" class="line" id="l337">    337</a>         | Node::NestedLoopJoin { left: ref source, .. }</code>
-<code><a href="#l338" class="line" id="l338">    338</a>         | Node::NestedLoopJoin { right: ref source, .. }</code>
-<code><a href="#l339" class="line" id="l339">    339</a>         | Node::Offset { ref source, .. }</code>
-<code><a href="#l340" class="line" id="l340">    340</a>         | Node::Order { ref source, .. }</code>
-<code><a href="#l341" class="line" id="l341">    341</a>         | Node::Projection { ref source, .. })</code>
-<code><a href="#l342" class="line" id="l342">    342</a>             if matches!(**source, Node::Nothing { .. }) =&gt;</code>
-<code><a href="#l343" class="line" id="l343">    343</a>         {</code>
-<code><a href="#l344" class="line" id="l344">    344</a>             nothing(node)</code>
-<code><a href="#l345" class="line" id="l345">    345</a>         }</code>
-<code><a href="#l346" class="line" id="l346">    346</a> </code>
-<code><a href="#l347" class="line" id="l347">    347</a>         // Remove noop projections that simply pass through the source columns.</code>
-<code><a href="#l348" class="line" id="l348">    348</a>         Node::Projection { source, expressions, aliases }</code>
-<code><a href="#l349" class="line" id="l349">    349</a>             if source.columns() == expressions.len()</code>
-<code><a href="#l350" class="line" id="l350">    350</a>                 &amp;&amp; aliases.iter().all(|alias| *alias == Label::None)</code>
-<code><a href="#l351" class="line" id="l351">    351</a>                 &amp;&amp; expressions</code>
-<code><a href="#l352" class="line" id="l352">    352</a>                     .iter()</code>
-<code><a href="#l353" class="line" id="l353">    353</a>                     .enumerate()</code>
-<code><a href="#l354" class="line" id="l354">    354</a>                     .all(|(i, expr)| matches!(expr, Expression::Column(c) if i == *c)) =&gt;</code>
-<code><a href="#l355" class="line" id="l355">    355</a>         {</code>
-<code><a href="#l356" class="line" id="l356">    356</a>             *source</code>
-<code><a href="#l357" class="line" id="l357">    357</a>         }</code>
-<code><a href="#l358" class="line" id="l358">    358</a> </code>
-<code><a href="#l359" class="line" id="l359">    359</a>         node =&gt; node,</code>
-<code><a href="#l360" class="line" id="l360">    360</a>     };</code>
-<code><a href="#l361" class="line" id="l361">    361</a> </code>
-<code><a href="#l362" class="line" id="l362">    362</a>     // Transform after descending, to pull Nothing nodes upwards.</code>
-<code><a href="#l363" class="line" id="l363">    363</a>     node.transform(&amp;Ok, &amp;|node| Ok(xform(node)))</code>
-<code><a href="#l364" class="line" id="l364">    364</a> }</code>
+<a href="#l1" class="line" id="l1">      1</a><code> use super::Node;</code>
+<a href="#l2" class="line" id="l2">      2</a><code> use crate::error::Result;</code>
+<a href="#l3" class="line" id="l3">      3</a><code> use crate::sql::types::{Expression, Label, Value};</code>
+<a href="#l4" class="line" id="l4">      4</a><code> </code>
+<a href="#l5" class="line" id="l5">      5</a><code> use std::collections::HashMap;</code>
+<a href="#l6" class="line" id="l6">      6</a><code> </code>
+<a href="#l7" class="line" id="l7">      7</a><code> /// A plan optimizer, which recursively transforms a plan node to make plan</code>
+<a href="#l8" class="line" id="l8">      8</a><code> /// execution more efficient where possible.</code>
+<a href="#l9" class="line" id="l9">      9</a><code> pub type Optimizer = fn(Node) -&gt; Result&lt;Node&gt;;</code>
+<a href="#l10" class="line" id="l10">     10</a><code> </code>
+<a href="#l11" class="line" id="l11">     11</a><code> /// The set of optimizers, and the order in which they are applied.</code>
+<a href="#l12" class="line" id="l12">     12</a><code> pub static OPTIMIZERS: &amp;[(&amp;str, Optimizer)] = &amp;[</code>
+<a href="#l13" class="line" id="l13">     13</a><code>     (&quot;Constant folding&quot;, fold_constants),</code>
+<a href="#l14" class="line" id="l14">     14</a><code>     (&quot;Filter pushdown&quot;, push_filters),</code>
+<a href="#l15" class="line" id="l15">     15</a><code>     (&quot;Index lookup&quot;, index_lookup),</code>
+<a href="#l16" class="line" id="l16">     16</a><code>     (&quot;Join type&quot;, join_type),</code>
+<a href="#l17" class="line" id="l17">     17</a><code>     (&quot;Short circuit&quot;, short_circuit),</code>
+<a href="#l18" class="line" id="l18">     18</a><code> ];</code>
+<a href="#l19" class="line" id="l19">     19</a><code> </code>
+<a href="#l20" class="line" id="l20">     20</a><code> /// Folds constant (sub)expressions by pre-evaluating them, instead of</code>
+<a href="#l21" class="line" id="l21">     21</a><code> /// re-evaluating then for every row during execution.</code>
+<a href="#l22" class="line" id="l22">     22</a><code> pub fn fold_constants(node: Node) -&gt; Result&lt;Node&gt; {</code>
+<a href="#l23" class="line" id="l23">     23</a><code>     use Expression::*;</code>
+<a href="#l24" class="line" id="l24">     24</a><code>     use Value::*;</code>
+<a href="#l25" class="line" id="l25">     25</a><code> </code>
+<a href="#l26" class="line" id="l26">     26</a><code>     // Transform expressions. Called after descending, to perform logical</code>
+<a href="#l27" class="line" id="l27">     27</a><code>     // short-circuiting on child expressions that have already been folded, and</code>
+<a href="#l28" class="line" id="l28">     28</a><code>     // to reduce the quadratic cost when an expression contains a column.</code>
+<a href="#l29" class="line" id="l29">     29</a><code>     let xform = |mut expr: Expression| {</code>
+<a href="#l30" class="line" id="l30">     30</a><code>         // If the expression is constant, evaluate it.</code>
+<a href="#l31" class="line" id="l31">     31</a><code>         //</code>
+<a href="#l32" class="line" id="l32">     32</a><code>         // This is a very simple approach, which doesn&#39;t handle more complex</code>
+<a href="#l33" class="line" id="l33">     33</a><code>         // cases such as 1 + a - 2 (which would require rearranging the</code>
+<a href="#l34" class="line" id="l34">     34</a><code>         // expression as 1 - 2 + a to evaluate the 1 - 2 branch).</code>
+<a href="#l35" class="line" id="l35">     35</a><code>         //</code>
+<a href="#l36" class="line" id="l36">     36</a><code>         // TODO: consider doing something better.</code>
+<a href="#l37" class="line" id="l37">     37</a><code>         if !expr.contains(&amp;|expr| matches!(expr, Column(_))) {</code>
+<a href="#l38" class="line" id="l38">     38</a><code>             return expr.evaluate(None).map(Constant);</code>
+<a href="#l39" class="line" id="l39">     39</a><code>         }</code>
+<a href="#l40" class="line" id="l40">     40</a><code> </code>
+<a href="#l41" class="line" id="l41">     41</a><code>         // If the expression is a logical operator, and one of the sides is</code>
+<a href="#l42" class="line" id="l42">     42</a><code>         // known, we may be able to short-circuit it.</code>
+<a href="#l43" class="line" id="l43">     43</a><code>         expr = match expr {</code>
+<a href="#l44" class="line" id="l44">     44</a><code>             And(lhs, rhs) =&gt; match (*lhs, *rhs) {</code>
+<a href="#l45" class="line" id="l45">     45</a><code>                 // If either side of an AND is false, the AND is false.</code>
+<a href="#l46" class="line" id="l46">     46</a><code>                 (Constant(Boolean(false)), _) | (_, Constant(Boolean(false))) =&gt; {</code>
+<a href="#l47" class="line" id="l47">     47</a><code>                     Constant(Boolean(false))</code>
+<a href="#l48" class="line" id="l48">     48</a><code>                 }</code>
+<a href="#l49" class="line" id="l49">     49</a><code>                 // If either side of an AND is true, the AND is redundant.</code>
+<a href="#l50" class="line" id="l50">     50</a><code>                 (Constant(Boolean(true)), expr) | (expr, Constant(Boolean(true))) =&gt; expr,</code>
+<a href="#l51" class="line" id="l51">     51</a><code>                 (lhs, rhs) =&gt; And(lhs.into(), rhs.into()),</code>
+<a href="#l52" class="line" id="l52">     52</a><code>             },</code>
+<a href="#l53" class="line" id="l53">     53</a><code>             Or(lhs, rhs) =&gt; match (*lhs, *rhs) {</code>
+<a href="#l54" class="line" id="l54">     54</a><code>                 // If either side of an OR is true, the OR is true.</code>
+<a href="#l55" class="line" id="l55">     55</a><code>                 (Constant(Boolean(true)), _) | (_, Constant(Boolean(true))) =&gt; {</code>
+<a href="#l56" class="line" id="l56">     56</a><code>                     Constant(Boolean(true))</code>
+<a href="#l57" class="line" id="l57">     57</a><code>                 }</code>
+<a href="#l58" class="line" id="l58">     58</a><code>                 // If either side of an OR is false, the OR is redundant.</code>
+<a href="#l59" class="line" id="l59">     59</a><code>                 (Constant(Boolean(false)), expr) | (expr, Constant(Boolean(false))) =&gt; expr,</code>
+<a href="#l60" class="line" id="l60">     60</a><code>                 (lhs, rhs) =&gt; Or(lhs.into(), rhs.into()),</code>
+<a href="#l61" class="line" id="l61">     61</a><code>             },</code>
+<a href="#l62" class="line" id="l62">     62</a><code>             expr =&gt; expr,</code>
+<a href="#l63" class="line" id="l63">     63</a><code>         };</code>
+<a href="#l64" class="line" id="l64">     64</a><code>         Ok(expr)</code>
+<a href="#l65" class="line" id="l65">     65</a><code>     };</code>
+<a href="#l66" class="line" id="l66">     66</a><code> </code>
+<a href="#l67" class="line" id="l67">     67</a><code>     node.transform(&amp;|node| node.transform_expressions(&amp;Ok, &amp;xform), &amp;Ok)</code>
+<a href="#l68" class="line" id="l68">     68</a><code> }</code>
+<a href="#l69" class="line" id="l69">     69</a><code> </code>
+<a href="#l70" class="line" id="l70">     70</a><code> /// Pushes filter predicates down into child nodes where possible. In</code>
+<a href="#l71" class="line" id="l71">     71</a><code> /// particular, this can allow filtering during storage scans (below Raft),</code>
+<a href="#l72" class="line" id="l72">     72</a><code> /// instead of reading and transmitting all rows then filtering.</code>
+<a href="#l73" class="line" id="l73">     73</a><code> pub fn push_filters(node: Node) -&gt; Result&lt;Node&gt; {</code>
+<a href="#l74" class="line" id="l74">     74</a><code>     /// Pushes an expression into a node if possible. Otherwise, returns the the</code>
+<a href="#l75" class="line" id="l75">     75</a><code>     /// unpushed expression.</code>
+<a href="#l76" class="line" id="l76">     76</a><code>     fn push_into(expr: Expression, target: &amp;mut Node) -&gt; Option&lt;Expression&gt; {</code>
+<a href="#l77" class="line" id="l77">     77</a><code>         match target {</code>
+<a href="#l78" class="line" id="l78">     78</a><code>             Node::Filter { predicate, .. } =&gt; {</code>
+<a href="#l79" class="line" id="l79">     79</a><code>                 // Temporarily swap the predicate to take ownership.</code>
+<a href="#l80" class="line" id="l80">     80</a><code>                 let rhs = std::mem::replace(predicate, Expression::Constant(Value::Null));</code>
+<a href="#l81" class="line" id="l81">     81</a><code>                 *predicate = Expression::And(expr.into(), rhs.into());</code>
+<a href="#l82" class="line" id="l82">     82</a><code>             }</code>
+<a href="#l83" class="line" id="l83">     83</a><code>             Node::NestedLoopJoin { predicate, .. } =&gt; {</code>
+<a href="#l84" class="line" id="l84">     84</a><code>                 *predicate = match predicate.take() {</code>
+<a href="#l85" class="line" id="l85">     85</a><code>                     Some(predicate) =&gt; Some(Expression::And(expr.into(), predicate.into())),</code>
+<a href="#l86" class="line" id="l86">     86</a><code>                     None =&gt; Some(expr),</code>
+<a href="#l87" class="line" id="l87">     87</a><code>                 };</code>
+<a href="#l88" class="line" id="l88">     88</a><code>             }</code>
+<a href="#l89" class="line" id="l89">     89</a><code>             Node::Scan { filter, .. } =&gt; {</code>
+<a href="#l90" class="line" id="l90">     90</a><code>                 *filter = match filter.take() {</code>
+<a href="#l91" class="line" id="l91">     91</a><code>                     Some(filter) =&gt; Some(Expression::And(expr.into(), filter.into())),</code>
+<a href="#l92" class="line" id="l92">     92</a><code>                     None =&gt; Some(expr),</code>
+<a href="#l93" class="line" id="l93">     93</a><code>                 };</code>
+<a href="#l94" class="line" id="l94">     94</a><code>             }</code>
+<a href="#l95" class="line" id="l95">     95</a><code>             // We don&#39;t handle HashJoin here, since we assume the join_type()</code>
+<a href="#l96" class="line" id="l96">     96</a><code>             // optimizer runs after this.</code>
+<a href="#l97" class="line" id="l97">     97</a><code>             Node::HashJoin { .. } =&gt; panic!(&quot;filter pushdown must run before join optimizer&quot;),</code>
+<a href="#l98" class="line" id="l98">     98</a><code>             // Unable to push down, just return the original expression.</code>
+<a href="#l99" class="line" id="l99">     99</a><code>             _ =&gt; return Some(expr),</code>
+<a href="#l100" class="line" id="l100">    100</a><code>         }</code>
+<a href="#l101" class="line" id="l101">    101</a><code>         None</code>
+<a href="#l102" class="line" id="l102">    102</a><code>     }</code>
+<a href="#l103" class="line" id="l103">    103</a><code> </code>
+<a href="#l104" class="line" id="l104">    104</a><code>     /// Pushes down a filter node if possible.</code>
+<a href="#l105" class="line" id="l105">    105</a><code>     fn push_filter(node: Node) -&gt; Node {</code>
+<a href="#l106" class="line" id="l106">    106</a><code>         let Node::Filter { mut source, predicate } = node else { return node };</code>
+<a href="#l107" class="line" id="l107">    107</a><code>         // Attempt to push the filter into the source.</code>
+<a href="#l108" class="line" id="l108">    108</a><code>         if let Some(predicate) = push_into(predicate, &amp;mut source) {</code>
+<a href="#l109" class="line" id="l109">    109</a><code>             // Push failed, return the original filter node.</code>
+<a href="#l110" class="line" id="l110">    110</a><code>             return Node::Filter { source, predicate };</code>
+<a href="#l111" class="line" id="l111">    111</a><code>         }</code>
+<a href="#l112" class="line" id="l112">    112</a><code>         // Push succeded, return the source that was pushed into. When we</code>
+<a href="#l113" class="line" id="l113">    113</a><code>         // replace this filter node with the source node, Node.transform() will</code>
+<a href="#l114" class="line" id="l114">    114</a><code>         // skip the source node since it now takes the place of the original</code>
+<a href="#l115" class="line" id="l115">    115</a><code>         // filter node. Transform the source manually.</code>
+<a href="#l116" class="line" id="l116">    116</a><code>         xform(*source)</code>
+<a href="#l117" class="line" id="l117">    117</a><code>     }</code>
+<a href="#l118" class="line" id="l118">    118</a><code> </code>
+<a href="#l119" class="line" id="l119">    119</a><code>     // Pushes down parts of a join predicate into the left or right sources</code>
+<a href="#l120" class="line" id="l120">    120</a><code>     // where possible.</code>
+<a href="#l121" class="line" id="l121">    121</a><code>     fn push_join(node: Node) -&gt; Node {</code>
+<a href="#l122" class="line" id="l122">    122</a><code>         let Node::NestedLoopJoin { mut left, mut right, predicate: Some(predicate), outer } = node</code>
+<a href="#l123" class="line" id="l123">    123</a><code>         else {</code>
+<a href="#l124" class="line" id="l124">    124</a><code>             return node;</code>
+<a href="#l125" class="line" id="l125">    125</a><code>         };</code>
+<a href="#l126" class="line" id="l126">    126</a><code>         // Convert the predicate into conjunctive normal form (an AND vector).</code>
+<a href="#l127" class="line" id="l127">    127</a><code>         let cnf = predicate.into_cnf_vec();</code>
+<a href="#l128" class="line" id="l128">    128</a><code> </code>
+<a href="#l129" class="line" id="l129">    129</a><code>         // Push down expressions that don&#39;t reference both sources. Constant</code>
+<a href="#l130" class="line" id="l130">    130</a><code>         // expressions can be pushed down into both.</code>
+<a href="#l131" class="line" id="l131">    131</a><code>         let (mut push_left, mut push_right, mut predicate) = (Vec::new(), Vec::new(), Vec::new());</code>
+<a href="#l132" class="line" id="l132">    132</a><code>         for expr in cnf {</code>
+<a href="#l133" class="line" id="l133">    133</a><code>             let (mut ref_left, mut ref_right) = (false, false);</code>
+<a href="#l134" class="line" id="l134">    134</a><code>             expr.walk(&amp;mut |expr| {</code>
+<a href="#l135" class="line" id="l135">    135</a><code>                 if let Expression::Column(index) = expr {</code>
+<a href="#l136" class="line" id="l136">    136</a><code>                     ref_left = ref_left || *index &lt; left.columns();</code>
+<a href="#l137" class="line" id="l137">    137</a><code>                     ref_right = ref_right || *index &gt;= left.columns();</code>
+<a href="#l138" class="line" id="l138">    138</a><code>                 }</code>
+<a href="#l139" class="line" id="l139">    139</a><code>                 !(ref_left &amp;&amp; ref_right) // exit once both are referenced</code>
+<a href="#l140" class="line" id="l140">    140</a><code>             });</code>
+<a href="#l141" class="line" id="l141">    141</a><code>             match (ref_left, ref_right) {</code>
+<a href="#l142" class="line" id="l142">    142</a><code>                 (true, true) =&gt; predicate.push(expr),</code>
+<a href="#l143" class="line" id="l143">    143</a><code>                 (true, false) =&gt; push_left.push(expr),</code>
+<a href="#l144" class="line" id="l144">    144</a><code>                 (false, true) =&gt; push_right.push(expr),</code>
+<a href="#l145" class="line" id="l145">    145</a><code>                 (false, false) =&gt; {</code>
+<a href="#l146" class="line" id="l146">    146</a><code>                     push_left.push(expr.clone());</code>
+<a href="#l147" class="line" id="l147">    147</a><code>                     push_right.push(expr);</code>
+<a href="#l148" class="line" id="l148">    148</a><code>                 }</code>
+<a href="#l149" class="line" id="l149">    149</a><code>             }</code>
+<a href="#l150" class="line" id="l150">    150</a><code>         }</code>
+<a href="#l151" class="line" id="l151">    151</a><code> </code>
+<a href="#l152" class="line" id="l152">    152</a><code>         // In the remaining cross-source expressions, look for equijoins where</code>
+<a href="#l153" class="line" id="l153">    153</a><code>         // one side also has constant value lookups. In this case we can copy</code>
+<a href="#l154" class="line" id="l154">    154</a><code>         // the constant lookups to the other side, to allow index lookups. This</code>
+<a href="#l155" class="line" id="l155">    155</a><code>         // commonly happens when joining a foreign key (which is indexed) on a</code>
+<a href="#l156" class="line" id="l156">    156</a><code>         // primary key, and we want to make use of the foreign key index, e.g.:</code>
+<a href="#l157" class="line" id="l157">    157</a><code>         //</code>
+<a href="#l158" class="line" id="l158">    158</a><code>         // SELECT m.name, g.name FROM movies m JOIN genres g ON m.genre_id = g.id AND g.id = 7;</code>
+<a href="#l159" class="line" id="l159">    159</a><code>         let left_lookups: HashMap&lt;usize, usize&gt; = push_left // column → push_left index</code>
+<a href="#l160" class="line" id="l160">    160</a><code>             .iter()</code>
+<a href="#l161" class="line" id="l161">    161</a><code>             .enumerate()</code>
+<a href="#l162" class="line" id="l162">    162</a><code>             .filter_map(|(i, expr)| expr.is_column_lookup().map(|column| (column, i)))</code>
+<a href="#l163" class="line" id="l163">    163</a><code>             .collect();</code>
+<a href="#l164" class="line" id="l164">    164</a><code>         let right_lookups: HashMap&lt;usize, usize&gt; = push_right // column → push_right index</code>
+<a href="#l165" class="line" id="l165">    165</a><code>             .iter()</code>
+<a href="#l166" class="line" id="l166">    166</a><code>             .enumerate()</code>
+<a href="#l167" class="line" id="l167">    167</a><code>             .filter_map(|(i, expr)| expr.is_column_lookup().map(|column| (column, i)))</code>
+<a href="#l168" class="line" id="l168">    168</a><code>             .collect();</code>
+<a href="#l169" class="line" id="l169">    169</a><code> </code>
+<a href="#l170" class="line" id="l170">    170</a><code>         for expr in &amp;predicate {</code>
+<a href="#l171" class="line" id="l171">    171</a><code>             // Find equijoins.</code>
+<a href="#l172" class="line" id="l172">    172</a><code>             let Expression::Equal(lhs, rhs) = expr else { continue };</code>
+<a href="#l173" class="line" id="l173">    173</a><code>             let Expression::Column(mut l) = **lhs else { continue };</code>
+<a href="#l174" class="line" id="l174">    174</a><code>             let Expression::Column(mut r) = **rhs else { continue };</code>
+<a href="#l175" class="line" id="l175">    175</a><code> </code>
+<a href="#l176" class="line" id="l176">    176</a><code>             // The lhs may be a reference to the right source; swap them.</code>
+<a href="#l177" class="line" id="l177">    177</a><code>             if l &gt; r {</code>
+<a href="#l178" class="line" id="l178">    178</a><code>                 (l, r) = (r, l)</code>
+<a href="#l179" class="line" id="l179">    179</a><code>             }</code>
+<a href="#l180" class="line" id="l180">    180</a><code> </code>
+<a href="#l181" class="line" id="l181">    181</a><code>             // Check if either side is a column lookup, and copy it over.</code>
+<a href="#l182" class="line" id="l182">    182</a><code>             if let Some(expr) = left_lookups.get(&amp;l).map(|i| push_left[*i].clone()) {</code>
+<a href="#l183" class="line" id="l183">    183</a><code>                 push_right.push(expr.replace_column(l, r));</code>
+<a href="#l184" class="line" id="l184">    184</a><code>             }</code>
+<a href="#l185" class="line" id="l185">    185</a><code>             if let Some(expr) = right_lookups.get(&amp;r).map(|i| push_right[*i].clone()) {</code>
+<a href="#l186" class="line" id="l186">    186</a><code>                 push_left.push(expr.replace_column(r, l));</code>
+<a href="#l187" class="line" id="l187">    187</a><code>             }</code>
+<a href="#l188" class="line" id="l188">    188</a><code>         }</code>
+<a href="#l189" class="line" id="l189">    189</a><code> </code>
+<a href="#l190" class="line" id="l190">    190</a><code>         // Push predicates down into the sources if possible.</code>
+<a href="#l191" class="line" id="l191">    191</a><code>         if let Some(expr) = Expression::and_vec(push_left) {</code>
+<a href="#l192" class="line" id="l192">    192</a><code>             if let Some(expr) = push_into(expr, &amp;mut left) {</code>
+<a href="#l193" class="line" id="l193">    193</a><code>                 // Pushdown failed, put it back into the join predicate.</code>
+<a href="#l194" class="line" id="l194">    194</a><code>                 predicate.push(expr)</code>
+<a href="#l195" class="line" id="l195">    195</a><code>             }</code>
+<a href="#l196" class="line" id="l196">    196</a><code>         }</code>
+<a href="#l197" class="line" id="l197">    197</a><code> </code>
+<a href="#l198" class="line" id="l198">    198</a><code>         if let Some(mut expr) = Expression::and_vec(push_right) {</code>
+<a href="#l199" class="line" id="l199">    199</a><code>             // Right columns have indexes in the joined row; shift them left.</code>
+<a href="#l200" class="line" id="l200">    200</a><code>             expr = expr.shift_column(-(left.columns() as isize));</code>
+<a href="#l201" class="line" id="l201">    201</a><code>             if let Some(mut expr) = push_into(expr, &amp;mut right) {</code>
+<a href="#l202" class="line" id="l202">    202</a><code>                 // Pushdown failed, undo the column index shift.</code>
+<a href="#l203" class="line" id="l203">    203</a><code>                 expr = expr.shift_column(left.columns() as isize);</code>
+<a href="#l204" class="line" id="l204">    204</a><code>                 predicate.push(expr)</code>
+<a href="#l205" class="line" id="l205">    205</a><code>             }</code>
+<a href="#l206" class="line" id="l206">    206</a><code>         }</code>
+<a href="#l207" class="line" id="l207">    207</a><code> </code>
+<a href="#l208" class="line" id="l208">    208</a><code>         // Leave any remaining predicates in the join node.</code>
+<a href="#l209" class="line" id="l209">    209</a><code>         let predicate = Expression::and_vec(predicate);</code>
+<a href="#l210" class="line" id="l210">    210</a><code>         Node::NestedLoopJoin { left, right, predicate, outer }</code>
+<a href="#l211" class="line" id="l211">    211</a><code>     }</code>
+<a href="#l212" class="line" id="l212">    212</a><code> </code>
+<a href="#l213" class="line" id="l213">    213</a><code>     /// Applies pushdown transformations to a node.</code>
+<a href="#l214" class="line" id="l214">    214</a><code>     fn xform(node: Node) -&gt; Node {</code>
+<a href="#l215" class="line" id="l215">    215</a><code>         push_join(push_filter(node))</code>
+<a href="#l216" class="line" id="l216">    216</a><code>     }</code>
+<a href="#l217" class="line" id="l217">    217</a><code> </code>
+<a href="#l218" class="line" id="l218">    218</a><code>     // Push down before descending, so we can keep recursively pushing down.</code>
+<a href="#l219" class="line" id="l219">    219</a><code>     node.transform(&amp;|node| Ok(xform(node)), &amp;Ok)</code>
+<a href="#l220" class="line" id="l220">    220</a><code> }</code>
+<a href="#l221" class="line" id="l221">    221</a><code> </code>
+<a href="#l222" class="line" id="l222">    222</a><code> /// Uses an index or primary key lookup for a filter when possible.</code>
+<a href="#l223" class="line" id="l223">    223</a><code> pub fn index_lookup(node: Node) -&gt; Result&lt;Node&gt; {</code>
+<a href="#l224" class="line" id="l224">    224</a><code>     let transform = |mut node| {</code>
+<a href="#l225" class="line" id="l225">    225</a><code>         // Only handle scan filters. filter_pushdown() must have pushed filters</code>
+<a href="#l226" class="line" id="l226">    226</a><code>         // into scan nodes first.</code>
+<a href="#l227" class="line" id="l227">    227</a><code>         let Node::Scan { table, alias, filter: Some(filter) } = node else { return node };</code>
+<a href="#l228" class="line" id="l228">    228</a><code> </code>
+<a href="#l229" class="line" id="l229">    229</a><code>         // Convert the filter into conjunctive normal form (a list of ANDs).</code>
+<a href="#l230" class="line" id="l230">    230</a><code>         let mut cnf = filter.clone().into_cnf_vec();</code>
+<a href="#l231" class="line" id="l231">    231</a><code> </code>
+<a href="#l232" class="line" id="l232">    232</a><code>         // Find the first expression that&#39;s either a primary key or secondary</code>
+<a href="#l233" class="line" id="l233">    233</a><code>         // index lookup. We could be more clever here, but this is fine.</code>
+<a href="#l234" class="line" id="l234">    234</a><code>         let Some((i, column)) = cnf.iter().enumerate().find_map(|(i, expr)| {</code>
+<a href="#l235" class="line" id="l235">    235</a><code>             expr.is_column_lookup()</code>
+<a href="#l236" class="line" id="l236">    236</a><code>                 .filter(|c| *c == table.primary_key || table.columns[*c].index)</code>
+<a href="#l237" class="line" id="l237">    237</a><code>                 .map(|column| (i, column))</code>
+<a href="#l238" class="line" id="l238">    238</a><code>         }) else {</code>
+<a href="#l239" class="line" id="l239">    239</a><code>             return Node::Scan { table, alias, filter: Some(filter) };</code>
+<a href="#l240" class="line" id="l240">    240</a><code>         };</code>
+<a href="#l241" class="line" id="l241">    241</a><code> </code>
+<a href="#l242" class="line" id="l242">    242</a><code>         // Extract the lookup values and expression from the cnf vector.</code>
+<a href="#l243" class="line" id="l243">    243</a><code>         let values = cnf.remove(i).into_column_values(column);</code>
+<a href="#l244" class="line" id="l244">    244</a><code> </code>
+<a href="#l245" class="line" id="l245">    245</a><code>         // Build the primary key or secondary index lookup node.</code>
+<a href="#l246" class="line" id="l246">    246</a><code>         if column == table.primary_key {</code>
+<a href="#l247" class="line" id="l247">    247</a><code>             node = Node::KeyLookup { table, keys: values, alias };</code>
+<a href="#l248" class="line" id="l248">    248</a><code>         } else {</code>
+<a href="#l249" class="line" id="l249">    249</a><code>             node = Node::IndexLookup { table, column, values, alias };</code>
+<a href="#l250" class="line" id="l250">    250</a><code>         }</code>
+<a href="#l251" class="line" id="l251">    251</a><code> </code>
+<a href="#l252" class="line" id="l252">    252</a><code>         // If there&#39;s any remaining CNF expressions, add a filter node for them.</code>
+<a href="#l253" class="line" id="l253">    253</a><code>         if let Some(predicate) = Expression::and_vec(cnf) {</code>
+<a href="#l254" class="line" id="l254">    254</a><code>             node = Node::Filter { source: Box::new(node), predicate };</code>
+<a href="#l255" class="line" id="l255">    255</a><code>         }</code>
+<a href="#l256" class="line" id="l256">    256</a><code> </code>
+<a href="#l257" class="line" id="l257">    257</a><code>         node</code>
+<a href="#l258" class="line" id="l258">    258</a><code>     };</code>
+<a href="#l259" class="line" id="l259">    259</a><code>     node.transform(&amp;Ok, &amp;|n| Ok(transform(n)))</code>
+<a href="#l260" class="line" id="l260">    260</a><code> }</code>
+<a href="#l261" class="line" id="l261">    261</a><code> </code>
+<a href="#l262" class="line" id="l262">    262</a><code> /// Uses a hash join instead of a nested loop join for single-column equijoins.</code>
+<a href="#l263" class="line" id="l263">    263</a><code> pub fn join_type(node: Node) -&gt; Result&lt;Node&gt; {</code>
+<a href="#l264" class="line" id="l264">    264</a><code>     let xform = |node| match node {</code>
+<a href="#l265" class="line" id="l265">    265</a><code>         Node::NestedLoopJoin {</code>
+<a href="#l266" class="line" id="l266">    266</a><code>             left,</code>
+<a href="#l267" class="line" id="l267">    267</a><code>             right,</code>
+<a href="#l268" class="line" id="l268">    268</a><code>             predicate: Some(Expression::Equal(lhs, rhs)),</code>
+<a href="#l269" class="line" id="l269">    269</a><code>             outer,</code>
+<a href="#l270" class="line" id="l270">    270</a><code>         } =&gt; match (*lhs, *rhs) {</code>
+<a href="#l271" class="line" id="l271">    271</a><code>             (Expression::Column(mut left_column), Expression::Column(mut right_column)) =&gt; {</code>
+<a href="#l272" class="line" id="l272">    272</a><code>                 // The LHS column may be a column in the right table; swap them.</code>
+<a href="#l273" class="line" id="l273">    273</a><code>                 if right_column &lt; left_column {</code>
+<a href="#l274" class="line" id="l274">    274</a><code>                     (left_column, right_column) = (right_column, left_column);</code>
+<a href="#l275" class="line" id="l275">    275</a><code>                 }</code>
+<a href="#l276" class="line" id="l276">    276</a><code>                 // The NestedLoopJoin predicate uses column indexes in the</code>
+<a href="#l277" class="line" id="l277">    277</a><code>                 // joined row, while the HashJoin uses column indexes in each</code>
+<a href="#l278" class="line" id="l278">    278</a><code>                 // individual table. Adjust the RHS column reference.</code>
+<a href="#l279" class="line" id="l279">    279</a><code>                 right_column -= left.columns();</code>
+<a href="#l280" class="line" id="l280">    280</a><code>                 Node::HashJoin { left, left_column, right, right_column, outer }</code>
+<a href="#l281" class="line" id="l281">    281</a><code>             }</code>
+<a href="#l282" class="line" id="l282">    282</a><code>             (lhs, rhs) =&gt; {</code>
+<a href="#l283" class="line" id="l283">    283</a><code>                 let predicate = Some(Expression::Equal(lhs.into(), rhs.into()));</code>
+<a href="#l284" class="line" id="l284">    284</a><code>                 Node::NestedLoopJoin { left, right, predicate, outer }</code>
+<a href="#l285" class="line" id="l285">    285</a><code>             }</code>
+<a href="#l286" class="line" id="l286">    286</a><code>         },</code>
+<a href="#l287" class="line" id="l287">    287</a><code>         node =&gt; node,</code>
+<a href="#l288" class="line" id="l288">    288</a><code>     };</code>
+<a href="#l289" class="line" id="l289">    289</a><code>     node.transform(&amp;|node| Ok(xform(node)), &amp;Ok)</code>
+<a href="#l290" class="line" id="l290">    290</a><code> }</code>
+<a href="#l291" class="line" id="l291">    291</a><code> </code>
+<a href="#l292" class="line" id="l292">    292</a><code> /// Short-circuits useless nodes and expressions, by removing them and/or</code>
+<a href="#l293" class="line" id="l293">    293</a><code> /// replacing them with Nothing nodes that yield no rows.</code>
+<a href="#l294" class="line" id="l294">    294</a><code> pub fn short_circuit(node: Node) -&gt; Result&lt;Node&gt; {</code>
+<a href="#l295" class="line" id="l295">    295</a><code>     use Expression::*;</code>
+<a href="#l296" class="line" id="l296">    296</a><code>     use Value::*;</code>
+<a href="#l297" class="line" id="l297">    297</a><code> </code>
+<a href="#l298" class="line" id="l298">    298</a><code>     /// Creates a Nothing node with the columns of the original node.</code>
+<a href="#l299" class="line" id="l299">    299</a><code>     fn nothing(node: &amp;Node) -&gt; Node {</code>
+<a href="#l300" class="line" id="l300">    300</a><code>         let columns = (0..node.columns()).map(|i| node.column_label(i)).collect();</code>
+<a href="#l301" class="line" id="l301">    301</a><code>         Node::Nothing { columns }</code>
+<a href="#l302" class="line" id="l302">    302</a><code>     }</code>
+<a href="#l303" class="line" id="l303">    303</a><code> </code>
+<a href="#l304" class="line" id="l304">    304</a><code>     let xform = |node| match node {</code>
+<a href="#l305" class="line" id="l305">    305</a><code>         // Filter nodes that always yield true are unnecessary: remove them.</code>
+<a href="#l306" class="line" id="l306">    306</a><code>         Node::Filter { source, predicate: Constant(Boolean(true)) } =&gt; *source,</code>
+<a href="#l307" class="line" id="l307">    307</a><code> </code>
+<a href="#l308" class="line" id="l308">    308</a><code>         // Predicates that always yield true are unnecessary: remove them.</code>
+<a href="#l309" class="line" id="l309">    309</a><code>         Node::Scan { table, filter: Some(Constant(Boolean(true))), alias } =&gt; {</code>
+<a href="#l310" class="line" id="l310">    310</a><code>             Node::Scan { table, filter: None, alias }</code>
+<a href="#l311" class="line" id="l311">    311</a><code>         }</code>
+<a href="#l312" class="line" id="l312">    312</a><code>         Node::NestedLoopJoin { left, right, predicate: Some(Constant(Boolean(true))), outer } =&gt; {</code>
+<a href="#l313" class="line" id="l313">    313</a><code>             Node::NestedLoopJoin { left, right, predicate: None, outer }</code>
+<a href="#l314" class="line" id="l314">    314</a><code>         }</code>
+<a href="#l315" class="line" id="l315">    315</a><code> </code>
+<a href="#l316" class="line" id="l316">    316</a><code>         // Short-circuit nodes that can&#39;t produce anything by replacing them</code>
+<a href="#l317" class="line" id="l317">    317</a><code>         // with a Nothing node, retaining the columns.</code>
+<a href="#l318" class="line" id="l318">    318</a><code>         ref node @ Node::Filter { predicate: Constant(Boolean(false) | Null), .. } =&gt; nothing(node),</code>
+<a href="#l319" class="line" id="l319">    319</a><code>         ref node @ Node::IndexLookup { ref values, .. } if values.is_empty() =&gt; nothing(node),</code>
+<a href="#l320" class="line" id="l320">    320</a><code>         ref node @ Node::KeyLookup { ref keys, .. } if keys.is_empty() =&gt; nothing(node),</code>
+<a href="#l321" class="line" id="l321">    321</a><code>         ref node @ Node::Limit { limit: 0, .. } =&gt; nothing(node),</code>
+<a href="#l322" class="line" id="l322">    322</a><code>         ref node @ Node::NestedLoopJoin {</code>
+<a href="#l323" class="line" id="l323">    323</a><code>             predicate: Some(Constant(Boolean(false) | Null)), ..</code>
+<a href="#l324" class="line" id="l324">    324</a><code>         } =&gt; nothing(node),</code>
+<a href="#l325" class="line" id="l325">    325</a><code>         ref node @ Node::Scan { filter: Some(Constant(Boolean(false) | Null)), .. } =&gt; {</code>
+<a href="#l326" class="line" id="l326">    326</a><code>             nothing(node)</code>
+<a href="#l327" class="line" id="l327">    327</a><code>         }</code>
+<a href="#l328" class="line" id="l328">    328</a><code>         ref node @ Node::Values { ref rows } if rows.is_empty() =&gt; nothing(node),</code>
+<a href="#l329" class="line" id="l329">    329</a><code> </code>
+<a href="#l330" class="line" id="l330">    330</a><code>         // Short-circuit nodes that pull from a Nothing node.</code>
+<a href="#l331" class="line" id="l331">    331</a><code>         //</code>
+<a href="#l332" class="line" id="l332">    332</a><code>         // NB: does not short-circuit aggregation, since an aggregation over 0</code>
+<a href="#l333" class="line" id="l333">    333</a><code>         // rows should produce a result.</code>
+<a href="#l334" class="line" id="l334">    334</a><code>         ref node @ (Node::Filter { ref source, .. }</code>
+<a href="#l335" class="line" id="l335">    335</a><code>         | Node::HashJoin { left: ref source, .. }</code>
+<a href="#l336" class="line" id="l336">    336</a><code>         | Node::HashJoin { right: ref source, .. }</code>
+<a href="#l337" class="line" id="l337">    337</a><code>         | Node::NestedLoopJoin { left: ref source, .. }</code>
+<a href="#l338" class="line" id="l338">    338</a><code>         | Node::NestedLoopJoin { right: ref source, .. }</code>
+<a href="#l339" class="line" id="l339">    339</a><code>         | Node::Offset { ref source, .. }</code>
+<a href="#l340" class="line" id="l340">    340</a><code>         | Node::Order { ref source, .. }</code>
+<a href="#l341" class="line" id="l341">    341</a><code>         | Node::Projection { ref source, .. })</code>
+<a href="#l342" class="line" id="l342">    342</a><code>             if matches!(**source, Node::Nothing { .. }) =&gt;</code>
+<a href="#l343" class="line" id="l343">    343</a><code>         {</code>
+<a href="#l344" class="line" id="l344">    344</a><code>             nothing(node)</code>
+<a href="#l345" class="line" id="l345">    345</a><code>         }</code>
+<a href="#l346" class="line" id="l346">    346</a><code> </code>
+<a href="#l347" class="line" id="l347">    347</a><code>         // Remove noop projections that simply pass through the source columns.</code>
+<a href="#l348" class="line" id="l348">    348</a><code>         Node::Projection { source, expressions, aliases }</code>
+<a href="#l349" class="line" id="l349">    349</a><code>             if source.columns() == expressions.len()</code>
+<a href="#l350" class="line" id="l350">    350</a><code>                 &amp;&amp; aliases.iter().all(|alias| *alias == Label::None)</code>
+<a href="#l351" class="line" id="l351">    351</a><code>                 &amp;&amp; expressions</code>
+<a href="#l352" class="line" id="l352">    352</a><code>                     .iter()</code>
+<a href="#l353" class="line" id="l353">    353</a><code>                     .enumerate()</code>
+<a href="#l354" class="line" id="l354">    354</a><code>                     .all(|(i, expr)| matches!(expr, Expression::Column(c) if i == *c)) =&gt;</code>
+<a href="#l355" class="line" id="l355">    355</a><code>         {</code>
+<a href="#l356" class="line" id="l356">    356</a><code>             *source</code>
+<a href="#l357" class="line" id="l357">    357</a><code>         }</code>
+<a href="#l358" class="line" id="l358">    358</a><code> </code>
+<a href="#l359" class="line" id="l359">    359</a><code>         node =&gt; node,</code>
+<a href="#l360" class="line" id="l360">    360</a><code>     };</code>
+<a href="#l361" class="line" id="l361">    361</a><code> </code>
+<a href="#l362" class="line" id="l362">    362</a><code>     // Transform after descending, to pull Nothing nodes upwards.</code>
+<a href="#l363" class="line" id="l363">    363</a><code>     node.transform(&amp;Ok, &amp;|node| Ok(xform(node)))</code>
+<a href="#l364" class="line" id="l364">    364</a><code> }</code>
 </pre>
 </div>
 </body>

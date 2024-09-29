@@ -12,281 +12,282 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Source+Code+Pro:ital,wght@0,200..900;1,200..900&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/default.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/base16/tender.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
 <script>hljs.highlightAll();</script>
-</head>
+<style>pre code.hljs {display: inline;padding: 0;} code.hljs {padding: 0;} .hljs {background: initial;}</style></head>
 <body>
 <table><tr><td><a href="../../../../"><img src="../../../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
 </span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<br>
 <a href="../../../log.html">Log</a> | <a href="../../../files.html">Files</a> | <a href="../../../refs.html">Refs</a> | <a href="../../../file/README.md.html">README</a> | <a href="../../../file/LICENSE.html">LICENSE</a></td></tr></table>
 <hr/>
 <div id="content">
 <p> mod.rs (14364B)</p><hr/><pre id="blob">
-<code><a href="#l1" class="line" id="l1">      1</a> //! Implements the Raft distributed consensus protocol.</code>
-<code><a href="#l2" class="line" id="l2">      2</a> //!</code>
-<code><a href="#l3" class="line" id="l3">      3</a> //! For details, see Diego Ongaro&#39;s original writings:</code>
-<code><a href="#l4" class="line" id="l4">      4</a> //!</code>
-<code><a href="#l5" class="line" id="l5">      5</a> //! * Raft paper: &lt;https://raft.github.io/raft.pdf&gt;</code>
-<code><a href="#l6" class="line" id="l6">      6</a> //! * Raft thesis: &lt;https://web.stanford.edu/~ouster/cgi-bin/papers/OngaroPhD.pdf&gt;</code>
-<code><a href="#l7" class="line" id="l7">      7</a> //! * Raft website: &lt;https://raft.github.io&gt;</code>
-<code><a href="#l8" class="line" id="l8">      8</a> //!</code>
-<code><a href="#l9" class="line" id="l9">      9</a> //! Raft is a protocol for a group of computers to agree on some data -- or more</code>
-<code><a href="#l10" class="line" id="l10">     10</a> //! simply, to replicate the data. It is broadly equivalent to [Paxos] and</code>
-<code><a href="#l11" class="line" id="l11">     11</a> //! [Viewstamped Replication], but more prescriptive and simpler to understand.</code>
-<code><a href="#l12" class="line" id="l12">     12</a> //!</code>
-<code><a href="#l13" class="line" id="l13">     13</a> //! Raft has three main properties:</code>
-<code><a href="#l14" class="line" id="l14">     14</a> //!</code>
-<code><a href="#l15" class="line" id="l15">     15</a> //! * Fault tolerance: the system tolerates node failures as long as a majority</code>
-<code><a href="#l16" class="line" id="l16">     16</a> //!   of nodes (&gt;50%) remain operational.</code>
-<code><a href="#l17" class="line" id="l17">     17</a> //!</code>
-<code><a href="#l18" class="line" id="l18">     18</a> //! * Linearizability (aka strong consistency): once a client write has been</code>
-<code><a href="#l19" class="line" id="l19">     19</a> //!   accepted, it is visible to all clients -- they never see outdated data.</code>
-<code><a href="#l20" class="line" id="l20">     20</a> //!</code>
-<code><a href="#l21" class="line" id="l21">     21</a> //! * Durability: a write is never lost as long as a majority of nodes remain.</code>
-<code><a href="#l22" class="line" id="l22">     22</a> //!</code>
-<code><a href="#l23" class="line" id="l23">     23</a> //! It does this by electing a single leader node which serves client requests</code>
-<code><a href="#l24" class="line" id="l24">     24</a> //! and replicates writes to other nodes. Requests are executed once they have</code>
-<code><a href="#l25" class="line" id="l25">     25</a> //! been confirmed by a strict majority of nodes (a quorum). If a leader fails,</code>
-<code><a href="#l26" class="line" id="l26">     26</a> //! a new leader is elected. Clusters have 3 or more nodes, since a two-node</code>
-<code><a href="#l27" class="line" id="l27">     27</a> //! cluster can&#39;t tolerate failures (1/2 is not a majority and would lead to</code>
-<code><a href="#l28" class="line" id="l28">     28</a> //! split brain).</code>
-<code><a href="#l29" class="line" id="l29">     29</a> //!</code>
-<code><a href="#l30" class="line" id="l30">     30</a> //! Notably, Raft does not provide horizontal scalability. Client requests are</code>
-<code><a href="#l31" class="line" id="l31">     31</a> //! processed by a single leader node which can quickly become a bottleneck, and</code>
-<code><a href="#l32" class="line" id="l32">     32</a> //! each node stores a complete copy of the entire dataset. Systems often handle</code>
-<code><a href="#l33" class="line" id="l33">     33</a> //! this by sharding the data into multiple Raft clusters and using a</code>
-<code><a href="#l34" class="line" id="l34">     34</a> //! distributed transaction protocol across them, but this is out of scope here.</code>
-<code><a href="#l35" class="line" id="l35">     35</a> //!</code>
-<code><a href="#l36" class="line" id="l36">     36</a> //! toyDB follows the Raft paper fairly closely, but, like most implementations,</code>
-<code><a href="#l37" class="line" id="l37">     37</a> //! takes some minor artistic liberties.</code>
-<code><a href="#l38" class="line" id="l38">     38</a> //!</code>
-<code><a href="#l39" class="line" id="l39">     39</a> //! [Paxos]: https://www.microsoft.com/en-us/research/uploads/prod/2016/12/paxos-simple-Copy.pdf</code>
-<code><a href="#l40" class="line" id="l40">     40</a> //! [Viewstamped Replication]: https://pmg.csail.mit.edu/papers/vr-revisited.pdf</code>
-<code><a href="#l41" class="line" id="l41">     41</a> //!</code>
-<code><a href="#l42" class="line" id="l42">     42</a> //! RAFT LOG AND STATE MACHINE</code>
-<code><a href="#l43" class="line" id="l43">     43</a> //! ==========================</code>
-<code><a href="#l44" class="line" id="l44">     44</a> //!</code>
-<code><a href="#l45" class="line" id="l45">     45</a> //! Raft maintains an ordered command log containing arbitrary write commands</code>
-<code><a href="#l46" class="line" id="l46">     46</a> //! submitted by clients. It attempts to reach consensus on this log by</code>
-<code><a href="#l47" class="line" id="l47">     47</a> //! replicating it to a majority of nodes. If successful, the log is considered</code>
-<code><a href="#l48" class="line" id="l48">     48</a> //! committed and immutable up to that point.</code>
-<code><a href="#l49" class="line" id="l49">     49</a> //!</code>
-<code><a href="#l50" class="line" id="l50">     50</a> //! Once committed, the commands in the log are applied sequentially to a local</code>
-<code><a href="#l51" class="line" id="l51">     51</a> //! state machine on each node. Raft itself doesn&#39;t care what the state machine</code>
-<code><a href="#l52" class="line" id="l52">     52</a> //! and commands are -- in toyDB&#39;s case it&#39;s a SQL database, but it could be</code>
-<code><a href="#l53" class="line" id="l53">     53</a> //! anything. Raft simply passes opaque commands to an opaque state machine.</code>
-<code><a href="#l54" class="line" id="l54">     54</a> //!</code>
-<code><a href="#l55" class="line" id="l55">     55</a> //! Each log entry contains an index, the leader&#39;s term (see next section), and</code>
-<code><a href="#l56" class="line" id="l56">     56</a> //! the command. For example, a naïve illustration of a toyDB Raft log might be:</code>
-<code><a href="#l57" class="line" id="l57">     57</a> //!</code>
-<code><a href="#l58" class="line" id="l58">     58</a> //! Index | Term | Command</code>
-<code><a href="#l59" class="line" id="l59">     59</a> //! ------|------|------------------------------------------------------</code>
-<code><a href="#l60" class="line" id="l60">     60</a> //!   1   |   1  | CREATE TABLE table (id INT PRIMARY KEY, value STRING)</code>
-<code><a href="#l61" class="line" id="l61">     61</a> //!   2   |   1  | INSERT INTO table VALUES (1, &#39;foo&#39;)</code>
-<code><a href="#l62" class="line" id="l62">     62</a> //!   3   |   2  | UPDATE table SET value = &#39;bar&#39; WHERE id = 1</code>
-<code><a href="#l63" class="line" id="l63">     63</a> //!   4   |   2  | DELETE FROM table WHERE id = 1</code>
-<code><a href="#l64" class="line" id="l64">     64</a> //!</code>
-<code><a href="#l65" class="line" id="l65">     65</a> //! The state machine must be deterministic, such that all nodes will reach the</code>
-<code><a href="#l66" class="line" id="l66">     66</a> //! same identical state. Raft will apply the same commands in the same order</code>
-<code><a href="#l67" class="line" id="l67">     67</a> //! independently on all nodes, but if the commands have non-deterministic</code>
-<code><a href="#l68" class="line" id="l68">     68</a> //! behavior such as random number generation or communication with external</code>
-<code><a href="#l69" class="line" id="l69">     69</a> //! systems it can lead to state divergence causing different results.</code>
-<code><a href="#l70" class="line" id="l70">     70</a> //!</code>
-<code><a href="#l71" class="line" id="l71">     71</a> //! In toyDB, the Raft log is managed by `Log` and stored locally in a</code>
-<code><a href="#l72" class="line" id="l72">     72</a> //! `storage::Engine`. The state machine interface is the `State` trait. See</code>
-<code><a href="#l73" class="line" id="l73">     73</a> //! their documentation for more details.</code>
-<code><a href="#l74" class="line" id="l74">     74</a> //!</code>
-<code><a href="#l75" class="line" id="l75">     75</a> //! LEADER ELECTION</code>
-<code><a href="#l76" class="line" id="l76">     76</a> //! ===============</code>
-<code><a href="#l77" class="line" id="l77">     77</a> //!</code>
-<code><a href="#l78" class="line" id="l78">     78</a> //! Raft nodes can be in one of three states (or roles): follower, candidate,</code>
-<code><a href="#l79" class="line" id="l79">     79</a> //! and leader. toyDB models these as `Node::Follower`, `Node::Candidate`, and</code>
-<code><a href="#l80" class="line" id="l80">     80</a> //! `Node::Leader`.</code>
-<code><a href="#l81" class="line" id="l81">     81</a> //!</code>
-<code><a href="#l82" class="line" id="l82">     82</a> //! * Follower: replicates log entries from a leader. May not know a leader yet.</code>
-<code><a href="#l83" class="line" id="l83">     83</a> //! * Candidate: campaigns for leadership in an election.</code>
-<code><a href="#l84" class="line" id="l84">     84</a> //! * Leader: processes client requests and replicates writes to followers.</code>
-<code><a href="#l85" class="line" id="l85">     85</a> //!</code>
-<code><a href="#l86" class="line" id="l86">     86</a> //! Raft fundamentally relies on a single guarantee: there can be at most one</code>
-<code><a href="#l87" class="line" id="l87">     87</a> //! _valid_ leader at any point in time (old, since-replaced leaders may think</code>
-<code><a href="#l88" class="line" id="l88">     88</a> //! they&#39;re still a leader, e.g. during a network partition, but they won&#39;t be</code>
-<code><a href="#l89" class="line" id="l89">     89</a> //! able to do anything). It enforces this through the leader election protocol.</code>
-<code><a href="#l90" class="line" id="l90">     90</a> //!</code>
-<code><a href="#l91" class="line" id="l91">     91</a> //! Raft divides time into terms, which are monotonically increasing numbers.</code>
-<code><a href="#l92" class="line" id="l92">     92</a> //! Higher terms always take priority over lower terms. There can be at most one</code>
-<code><a href="#l93" class="line" id="l93">     93</a> //! leader in a term, and it can&#39;t change. Nodes keep track of their last known</code>
-<code><a href="#l94" class="line" id="l94">     94</a> //! term and store it on disk (see `Log.set_term()`). Messages between nodes are</code>
-<code><a href="#l95" class="line" id="l95">     95</a> //! tagged with the current term (as `Envelope.term`) -- old terms are ignored,</code>
-<code><a href="#l96" class="line" id="l96">     96</a> //! and future terms cause the node to become a follower in that term.</code>
-<code><a href="#l97" class="line" id="l97">     97</a> //!</code>
-<code><a href="#l98" class="line" id="l98">     98</a> //! Nodes start out as leaderless followers. If they receive a message from a</code>
-<code><a href="#l99" class="line" id="l99">     99</a> //! leader (in a current or future term), they follow it. Otherwise, they wait</code>
-<code><a href="#l100" class="line" id="l100">    100</a> //! out the election timeout (a few seconds), become candidates, and hold a</code>
-<code><a href="#l101" class="line" id="l101">    101</a> //! leader election.</code>
-<code><a href="#l102" class="line" id="l102">    102</a> //!</code>
-<code><a href="#l103" class="line" id="l103">    103</a> //! Candidates increase their term by 1 and send `Message::Campaign` to all</code>
-<code><a href="#l104" class="line" id="l104">    104</a> //! nodes, requesting their vote. Nodes respond with `Message::CampaignResponse`</code>
-<code><a href="#l105" class="line" id="l105">    105</a> //! saying whether a vote was granted. A node can only grant a single vote in a</code>
-<code><a href="#l106" class="line" id="l106">    106</a> //! term (stored to disk via `Log.set_term()`), on a first-come first-serve</code>
-<code><a href="#l107" class="line" id="l107">    107</a> //! basis, and candidates implicitly vote for themselves.</code>
-<code><a href="#l108" class="line" id="l108">    108</a> //!</code>
-<code><a href="#l109" class="line" id="l109">    109</a> //! When a candidate receives a majority of votes (&gt;50%), it becomes leader. It</code>
-<code><a href="#l110" class="line" id="l110">    110</a> //! sends a `Message::Heartbeat` to all nodes asserting its leadership, and all</code>
-<code><a href="#l111" class="line" id="l111">    111</a> //! nodes become followers when they receive it (regardless of who they voted</code>
-<code><a href="#l112" class="line" id="l112">    112</a> //! for). Leaders continue to send periodic heartbeats every second or so. The</code>
-<code><a href="#l113" class="line" id="l113">    113</a> //! new leader also appends an empty entry to its log in order to safely commit</code>
-<code><a href="#l114" class="line" id="l114">    114</a> //! all entries from previous terms (Raft paper section 5.4.2).</code>
-<code><a href="#l115" class="line" id="l115">    115</a> //!</code>
-<code><a href="#l116" class="line" id="l116">    116</a> //! The new leader must have all committed entries in its log (or the cluster</code>
-<code><a href="#l117" class="line" id="l117">    117</a> //! would lose data). To ensure this, there is one additional condition for</code>
-<code><a href="#l118" class="line" id="l118">    118</a> //! granting a vote: the candidate&#39;s log must be at least as up-to-date as the</code>
-<code><a href="#l119" class="line" id="l119">    119</a> //! voter. Because an entry must be replicated to a majority before being</code>
-<code><a href="#l120" class="line" id="l120">    120</a> //! committed, this ensures a candidate can only win a majority of votes if its</code>
-<code><a href="#l121" class="line" id="l121">    121</a> //! log is up-to-date with all committed entries (Raft paper section 5.4.1).</code>
-<code><a href="#l122" class="line" id="l122">    122</a> //!</code>
-<code><a href="#l123" class="line" id="l123">    123</a> //! It&#39;s possible that no candidate wins an election, for example due to a tie</code>
-<code><a href="#l124" class="line" id="l124">    124</a> //! or a majority of nodes being offline. After an election timeout passes,</code>
-<code><a href="#l125" class="line" id="l125">    125</a> //! candidates will again bump their term and start a new election, until a</code>
-<code><a href="#l126" class="line" id="l126">    126</a> //! leader can be established. To avoid frequent ties, nodes use different,</code>
-<code><a href="#l127" class="line" id="l127">    127</a> //! randomized election timeouts (Raft paper section 5.2).</code>
-<code><a href="#l128" class="line" id="l128">    128</a> //!</code>
-<code><a href="#l129" class="line" id="l129">    129</a> //! Similarly, if a follower doesn&#39;t hear from a leader in an election timeout</code>
-<code><a href="#l130" class="line" id="l130">    130</a> //! interval, it will become candidate and hold another election. The periodic</code>
-<code><a href="#l131" class="line" id="l131">    131</a> //! leader heartbeats prevent this as long as the leader is running and</code>
-<code><a href="#l132" class="line" id="l132">    132</a> //! connected. A node that becomes disconnected from the leader will continually</code>
-<code><a href="#l133" class="line" id="l133">    133</a> //! hold new elections by itself until the network heals, at which point a new</code>
-<code><a href="#l134" class="line" id="l134">    134</a> //! election will be held in its term (disrupting the current leader).</code>
-<code><a href="#l135" class="line" id="l135">    135</a> //!</code>
-<code><a href="#l136" class="line" id="l136">    136</a> //! REPLICATION AND CONSENSUS</code>
-<code><a href="#l137" class="line" id="l137">    137</a> //! =========================</code>
-<code><a href="#l138" class="line" id="l138">    138</a> //!</code>
-<code><a href="#l139" class="line" id="l139">    139</a> //! When the leader receives a client write request, it appends the command to</code>
-<code><a href="#l140" class="line" id="l140">    140</a> //! its local log via `Log.append()`, and sends the log entry to all peers in</code>
-<code><a href="#l141" class="line" id="l141">    141</a> //! a `Message::Append`. Followers will attempt to durably append the entry to</code>
-<code><a href="#l142" class="line" id="l142">    142</a> //! their local logs and respond with `Message::AppendResponse`.</code>
-<code><a href="#l143" class="line" id="l143">    143</a> //!</code>
-<code><a href="#l144" class="line" id="l144">    144</a> //! Once a majority have acknowledged the append, the leader commits the entry</code>
-<code><a href="#l145" class="line" id="l145">    145</a> //! via `Log.commit()` and applies it to its local state machine, returning the</code>
-<code><a href="#l146" class="line" id="l146">    146</a> //! result to the client. It will inform followers about the commit in the next</code>
-<code><a href="#l147" class="line" id="l147">    147</a> //! heartbeat as `Message::Heartbeat.commit_index` so they can apply it too, but</code>
-<code><a href="#l148" class="line" id="l148">    148</a> //! this is not necessary for correctness (they will commit and apply it if they</code>
-<code><a href="#l149" class="line" id="l149">    149</a> //! become leader, otherwise they have no need for applying it).</code>
-<code><a href="#l150" class="line" id="l150">    150</a> //!</code>
-<code><a href="#l151" class="line" id="l151">    151</a> //! Followers may not be able to append the entry to their log -- they may be</code>
-<code><a href="#l152" class="line" id="l152">    152</a> //! unreachable, lag behind the leader, or have divergent logs (see Raft paper</code>
-<code><a href="#l153" class="line" id="l153">    153</a> //! section 5.3). The `Append` contains the index and term of the log entry</code>
-<code><a href="#l154" class="line" id="l154">    154</a> //! immediately before the replicated entry as `base_index` and `base_term`. An</code>
-<code><a href="#l155" class="line" id="l155">    155</a> //! index/term pair uniquely identifies a command, and if two logs have the same</code>
-<code><a href="#l156" class="line" id="l156">    156</a> //! index/term pair then the logs are identical up to and including that entry</code>
-<code><a href="#l157" class="line" id="l157">    157</a> //! (Raft paper section 5.3). If the base index/term matches the follower&#39;s log,</code>
-<code><a href="#l158" class="line" id="l158">    158</a> //! it appends the entry (potentially replacing any conflicting entries),</code>
-<code><a href="#l159" class="line" id="l159">    159</a> //! otherwise it rejects it.</code>
-<code><a href="#l160" class="line" id="l160">    160</a> //!</code>
-<code><a href="#l161" class="line" id="l161">    161</a> //! When a follower rejects an append, the leader must try to find a common log</code>
-<code><a href="#l162" class="line" id="l162">    162</a> //! entry that exists in both its and the follower&#39;s log where it can resume</code>
-<code><a href="#l163" class="line" id="l163">    163</a> //! replication. It does this by sending `Message::Append` probes only</code>
-<code><a href="#l164" class="line" id="l164">    164</a> //! containing a base index/term but no entries -- it will continue to probe</code>
-<code><a href="#l165" class="line" id="l165">    165</a> //! decreasing indexes one by one until the follower responds with a match, then</code>
-<code><a href="#l166" class="line" id="l166">    166</a> //! send an `Append` with the missing entries (Raft paper section 5.3). It keeps</code>
-<code><a href="#l167" class="line" id="l167">    167</a> //! track of each follower&#39;s `match_index` and `next_index` in a `Progress`</code>
-<code><a href="#l168" class="line" id="l168">    168</a> //! struct to manage this.</code>
-<code><a href="#l169" class="line" id="l169">    169</a> //!</code>
-<code><a href="#l170" class="line" id="l170">    170</a> //! In case `Append` messages or responses are lost, leaders also send their</code>
-<code><a href="#l171" class="line" id="l171">    171</a> //! `last_index` and term in each `Heartbeat`. If followers don&#39;t have that</code>
-<code><a href="#l172" class="line" id="l172">    172</a> //! index/term pair in their log, they&#39;ll say so in the `HeartbeatResponse` and</code>
-<code><a href="#l173" class="line" id="l173">    173</a> //! the leader can begin probing their logs as with append rejections.</code>
-<code><a href="#l174" class="line" id="l174">    174</a> //!</code>
-<code><a href="#l175" class="line" id="l175">    175</a> //! CLIENT REQUESTS</code>
-<code><a href="#l176" class="line" id="l176">    176</a> //! ===============</code>
-<code><a href="#l177" class="line" id="l177">    177</a> //!</code>
-<code><a href="#l178" class="line" id="l178">    178</a> //! Client requests are submitted as `Message::ClientRequest` to the local Raft</code>
-<code><a href="#l179" class="line" id="l179">    179</a> //! node. They are only processed on the leader, but followers will proxy them</code>
-<code><a href="#l180" class="line" id="l180">    180</a> //! to the leader (Raft thesis section 6.2). To avoid complications with message</code>
-<code><a href="#l181" class="line" id="l181">    181</a> //! replays (Raft thesis section 6.3), requests are not retried internally, and</code>
-<code><a href="#l182" class="line" id="l182">    182</a> //! are explicitly aborted with `Error::Abort` on leader/term changes as well as</code>
-<code><a href="#l183" class="line" id="l183">    183</a> //! elections.</code>
-<code><a href="#l184" class="line" id="l184">    184</a> //!</code>
-<code><a href="#l185" class="line" id="l185">    185</a> //! Write requests, `Request::Write`, are appended to the Raft log and</code>
-<code><a href="#l186" class="line" id="l186">    186</a> //! replicated. The leader keeps track of the request and its log index in a</code>
-<code><a href="#l187" class="line" id="l187">    187</a> //! `Write` struct. Once the command is committed and applied to the local state</code>
-<code><a href="#l188" class="line" id="l188">    188</a> //! machine, the leader looks up the write request by its log index and sends</code>
-<code><a href="#l189" class="line" id="l189">    189</a> //! the result to the client. Deterministic errors (e.g. foreign key violations)</code>
-<code><a href="#l190" class="line" id="l190">    190</a> //! are also returned to the client, but non-deterministic errors (e.g. IO</code>
-<code><a href="#l191" class="line" id="l191">    191</a> //! errors) must panic the node to avoid replica state divergence.</code>
-<code><a href="#l192" class="line" id="l192">    192</a> //!</code>
-<code><a href="#l193" class="line" id="l193">    193</a> //! Read requests, `Request::Read`, are only executed on the leader and don&#39;t</code>
-<code><a href="#l194" class="line" id="l194">    194</a> //! need to be replicated via the Raft log. However, to ensure linearizability,</code>
-<code><a href="#l195" class="line" id="l195">    195</a> //! the leader has to confirm with a quorum that it&#39;s actually still the leader.</code>
-<code><a href="#l196" class="line" id="l196">    196</a> //! Otherwise, it&#39;s possible that a new leader has been elected elsewhere and</code>
-<code><a href="#l197" class="line" id="l197">    197</a> //! executed writes without us knowing about it. It does this by assigning an</code>
-<code><a href="#l198" class="line" id="l198">    198</a> //! incrementing sequence number to each read, keeping track of the request in a</code>
-<code><a href="#l199" class="line" id="l199">    199</a> //! `Read` struct, and immediately sending a `Read` message with the latest</code>
-<code><a href="#l200" class="line" id="l200">    200</a> //! sequence number. Followers respond with the sequence number, and once a</code>
-<code><a href="#l201" class="line" id="l201">    201</a> //! quorum have confirmed a sequence number the read is executed and the result</code>
-<code><a href="#l202" class="line" id="l202">    202</a> //! returned to the client.</code>
-<code><a href="#l203" class="line" id="l203">    203</a> //!</code>
-<code><a href="#l204" class="line" id="l204">    204</a> //! IMPLEMENTATION CAVEATS</code>
-<code><a href="#l205" class="line" id="l205">    205</a> //! ======================</code>
-<code><a href="#l206" class="line" id="l206">    206</a> //!</code>
-<code><a href="#l207" class="line" id="l207">    207</a> //! For simplicity, toyDB implements the bare minimum for a functional and</code>
-<code><a href="#l208" class="line" id="l208">    208</a> //! correct Raft protocol, and omits several advanced mechanisms that would be</code>
-<code><a href="#l209" class="line" id="l209">    209</a> //! needed for a real production system. In particular:</code>
-<code><a href="#l210" class="line" id="l210">    210</a> //!</code>
-<code><a href="#l211" class="line" id="l211">    211</a> //! * No leases: for linearizability, every read request requires the leader to</code>
-<code><a href="#l212" class="line" id="l212">    212</a> //!   confirm with followers that it&#39;s still the leader. This could be avoided</code>
-<code><a href="#l213" class="line" id="l213">    213</a> //!   with a leader lease for a predefined time interval (Raft paper section 8,</code>
-<code><a href="#l214" class="line" id="l214">    214</a> //!   Raft thesis section 6.3).</code>
-<code><a href="#l215" class="line" id="l215">    215</a> //!</code>
-<code><a href="#l216" class="line" id="l216">    216</a> //! * No cluster membership changes: to add or remove nodes, the entire cluster</code>
-<code><a href="#l217" class="line" id="l217">    217</a> //!   must be stopped and restarted with the new configuration, otherwise it</code>
-<code><a href="#l218" class="line" id="l218">    218</a> //!   risks multiple leaders (Raft paper section 6).</code>
-<code><a href="#l219" class="line" id="l219">    219</a> //!</code>
-<code><a href="#l220" class="line" id="l220">    220</a> //! * No snapshots: new or lagging nodes must be caught up by replicating and</code>
-<code><a href="#l221" class="line" id="l221">    221</a> //!   replaying the entire log, instead of sending a state machine snapshot</code>
-<code><a href="#l222" class="line" id="l222">    222</a> //!   (Raft paper section 7).</code>
-<code><a href="#l223" class="line" id="l223">    223</a> //!</code>
-<code><a href="#l224" class="line" id="l224">    224</a> //! * No log truncation: because snapshots aren&#39;t supported, the entire Raft</code>
-<code><a href="#l225" class="line" id="l225">    225</a> //!   log must be retained forever in order to catch up new/lagging nodes,</code>
-<code><a href="#l226" class="line" id="l226">    226</a> //!   leading to excessive storage use (Raft paper section 7).</code>
-<code><a href="#l227" class="line" id="l227">    227</a> //!</code>
-<code><a href="#l228" class="line" id="l228">    228</a> //! * No pre-vote or check-quorum: a node that&#39;s partially partitioned (can</code>
-<code><a href="#l229" class="line" id="l229">    229</a> //!   reach some but not all nodes) can cause persistent unavailability with</code>
-<code><a href="#l230" class="line" id="l230">    230</a> //!   spurious elections or heartbeats. A node rejoining after a partition can</code>
-<code><a href="#l231" class="line" id="l231">    231</a> //!   also temporarily disrupt a leader. This requires additional pre-vote and</code>
-<code><a href="#l232" class="line" id="l232">    232</a> //!   check-quorum protocol extensions (Raft thesis section 4.2.3 and 9.6).</code>
-<code><a href="#l233" class="line" id="l233">    233</a> //!</code>
-<code><a href="#l234" class="line" id="l234">    234</a> //! * No request retries: client requests will not be retried on leader changes</code>
-<code><a href="#l235" class="line" id="l235">    235</a> //!   or message loss, and will be aggressively aborted, to ignore problems</code>
-<code><a href="#l236" class="line" id="l236">    236</a> //!   related to message replay (Raft thesis section 6.3).</code>
-<code><a href="#l237" class="line" id="l237">    237</a> //!</code>
-<code><a href="#l238" class="line" id="l238">    238</a> //! * No reject hints: if a follower has a divergent log, the leader will probe</code>
-<code><a href="#l239" class="line" id="l239">    239</a> //!   entries one by one until a match is found. The replication protocol could</code>
-<code><a href="#l240" class="line" id="l240">    240</a> //!   instead be extended with rejection hints (Raft paper section 5.3).</code>
-<code><a href="#l241" class="line" id="l241">    241</a> </code>
-<code><a href="#l242" class="line" id="l242">    242</a> mod log;</code>
-<code><a href="#l243" class="line" id="l243">    243</a> mod message;</code>
-<code><a href="#l244" class="line" id="l244">    244</a> mod node;</code>
-<code><a href="#l245" class="line" id="l245">    245</a> mod state;</code>
-<code><a href="#l246" class="line" id="l246">    246</a> </code>
-<code><a href="#l247" class="line" id="l247">    247</a> pub use log::{Entry, Index, Key, Log};</code>
-<code><a href="#l248" class="line" id="l248">    248</a> pub use message::{Envelope, Message, ReadSequence, Request, RequestID, Response, Status};</code>
-<code><a href="#l249" class="line" id="l249">    249</a> pub use node::{Node, NodeID, Options, Term, Ticks};</code>
-<code><a href="#l250" class="line" id="l250">    250</a> pub use state::State;</code>
-<code><a href="#l251" class="line" id="l251">    251</a> </code>
-<code><a href="#l252" class="line" id="l252">    252</a> /// The interval between Raft ticks, the unit of time.</code>
-<code><a href="#l253" class="line" id="l253">    253</a> pub const TICK_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);</code>
-<code><a href="#l254" class="line" id="l254">    254</a> </code>
-<code><a href="#l255" class="line" id="l255">    255</a> /// The interval between leader heartbeats in ticks.</code>
-<code><a href="#l256" class="line" id="l256">    256</a> const HEARTBEAT_INTERVAL: Ticks = 4;</code>
-<code><a href="#l257" class="line" id="l257">    257</a> </code>
-<code><a href="#l258" class="line" id="l258">    258</a> /// The default election timeout range in ticks. This is randomized in this</code>
-<code><a href="#l259" class="line" id="l259">    259</a> /// interval, to avoid election ties.</code>
-<code><a href="#l260" class="line" id="l260">    260</a> const ELECTION_TIMEOUT_RANGE: std::ops::Range&lt;Ticks&gt; = 10..20;</code>
-<code><a href="#l261" class="line" id="l261">    261</a> </code>
-<code><a href="#l262" class="line" id="l262">    262</a> /// The maximum number of entries to send in a single append message.</code>
-<code><a href="#l263" class="line" id="l263">    263</a> const MAX_APPEND_ENTRIES: usize = 100;</code>
+<a href="#l1" class="line" id="l1">      1</a><code> //! Implements the Raft distributed consensus protocol.</code>
+<a href="#l2" class="line" id="l2">      2</a><code> //!</code>
+<a href="#l3" class="line" id="l3">      3</a><code> //! For details, see Diego Ongaro&#39;s original writings:</code>
+<a href="#l4" class="line" id="l4">      4</a><code> //!</code>
+<a href="#l5" class="line" id="l5">      5</a><code> //! * Raft paper: &lt;https://raft.github.io/raft.pdf&gt;</code>
+<a href="#l6" class="line" id="l6">      6</a><code> //! * Raft thesis: &lt;https://web.stanford.edu/~ouster/cgi-bin/papers/OngaroPhD.pdf&gt;</code>
+<a href="#l7" class="line" id="l7">      7</a><code> //! * Raft website: &lt;https://raft.github.io&gt;</code>
+<a href="#l8" class="line" id="l8">      8</a><code> //!</code>
+<a href="#l9" class="line" id="l9">      9</a><code> //! Raft is a protocol for a group of computers to agree on some data -- or more</code>
+<a href="#l10" class="line" id="l10">     10</a><code> //! simply, to replicate the data. It is broadly equivalent to [Paxos] and</code>
+<a href="#l11" class="line" id="l11">     11</a><code> //! [Viewstamped Replication], but more prescriptive and simpler to understand.</code>
+<a href="#l12" class="line" id="l12">     12</a><code> //!</code>
+<a href="#l13" class="line" id="l13">     13</a><code> //! Raft has three main properties:</code>
+<a href="#l14" class="line" id="l14">     14</a><code> //!</code>
+<a href="#l15" class="line" id="l15">     15</a><code> //! * Fault tolerance: the system tolerates node failures as long as a majority</code>
+<a href="#l16" class="line" id="l16">     16</a><code> //!   of nodes (&gt;50%) remain operational.</code>
+<a href="#l17" class="line" id="l17">     17</a><code> //!</code>
+<a href="#l18" class="line" id="l18">     18</a><code> //! * Linearizability (aka strong consistency): once a client write has been</code>
+<a href="#l19" class="line" id="l19">     19</a><code> //!   accepted, it is visible to all clients -- they never see outdated data.</code>
+<a href="#l20" class="line" id="l20">     20</a><code> //!</code>
+<a href="#l21" class="line" id="l21">     21</a><code> //! * Durability: a write is never lost as long as a majority of nodes remain.</code>
+<a href="#l22" class="line" id="l22">     22</a><code> //!</code>
+<a href="#l23" class="line" id="l23">     23</a><code> //! It does this by electing a single leader node which serves client requests</code>
+<a href="#l24" class="line" id="l24">     24</a><code> //! and replicates writes to other nodes. Requests are executed once they have</code>
+<a href="#l25" class="line" id="l25">     25</a><code> //! been confirmed by a strict majority of nodes (a quorum). If a leader fails,</code>
+<a href="#l26" class="line" id="l26">     26</a><code> //! a new leader is elected. Clusters have 3 or more nodes, since a two-node</code>
+<a href="#l27" class="line" id="l27">     27</a><code> //! cluster can&#39;t tolerate failures (1/2 is not a majority and would lead to</code>
+<a href="#l28" class="line" id="l28">     28</a><code> //! split brain).</code>
+<a href="#l29" class="line" id="l29">     29</a><code> //!</code>
+<a href="#l30" class="line" id="l30">     30</a><code> //! Notably, Raft does not provide horizontal scalability. Client requests are</code>
+<a href="#l31" class="line" id="l31">     31</a><code> //! processed by a single leader node which can quickly become a bottleneck, and</code>
+<a href="#l32" class="line" id="l32">     32</a><code> //! each node stores a complete copy of the entire dataset. Systems often handle</code>
+<a href="#l33" class="line" id="l33">     33</a><code> //! this by sharding the data into multiple Raft clusters and using a</code>
+<a href="#l34" class="line" id="l34">     34</a><code> //! distributed transaction protocol across them, but this is out of scope here.</code>
+<a href="#l35" class="line" id="l35">     35</a><code> //!</code>
+<a href="#l36" class="line" id="l36">     36</a><code> //! toyDB follows the Raft paper fairly closely, but, like most implementations,</code>
+<a href="#l37" class="line" id="l37">     37</a><code> //! takes some minor artistic liberties.</code>
+<a href="#l38" class="line" id="l38">     38</a><code> //!</code>
+<a href="#l39" class="line" id="l39">     39</a><code> //! [Paxos]: https://www.microsoft.com/en-us/research/uploads/prod/2016/12/paxos-simple-Copy.pdf</code>
+<a href="#l40" class="line" id="l40">     40</a><code> //! [Viewstamped Replication]: https://pmg.csail.mit.edu/papers/vr-revisited.pdf</code>
+<a href="#l41" class="line" id="l41">     41</a><code> //!</code>
+<a href="#l42" class="line" id="l42">     42</a><code> //! RAFT LOG AND STATE MACHINE</code>
+<a href="#l43" class="line" id="l43">     43</a><code> //! ==========================</code>
+<a href="#l44" class="line" id="l44">     44</a><code> //!</code>
+<a href="#l45" class="line" id="l45">     45</a><code> //! Raft maintains an ordered command log containing arbitrary write commands</code>
+<a href="#l46" class="line" id="l46">     46</a><code> //! submitted by clients. It attempts to reach consensus on this log by</code>
+<a href="#l47" class="line" id="l47">     47</a><code> //! replicating it to a majority of nodes. If successful, the log is considered</code>
+<a href="#l48" class="line" id="l48">     48</a><code> //! committed and immutable up to that point.</code>
+<a href="#l49" class="line" id="l49">     49</a><code> //!</code>
+<a href="#l50" class="line" id="l50">     50</a><code> //! Once committed, the commands in the log are applied sequentially to a local</code>
+<a href="#l51" class="line" id="l51">     51</a><code> //! state machine on each node. Raft itself doesn&#39;t care what the state machine</code>
+<a href="#l52" class="line" id="l52">     52</a><code> //! and commands are -- in toyDB&#39;s case it&#39;s a SQL database, but it could be</code>
+<a href="#l53" class="line" id="l53">     53</a><code> //! anything. Raft simply passes opaque commands to an opaque state machine.</code>
+<a href="#l54" class="line" id="l54">     54</a><code> //!</code>
+<a href="#l55" class="line" id="l55">     55</a><code> //! Each log entry contains an index, the leader&#39;s term (see next section), and</code>
+<a href="#l56" class="line" id="l56">     56</a><code> //! the command. For example, a naïve illustration of a toyDB Raft log might be:</code>
+<a href="#l57" class="line" id="l57">     57</a><code> //!</code>
+<a href="#l58" class="line" id="l58">     58</a><code> //! Index | Term | Command</code>
+<a href="#l59" class="line" id="l59">     59</a><code> //! ------|------|------------------------------------------------------</code>
+<a href="#l60" class="line" id="l60">     60</a><code> //!   1   |   1  | CREATE TABLE table (id INT PRIMARY KEY, value STRING)</code>
+<a href="#l61" class="line" id="l61">     61</a><code> //!   2   |   1  | INSERT INTO table VALUES (1, &#39;foo&#39;)</code>
+<a href="#l62" class="line" id="l62">     62</a><code> //!   3   |   2  | UPDATE table SET value = &#39;bar&#39; WHERE id = 1</code>
+<a href="#l63" class="line" id="l63">     63</a><code> //!   4   |   2  | DELETE FROM table WHERE id = 1</code>
+<a href="#l64" class="line" id="l64">     64</a><code> //!</code>
+<a href="#l65" class="line" id="l65">     65</a><code> //! The state machine must be deterministic, such that all nodes will reach the</code>
+<a href="#l66" class="line" id="l66">     66</a><code> //! same identical state. Raft will apply the same commands in the same order</code>
+<a href="#l67" class="line" id="l67">     67</a><code> //! independently on all nodes, but if the commands have non-deterministic</code>
+<a href="#l68" class="line" id="l68">     68</a><code> //! behavior such as random number generation or communication with external</code>
+<a href="#l69" class="line" id="l69">     69</a><code> //! systems it can lead to state divergence causing different results.</code>
+<a href="#l70" class="line" id="l70">     70</a><code> //!</code>
+<a href="#l71" class="line" id="l71">     71</a><code> //! In toyDB, the Raft log is managed by `Log` and stored locally in a</code>
+<a href="#l72" class="line" id="l72">     72</a><code> //! `storage::Engine`. The state machine interface is the `State` trait. See</code>
+<a href="#l73" class="line" id="l73">     73</a><code> //! their documentation for more details.</code>
+<a href="#l74" class="line" id="l74">     74</a><code> //!</code>
+<a href="#l75" class="line" id="l75">     75</a><code> //! LEADER ELECTION</code>
+<a href="#l76" class="line" id="l76">     76</a><code> //! ===============</code>
+<a href="#l77" class="line" id="l77">     77</a><code> //!</code>
+<a href="#l78" class="line" id="l78">     78</a><code> //! Raft nodes can be in one of three states (or roles): follower, candidate,</code>
+<a href="#l79" class="line" id="l79">     79</a><code> //! and leader. toyDB models these as `Node::Follower`, `Node::Candidate`, and</code>
+<a href="#l80" class="line" id="l80">     80</a><code> //! `Node::Leader`.</code>
+<a href="#l81" class="line" id="l81">     81</a><code> //!</code>
+<a href="#l82" class="line" id="l82">     82</a><code> //! * Follower: replicates log entries from a leader. May not know a leader yet.</code>
+<a href="#l83" class="line" id="l83">     83</a><code> //! * Candidate: campaigns for leadership in an election.</code>
+<a href="#l84" class="line" id="l84">     84</a><code> //! * Leader: processes client requests and replicates writes to followers.</code>
+<a href="#l85" class="line" id="l85">     85</a><code> //!</code>
+<a href="#l86" class="line" id="l86">     86</a><code> //! Raft fundamentally relies on a single guarantee: there can be at most one</code>
+<a href="#l87" class="line" id="l87">     87</a><code> //! _valid_ leader at any point in time (old, since-replaced leaders may think</code>
+<a href="#l88" class="line" id="l88">     88</a><code> //! they&#39;re still a leader, e.g. during a network partition, but they won&#39;t be</code>
+<a href="#l89" class="line" id="l89">     89</a><code> //! able to do anything). It enforces this through the leader election protocol.</code>
+<a href="#l90" class="line" id="l90">     90</a><code> //!</code>
+<a href="#l91" class="line" id="l91">     91</a><code> //! Raft divides time into terms, which are monotonically increasing numbers.</code>
+<a href="#l92" class="line" id="l92">     92</a><code> //! Higher terms always take priority over lower terms. There can be at most one</code>
+<a href="#l93" class="line" id="l93">     93</a><code> //! leader in a term, and it can&#39;t change. Nodes keep track of their last known</code>
+<a href="#l94" class="line" id="l94">     94</a><code> //! term and store it on disk (see `Log.set_term()`). Messages between nodes are</code>
+<a href="#l95" class="line" id="l95">     95</a><code> //! tagged with the current term (as `Envelope.term`) -- old terms are ignored,</code>
+<a href="#l96" class="line" id="l96">     96</a><code> //! and future terms cause the node to become a follower in that term.</code>
+<a href="#l97" class="line" id="l97">     97</a><code> //!</code>
+<a href="#l98" class="line" id="l98">     98</a><code> //! Nodes start out as leaderless followers. If they receive a message from a</code>
+<a href="#l99" class="line" id="l99">     99</a><code> //! leader (in a current or future term), they follow it. Otherwise, they wait</code>
+<a href="#l100" class="line" id="l100">    100</a><code> //! out the election timeout (a few seconds), become candidates, and hold a</code>
+<a href="#l101" class="line" id="l101">    101</a><code> //! leader election.</code>
+<a href="#l102" class="line" id="l102">    102</a><code> //!</code>
+<a href="#l103" class="line" id="l103">    103</a><code> //! Candidates increase their term by 1 and send `Message::Campaign` to all</code>
+<a href="#l104" class="line" id="l104">    104</a><code> //! nodes, requesting their vote. Nodes respond with `Message::CampaignResponse`</code>
+<a href="#l105" class="line" id="l105">    105</a><code> //! saying whether a vote was granted. A node can only grant a single vote in a</code>
+<a href="#l106" class="line" id="l106">    106</a><code> //! term (stored to disk via `Log.set_term()`), on a first-come first-serve</code>
+<a href="#l107" class="line" id="l107">    107</a><code> //! basis, and candidates implicitly vote for themselves.</code>
+<a href="#l108" class="line" id="l108">    108</a><code> //!</code>
+<a href="#l109" class="line" id="l109">    109</a><code> //! When a candidate receives a majority of votes (&gt;50%), it becomes leader. It</code>
+<a href="#l110" class="line" id="l110">    110</a><code> //! sends a `Message::Heartbeat` to all nodes asserting its leadership, and all</code>
+<a href="#l111" class="line" id="l111">    111</a><code> //! nodes become followers when they receive it (regardless of who they voted</code>
+<a href="#l112" class="line" id="l112">    112</a><code> //! for). Leaders continue to send periodic heartbeats every second or so. The</code>
+<a href="#l113" class="line" id="l113">    113</a><code> //! new leader also appends an empty entry to its log in order to safely commit</code>
+<a href="#l114" class="line" id="l114">    114</a><code> //! all entries from previous terms (Raft paper section 5.4.2).</code>
+<a href="#l115" class="line" id="l115">    115</a><code> //!</code>
+<a href="#l116" class="line" id="l116">    116</a><code> //! The new leader must have all committed entries in its log (or the cluster</code>
+<a href="#l117" class="line" id="l117">    117</a><code> //! would lose data). To ensure this, there is one additional condition for</code>
+<a href="#l118" class="line" id="l118">    118</a><code> //! granting a vote: the candidate&#39;s log must be at least as up-to-date as the</code>
+<a href="#l119" class="line" id="l119">    119</a><code> //! voter. Because an entry must be replicated to a majority before being</code>
+<a href="#l120" class="line" id="l120">    120</a><code> //! committed, this ensures a candidate can only win a majority of votes if its</code>
+<a href="#l121" class="line" id="l121">    121</a><code> //! log is up-to-date with all committed entries (Raft paper section 5.4.1).</code>
+<a href="#l122" class="line" id="l122">    122</a><code> //!</code>
+<a href="#l123" class="line" id="l123">    123</a><code> //! It&#39;s possible that no candidate wins an election, for example due to a tie</code>
+<a href="#l124" class="line" id="l124">    124</a><code> //! or a majority of nodes being offline. After an election timeout passes,</code>
+<a href="#l125" class="line" id="l125">    125</a><code> //! candidates will again bump their term and start a new election, until a</code>
+<a href="#l126" class="line" id="l126">    126</a><code> //! leader can be established. To avoid frequent ties, nodes use different,</code>
+<a href="#l127" class="line" id="l127">    127</a><code> //! randomized election timeouts (Raft paper section 5.2).</code>
+<a href="#l128" class="line" id="l128">    128</a><code> //!</code>
+<a href="#l129" class="line" id="l129">    129</a><code> //! Similarly, if a follower doesn&#39;t hear from a leader in an election timeout</code>
+<a href="#l130" class="line" id="l130">    130</a><code> //! interval, it will become candidate and hold another election. The periodic</code>
+<a href="#l131" class="line" id="l131">    131</a><code> //! leader heartbeats prevent this as long as the leader is running and</code>
+<a href="#l132" class="line" id="l132">    132</a><code> //! connected. A node that becomes disconnected from the leader will continually</code>
+<a href="#l133" class="line" id="l133">    133</a><code> //! hold new elections by itself until the network heals, at which point a new</code>
+<a href="#l134" class="line" id="l134">    134</a><code> //! election will be held in its term (disrupting the current leader).</code>
+<a href="#l135" class="line" id="l135">    135</a><code> //!</code>
+<a href="#l136" class="line" id="l136">    136</a><code> //! REPLICATION AND CONSENSUS</code>
+<a href="#l137" class="line" id="l137">    137</a><code> //! =========================</code>
+<a href="#l138" class="line" id="l138">    138</a><code> //!</code>
+<a href="#l139" class="line" id="l139">    139</a><code> //! When the leader receives a client write request, it appends the command to</code>
+<a href="#l140" class="line" id="l140">    140</a><code> //! its local log via `Log.append()`, and sends the log entry to all peers in</code>
+<a href="#l141" class="line" id="l141">    141</a><code> //! a `Message::Append`. Followers will attempt to durably append the entry to</code>
+<a href="#l142" class="line" id="l142">    142</a><code> //! their local logs and respond with `Message::AppendResponse`.</code>
+<a href="#l143" class="line" id="l143">    143</a><code> //!</code>
+<a href="#l144" class="line" id="l144">    144</a><code> //! Once a majority have acknowledged the append, the leader commits the entry</code>
+<a href="#l145" class="line" id="l145">    145</a><code> //! via `Log.commit()` and applies it to its local state machine, returning the</code>
+<a href="#l146" class="line" id="l146">    146</a><code> //! result to the client. It will inform followers about the commit in the next</code>
+<a href="#l147" class="line" id="l147">    147</a><code> //! heartbeat as `Message::Heartbeat.commit_index` so they can apply it too, but</code>
+<a href="#l148" class="line" id="l148">    148</a><code> //! this is not necessary for correctness (they will commit and apply it if they</code>
+<a href="#l149" class="line" id="l149">    149</a><code> //! become leader, otherwise they have no need for applying it).</code>
+<a href="#l150" class="line" id="l150">    150</a><code> //!</code>
+<a href="#l151" class="line" id="l151">    151</a><code> //! Followers may not be able to append the entry to their log -- they may be</code>
+<a href="#l152" class="line" id="l152">    152</a><code> //! unreachable, lag behind the leader, or have divergent logs (see Raft paper</code>
+<a href="#l153" class="line" id="l153">    153</a><code> //! section 5.3). The `Append` contains the index and term of the log entry</code>
+<a href="#l154" class="line" id="l154">    154</a><code> //! immediately before the replicated entry as `base_index` and `base_term`. An</code>
+<a href="#l155" class="line" id="l155">    155</a><code> //! index/term pair uniquely identifies a command, and if two logs have the same</code>
+<a href="#l156" class="line" id="l156">    156</a><code> //! index/term pair then the logs are identical up to and including that entry</code>
+<a href="#l157" class="line" id="l157">    157</a><code> //! (Raft paper section 5.3). If the base index/term matches the follower&#39;s log,</code>
+<a href="#l158" class="line" id="l158">    158</a><code> //! it appends the entry (potentially replacing any conflicting entries),</code>
+<a href="#l159" class="line" id="l159">    159</a><code> //! otherwise it rejects it.</code>
+<a href="#l160" class="line" id="l160">    160</a><code> //!</code>
+<a href="#l161" class="line" id="l161">    161</a><code> //! When a follower rejects an append, the leader must try to find a common log</code>
+<a href="#l162" class="line" id="l162">    162</a><code> //! entry that exists in both its and the follower&#39;s log where it can resume</code>
+<a href="#l163" class="line" id="l163">    163</a><code> //! replication. It does this by sending `Message::Append` probes only</code>
+<a href="#l164" class="line" id="l164">    164</a><code> //! containing a base index/term but no entries -- it will continue to probe</code>
+<a href="#l165" class="line" id="l165">    165</a><code> //! decreasing indexes one by one until the follower responds with a match, then</code>
+<a href="#l166" class="line" id="l166">    166</a><code> //! send an `Append` with the missing entries (Raft paper section 5.3). It keeps</code>
+<a href="#l167" class="line" id="l167">    167</a><code> //! track of each follower&#39;s `match_index` and `next_index` in a `Progress`</code>
+<a href="#l168" class="line" id="l168">    168</a><code> //! struct to manage this.</code>
+<a href="#l169" class="line" id="l169">    169</a><code> //!</code>
+<a href="#l170" class="line" id="l170">    170</a><code> //! In case `Append` messages or responses are lost, leaders also send their</code>
+<a href="#l171" class="line" id="l171">    171</a><code> //! `last_index` and term in each `Heartbeat`. If followers don&#39;t have that</code>
+<a href="#l172" class="line" id="l172">    172</a><code> //! index/term pair in their log, they&#39;ll say so in the `HeartbeatResponse` and</code>
+<a href="#l173" class="line" id="l173">    173</a><code> //! the leader can begin probing their logs as with append rejections.</code>
+<a href="#l174" class="line" id="l174">    174</a><code> //!</code>
+<a href="#l175" class="line" id="l175">    175</a><code> //! CLIENT REQUESTS</code>
+<a href="#l176" class="line" id="l176">    176</a><code> //! ===============</code>
+<a href="#l177" class="line" id="l177">    177</a><code> //!</code>
+<a href="#l178" class="line" id="l178">    178</a><code> //! Client requests are submitted as `Message::ClientRequest` to the local Raft</code>
+<a href="#l179" class="line" id="l179">    179</a><code> //! node. They are only processed on the leader, but followers will proxy them</code>
+<a href="#l180" class="line" id="l180">    180</a><code> //! to the leader (Raft thesis section 6.2). To avoid complications with message</code>
+<a href="#l181" class="line" id="l181">    181</a><code> //! replays (Raft thesis section 6.3), requests are not retried internally, and</code>
+<a href="#l182" class="line" id="l182">    182</a><code> //! are explicitly aborted with `Error::Abort` on leader/term changes as well as</code>
+<a href="#l183" class="line" id="l183">    183</a><code> //! elections.</code>
+<a href="#l184" class="line" id="l184">    184</a><code> //!</code>
+<a href="#l185" class="line" id="l185">    185</a><code> //! Write requests, `Request::Write`, are appended to the Raft log and</code>
+<a href="#l186" class="line" id="l186">    186</a><code> //! replicated. The leader keeps track of the request and its log index in a</code>
+<a href="#l187" class="line" id="l187">    187</a><code> //! `Write` struct. Once the command is committed and applied to the local state</code>
+<a href="#l188" class="line" id="l188">    188</a><code> //! machine, the leader looks up the write request by its log index and sends</code>
+<a href="#l189" class="line" id="l189">    189</a><code> //! the result to the client. Deterministic errors (e.g. foreign key violations)</code>
+<a href="#l190" class="line" id="l190">    190</a><code> //! are also returned to the client, but non-deterministic errors (e.g. IO</code>
+<a href="#l191" class="line" id="l191">    191</a><code> //! errors) must panic the node to avoid replica state divergence.</code>
+<a href="#l192" class="line" id="l192">    192</a><code> //!</code>
+<a href="#l193" class="line" id="l193">    193</a><code> //! Read requests, `Request::Read`, are only executed on the leader and don&#39;t</code>
+<a href="#l194" class="line" id="l194">    194</a><code> //! need to be replicated via the Raft log. However, to ensure linearizability,</code>
+<a href="#l195" class="line" id="l195">    195</a><code> //! the leader has to confirm with a quorum that it&#39;s actually still the leader.</code>
+<a href="#l196" class="line" id="l196">    196</a><code> //! Otherwise, it&#39;s possible that a new leader has been elected elsewhere and</code>
+<a href="#l197" class="line" id="l197">    197</a><code> //! executed writes without us knowing about it. It does this by assigning an</code>
+<a href="#l198" class="line" id="l198">    198</a><code> //! incrementing sequence number to each read, keeping track of the request in a</code>
+<a href="#l199" class="line" id="l199">    199</a><code> //! `Read` struct, and immediately sending a `Read` message with the latest</code>
+<a href="#l200" class="line" id="l200">    200</a><code> //! sequence number. Followers respond with the sequence number, and once a</code>
+<a href="#l201" class="line" id="l201">    201</a><code> //! quorum have confirmed a sequence number the read is executed and the result</code>
+<a href="#l202" class="line" id="l202">    202</a><code> //! returned to the client.</code>
+<a href="#l203" class="line" id="l203">    203</a><code> //!</code>
+<a href="#l204" class="line" id="l204">    204</a><code> //! IMPLEMENTATION CAVEATS</code>
+<a href="#l205" class="line" id="l205">    205</a><code> //! ======================</code>
+<a href="#l206" class="line" id="l206">    206</a><code> //!</code>
+<a href="#l207" class="line" id="l207">    207</a><code> //! For simplicity, toyDB implements the bare minimum for a functional and</code>
+<a href="#l208" class="line" id="l208">    208</a><code> //! correct Raft protocol, and omits several advanced mechanisms that would be</code>
+<a href="#l209" class="line" id="l209">    209</a><code> //! needed for a real production system. In particular:</code>
+<a href="#l210" class="line" id="l210">    210</a><code> //!</code>
+<a href="#l211" class="line" id="l211">    211</a><code> //! * No leases: for linearizability, every read request requires the leader to</code>
+<a href="#l212" class="line" id="l212">    212</a><code> //!   confirm with followers that it&#39;s still the leader. This could be avoided</code>
+<a href="#l213" class="line" id="l213">    213</a><code> //!   with a leader lease for a predefined time interval (Raft paper section 8,</code>
+<a href="#l214" class="line" id="l214">    214</a><code> //!   Raft thesis section 6.3).</code>
+<a href="#l215" class="line" id="l215">    215</a><code> //!</code>
+<a href="#l216" class="line" id="l216">    216</a><code> //! * No cluster membership changes: to add or remove nodes, the entire cluster</code>
+<a href="#l217" class="line" id="l217">    217</a><code> //!   must be stopped and restarted with the new configuration, otherwise it</code>
+<a href="#l218" class="line" id="l218">    218</a><code> //!   risks multiple leaders (Raft paper section 6).</code>
+<a href="#l219" class="line" id="l219">    219</a><code> //!</code>
+<a href="#l220" class="line" id="l220">    220</a><code> //! * No snapshots: new or lagging nodes must be caught up by replicating and</code>
+<a href="#l221" class="line" id="l221">    221</a><code> //!   replaying the entire log, instead of sending a state machine snapshot</code>
+<a href="#l222" class="line" id="l222">    222</a><code> //!   (Raft paper section 7).</code>
+<a href="#l223" class="line" id="l223">    223</a><code> //!</code>
+<a href="#l224" class="line" id="l224">    224</a><code> //! * No log truncation: because snapshots aren&#39;t supported, the entire Raft</code>
+<a href="#l225" class="line" id="l225">    225</a><code> //!   log must be retained forever in order to catch up new/lagging nodes,</code>
+<a href="#l226" class="line" id="l226">    226</a><code> //!   leading to excessive storage use (Raft paper section 7).</code>
+<a href="#l227" class="line" id="l227">    227</a><code> //!</code>
+<a href="#l228" class="line" id="l228">    228</a><code> //! * No pre-vote or check-quorum: a node that&#39;s partially partitioned (can</code>
+<a href="#l229" class="line" id="l229">    229</a><code> //!   reach some but not all nodes) can cause persistent unavailability with</code>
+<a href="#l230" class="line" id="l230">    230</a><code> //!   spurious elections or heartbeats. A node rejoining after a partition can</code>
+<a href="#l231" class="line" id="l231">    231</a><code> //!   also temporarily disrupt a leader. This requires additional pre-vote and</code>
+<a href="#l232" class="line" id="l232">    232</a><code> //!   check-quorum protocol extensions (Raft thesis section 4.2.3 and 9.6).</code>
+<a href="#l233" class="line" id="l233">    233</a><code> //!</code>
+<a href="#l234" class="line" id="l234">    234</a><code> //! * No request retries: client requests will not be retried on leader changes</code>
+<a href="#l235" class="line" id="l235">    235</a><code> //!   or message loss, and will be aggressively aborted, to ignore problems</code>
+<a href="#l236" class="line" id="l236">    236</a><code> //!   related to message replay (Raft thesis section 6.3).</code>
+<a href="#l237" class="line" id="l237">    237</a><code> //!</code>
+<a href="#l238" class="line" id="l238">    238</a><code> //! * No reject hints: if a follower has a divergent log, the leader will probe</code>
+<a href="#l239" class="line" id="l239">    239</a><code> //!   entries one by one until a match is found. The replication protocol could</code>
+<a href="#l240" class="line" id="l240">    240</a><code> //!   instead be extended with rejection hints (Raft paper section 5.3).</code>
+<a href="#l241" class="line" id="l241">    241</a><code> </code>
+<a href="#l242" class="line" id="l242">    242</a><code> mod log;</code>
+<a href="#l243" class="line" id="l243">    243</a><code> mod message;</code>
+<a href="#l244" class="line" id="l244">    244</a><code> mod node;</code>
+<a href="#l245" class="line" id="l245">    245</a><code> mod state;</code>
+<a href="#l246" class="line" id="l246">    246</a><code> </code>
+<a href="#l247" class="line" id="l247">    247</a><code> pub use log::{Entry, Index, Key, Log};</code>
+<a href="#l248" class="line" id="l248">    248</a><code> pub use message::{Envelope, Message, ReadSequence, Request, RequestID, Response, Status};</code>
+<a href="#l249" class="line" id="l249">    249</a><code> pub use node::{Node, NodeID, Options, Term, Ticks};</code>
+<a href="#l250" class="line" id="l250">    250</a><code> pub use state::State;</code>
+<a href="#l251" class="line" id="l251">    251</a><code> </code>
+<a href="#l252" class="line" id="l252">    252</a><code> /// The interval between Raft ticks, the unit of time.</code>
+<a href="#l253" class="line" id="l253">    253</a><code> pub const TICK_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);</code>
+<a href="#l254" class="line" id="l254">    254</a><code> </code>
+<a href="#l255" class="line" id="l255">    255</a><code> /// The interval between leader heartbeats in ticks.</code>
+<a href="#l256" class="line" id="l256">    256</a><code> const HEARTBEAT_INTERVAL: Ticks = 4;</code>
+<a href="#l257" class="line" id="l257">    257</a><code> </code>
+<a href="#l258" class="line" id="l258">    258</a><code> /// The default election timeout range in ticks. This is randomized in this</code>
+<a href="#l259" class="line" id="l259">    259</a><code> /// interval, to avoid election ties.</code>
+<a href="#l260" class="line" id="l260">    260</a><code> const ELECTION_TIMEOUT_RANGE: std::ops::Range&lt;Ticks&gt; = 10..20;</code>
+<a href="#l261" class="line" id="l261">    261</a><code> </code>
+<a href="#l262" class="line" id="l262">    262</a><code> /// The maximum number of entries to send in a single append message.</code>
+<a href="#l263" class="line" id="l263">    263</a><code> const MAX_APPEND_ENTRIES: usize = 100;</code>
 </pre>
 </div>
 </body>

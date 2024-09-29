@@ -12,624 +12,625 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Source+Code+Pro:ital,wght@0,200..900;1,200..900&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/default.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/base16/tender.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
 <script>hljs.highlightAll();</script>
-</head>
+<style>pre code.hljs {display: inline;padding: 0;} code.hljs {padding: 0;} .hljs {background: initial;}</style></head>
 <body>
 <table><tr><td><a href="../../../../../"><img src="../../../../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
 </span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<br>
 <a href="../../../../log.html">Log</a> | <a href="../../../../files.html">Files</a> | <a href="../../../../refs.html">Refs</a> | <a href="../../../../file/README.md.html">README</a> | <a href="../../../../file/LICENSE.html">LICENSE</a></td></tr></table>
 <hr/>
 <div id="content">
 <p> plan.rs (26602B)</p><hr/><pre id="blob">
-<code><a href="#l1" class="line" id="l1">      1</a> use super::optimizer::OPTIMIZERS;</code>
-<code><a href="#l2" class="line" id="l2">      2</a> use super::planner::Planner;</code>
-<code><a href="#l3" class="line" id="l3">      3</a> use crate::error::Result;</code>
-<code><a href="#l4" class="line" id="l4">      4</a> use crate::sql::engine::{Catalog, Transaction};</code>
-<code><a href="#l5" class="line" id="l5">      5</a> use crate::sql::execution::{self, ExecutionResult};</code>
-<code><a href="#l6" class="line" id="l6">      6</a> use crate::sql::parser::ast;</code>
-<code><a href="#l7" class="line" id="l7">      7</a> use crate::sql::types::{Expression, Label, Table, Value};</code>
-<code><a href="#l8" class="line" id="l8">      8</a> </code>
-<code><a href="#l9" class="line" id="l9">      9</a> use itertools::Itertools as _;</code>
-<code><a href="#l10" class="line" id="l10">     10</a> use serde::{Deserialize, Serialize};</code>
-<code><a href="#l11" class="line" id="l11">     11</a> use std::collections::HashMap;</code>
-<code><a href="#l12" class="line" id="l12">     12</a> </code>
-<code><a href="#l13" class="line" id="l13">     13</a> /// A statement execution plan. The root nodes can perform data modifications or</code>
-<code><a href="#l14" class="line" id="l14">     14</a> /// schema changes, in addition to SELECT queries. Beyond the root, the plan is</code>
-<code><a href="#l15" class="line" id="l15">     15</a> /// made up of a tree of inner plan nodes that stream and process rows via</code>
-<code><a href="#l16" class="line" id="l16">     16</a> /// iterators. Below is an example of an (unoptimized) plan for the given query:</code>
-<code><a href="#l17" class="line" id="l17">     17</a> ///</code>
-<code><a href="#l18" class="line" id="l18">     18</a> /// SELECT title, released, genres.name AS genre</code>
-<code><a href="#l19" class="line" id="l19">     19</a> /// FROM movies INNER JOIN genres ON movies.genre_id = genres.id</code>
-<code><a href="#l20" class="line" id="l20">     20</a> /// WHERE released &gt;= 2000 ORDER BY released</code>
-<code><a href="#l21" class="line" id="l21">     21</a> ///</code>
-<code><a href="#l22" class="line" id="l22">     22</a> /// Order: movies.released desc</code>
-<code><a href="#l23" class="line" id="l23">     23</a> /// └─ Projection: movies.title, movies.released, genres.name as genre</code>
-<code><a href="#l24" class="line" id="l24">     24</a> ///    └─ Filter: movies.released &gt;= 2000</code>
-<code><a href="#l25" class="line" id="l25">     25</a> ///       └─ NestedLoopJoin: inner on movies.genre_id = genres.id</code>
-<code><a href="#l26" class="line" id="l26">     26</a> ///          ├─ Scan: movies</code>
-<code><a href="#l27" class="line" id="l27">     27</a> ///          └─ Scan: genres</code>
-<code><a href="#l28" class="line" id="l28">     28</a> ///</code>
-<code><a href="#l29" class="line" id="l29">     29</a> /// Rows flow from the tree leaves to the root. The Scan nodes read and emit</code>
-<code><a href="#l30" class="line" id="l30">     30</a> /// table rows from storage. They are passed to the NestedLoopJoin node which</code>
-<code><a href="#l31" class="line" id="l31">     31</a> /// joins the rows from the two tables, then the Filter node discards old</code>
-<code><a href="#l32" class="line" id="l32">     32</a> /// movies, the Projection node picks out the requested columns, and the Order</code>
-<code><a href="#l33" class="line" id="l33">     33</a> /// node sorts them before emitting the rows to the client.</code>
-<code><a href="#l34" class="line" id="l34">     34</a> #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]</code>
-<code><a href="#l35" class="line" id="l35">     35</a> pub enum Plan {</code>
-<code><a href="#l36" class="line" id="l36">     36</a>     /// A CREATE TABLE plan. Creates a new table with the given schema. Errors</code>
-<code><a href="#l37" class="line" id="l37">     37</a>     /// if the table already exists or the schema is invalid.</code>
-<code><a href="#l38" class="line" id="l38">     38</a>     CreateTable { schema: Table },</code>
-<code><a href="#l39" class="line" id="l39">     39</a>     /// A DROP TABLE plan. Drops the given table. Errors if the table does not</code>
-<code><a href="#l40" class="line" id="l40">     40</a>     /// exist, unless if_exists is true.</code>
-<code><a href="#l41" class="line" id="l41">     41</a>     DropTable { table: String, if_exists: bool },</code>
-<code><a href="#l42" class="line" id="l42">     42</a>     /// A DELETE plan. Deletes rows in table that match the rows from source.</code>
-<code><a href="#l43" class="line" id="l43">     43</a>     /// primary_key specifies the primary key column index in the source rows.</code>
-<code><a href="#l44" class="line" id="l44">     44</a>     Delete { table: String, primary_key: usize, source: Node },</code>
-<code><a href="#l45" class="line" id="l45">     45</a>     /// An INSERT plan. Inserts rows from source (typically a Values node) into</code>
-<code><a href="#l46" class="line" id="l46">     46</a>     /// table. If column_map is given, it maps table → source column indexes and</code>
-<code><a href="#l47" class="line" id="l47">     47</a>     /// must have one entry for every column in source. Table columns not</code>
-<code><a href="#l48" class="line" id="l48">     48</a>     /// present in source will get the column&#39;s default value if set, or error.</code>
-<code><a href="#l49" class="line" id="l49">     49</a>     Insert { table: Table, column_map: Option&lt;HashMap&lt;usize, usize&gt;&gt;, source: Node },</code>
-<code><a href="#l50" class="line" id="l50">     50</a>     /// An UPDATE plan. Updates rows in table that match the rows from source,</code>
-<code><a href="#l51" class="line" id="l51">     51</a>     /// where primary_key specifies the primary key column index in the source</code>
-<code><a href="#l52" class="line" id="l52">     52</a>     /// rows. The given column/expression pairs specify the row updates to make,</code>
-<code><a href="#l53" class="line" id="l53">     53</a>     /// evaluated using the existing source row, which must be a complete row</code>
-<code><a href="#l54" class="line" id="l54">     54</a>     /// from the update table.</code>
-<code><a href="#l55" class="line" id="l55">     55</a>     Update { table: Table, primary_key: usize, source: Node, expressions: Vec&lt;(usize, Expression)&gt; },</code>
-<code><a href="#l56" class="line" id="l56">     56</a>     /// A SELECT plan. Recursively executes the query plan tree and returns the</code>
-<code><a href="#l57" class="line" id="l57">     57</a>     /// resulting rows.</code>
-<code><a href="#l58" class="line" id="l58">     58</a>     Select(Node),</code>
-<code><a href="#l59" class="line" id="l59">     59</a> }</code>
-<code><a href="#l60" class="line" id="l60">     60</a> </code>
-<code><a href="#l61" class="line" id="l61">     61</a> impl Plan {</code>
-<code><a href="#l62" class="line" id="l62">     62</a>     /// Builds a plan from an AST statement.</code>
-<code><a href="#l63" class="line" id="l63">     63</a>     pub fn build(statement: ast::Statement, catalog: &amp;impl Catalog) -&gt; Result&lt;Self&gt; {</code>
-<code><a href="#l64" class="line" id="l64">     64</a>         Planner::new(catalog).build(statement)</code>
-<code><a href="#l65" class="line" id="l65">     65</a>     }</code>
-<code><a href="#l66" class="line" id="l66">     66</a> </code>
-<code><a href="#l67" class="line" id="l67">     67</a>     /// Executes the plan, consuming it.</code>
-<code><a href="#l68" class="line" id="l68">     68</a>     pub fn execute(self, txn: &amp;(impl Transaction + Catalog)) -&gt; Result&lt;ExecutionResult&gt; {</code>
-<code><a href="#l69" class="line" id="l69">     69</a>         execution::execute_plan(self, txn, txn)</code>
-<code><a href="#l70" class="line" id="l70">     70</a>     }</code>
-<code><a href="#l71" class="line" id="l71">     71</a> </code>
-<code><a href="#l72" class="line" id="l72">     72</a>     /// Optimizes the plan, consuming it. See OPTIMIZERS for the list of</code>
-<code><a href="#l73" class="line" id="l73">     73</a>     /// optimizers.</code>
-<code><a href="#l74" class="line" id="l74">     74</a>     pub fn optimize(self) -&gt; Result&lt;Self&gt; {</code>
-<code><a href="#l75" class="line" id="l75">     75</a>         let optimize = |node| OPTIMIZERS.iter().try_fold(node, |node, (_, opt)| opt(node));</code>
-<code><a href="#l76" class="line" id="l76">     76</a>         Ok(match self {</code>
-<code><a href="#l77" class="line" id="l77">     77</a>             Self::CreateTable { .. } | Self::DropTable { .. } =&gt; self,</code>
-<code><a href="#l78" class="line" id="l78">     78</a>             Self::Delete { table, primary_key, source } =&gt; {</code>
-<code><a href="#l79" class="line" id="l79">     79</a>                 Self::Delete { table, primary_key, source: optimize(source)? }</code>
-<code><a href="#l80" class="line" id="l80">     80</a>             }</code>
-<code><a href="#l81" class="line" id="l81">     81</a>             Self::Insert { table, column_map, source } =&gt; {</code>
-<code><a href="#l82" class="line" id="l82">     82</a>                 Self::Insert { table, column_map, source: optimize(source)? }</code>
-<code><a href="#l83" class="line" id="l83">     83</a>             }</code>
-<code><a href="#l84" class="line" id="l84">     84</a>             Self::Update { table, primary_key, source, expressions } =&gt; {</code>
-<code><a href="#l85" class="line" id="l85">     85</a>                 Self::Update { table, primary_key, source: optimize(source)?, expressions }</code>
-<code><a href="#l86" class="line" id="l86">     86</a>             }</code>
-<code><a href="#l87" class="line" id="l87">     87</a>             Self::Select(root) =&gt; Self::Select(optimize(root)?),</code>
-<code><a href="#l88" class="line" id="l88">     88</a>         })</code>
-<code><a href="#l89" class="line" id="l89">     89</a>     }</code>
-<code><a href="#l90" class="line" id="l90">     90</a> }</code>
-<code><a href="#l91" class="line" id="l91">     91</a> </code>
-<code><a href="#l92" class="line" id="l92">     92</a> /// A query plan node. Returns a row iterator, and can be nested.</code>
-<code><a href="#l93" class="line" id="l93">     93</a> #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]</code>
-<code><a href="#l94" class="line" id="l94">     94</a> pub enum Node {</code>
-<code><a href="#l95" class="line" id="l95">     95</a>     /// Computes the given aggregate values for the given group_by buckets</code>
-<code><a href="#l96" class="line" id="l96">     96</a>     /// across all rows in the source node. The group_by columns are emitted</code>
-<code><a href="#l97" class="line" id="l97">     97</a>     /// first, followed by the aggregate columns, in the given order.</code>
-<code><a href="#l98" class="line" id="l98">     98</a>     Aggregate { source: Box&lt;Node&gt;, group_by: Vec&lt;Expression&gt;, aggregates: Vec&lt;Aggregate&gt; },</code>
-<code><a href="#l99" class="line" id="l99">     99</a>     /// Filters source rows, by discarding rows for which the predicate</code>
-<code><a href="#l100" class="line" id="l100">    100</a>     /// evaluates to false.</code>
-<code><a href="#l101" class="line" id="l101">    101</a>     Filter { source: Box&lt;Node&gt;, predicate: Expression },</code>
-<code><a href="#l102" class="line" id="l102">    102</a>     /// Joins the left and right sources on the given columns by building an</code>
-<code><a href="#l103" class="line" id="l103">    103</a>     /// in-memory hashmap of the right source and looking up matches for each</code>
-<code><a href="#l104" class="line" id="l104">    104</a>     /// row in the left source. When outer is true (e.g. LEFT JOIN), a left row</code>
-<code><a href="#l105" class="line" id="l105">    105</a>     /// without a right match is emitted anyway, with NULLs for the right row.</code>
-<code><a href="#l106" class="line" id="l106">    106</a>     HashJoin {</code>
-<code><a href="#l107" class="line" id="l107">    107</a>         left: Box&lt;Node&gt;,</code>
-<code><a href="#l108" class="line" id="l108">    108</a>         left_column: usize,</code>
-<code><a href="#l109" class="line" id="l109">    109</a>         right: Box&lt;Node&gt;,</code>
-<code><a href="#l110" class="line" id="l110">    110</a>         right_column: usize,</code>
-<code><a href="#l111" class="line" id="l111">    111</a>         outer: bool,</code>
-<code><a href="#l112" class="line" id="l112">    112</a>     },</code>
-<code><a href="#l113" class="line" id="l113">    113</a>     /// Looks up the given values in a secondary index and emits matching rows.</code>
-<code><a href="#l114" class="line" id="l114">    114</a>     /// NULL and NaN values are considered equal, to allow IS NULL and IS NAN</code>
-<code><a href="#l115" class="line" id="l115">    115</a>     /// index lookups, as is -0.0 and 0.0.</code>
-<code><a href="#l116" class="line" id="l116">    116</a>     IndexLookup { table: Table, column: usize, values: Vec&lt;Value&gt;, alias: Option&lt;String&gt; },</code>
-<code><a href="#l117" class="line" id="l117">    117</a>     /// Looks up the given primary keys and emits their rows.</code>
-<code><a href="#l118" class="line" id="l118">    118</a>     KeyLookup { table: Table, keys: Vec&lt;Value&gt;, alias: Option&lt;String&gt; },</code>
-<code><a href="#l119" class="line" id="l119">    119</a>     /// Only emits the first limit rows from the source, discards the rest.</code>
-<code><a href="#l120" class="line" id="l120">    120</a>     Limit { source: Box&lt;Node&gt;, limit: usize },</code>
-<code><a href="#l121" class="line" id="l121">    121</a>     /// Joins the left and right sources on the given predicate by buffering the</code>
-<code><a href="#l122" class="line" id="l122">    122</a>     /// right source and iterating over it for every row in the left source.</code>
-<code><a href="#l123" class="line" id="l123">    123</a>     /// When outer is true (e.g. LEFT JOIN), a left row without a right match is</code>
-<code><a href="#l124" class="line" id="l124">    124</a>     /// emitted anyway, with NULLs for the right row.</code>
-<code><a href="#l125" class="line" id="l125">    125</a>     NestedLoopJoin { left: Box&lt;Node&gt;, right: Box&lt;Node&gt;, predicate: Option&lt;Expression&gt;, outer: bool },</code>
-<code><a href="#l126" class="line" id="l126">    126</a>     /// Nothing does not emit anything, and is used to short-circuit nodes that</code>
-<code><a href="#l127" class="line" id="l127">    127</a>     /// can&#39;t emit anything during optimization. It retains the column names of</code>
-<code><a href="#l128" class="line" id="l128">    128</a>     /// any replaced nodes for results headers and plan formatting.</code>
-<code><a href="#l129" class="line" id="l129">    129</a>     Nothing { columns: Vec&lt;Label&gt; },</code>
-<code><a href="#l130" class="line" id="l130">    130</a>     /// Discards the first offset rows from source, emits the rest.</code>
-<code><a href="#l131" class="line" id="l131">    131</a>     Offset { source: Box&lt;Node&gt;, offset: usize },</code>
-<code><a href="#l132" class="line" id="l132">    132</a>     /// Sorts the source rows by the given sort key. Buffers the entire row set</code>
-<code><a href="#l133" class="line" id="l133">    133</a>     /// in memory.</code>
-<code><a href="#l134" class="line" id="l134">    134</a>     Order { source: Box&lt;Node&gt;, key: Vec&lt;(Expression, Direction)&gt; },</code>
-<code><a href="#l135" class="line" id="l135">    135</a>     /// Projects the input rows by evaluating the given expressions. Aliases are</code>
-<code><a href="#l136" class="line" id="l136">    136</a>     /// only used when displaying the plan.</code>
-<code><a href="#l137" class="line" id="l137">    137</a>     Projection { source: Box&lt;Node&gt;, expressions: Vec&lt;Expression&gt;, aliases: Vec&lt;Label&gt; },</code>
-<code><a href="#l138" class="line" id="l138">    138</a>     /// Remaps source columns to the given target column index, or None to drop</code>
-<code><a href="#l139" class="line" id="l139">    139</a>     /// the column. Unspecified target columns yield Value::Null. The source →</code>
-<code><a href="#l140" class="line" id="l140">    140</a>     /// target mapping ensures a source column can only be mapped to a single</code>
-<code><a href="#l141" class="line" id="l141">    141</a>     /// target column, allowing the value to be moved rather than cloned.</code>
-<code><a href="#l142" class="line" id="l142">    142</a>     Remap { source: Box&lt;Node&gt;, targets: Vec&lt;Option&lt;usize&gt;&gt; },</code>
-<code><a href="#l143" class="line" id="l143">    143</a>     /// A full table scan, with an optional pushed-down filter. The schema is</code>
-<code><a href="#l144" class="line" id="l144">    144</a>     /// used during plan optimization. The alias is only used for formatting.</code>
-<code><a href="#l145" class="line" id="l145">    145</a>     Scan { table: Table, filter: Option&lt;Expression&gt;, alias: Option&lt;String&gt; },</code>
-<code><a href="#l146" class="line" id="l146">    146</a>     /// A constant set of values.</code>
-<code><a href="#l147" class="line" id="l147">    147</a>     Values { rows: Vec&lt;Vec&lt;Expression&gt;&gt; },</code>
-<code><a href="#l148" class="line" id="l148">    148</a> }</code>
-<code><a href="#l149" class="line" id="l149">    149</a> </code>
-<code><a href="#l150" class="line" id="l150">    150</a> impl Node {</code>
-<code><a href="#l151" class="line" id="l151">    151</a>     /// Returns the number of columns emitted by the node.</code>
-<code><a href="#l152" class="line" id="l152">    152</a>     pub fn columns(&amp;self) -&gt; usize {</code>
-<code><a href="#l153" class="line" id="l153">    153</a>         match self {</code>
-<code><a href="#l154" class="line" id="l154">    154</a>             // Source nodes emit all table columns.</code>
-<code><a href="#l155" class="line" id="l155">    155</a>             Self::IndexLookup { table, .. }</code>
-<code><a href="#l156" class="line" id="l156">    156</a>             | Self::KeyLookup { table, .. }</code>
-<code><a href="#l157" class="line" id="l157">    157</a>             | Self::Scan { table, .. } =&gt; table.columns.len(),</code>
-<code><a href="#l158" class="line" id="l158">    158</a> </code>
-<code><a href="#l159" class="line" id="l159">    159</a>             // Some nodes modify the column set.</code>
-<code><a href="#l160" class="line" id="l160">    160</a>             Self::Aggregate { aggregates, group_by, .. } =&gt; aggregates.len() + group_by.len(),</code>
-<code><a href="#l161" class="line" id="l161">    161</a>             Self::Projection { expressions, .. } =&gt; expressions.len(),</code>
-<code><a href="#l162" class="line" id="l162">    162</a>             Self::Remap { targets, .. } =&gt; {</code>
-<code><a href="#l163" class="line" id="l163">    163</a>                 targets.iter().filter_map(|v| *v).map(|i| i + 1).max().unwrap_or(0)</code>
-<code><a href="#l164" class="line" id="l164">    164</a>             }</code>
-<code><a href="#l165" class="line" id="l165">    165</a> </code>
-<code><a href="#l166" class="line" id="l166">    166</a>             // Join nodes emit the combined columns.</code>
-<code><a href="#l167" class="line" id="l167">    167</a>             Self::HashJoin { left, right, .. } | Self::NestedLoopJoin { left, right, .. } =&gt; {</code>
-<code><a href="#l168" class="line" id="l168">    168</a>                 left.columns() + right.columns()</code>
-<code><a href="#l169" class="line" id="l169">    169</a>             }</code>
-<code><a href="#l170" class="line" id="l170">    170</a> </code>
-<code><a href="#l171" class="line" id="l171">    171</a>             // Simple nodes just pass through the source columns.</code>
-<code><a href="#l172" class="line" id="l172">    172</a>             Self::Filter { source, .. }</code>
-<code><a href="#l173" class="line" id="l173">    173</a>             | Self::Limit { source, .. }</code>
-<code><a href="#l174" class="line" id="l174">    174</a>             | Self::Offset { source, .. }</code>
-<code><a href="#l175" class="line" id="l175">    175</a>             | Self::Order { source, .. } =&gt; source.columns(),</code>
-<code><a href="#l176" class="line" id="l176">    176</a> </code>
-<code><a href="#l177" class="line" id="l177">    177</a>             // And some are trivial.</code>
-<code><a href="#l178" class="line" id="l178">    178</a>             Self::Nothing { columns } =&gt; columns.len(),</code>
-<code><a href="#l179" class="line" id="l179">    179</a>             Self::Values { rows } =&gt; rows.first().map(|row| row.len()).unwrap_or(0),</code>
-<code><a href="#l180" class="line" id="l180">    180</a>         }</code>
-<code><a href="#l181" class="line" id="l181">    181</a>     }</code>
-<code><a href="#l182" class="line" id="l182">    182</a> </code>
-<code><a href="#l183" class="line" id="l183">    183</a>     /// Returns a label for a column, if any, by tracing the column through the</code>
-<code><a href="#l184" class="line" id="l184">    184</a>     /// plan tree. Only used for query result headers and plan display purposes,</code>
-<code><a href="#l185" class="line" id="l185">    185</a>     /// not to look up expression columns (see Scope).</code>
-<code><a href="#l186" class="line" id="l186">    186</a>     pub fn column_label(&amp;self, index: usize) -&gt; Label {</code>
-<code><a href="#l187" class="line" id="l187">    187</a>         match self {</code>
-<code><a href="#l188" class="line" id="l188">    188</a>             // Source nodes use the table/column name.</code>
-<code><a href="#l189" class="line" id="l189">    189</a>             Self::IndexLookup { table, alias, .. }</code>
-<code><a href="#l190" class="line" id="l190">    190</a>             | Self::KeyLookup { table, alias, .. }</code>
-<code><a href="#l191" class="line" id="l191">    191</a>             | Self::Scan { table, alias, .. } =&gt; Label::Qualified(</code>
-<code><a href="#l192" class="line" id="l192">    192</a>                 alias.as_ref().unwrap_or(&amp;table.name).clone(),</code>
-<code><a href="#l193" class="line" id="l193">    193</a>                 table.columns[index].name.clone(),</code>
-<code><a href="#l194" class="line" id="l194">    194</a>             ),</code>
-<code><a href="#l195" class="line" id="l195">    195</a> </code>
-<code><a href="#l196" class="line" id="l196">    196</a>             // Some nodes rearrange columns. Route them to the correct</code>
-<code><a href="#l197" class="line" id="l197">    197</a>             // upstream column where appropriate.</code>
-<code><a href="#l198" class="line" id="l198">    198</a>             Self::Aggregate { source, group_by, .. } =&gt; match group_by.get(index) {</code>
-<code><a href="#l199" class="line" id="l199">    199</a>                 Some(Expression::Column(index)) =&gt; source.column_label(*index),</code>
-<code><a href="#l200" class="line" id="l200">    200</a>                 Some(_) | None =&gt; Label::None,</code>
-<code><a href="#l201" class="line" id="l201">    201</a>             },</code>
-<code><a href="#l202" class="line" id="l202">    202</a>             Self::Projection { source, expressions, aliases } =&gt; match aliases.get(index) {</code>
-<code><a href="#l203" class="line" id="l203">    203</a>                 Some(Label::None) | None =&gt; match expressions.get(index) {</code>
-<code><a href="#l204" class="line" id="l204">    204</a>                     // Unaliased column references route to the source.</code>
-<code><a href="#l205" class="line" id="l205">    205</a>                     Some(Expression::Column(index)) =&gt; source.column_label(*index),</code>
-<code><a href="#l206" class="line" id="l206">    206</a>                     // Unaliased expressions don&#39;t have a name.</code>
-<code><a href="#l207" class="line" id="l207">    207</a>                     Some(_) | None =&gt; Label::None,</code>
-<code><a href="#l208" class="line" id="l208">    208</a>                 },</code>
-<code><a href="#l209" class="line" id="l209">    209</a>                 // Aliased columns use the alias.</code>
-<code><a href="#l210" class="line" id="l210">    210</a>                 Some(alias) =&gt; alias.clone(),</code>
-<code><a href="#l211" class="line" id="l211">    211</a>             },</code>
-<code><a href="#l212" class="line" id="l212">    212</a>             Self::Remap { source, targets } =&gt; targets</code>
-<code><a href="#l213" class="line" id="l213">    213</a>                 .iter()</code>
-<code><a href="#l214" class="line" id="l214">    214</a>                 .position(|t| t == &amp;Some(index))</code>
-<code><a href="#l215" class="line" id="l215">    215</a>                 .map(|i| source.column_label(i))</code>
-<code><a href="#l216" class="line" id="l216">    216</a>                 .unwrap_or(Label::None),</code>
-<code><a href="#l217" class="line" id="l217">    217</a> </code>
-<code><a href="#l218" class="line" id="l218">    218</a>             // Joins dispatch to the appropriate source.</code>
-<code><a href="#l219" class="line" id="l219">    219</a>             Self::HashJoin { left, right, .. } | Self::NestedLoopJoin { left, right, .. } =&gt; {</code>
-<code><a href="#l220" class="line" id="l220">    220</a>                 if index &lt; left.columns() {</code>
-<code><a href="#l221" class="line" id="l221">    221</a>                     left.column_label(index)</code>
-<code><a href="#l222" class="line" id="l222">    222</a>                 } else {</code>
-<code><a href="#l223" class="line" id="l223">    223</a>                     right.column_label(index - left.columns())</code>
-<code><a href="#l224" class="line" id="l224">    224</a>                 }</code>
-<code><a href="#l225" class="line" id="l225">    225</a>             }</code>
-<code><a href="#l226" class="line" id="l226">    226</a> </code>
-<code><a href="#l227" class="line" id="l227">    227</a>             // Simple nodes just dispatch to the source.</code>
-<code><a href="#l228" class="line" id="l228">    228</a>             Self::Filter { source, .. }</code>
-<code><a href="#l229" class="line" id="l229">    229</a>             | Self::Limit { source, .. }</code>
-<code><a href="#l230" class="line" id="l230">    230</a>             | Self::Offset { source, .. }</code>
-<code><a href="#l231" class="line" id="l231">    231</a>             | Self::Order { source, .. } =&gt; source.column_label(index),</code>
-<code><a href="#l232" class="line" id="l232">    232</a> </code>
-<code><a href="#l233" class="line" id="l233">    233</a>             // Nothing nodes contain the original columns of replaced nodes.</code>
-<code><a href="#l234" class="line" id="l234">    234</a>             Self::Nothing { columns } =&gt; columns.get(index).cloned().unwrap_or(Label::None),</code>
-<code><a href="#l235" class="line" id="l235">    235</a> </code>
-<code><a href="#l236" class="line" id="l236">    236</a>             // And some don&#39;t have any names at all.</code>
-<code><a href="#l237" class="line" id="l237">    237</a>             Self::Values { .. } =&gt; Label::None,</code>
-<code><a href="#l238" class="line" id="l238">    238</a>         }</code>
-<code><a href="#l239" class="line" id="l239">    239</a>     }</code>
-<code><a href="#l240" class="line" id="l240">    240</a> </code>
-<code><a href="#l241" class="line" id="l241">    241</a>     /// Recursively transforms query nodes depth-first by applying the given</code>
-<code><a href="#l242" class="line" id="l242">    242</a>     /// closures before and after descending.</code>
-<code><a href="#l243" class="line" id="l243">    243</a>     pub fn transform(</code>
-<code><a href="#l244" class="line" id="l244">    244</a>         mut self,</code>
-<code><a href="#l245" class="line" id="l245">    245</a>         before: &amp;impl Fn(Self) -&gt; Result&lt;Self&gt;,</code>
-<code><a href="#l246" class="line" id="l246">    246</a>         after: &amp;impl Fn(Self) -&gt; Result&lt;Self&gt;,</code>
-<code><a href="#l247" class="line" id="l247">    247</a>     ) -&gt; Result&lt;Self&gt; {</code>
-<code><a href="#l248" class="line" id="l248">    248</a>         // Helper for transforming boxed nodes.</code>
-<code><a href="#l249" class="line" id="l249">    249</a>         let xform = |mut node: Box&lt;Node&gt;| -&gt; Result&lt;Box&lt;Node&gt;&gt; {</code>
-<code><a href="#l250" class="line" id="l250">    250</a>             *node = node.transform(before, after)?;</code>
-<code><a href="#l251" class="line" id="l251">    251</a>             Ok(node)</code>
-<code><a href="#l252" class="line" id="l252">    252</a>         };</code>
-<code><a href="#l253" class="line" id="l253">    253</a> </code>
-<code><a href="#l254" class="line" id="l254">    254</a>         self = before(self)?;</code>
-<code><a href="#l255" class="line" id="l255">    255</a>         self = match self {</code>
-<code><a href="#l256" class="line" id="l256">    256</a>             Self::Aggregate { source, group_by, aggregates } =&gt; {</code>
-<code><a href="#l257" class="line" id="l257">    257</a>                 Self::Aggregate { source: xform(source)?, group_by, aggregates }</code>
-<code><a href="#l258" class="line" id="l258">    258</a>             }</code>
-<code><a href="#l259" class="line" id="l259">    259</a>             Self::Filter { source, predicate } =&gt; {</code>
-<code><a href="#l260" class="line" id="l260">    260</a>                 Self::Filter { source: xform(source)?, predicate }</code>
-<code><a href="#l261" class="line" id="l261">    261</a>             }</code>
-<code><a href="#l262" class="line" id="l262">    262</a>             Self::HashJoin { left, left_column, right, right_column, outer } =&gt; Self::HashJoin {</code>
-<code><a href="#l263" class="line" id="l263">    263</a>                 left: xform(left)?,</code>
-<code><a href="#l264" class="line" id="l264">    264</a>                 left_column,</code>
-<code><a href="#l265" class="line" id="l265">    265</a>                 right: xform(right)?,</code>
-<code><a href="#l266" class="line" id="l266">    266</a>                 right_column,</code>
-<code><a href="#l267" class="line" id="l267">    267</a>                 outer,</code>
-<code><a href="#l268" class="line" id="l268">    268</a>             },</code>
-<code><a href="#l269" class="line" id="l269">    269</a>             Self::Limit { source, limit } =&gt; Self::Limit { source: xform(source)?, limit },</code>
-<code><a href="#l270" class="line" id="l270">    270</a>             Self::NestedLoopJoin { left, right, predicate, outer } =&gt; {</code>
-<code><a href="#l271" class="line" id="l271">    271</a>                 Self::NestedLoopJoin { left: xform(left)?, right: xform(right)?, predicate, outer }</code>
-<code><a href="#l272" class="line" id="l272">    272</a>             }</code>
-<code><a href="#l273" class="line" id="l273">    273</a>             Self::Offset { source, offset } =&gt; Self::Offset { source: xform(source)?, offset },</code>
-<code><a href="#l274" class="line" id="l274">    274</a>             Self::Order { source, key } =&gt; Self::Order { source: xform(source)?, key },</code>
-<code><a href="#l275" class="line" id="l275">    275</a>             Self::Projection { source, expressions, aliases } =&gt; {</code>
-<code><a href="#l276" class="line" id="l276">    276</a>                 Self::Projection { source: xform(source)?, expressions, aliases }</code>
-<code><a href="#l277" class="line" id="l277">    277</a>             }</code>
-<code><a href="#l278" class="line" id="l278">    278</a>             Self::Remap { source, targets } =&gt; Self::Remap { source: xform(source)?, targets },</code>
-<code><a href="#l279" class="line" id="l279">    279</a> </code>
-<code><a href="#l280" class="line" id="l280">    280</a>             Self::IndexLookup { .. }</code>
-<code><a href="#l281" class="line" id="l281">    281</a>             | Self::KeyLookup { .. }</code>
-<code><a href="#l282" class="line" id="l282">    282</a>             | Self::Nothing { .. }</code>
-<code><a href="#l283" class="line" id="l283">    283</a>             | Self::Scan { .. }</code>
-<code><a href="#l284" class="line" id="l284">    284</a>             | Self::Values { .. } =&gt; self,</code>
-<code><a href="#l285" class="line" id="l285">    285</a>         };</code>
-<code><a href="#l286" class="line" id="l286">    286</a>         self = after(self)?;</code>
-<code><a href="#l287" class="line" id="l287">    287</a>         Ok(self)</code>
-<code><a href="#l288" class="line" id="l288">    288</a>     }</code>
-<code><a href="#l289" class="line" id="l289">    289</a> </code>
-<code><a href="#l290" class="line" id="l290">    290</a>     /// Recursively transforms all node expressions by calling the given</code>
-<code><a href="#l291" class="line" id="l291">    291</a>     /// closures on them before and after descending.</code>
-<code><a href="#l292" class="line" id="l292">    292</a>     pub fn transform_expressions(</code>
-<code><a href="#l293" class="line" id="l293">    293</a>         self,</code>
-<code><a href="#l294" class="line" id="l294">    294</a>         before: &amp;impl Fn(Expression) -&gt; Result&lt;Expression&gt;,</code>
-<code><a href="#l295" class="line" id="l295">    295</a>         after: &amp;impl Fn(Expression) -&gt; Result&lt;Expression&gt;,</code>
-<code><a href="#l296" class="line" id="l296">    296</a>     ) -&gt; Result&lt;Self&gt; {</code>
-<code><a href="#l297" class="line" id="l297">    297</a>         Ok(match self {</code>
-<code><a href="#l298" class="line" id="l298">    298</a>             Self::Filter { source, mut predicate } =&gt; {</code>
-<code><a href="#l299" class="line" id="l299">    299</a>                 predicate = predicate.transform(before, after)?;</code>
-<code><a href="#l300" class="line" id="l300">    300</a>                 Self::Filter { source, predicate }</code>
-<code><a href="#l301" class="line" id="l301">    301</a>             }</code>
-<code><a href="#l302" class="line" id="l302">    302</a>             Self::NestedLoopJoin { left, right, predicate: Some(predicate), outer } =&gt; {</code>
-<code><a href="#l303" class="line" id="l303">    303</a>                 let predicate = Some(predicate.transform(before, after)?);</code>
-<code><a href="#l304" class="line" id="l304">    304</a>                 Self::NestedLoopJoin { left, right, predicate, outer }</code>
-<code><a href="#l305" class="line" id="l305">    305</a>             }</code>
-<code><a href="#l306" class="line" id="l306">    306</a>             Self::Order { source, mut key } =&gt; {</code>
-<code><a href="#l307" class="line" id="l307">    307</a>                 key = key</code>
-<code><a href="#l308" class="line" id="l308">    308</a>                     .into_iter()</code>
-<code><a href="#l309" class="line" id="l309">    309</a>                     .map(|(expr, dir)| Ok((expr.transform(before, after)?, dir)))</code>
-<code><a href="#l310" class="line" id="l310">    310</a>                     .collect::&lt;Result&lt;_&gt;&gt;()?;</code>
-<code><a href="#l311" class="line" id="l311">    311</a>                 Self::Order { source, key }</code>
-<code><a href="#l312" class="line" id="l312">    312</a>             }</code>
-<code><a href="#l313" class="line" id="l313">    313</a>             Self::Projection { source, mut expressions, aliases } =&gt; {</code>
-<code><a href="#l314" class="line" id="l314">    314</a>                 expressions = expressions</code>
-<code><a href="#l315" class="line" id="l315">    315</a>                     .into_iter()</code>
-<code><a href="#l316" class="line" id="l316">    316</a>                     .map(|expr| expr.transform(before, after))</code>
-<code><a href="#l317" class="line" id="l317">    317</a>                     .try_collect()?;</code>
-<code><a href="#l318" class="line" id="l318">    318</a>                 Self::Projection { source, expressions, aliases }</code>
-<code><a href="#l319" class="line" id="l319">    319</a>             }</code>
-<code><a href="#l320" class="line" id="l320">    320</a>             Self::Scan { table, alias, filter: Some(filter) } =&gt; {</code>
-<code><a href="#l321" class="line" id="l321">    321</a>                 let filter = Some(filter.transform(before, after)?);</code>
-<code><a href="#l322" class="line" id="l322">    322</a>                 Self::Scan { table, alias, filter }</code>
-<code><a href="#l323" class="line" id="l323">    323</a>             }</code>
-<code><a href="#l324" class="line" id="l324">    324</a>             Self::Values { mut rows } =&gt; {</code>
-<code><a href="#l325" class="line" id="l325">    325</a>                 rows = rows</code>
-<code><a href="#l326" class="line" id="l326">    326</a>                     .into_iter()</code>
-<code><a href="#l327" class="line" id="l327">    327</a>                     .map(|row| row.into_iter().map(|expr| expr.transform(before, after)).collect())</code>
-<code><a href="#l328" class="line" id="l328">    328</a>                     .try_collect()?;</code>
-<code><a href="#l329" class="line" id="l329">    329</a>                 Self::Values { rows }</code>
-<code><a href="#l330" class="line" id="l330">    330</a>             }</code>
-<code><a href="#l331" class="line" id="l331">    331</a> </code>
-<code><a href="#l332" class="line" id="l332">    332</a>             Self::Aggregate { .. }</code>
-<code><a href="#l333" class="line" id="l333">    333</a>             | Self::HashJoin { .. }</code>
-<code><a href="#l334" class="line" id="l334">    334</a>             | Self::IndexLookup { .. }</code>
-<code><a href="#l335" class="line" id="l335">    335</a>             | Self::KeyLookup { .. }</code>
-<code><a href="#l336" class="line" id="l336">    336</a>             | Self::Limit { .. }</code>
-<code><a href="#l337" class="line" id="l337">    337</a>             | Self::NestedLoopJoin { predicate: None, .. }</code>
-<code><a href="#l338" class="line" id="l338">    338</a>             | Self::Nothing { .. }</code>
-<code><a href="#l339" class="line" id="l339">    339</a>             | Self::Offset { .. }</code>
-<code><a href="#l340" class="line" id="l340">    340</a>             | Self::Remap { .. }</code>
-<code><a href="#l341" class="line" id="l341">    341</a>             | Self::Scan { filter: None, .. } =&gt; self,</code>
-<code><a href="#l342" class="line" id="l342">    342</a>         })</code>
-<code><a href="#l343" class="line" id="l343">    343</a>     }</code>
-<code><a href="#l344" class="line" id="l344">    344</a> }</code>
-<code><a href="#l345" class="line" id="l345">    345</a> </code>
-<code><a href="#l346" class="line" id="l346">    346</a> /// An aggregate function.</code>
-<code><a href="#l347" class="line" id="l347">    347</a> #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]</code>
-<code><a href="#l348" class="line" id="l348">    348</a> pub enum Aggregate {</code>
-<code><a href="#l349" class="line" id="l349">    349</a>     Average(Expression),</code>
-<code><a href="#l350" class="line" id="l350">    350</a>     Count(Expression),</code>
-<code><a href="#l351" class="line" id="l351">    351</a>     Max(Expression),</code>
-<code><a href="#l352" class="line" id="l352">    352</a>     Min(Expression),</code>
-<code><a href="#l353" class="line" id="l353">    353</a>     Sum(Expression),</code>
-<code><a href="#l354" class="line" id="l354">    354</a> }</code>
-<code><a href="#l355" class="line" id="l355">    355</a> </code>
-<code><a href="#l356" class="line" id="l356">    356</a> impl Aggregate {</code>
-<code><a href="#l357" class="line" id="l357">    357</a>     fn format(&amp;self, node: &amp;Node) -&gt; String {</code>
-<code><a href="#l358" class="line" id="l358">    358</a>         match self {</code>
-<code><a href="#l359" class="line" id="l359">    359</a>             Self::Average(expr) =&gt; format!(&quot;avg({})&quot;, expr.format(node)),</code>
-<code><a href="#l360" class="line" id="l360">    360</a>             Self::Count(expr) =&gt; format!(&quot;count({})&quot;, expr.format(node)),</code>
-<code><a href="#l361" class="line" id="l361">    361</a>             Self::Max(expr) =&gt; format!(&quot;max({})&quot;, expr.format(node)),</code>
-<code><a href="#l362" class="line" id="l362">    362</a>             Self::Min(expr) =&gt; format!(&quot;min({})&quot;, expr.format(node)),</code>
-<code><a href="#l363" class="line" id="l363">    363</a>             Self::Sum(expr) =&gt; format!(&quot;sum({})&quot;, expr.format(node)),</code>
-<code><a href="#l364" class="line" id="l364">    364</a>         }</code>
-<code><a href="#l365" class="line" id="l365">    365</a>     }</code>
-<code><a href="#l366" class="line" id="l366">    366</a> }</code>
-<code><a href="#l367" class="line" id="l367">    367</a> </code>
-<code><a href="#l368" class="line" id="l368">    368</a> /// A sort order direction.</code>
-<code><a href="#l369" class="line" id="l369">    369</a> #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]</code>
-<code><a href="#l370" class="line" id="l370">    370</a> pub enum Direction {</code>
-<code><a href="#l371" class="line" id="l371">    371</a>     Ascending,</code>
-<code><a href="#l372" class="line" id="l372">    372</a>     Descending,</code>
-<code><a href="#l373" class="line" id="l373">    373</a> }</code>
-<code><a href="#l374" class="line" id="l374">    374</a> </code>
-<code><a href="#l375" class="line" id="l375">    375</a> impl std::fmt::Display for Direction {</code>
-<code><a href="#l376" class="line" id="l376">    376</a>     fn fmt(&amp;self, f: &amp;mut std::fmt::Formatter&lt;&#39;_&gt;) -&gt; std::fmt::Result {</code>
-<code><a href="#l377" class="line" id="l377">    377</a>         match self {</code>
-<code><a href="#l378" class="line" id="l378">    378</a>             Self::Ascending =&gt; f.write_str(&quot;asc&quot;),</code>
-<code><a href="#l379" class="line" id="l379">    379</a>             Self::Descending =&gt; f.write_str(&quot;desc&quot;),</code>
-<code><a href="#l380" class="line" id="l380">    380</a>         }</code>
-<code><a href="#l381" class="line" id="l381">    381</a>     }</code>
-<code><a href="#l382" class="line" id="l382">    382</a> }</code>
-<code><a href="#l383" class="line" id="l383">    383</a> </code>
-<code><a href="#l384" class="line" id="l384">    384</a> impl From&lt;ast::Direction&gt; for Direction {</code>
-<code><a href="#l385" class="line" id="l385">    385</a>     fn from(dir: ast::Direction) -&gt; Self {</code>
-<code><a href="#l386" class="line" id="l386">    386</a>         match dir {</code>
-<code><a href="#l387" class="line" id="l387">    387</a>             ast::Direction::Ascending =&gt; Self::Ascending,</code>
-<code><a href="#l388" class="line" id="l388">    388</a>             ast::Direction::Descending =&gt; Self::Descending,</code>
-<code><a href="#l389" class="line" id="l389">    389</a>         }</code>
-<code><a href="#l390" class="line" id="l390">    390</a>     }</code>
-<code><a href="#l391" class="line" id="l391">    391</a> }</code>
-<code><a href="#l392" class="line" id="l392">    392</a> </code>
-<code><a href="#l393" class="line" id="l393">    393</a> /// Formats the plan as an EXPLAIN tree.</code>
-<code><a href="#l394" class="line" id="l394">    394</a> impl std::fmt::Display for Plan {</code>
-<code><a href="#l395" class="line" id="l395">    395</a>     fn fmt(&amp;self, f: &amp;mut std::fmt::Formatter&lt;&#39;_&gt;) -&gt; std::fmt::Result {</code>
-<code><a href="#l396" class="line" id="l396">    396</a>         match self {</code>
-<code><a href="#l397" class="line" id="l397">    397</a>             Self::CreateTable { schema } =&gt; write!(f, &quot;CreateTable: {}&quot;, schema.name),</code>
-<code><a href="#l398" class="line" id="l398">    398</a>             Self::DropTable { table, .. } =&gt; write!(f, &quot;DropTable: {table}&quot;),</code>
-<code><a href="#l399" class="line" id="l399">    399</a>             Self::Delete { table, source, .. } =&gt; {</code>
-<code><a href="#l400" class="line" id="l400">    400</a>                 write!(f, &quot;Delete: {table}&quot;)?;</code>
-<code><a href="#l401" class="line" id="l401">    401</a>                 source.format(f, &quot;&quot;, false, true)</code>
-<code><a href="#l402" class="line" id="l402">    402</a>             }</code>
-<code><a href="#l403" class="line" id="l403">    403</a>             Self::Insert { table, source, .. } =&gt; {</code>
-<code><a href="#l404" class="line" id="l404">    404</a>                 write!(f, &quot;Insert: {}&quot;, table.name)?;</code>
-<code><a href="#l405" class="line" id="l405">    405</a>                 source.format(f, &quot;&quot;, false, true)</code>
-<code><a href="#l406" class="line" id="l406">    406</a>             }</code>
-<code><a href="#l407" class="line" id="l407">    407</a>             Self::Update { table, source, expressions, .. } =&gt; {</code>
-<code><a href="#l408" class="line" id="l408">    408</a>                 let expressions = expressions</code>
-<code><a href="#l409" class="line" id="l409">    409</a>                     .iter()</code>
-<code><a href="#l410" class="line" id="l410">    410</a>                     .map(|(i, expr)| format!(&quot;{}={}&quot;, table.columns[*i].name, expr.format(source)))</code>
-<code><a href="#l411" class="line" id="l411">    411</a>                     .join(&quot;, &quot;);</code>
-<code><a href="#l412" class="line" id="l412">    412</a>                 write!(f, &quot;Update: {} ({expressions})&quot;, table.name)?;</code>
-<code><a href="#l413" class="line" id="l413">    413</a>                 source.format(f, &quot;&quot;, false, true)</code>
-<code><a href="#l414" class="line" id="l414">    414</a>             }</code>
-<code><a href="#l415" class="line" id="l415">    415</a>             Self::Select(root) =&gt; root.format(f, &quot;&quot;, true, true),</code>
-<code><a href="#l416" class="line" id="l416">    416</a>         }</code>
-<code><a href="#l417" class="line" id="l417">    417</a>     }</code>
-<code><a href="#l418" class="line" id="l418">    418</a> }</code>
-<code><a href="#l419" class="line" id="l419">    419</a> </code>
-<code><a href="#l420" class="line" id="l420">    420</a> impl std::fmt::Display for Node {</code>
-<code><a href="#l421" class="line" id="l421">    421</a>     fn fmt(&amp;self, f: &amp;mut std::fmt::Formatter&lt;&#39;_&gt;) -&gt; std::fmt::Result {</code>
-<code><a href="#l422" class="line" id="l422">    422</a>         self.format(f, &quot;&quot;, true, true)</code>
-<code><a href="#l423" class="line" id="l423">    423</a>     }</code>
-<code><a href="#l424" class="line" id="l424">    424</a> }</code>
-<code><a href="#l425" class="line" id="l425">    425</a> </code>
-<code><a href="#l426" class="line" id="l426">    426</a> impl Node {</code>
-<code><a href="#l427" class="line" id="l427">    427</a>     /// Recursively formats the node. Prefix is used for tree branch lines. root</code>
-<code><a href="#l428" class="line" id="l428">    428</a>     /// is true if this is the root (first) node, and last_child is true if this</code>
-<code><a href="#l429" class="line" id="l429">    429</a>     /// is the last child node of the parent.</code>
-<code><a href="#l430" class="line" id="l430">    430</a>     pub fn format(</code>
-<code><a href="#l431" class="line" id="l431">    431</a>         &amp;self,</code>
-<code><a href="#l432" class="line" id="l432">    432</a>         f: &amp;mut std::fmt::Formatter&lt;&#39;_&gt;,</code>
-<code><a href="#l433" class="line" id="l433">    433</a>         prefix: &amp;str,</code>
-<code><a href="#l434" class="line" id="l434">    434</a>         root: bool,</code>
-<code><a href="#l435" class="line" id="l435">    435</a>         last_child: bool,</code>
-<code><a href="#l436" class="line" id="l436">    436</a>     ) -&gt; std::fmt::Result {</code>
-<code><a href="#l437" class="line" id="l437">    437</a>         // If this is not the root node, emit a newline after the previous node.</code>
-<code><a href="#l438" class="line" id="l438">    438</a>         // This avoids a spurious newline at the end of the plan.</code>
-<code><a href="#l439" class="line" id="l439">    439</a>         if !root {</code>
-<code><a href="#l440" class="line" id="l440">    440</a>             writeln!(f)?;</code>
-<code><a href="#l441" class="line" id="l441">    441</a>         }</code>
-<code><a href="#l442" class="line" id="l442">    442</a> </code>
-<code><a href="#l443" class="line" id="l443">    443</a>         // Prefix the node with a tree branch line. Modify the prefix for any</code>
-<code><a href="#l444" class="line" id="l444">    444</a>         // child nodes we&#39;ll recurse into.</code>
-<code><a href="#l445" class="line" id="l445">    445</a>         let prefix = if !last_child {</code>
-<code><a href="#l446" class="line" id="l446">    446</a>             write!(f, &quot;{prefix}├─ &quot;)?;</code>
-<code><a href="#l447" class="line" id="l447">    447</a>             format!(&quot;{prefix}│  &quot;)</code>
-<code><a href="#l448" class="line" id="l448">    448</a>         } else if !root {</code>
-<code><a href="#l449" class="line" id="l449">    449</a>             write!(f, &quot;{prefix}└─ &quot;)?;</code>
-<code><a href="#l450" class="line" id="l450">    450</a>             format!(&quot;{prefix}   &quot;)</code>
-<code><a href="#l451" class="line" id="l451">    451</a>         } else {</code>
-<code><a href="#l452" class="line" id="l452">    452</a>             write!(f, &quot;{prefix}&quot;)?;</code>
-<code><a href="#l453" class="line" id="l453">    453</a>             prefix.to_string()</code>
-<code><a href="#l454" class="line" id="l454">    454</a>         };</code>
-<code><a href="#l455" class="line" id="l455">    455</a> </code>
-<code><a href="#l456" class="line" id="l456">    456</a>         // Format the node.</code>
-<code><a href="#l457" class="line" id="l457">    457</a>         match self {</code>
-<code><a href="#l458" class="line" id="l458">    458</a>             Self::Aggregate { source, aggregates, group_by } =&gt; {</code>
-<code><a href="#l459" class="line" id="l459">    459</a>                 let aggregates = group_by</code>
-<code><a href="#l460" class="line" id="l460">    460</a>                     .iter()</code>
-<code><a href="#l461" class="line" id="l461">    461</a>                     .map(|group_by| group_by.format(source))</code>
-<code><a href="#l462" class="line" id="l462">    462</a>                     .chain(aggregates.iter().map(|agg| agg.format(source)))</code>
-<code><a href="#l463" class="line" id="l463">    463</a>                     .join(&quot;, &quot;);</code>
-<code><a href="#l464" class="line" id="l464">    464</a>                 write!(f, &quot;Aggregate: {aggregates}&quot;)?;</code>
-<code><a href="#l465" class="line" id="l465">    465</a>                 source.format(f, &amp;prefix, false, true)?;</code>
-<code><a href="#l466" class="line" id="l466">    466</a>             }</code>
-<code><a href="#l467" class="line" id="l467">    467</a>             Self::Filter { source, predicate } =&gt; {</code>
-<code><a href="#l468" class="line" id="l468">    468</a>                 write!(f, &quot;Filter: {}&quot;, predicate.format(source))?;</code>
-<code><a href="#l469" class="line" id="l469">    469</a>                 source.format(f, &amp;prefix, false, true)?;</code>
-<code><a href="#l470" class="line" id="l470">    470</a>             }</code>
-<code><a href="#l471" class="line" id="l471">    471</a>             Self::HashJoin { left, left_column, right, right_column, outer } =&gt; {</code>
-<code><a href="#l472" class="line" id="l472">    472</a>                 let kind = if *outer { &quot;outer&quot; } else { &quot;inner&quot; };</code>
-<code><a href="#l473" class="line" id="l473">    473</a>                 let left_column = match left.column_label(*left_column) {</code>
-<code><a href="#l474" class="line" id="l474">    474</a>                     Label::None =&gt; format!(&quot;left #{left_column}&quot;),</code>
-<code><a href="#l475" class="line" id="l475">    475</a>                     label =&gt; format!(&quot;{label}&quot;),</code>
-<code><a href="#l476" class="line" id="l476">    476</a>                 };</code>
-<code><a href="#l477" class="line" id="l477">    477</a>                 let right_column = match right.column_label(*right_column) {</code>
-<code><a href="#l478" class="line" id="l478">    478</a>                     Label::None =&gt; format!(&quot;right #{right_column}&quot;),</code>
-<code><a href="#l479" class="line" id="l479">    479</a>                     label =&gt; format!(&quot;{label}&quot;),</code>
-<code><a href="#l480" class="line" id="l480">    480</a>                 };</code>
-<code><a href="#l481" class="line" id="l481">    481</a>                 write!(f, &quot;HashJoin: {kind} on {left_column} = {right_column}&quot;)?;</code>
-<code><a href="#l482" class="line" id="l482">    482</a>                 left.format(f, &amp;prefix, false, false)?;</code>
-<code><a href="#l483" class="line" id="l483">    483</a>                 right.format(f, &amp;prefix, false, true)?;</code>
-<code><a href="#l484" class="line" id="l484">    484</a>             }</code>
-<code><a href="#l485" class="line" id="l485">    485</a>             Self::IndexLookup { table, column, alias, values } =&gt; {</code>
-<code><a href="#l486" class="line" id="l486">    486</a>                 let column = &amp;table.columns[*column].name;</code>
-<code><a href="#l487" class="line" id="l487">    487</a>                 write!(f, &quot;IndexLookup: {}.{column}&quot;, table.name)?;</code>
-<code><a href="#l488" class="line" id="l488">    488</a>                 if let Some(alias) = alias {</code>
-<code><a href="#l489" class="line" id="l489">    489</a>                     write!(f, &quot; as {alias}.{column}&quot;)?;</code>
-<code><a href="#l490" class="line" id="l490">    490</a>                 }</code>
-<code><a href="#l491" class="line" id="l491">    491</a>                 if !values.is_empty() &amp;&amp; values.len() &lt; 10 {</code>
-<code><a href="#l492" class="line" id="l492">    492</a>                     write!(f, &quot; ({})&quot;, values.iter().join(&quot;, &quot;))?;</code>
-<code><a href="#l493" class="line" id="l493">    493</a>                 } else {</code>
-<code><a href="#l494" class="line" id="l494">    494</a>                     write!(f, &quot; ({} values)&quot;, values.len())?;</code>
-<code><a href="#l495" class="line" id="l495">    495</a>                 }</code>
-<code><a href="#l496" class="line" id="l496">    496</a>             }</code>
-<code><a href="#l497" class="line" id="l497">    497</a>             Self::KeyLookup { table, alias, keys } =&gt; {</code>
-<code><a href="#l498" class="line" id="l498">    498</a>                 write!(f, &quot;KeyLookup: {}&quot;, table.name)?;</code>
-<code><a href="#l499" class="line" id="l499">    499</a>                 if let Some(alias) = alias {</code>
-<code><a href="#l500" class="line" id="l500">    500</a>                     write!(f, &quot; as {alias}&quot;)?;</code>
-<code><a href="#l501" class="line" id="l501">    501</a>                 }</code>
-<code><a href="#l502" class="line" id="l502">    502</a>                 if !keys.is_empty() &amp;&amp; keys.len() &lt; 10 {</code>
-<code><a href="#l503" class="line" id="l503">    503</a>                     write!(f, &quot; ({})&quot;, keys.iter().join(&quot;, &quot;))?;</code>
-<code><a href="#l504" class="line" id="l504">    504</a>                 } else {</code>
-<code><a href="#l505" class="line" id="l505">    505</a>                     write!(f, &quot; ({} keys)&quot;, keys.len())?;</code>
-<code><a href="#l506" class="line" id="l506">    506</a>                 }</code>
-<code><a href="#l507" class="line" id="l507">    507</a>             }</code>
-<code><a href="#l508" class="line" id="l508">    508</a>             Self::Limit { source, limit } =&gt; {</code>
-<code><a href="#l509" class="line" id="l509">    509</a>                 write!(f, &quot;Limit: {limit}&quot;)?;</code>
-<code><a href="#l510" class="line" id="l510">    510</a>                 source.format(f, &amp;prefix, false, true)?;</code>
-<code><a href="#l511" class="line" id="l511">    511</a>             }</code>
-<code><a href="#l512" class="line" id="l512">    512</a>             Self::NestedLoopJoin { left, right, predicate, outer, .. } =&gt; {</code>
-<code><a href="#l513" class="line" id="l513">    513</a>                 let kind = if *outer { &quot;outer&quot; } else { &quot;inner&quot; };</code>
-<code><a href="#l514" class="line" id="l514">    514</a>                 write!(f, &quot;NestedLoopJoin: {kind}&quot;)?;</code>
-<code><a href="#l515" class="line" id="l515">    515</a>                 if let Some(predicate) = predicate {</code>
-<code><a href="#l516" class="line" id="l516">    516</a>                     write!(f, &quot; on {}&quot;, predicate.format(self))?;</code>
-<code><a href="#l517" class="line" id="l517">    517</a>                 }</code>
-<code><a href="#l518" class="line" id="l518">    518</a>                 left.format(f, &amp;prefix, false, false)?;</code>
-<code><a href="#l519" class="line" id="l519">    519</a>                 right.format(f, &amp;prefix, false, true)?;</code>
-<code><a href="#l520" class="line" id="l520">    520</a>             }</code>
-<code><a href="#l521" class="line" id="l521">    521</a>             Self::Nothing { .. } =&gt; write!(f, &quot;Nothing&quot;)?,</code>
-<code><a href="#l522" class="line" id="l522">    522</a>             Self::Offset { source, offset } =&gt; {</code>
-<code><a href="#l523" class="line" id="l523">    523</a>                 write!(f, &quot;Offset: {offset}&quot;)?;</code>
-<code><a href="#l524" class="line" id="l524">    524</a>                 source.format(f, &amp;prefix, false, true)?;</code>
-<code><a href="#l525" class="line" id="l525">    525</a>             }</code>
-<code><a href="#l526" class="line" id="l526">    526</a>             Self::Order { source, key: orders } =&gt; {</code>
-<code><a href="#l527" class="line" id="l527">    527</a>                 let orders = orders</code>
-<code><a href="#l528" class="line" id="l528">    528</a>                     .iter()</code>
-<code><a href="#l529" class="line" id="l529">    529</a>                     .map(|(expr, dir)| format!(&quot;{} {dir}&quot;, expr.format(source)))</code>
-<code><a href="#l530" class="line" id="l530">    530</a>                     .join(&quot;, &quot;);</code>
-<code><a href="#l531" class="line" id="l531">    531</a>                 write!(f, &quot;Order: {orders}&quot;)?;</code>
-<code><a href="#l532" class="line" id="l532">    532</a>                 source.format(f, &amp;prefix, false, true)?;</code>
-<code><a href="#l533" class="line" id="l533">    533</a>             }</code>
-<code><a href="#l534" class="line" id="l534">    534</a>             Self::Projection { source, expressions, aliases } =&gt; {</code>
-<code><a href="#l535" class="line" id="l535">    535</a>                 let expressions = expressions</code>
-<code><a href="#l536" class="line" id="l536">    536</a>                     .iter()</code>
-<code><a href="#l537" class="line" id="l537">    537</a>                     .enumerate()</code>
-<code><a href="#l538" class="line" id="l538">    538</a>                     .map(|(i, expr)| match aliases.get(i) {</code>
-<code><a href="#l539" class="line" id="l539">    539</a>                         Some(Label::None) | None =&gt; expr.format(source),</code>
-<code><a href="#l540" class="line" id="l540">    540</a>                         Some(alias) =&gt; format!(&quot;{} as {alias}&quot;, expr.format(source)),</code>
-<code><a href="#l541" class="line" id="l541">    541</a>                     })</code>
-<code><a href="#l542" class="line" id="l542">    542</a>                     .join(&quot;, &quot;);</code>
-<code><a href="#l543" class="line" id="l543">    543</a>                 write!(f, &quot;Projection: {expressions}&quot;)?;</code>
-<code><a href="#l544" class="line" id="l544">    544</a>                 source.format(f, &amp;prefix, false, true)?;</code>
-<code><a href="#l545" class="line" id="l545">    545</a>             }</code>
-<code><a href="#l546" class="line" id="l546">    546</a>             Self::Remap { source, targets } =&gt; {</code>
-<code><a href="#l547" class="line" id="l547">    547</a>                 let remap = remap_sources(targets)</code>
-<code><a href="#l548" class="line" id="l548">    548</a>                     .into_iter()</code>
-<code><a href="#l549" class="line" id="l549">    549</a>                     .map(|from| match from {</code>
-<code><a href="#l550" class="line" id="l550">    550</a>                         Some(from) =&gt; match source.column_label(from) {</code>
-<code><a href="#l551" class="line" id="l551">    551</a>                             Label::None =&gt; format!(&quot;#{from}&quot;),</code>
-<code><a href="#l552" class="line" id="l552">    552</a>                             label =&gt; label.to_string(),</code>
-<code><a href="#l553" class="line" id="l553">    553</a>                         },</code>
-<code><a href="#l554" class="line" id="l554">    554</a>                         None =&gt; &quot;Null&quot;.to_string(),</code>
-<code><a href="#l555" class="line" id="l555">    555</a>                     })</code>
-<code><a href="#l556" class="line" id="l556">    556</a>                     .join(&quot;, &quot;);</code>
-<code><a href="#l557" class="line" id="l557">    557</a>                 write!(f, &quot;Remap: {remap}&quot;)?;</code>
-<code><a href="#l558" class="line" id="l558">    558</a>                 let dropped = targets</code>
-<code><a href="#l559" class="line" id="l559">    559</a>                     .iter()</code>
-<code><a href="#l560" class="line" id="l560">    560</a>                     .enumerate()</code>
-<code><a href="#l561" class="line" id="l561">    561</a>                     .filter_map(|(i, v)| {</code>
-<code><a href="#l562" class="line" id="l562">    562</a>                         v.is_none().then_some(match source.column_label(i) {</code>
-<code><a href="#l563" class="line" id="l563">    563</a>                             Label::None =&gt; format!(&quot;#{i}&quot;),</code>
-<code><a href="#l564" class="line" id="l564">    564</a>                             label =&gt; format!(&quot;{label}&quot;),</code>
-<code><a href="#l565" class="line" id="l565">    565</a>                         })</code>
-<code><a href="#l566" class="line" id="l566">    566</a>                     })</code>
-<code><a href="#l567" class="line" id="l567">    567</a>                     .join(&quot;, &quot;);</code>
-<code><a href="#l568" class="line" id="l568">    568</a>                 if !dropped.is_empty() {</code>
-<code><a href="#l569" class="line" id="l569">    569</a>                     write!(f, &quot; (dropped: {dropped})&quot;)?;</code>
-<code><a href="#l570" class="line" id="l570">    570</a>                 }</code>
-<code><a href="#l571" class="line" id="l571">    571</a>                 source.format(f, &amp;prefix, false, true)?;</code>
-<code><a href="#l572" class="line" id="l572">    572</a>             }</code>
-<code><a href="#l573" class="line" id="l573">    573</a>             Self::Scan { table, alias, filter } =&gt; {</code>
-<code><a href="#l574" class="line" id="l574">    574</a>                 write!(f, &quot;Scan: {}&quot;, table.name)?;</code>
-<code><a href="#l575" class="line" id="l575">    575</a>                 if let Some(alias) = alias {</code>
-<code><a href="#l576" class="line" id="l576">    576</a>                     write!(f, &quot; as {alias}&quot;)?;</code>
-<code><a href="#l577" class="line" id="l577">    577</a>                 }</code>
-<code><a href="#l578" class="line" id="l578">    578</a>                 if let Some(filter) = filter {</code>
-<code><a href="#l579" class="line" id="l579">    579</a>                     write!(f, &quot; ({})&quot;, filter.format(self))?;</code>
-<code><a href="#l580" class="line" id="l580">    580</a>                 }</code>
-<code><a href="#l581" class="line" id="l581">    581</a>             }</code>
-<code><a href="#l582" class="line" id="l582">    582</a>             Self::Values { rows, .. } =&gt; {</code>
-<code><a href="#l583" class="line" id="l583">    583</a>                 write!(f, &quot;Values: &quot;)?;</code>
-<code><a href="#l584" class="line" id="l584">    584</a>                 match rows.len() {</code>
-<code><a href="#l585" class="line" id="l585">    585</a>                     1 if rows[0].is_empty() =&gt; write!(f, &quot;blank row&quot;)?,</code>
-<code><a href="#l586" class="line" id="l586">    586</a>                     1 =&gt; write!(f, &quot;{}&quot;, rows[0].iter().map(|e| e.format(self)).join(&quot;, &quot;))?,</code>
-<code><a href="#l587" class="line" id="l587">    587</a>                     n =&gt; write!(f, &quot;{n} rows&quot;)?,</code>
-<code><a href="#l588" class="line" id="l588">    588</a>                 }</code>
-<code><a href="#l589" class="line" id="l589">    589</a>             }</code>
-<code><a href="#l590" class="line" id="l590">    590</a>         };</code>
-<code><a href="#l591" class="line" id="l591">    591</a>         Ok(())</code>
-<code><a href="#l592" class="line" id="l592">    592</a>     }</code>
-<code><a href="#l593" class="line" id="l593">    593</a> }</code>
-<code><a href="#l594" class="line" id="l594">    594</a> </code>
-<code><a href="#l595" class="line" id="l595">    595</a> /// Inverts a Remap targets vector to a vector of source indexes, with None</code>
-<code><a href="#l596" class="line" id="l596">    596</a> /// for columns that weren&#39;t targeted.</code>
-<code><a href="#l597" class="line" id="l597">    597</a> pub fn remap_sources(targets: &amp;[Option&lt;usize&gt;]) -&gt; Vec&lt;Option&lt;usize&gt;&gt; {</code>
-<code><a href="#l598" class="line" id="l598">    598</a>     let size = targets.iter().filter_map(|v| *v).map(|i| i + 1).max().unwrap_or(0);</code>
-<code><a href="#l599" class="line" id="l599">    599</a>     let mut sources = vec![None; size];</code>
-<code><a href="#l600" class="line" id="l600">    600</a>     for (from, to) in targets.iter().enumerate() {</code>
-<code><a href="#l601" class="line" id="l601">    601</a>         if let Some(to) = to {</code>
-<code><a href="#l602" class="line" id="l602">    602</a>             sources[*to] = Some(from);</code>
-<code><a href="#l603" class="line" id="l603">    603</a>         }</code>
-<code><a href="#l604" class="line" id="l604">    604</a>     }</code>
-<code><a href="#l605" class="line" id="l605">    605</a>     sources</code>
-<code><a href="#l606" class="line" id="l606">    606</a> }</code>
+<a href="#l1" class="line" id="l1">      1</a><code> use super::optimizer::OPTIMIZERS;</code>
+<a href="#l2" class="line" id="l2">      2</a><code> use super::planner::Planner;</code>
+<a href="#l3" class="line" id="l3">      3</a><code> use crate::error::Result;</code>
+<a href="#l4" class="line" id="l4">      4</a><code> use crate::sql::engine::{Catalog, Transaction};</code>
+<a href="#l5" class="line" id="l5">      5</a><code> use crate::sql::execution::{self, ExecutionResult};</code>
+<a href="#l6" class="line" id="l6">      6</a><code> use crate::sql::parser::ast;</code>
+<a href="#l7" class="line" id="l7">      7</a><code> use crate::sql::types::{Expression, Label, Table, Value};</code>
+<a href="#l8" class="line" id="l8">      8</a><code> </code>
+<a href="#l9" class="line" id="l9">      9</a><code> use itertools::Itertools as _;</code>
+<a href="#l10" class="line" id="l10">     10</a><code> use serde::{Deserialize, Serialize};</code>
+<a href="#l11" class="line" id="l11">     11</a><code> use std::collections::HashMap;</code>
+<a href="#l12" class="line" id="l12">     12</a><code> </code>
+<a href="#l13" class="line" id="l13">     13</a><code> /// A statement execution plan. The root nodes can perform data modifications or</code>
+<a href="#l14" class="line" id="l14">     14</a><code> /// schema changes, in addition to SELECT queries. Beyond the root, the plan is</code>
+<a href="#l15" class="line" id="l15">     15</a><code> /// made up of a tree of inner plan nodes that stream and process rows via</code>
+<a href="#l16" class="line" id="l16">     16</a><code> /// iterators. Below is an example of an (unoptimized) plan for the given query:</code>
+<a href="#l17" class="line" id="l17">     17</a><code> ///</code>
+<a href="#l18" class="line" id="l18">     18</a><code> /// SELECT title, released, genres.name AS genre</code>
+<a href="#l19" class="line" id="l19">     19</a><code> /// FROM movies INNER JOIN genres ON movies.genre_id = genres.id</code>
+<a href="#l20" class="line" id="l20">     20</a><code> /// WHERE released &gt;= 2000 ORDER BY released</code>
+<a href="#l21" class="line" id="l21">     21</a><code> ///</code>
+<a href="#l22" class="line" id="l22">     22</a><code> /// Order: movies.released desc</code>
+<a href="#l23" class="line" id="l23">     23</a><code> /// └─ Projection: movies.title, movies.released, genres.name as genre</code>
+<a href="#l24" class="line" id="l24">     24</a><code> ///    └─ Filter: movies.released &gt;= 2000</code>
+<a href="#l25" class="line" id="l25">     25</a><code> ///       └─ NestedLoopJoin: inner on movies.genre_id = genres.id</code>
+<a href="#l26" class="line" id="l26">     26</a><code> ///          ├─ Scan: movies</code>
+<a href="#l27" class="line" id="l27">     27</a><code> ///          └─ Scan: genres</code>
+<a href="#l28" class="line" id="l28">     28</a><code> ///</code>
+<a href="#l29" class="line" id="l29">     29</a><code> /// Rows flow from the tree leaves to the root. The Scan nodes read and emit</code>
+<a href="#l30" class="line" id="l30">     30</a><code> /// table rows from storage. They are passed to the NestedLoopJoin node which</code>
+<a href="#l31" class="line" id="l31">     31</a><code> /// joins the rows from the two tables, then the Filter node discards old</code>
+<a href="#l32" class="line" id="l32">     32</a><code> /// movies, the Projection node picks out the requested columns, and the Order</code>
+<a href="#l33" class="line" id="l33">     33</a><code> /// node sorts them before emitting the rows to the client.</code>
+<a href="#l34" class="line" id="l34">     34</a><code> #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]</code>
+<a href="#l35" class="line" id="l35">     35</a><code> pub enum Plan {</code>
+<a href="#l36" class="line" id="l36">     36</a><code>     /// A CREATE TABLE plan. Creates a new table with the given schema. Errors</code>
+<a href="#l37" class="line" id="l37">     37</a><code>     /// if the table already exists or the schema is invalid.</code>
+<a href="#l38" class="line" id="l38">     38</a><code>     CreateTable { schema: Table },</code>
+<a href="#l39" class="line" id="l39">     39</a><code>     /// A DROP TABLE plan. Drops the given table. Errors if the table does not</code>
+<a href="#l40" class="line" id="l40">     40</a><code>     /// exist, unless if_exists is true.</code>
+<a href="#l41" class="line" id="l41">     41</a><code>     DropTable { table: String, if_exists: bool },</code>
+<a href="#l42" class="line" id="l42">     42</a><code>     /// A DELETE plan. Deletes rows in table that match the rows from source.</code>
+<a href="#l43" class="line" id="l43">     43</a><code>     /// primary_key specifies the primary key column index in the source rows.</code>
+<a href="#l44" class="line" id="l44">     44</a><code>     Delete { table: String, primary_key: usize, source: Node },</code>
+<a href="#l45" class="line" id="l45">     45</a><code>     /// An INSERT plan. Inserts rows from source (typically a Values node) into</code>
+<a href="#l46" class="line" id="l46">     46</a><code>     /// table. If column_map is given, it maps table → source column indexes and</code>
+<a href="#l47" class="line" id="l47">     47</a><code>     /// must have one entry for every column in source. Table columns not</code>
+<a href="#l48" class="line" id="l48">     48</a><code>     /// present in source will get the column&#39;s default value if set, or error.</code>
+<a href="#l49" class="line" id="l49">     49</a><code>     Insert { table: Table, column_map: Option&lt;HashMap&lt;usize, usize&gt;&gt;, source: Node },</code>
+<a href="#l50" class="line" id="l50">     50</a><code>     /// An UPDATE plan. Updates rows in table that match the rows from source,</code>
+<a href="#l51" class="line" id="l51">     51</a><code>     /// where primary_key specifies the primary key column index in the source</code>
+<a href="#l52" class="line" id="l52">     52</a><code>     /// rows. The given column/expression pairs specify the row updates to make,</code>
+<a href="#l53" class="line" id="l53">     53</a><code>     /// evaluated using the existing source row, which must be a complete row</code>
+<a href="#l54" class="line" id="l54">     54</a><code>     /// from the update table.</code>
+<a href="#l55" class="line" id="l55">     55</a><code>     Update { table: Table, primary_key: usize, source: Node, expressions: Vec&lt;(usize, Expression)&gt; },</code>
+<a href="#l56" class="line" id="l56">     56</a><code>     /// A SELECT plan. Recursively executes the query plan tree and returns the</code>
+<a href="#l57" class="line" id="l57">     57</a><code>     /// resulting rows.</code>
+<a href="#l58" class="line" id="l58">     58</a><code>     Select(Node),</code>
+<a href="#l59" class="line" id="l59">     59</a><code> }</code>
+<a href="#l60" class="line" id="l60">     60</a><code> </code>
+<a href="#l61" class="line" id="l61">     61</a><code> impl Plan {</code>
+<a href="#l62" class="line" id="l62">     62</a><code>     /// Builds a plan from an AST statement.</code>
+<a href="#l63" class="line" id="l63">     63</a><code>     pub fn build(statement: ast::Statement, catalog: &amp;impl Catalog) -&gt; Result&lt;Self&gt; {</code>
+<a href="#l64" class="line" id="l64">     64</a><code>         Planner::new(catalog).build(statement)</code>
+<a href="#l65" class="line" id="l65">     65</a><code>     }</code>
+<a href="#l66" class="line" id="l66">     66</a><code> </code>
+<a href="#l67" class="line" id="l67">     67</a><code>     /// Executes the plan, consuming it.</code>
+<a href="#l68" class="line" id="l68">     68</a><code>     pub fn execute(self, txn: &amp;(impl Transaction + Catalog)) -&gt; Result&lt;ExecutionResult&gt; {</code>
+<a href="#l69" class="line" id="l69">     69</a><code>         execution::execute_plan(self, txn, txn)</code>
+<a href="#l70" class="line" id="l70">     70</a><code>     }</code>
+<a href="#l71" class="line" id="l71">     71</a><code> </code>
+<a href="#l72" class="line" id="l72">     72</a><code>     /// Optimizes the plan, consuming it. See OPTIMIZERS for the list of</code>
+<a href="#l73" class="line" id="l73">     73</a><code>     /// optimizers.</code>
+<a href="#l74" class="line" id="l74">     74</a><code>     pub fn optimize(self) -&gt; Result&lt;Self&gt; {</code>
+<a href="#l75" class="line" id="l75">     75</a><code>         let optimize = |node| OPTIMIZERS.iter().try_fold(node, |node, (_, opt)| opt(node));</code>
+<a href="#l76" class="line" id="l76">     76</a><code>         Ok(match self {</code>
+<a href="#l77" class="line" id="l77">     77</a><code>             Self::CreateTable { .. } | Self::DropTable { .. } =&gt; self,</code>
+<a href="#l78" class="line" id="l78">     78</a><code>             Self::Delete { table, primary_key, source } =&gt; {</code>
+<a href="#l79" class="line" id="l79">     79</a><code>                 Self::Delete { table, primary_key, source: optimize(source)? }</code>
+<a href="#l80" class="line" id="l80">     80</a><code>             }</code>
+<a href="#l81" class="line" id="l81">     81</a><code>             Self::Insert { table, column_map, source } =&gt; {</code>
+<a href="#l82" class="line" id="l82">     82</a><code>                 Self::Insert { table, column_map, source: optimize(source)? }</code>
+<a href="#l83" class="line" id="l83">     83</a><code>             }</code>
+<a href="#l84" class="line" id="l84">     84</a><code>             Self::Update { table, primary_key, source, expressions } =&gt; {</code>
+<a href="#l85" class="line" id="l85">     85</a><code>                 Self::Update { table, primary_key, source: optimize(source)?, expressions }</code>
+<a href="#l86" class="line" id="l86">     86</a><code>             }</code>
+<a href="#l87" class="line" id="l87">     87</a><code>             Self::Select(root) =&gt; Self::Select(optimize(root)?),</code>
+<a href="#l88" class="line" id="l88">     88</a><code>         })</code>
+<a href="#l89" class="line" id="l89">     89</a><code>     }</code>
+<a href="#l90" class="line" id="l90">     90</a><code> }</code>
+<a href="#l91" class="line" id="l91">     91</a><code> </code>
+<a href="#l92" class="line" id="l92">     92</a><code> /// A query plan node. Returns a row iterator, and can be nested.</code>
+<a href="#l93" class="line" id="l93">     93</a><code> #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]</code>
+<a href="#l94" class="line" id="l94">     94</a><code> pub enum Node {</code>
+<a href="#l95" class="line" id="l95">     95</a><code>     /// Computes the given aggregate values for the given group_by buckets</code>
+<a href="#l96" class="line" id="l96">     96</a><code>     /// across all rows in the source node. The group_by columns are emitted</code>
+<a href="#l97" class="line" id="l97">     97</a><code>     /// first, followed by the aggregate columns, in the given order.</code>
+<a href="#l98" class="line" id="l98">     98</a><code>     Aggregate { source: Box&lt;Node&gt;, group_by: Vec&lt;Expression&gt;, aggregates: Vec&lt;Aggregate&gt; },</code>
+<a href="#l99" class="line" id="l99">     99</a><code>     /// Filters source rows, by discarding rows for which the predicate</code>
+<a href="#l100" class="line" id="l100">    100</a><code>     /// evaluates to false.</code>
+<a href="#l101" class="line" id="l101">    101</a><code>     Filter { source: Box&lt;Node&gt;, predicate: Expression },</code>
+<a href="#l102" class="line" id="l102">    102</a><code>     /// Joins the left and right sources on the given columns by building an</code>
+<a href="#l103" class="line" id="l103">    103</a><code>     /// in-memory hashmap of the right source and looking up matches for each</code>
+<a href="#l104" class="line" id="l104">    104</a><code>     /// row in the left source. When outer is true (e.g. LEFT JOIN), a left row</code>
+<a href="#l105" class="line" id="l105">    105</a><code>     /// without a right match is emitted anyway, with NULLs for the right row.</code>
+<a href="#l106" class="line" id="l106">    106</a><code>     HashJoin {</code>
+<a href="#l107" class="line" id="l107">    107</a><code>         left: Box&lt;Node&gt;,</code>
+<a href="#l108" class="line" id="l108">    108</a><code>         left_column: usize,</code>
+<a href="#l109" class="line" id="l109">    109</a><code>         right: Box&lt;Node&gt;,</code>
+<a href="#l110" class="line" id="l110">    110</a><code>         right_column: usize,</code>
+<a href="#l111" class="line" id="l111">    111</a><code>         outer: bool,</code>
+<a href="#l112" class="line" id="l112">    112</a><code>     },</code>
+<a href="#l113" class="line" id="l113">    113</a><code>     /// Looks up the given values in a secondary index and emits matching rows.</code>
+<a href="#l114" class="line" id="l114">    114</a><code>     /// NULL and NaN values are considered equal, to allow IS NULL and IS NAN</code>
+<a href="#l115" class="line" id="l115">    115</a><code>     /// index lookups, as is -0.0 and 0.0.</code>
+<a href="#l116" class="line" id="l116">    116</a><code>     IndexLookup { table: Table, column: usize, values: Vec&lt;Value&gt;, alias: Option&lt;String&gt; },</code>
+<a href="#l117" class="line" id="l117">    117</a><code>     /// Looks up the given primary keys and emits their rows.</code>
+<a href="#l118" class="line" id="l118">    118</a><code>     KeyLookup { table: Table, keys: Vec&lt;Value&gt;, alias: Option&lt;String&gt; },</code>
+<a href="#l119" class="line" id="l119">    119</a><code>     /// Only emits the first limit rows from the source, discards the rest.</code>
+<a href="#l120" class="line" id="l120">    120</a><code>     Limit { source: Box&lt;Node&gt;, limit: usize },</code>
+<a href="#l121" class="line" id="l121">    121</a><code>     /// Joins the left and right sources on the given predicate by buffering the</code>
+<a href="#l122" class="line" id="l122">    122</a><code>     /// right source and iterating over it for every row in the left source.</code>
+<a href="#l123" class="line" id="l123">    123</a><code>     /// When outer is true (e.g. LEFT JOIN), a left row without a right match is</code>
+<a href="#l124" class="line" id="l124">    124</a><code>     /// emitted anyway, with NULLs for the right row.</code>
+<a href="#l125" class="line" id="l125">    125</a><code>     NestedLoopJoin { left: Box&lt;Node&gt;, right: Box&lt;Node&gt;, predicate: Option&lt;Expression&gt;, outer: bool },</code>
+<a href="#l126" class="line" id="l126">    126</a><code>     /// Nothing does not emit anything, and is used to short-circuit nodes that</code>
+<a href="#l127" class="line" id="l127">    127</a><code>     /// can&#39;t emit anything during optimization. It retains the column names of</code>
+<a href="#l128" class="line" id="l128">    128</a><code>     /// any replaced nodes for results headers and plan formatting.</code>
+<a href="#l129" class="line" id="l129">    129</a><code>     Nothing { columns: Vec&lt;Label&gt; },</code>
+<a href="#l130" class="line" id="l130">    130</a><code>     /// Discards the first offset rows from source, emits the rest.</code>
+<a href="#l131" class="line" id="l131">    131</a><code>     Offset { source: Box&lt;Node&gt;, offset: usize },</code>
+<a href="#l132" class="line" id="l132">    132</a><code>     /// Sorts the source rows by the given sort key. Buffers the entire row set</code>
+<a href="#l133" class="line" id="l133">    133</a><code>     /// in memory.</code>
+<a href="#l134" class="line" id="l134">    134</a><code>     Order { source: Box&lt;Node&gt;, key: Vec&lt;(Expression, Direction)&gt; },</code>
+<a href="#l135" class="line" id="l135">    135</a><code>     /// Projects the input rows by evaluating the given expressions. Aliases are</code>
+<a href="#l136" class="line" id="l136">    136</a><code>     /// only used when displaying the plan.</code>
+<a href="#l137" class="line" id="l137">    137</a><code>     Projection { source: Box&lt;Node&gt;, expressions: Vec&lt;Expression&gt;, aliases: Vec&lt;Label&gt; },</code>
+<a href="#l138" class="line" id="l138">    138</a><code>     /// Remaps source columns to the given target column index, or None to drop</code>
+<a href="#l139" class="line" id="l139">    139</a><code>     /// the column. Unspecified target columns yield Value::Null. The source →</code>
+<a href="#l140" class="line" id="l140">    140</a><code>     /// target mapping ensures a source column can only be mapped to a single</code>
+<a href="#l141" class="line" id="l141">    141</a><code>     /// target column, allowing the value to be moved rather than cloned.</code>
+<a href="#l142" class="line" id="l142">    142</a><code>     Remap { source: Box&lt;Node&gt;, targets: Vec&lt;Option&lt;usize&gt;&gt; },</code>
+<a href="#l143" class="line" id="l143">    143</a><code>     /// A full table scan, with an optional pushed-down filter. The schema is</code>
+<a href="#l144" class="line" id="l144">    144</a><code>     /// used during plan optimization. The alias is only used for formatting.</code>
+<a href="#l145" class="line" id="l145">    145</a><code>     Scan { table: Table, filter: Option&lt;Expression&gt;, alias: Option&lt;String&gt; },</code>
+<a href="#l146" class="line" id="l146">    146</a><code>     /// A constant set of values.</code>
+<a href="#l147" class="line" id="l147">    147</a><code>     Values { rows: Vec&lt;Vec&lt;Expression&gt;&gt; },</code>
+<a href="#l148" class="line" id="l148">    148</a><code> }</code>
+<a href="#l149" class="line" id="l149">    149</a><code> </code>
+<a href="#l150" class="line" id="l150">    150</a><code> impl Node {</code>
+<a href="#l151" class="line" id="l151">    151</a><code>     /// Returns the number of columns emitted by the node.</code>
+<a href="#l152" class="line" id="l152">    152</a><code>     pub fn columns(&amp;self) -&gt; usize {</code>
+<a href="#l153" class="line" id="l153">    153</a><code>         match self {</code>
+<a href="#l154" class="line" id="l154">    154</a><code>             // Source nodes emit all table columns.</code>
+<a href="#l155" class="line" id="l155">    155</a><code>             Self::IndexLookup { table, .. }</code>
+<a href="#l156" class="line" id="l156">    156</a><code>             | Self::KeyLookup { table, .. }</code>
+<a href="#l157" class="line" id="l157">    157</a><code>             | Self::Scan { table, .. } =&gt; table.columns.len(),</code>
+<a href="#l158" class="line" id="l158">    158</a><code> </code>
+<a href="#l159" class="line" id="l159">    159</a><code>             // Some nodes modify the column set.</code>
+<a href="#l160" class="line" id="l160">    160</a><code>             Self::Aggregate { aggregates, group_by, .. } =&gt; aggregates.len() + group_by.len(),</code>
+<a href="#l161" class="line" id="l161">    161</a><code>             Self::Projection { expressions, .. } =&gt; expressions.len(),</code>
+<a href="#l162" class="line" id="l162">    162</a><code>             Self::Remap { targets, .. } =&gt; {</code>
+<a href="#l163" class="line" id="l163">    163</a><code>                 targets.iter().filter_map(|v| *v).map(|i| i + 1).max().unwrap_or(0)</code>
+<a href="#l164" class="line" id="l164">    164</a><code>             }</code>
+<a href="#l165" class="line" id="l165">    165</a><code> </code>
+<a href="#l166" class="line" id="l166">    166</a><code>             // Join nodes emit the combined columns.</code>
+<a href="#l167" class="line" id="l167">    167</a><code>             Self::HashJoin { left, right, .. } | Self::NestedLoopJoin { left, right, .. } =&gt; {</code>
+<a href="#l168" class="line" id="l168">    168</a><code>                 left.columns() + right.columns()</code>
+<a href="#l169" class="line" id="l169">    169</a><code>             }</code>
+<a href="#l170" class="line" id="l170">    170</a><code> </code>
+<a href="#l171" class="line" id="l171">    171</a><code>             // Simple nodes just pass through the source columns.</code>
+<a href="#l172" class="line" id="l172">    172</a><code>             Self::Filter { source, .. }</code>
+<a href="#l173" class="line" id="l173">    173</a><code>             | Self::Limit { source, .. }</code>
+<a href="#l174" class="line" id="l174">    174</a><code>             | Self::Offset { source, .. }</code>
+<a href="#l175" class="line" id="l175">    175</a><code>             | Self::Order { source, .. } =&gt; source.columns(),</code>
+<a href="#l176" class="line" id="l176">    176</a><code> </code>
+<a href="#l177" class="line" id="l177">    177</a><code>             // And some are trivial.</code>
+<a href="#l178" class="line" id="l178">    178</a><code>             Self::Nothing { columns } =&gt; columns.len(),</code>
+<a href="#l179" class="line" id="l179">    179</a><code>             Self::Values { rows } =&gt; rows.first().map(|row| row.len()).unwrap_or(0),</code>
+<a href="#l180" class="line" id="l180">    180</a><code>         }</code>
+<a href="#l181" class="line" id="l181">    181</a><code>     }</code>
+<a href="#l182" class="line" id="l182">    182</a><code> </code>
+<a href="#l183" class="line" id="l183">    183</a><code>     /// Returns a label for a column, if any, by tracing the column through the</code>
+<a href="#l184" class="line" id="l184">    184</a><code>     /// plan tree. Only used for query result headers and plan display purposes,</code>
+<a href="#l185" class="line" id="l185">    185</a><code>     /// not to look up expression columns (see Scope).</code>
+<a href="#l186" class="line" id="l186">    186</a><code>     pub fn column_label(&amp;self, index: usize) -&gt; Label {</code>
+<a href="#l187" class="line" id="l187">    187</a><code>         match self {</code>
+<a href="#l188" class="line" id="l188">    188</a><code>             // Source nodes use the table/column name.</code>
+<a href="#l189" class="line" id="l189">    189</a><code>             Self::IndexLookup { table, alias, .. }</code>
+<a href="#l190" class="line" id="l190">    190</a><code>             | Self::KeyLookup { table, alias, .. }</code>
+<a href="#l191" class="line" id="l191">    191</a><code>             | Self::Scan { table, alias, .. } =&gt; Label::Qualified(</code>
+<a href="#l192" class="line" id="l192">    192</a><code>                 alias.as_ref().unwrap_or(&amp;table.name).clone(),</code>
+<a href="#l193" class="line" id="l193">    193</a><code>                 table.columns[index].name.clone(),</code>
+<a href="#l194" class="line" id="l194">    194</a><code>             ),</code>
+<a href="#l195" class="line" id="l195">    195</a><code> </code>
+<a href="#l196" class="line" id="l196">    196</a><code>             // Some nodes rearrange columns. Route them to the correct</code>
+<a href="#l197" class="line" id="l197">    197</a><code>             // upstream column where appropriate.</code>
+<a href="#l198" class="line" id="l198">    198</a><code>             Self::Aggregate { source, group_by, .. } =&gt; match group_by.get(index) {</code>
+<a href="#l199" class="line" id="l199">    199</a><code>                 Some(Expression::Column(index)) =&gt; source.column_label(*index),</code>
+<a href="#l200" class="line" id="l200">    200</a><code>                 Some(_) | None =&gt; Label::None,</code>
+<a href="#l201" class="line" id="l201">    201</a><code>             },</code>
+<a href="#l202" class="line" id="l202">    202</a><code>             Self::Projection { source, expressions, aliases } =&gt; match aliases.get(index) {</code>
+<a href="#l203" class="line" id="l203">    203</a><code>                 Some(Label::None) | None =&gt; match expressions.get(index) {</code>
+<a href="#l204" class="line" id="l204">    204</a><code>                     // Unaliased column references route to the source.</code>
+<a href="#l205" class="line" id="l205">    205</a><code>                     Some(Expression::Column(index)) =&gt; source.column_label(*index),</code>
+<a href="#l206" class="line" id="l206">    206</a><code>                     // Unaliased expressions don&#39;t have a name.</code>
+<a href="#l207" class="line" id="l207">    207</a><code>                     Some(_) | None =&gt; Label::None,</code>
+<a href="#l208" class="line" id="l208">    208</a><code>                 },</code>
+<a href="#l209" class="line" id="l209">    209</a><code>                 // Aliased columns use the alias.</code>
+<a href="#l210" class="line" id="l210">    210</a><code>                 Some(alias) =&gt; alias.clone(),</code>
+<a href="#l211" class="line" id="l211">    211</a><code>             },</code>
+<a href="#l212" class="line" id="l212">    212</a><code>             Self::Remap { source, targets } =&gt; targets</code>
+<a href="#l213" class="line" id="l213">    213</a><code>                 .iter()</code>
+<a href="#l214" class="line" id="l214">    214</a><code>                 .position(|t| t == &amp;Some(index))</code>
+<a href="#l215" class="line" id="l215">    215</a><code>                 .map(|i| source.column_label(i))</code>
+<a href="#l216" class="line" id="l216">    216</a><code>                 .unwrap_or(Label::None),</code>
+<a href="#l217" class="line" id="l217">    217</a><code> </code>
+<a href="#l218" class="line" id="l218">    218</a><code>             // Joins dispatch to the appropriate source.</code>
+<a href="#l219" class="line" id="l219">    219</a><code>             Self::HashJoin { left, right, .. } | Self::NestedLoopJoin { left, right, .. } =&gt; {</code>
+<a href="#l220" class="line" id="l220">    220</a><code>                 if index &lt; left.columns() {</code>
+<a href="#l221" class="line" id="l221">    221</a><code>                     left.column_label(index)</code>
+<a href="#l222" class="line" id="l222">    222</a><code>                 } else {</code>
+<a href="#l223" class="line" id="l223">    223</a><code>                     right.column_label(index - left.columns())</code>
+<a href="#l224" class="line" id="l224">    224</a><code>                 }</code>
+<a href="#l225" class="line" id="l225">    225</a><code>             }</code>
+<a href="#l226" class="line" id="l226">    226</a><code> </code>
+<a href="#l227" class="line" id="l227">    227</a><code>             // Simple nodes just dispatch to the source.</code>
+<a href="#l228" class="line" id="l228">    228</a><code>             Self::Filter { source, .. }</code>
+<a href="#l229" class="line" id="l229">    229</a><code>             | Self::Limit { source, .. }</code>
+<a href="#l230" class="line" id="l230">    230</a><code>             | Self::Offset { source, .. }</code>
+<a href="#l231" class="line" id="l231">    231</a><code>             | Self::Order { source, .. } =&gt; source.column_label(index),</code>
+<a href="#l232" class="line" id="l232">    232</a><code> </code>
+<a href="#l233" class="line" id="l233">    233</a><code>             // Nothing nodes contain the original columns of replaced nodes.</code>
+<a href="#l234" class="line" id="l234">    234</a><code>             Self::Nothing { columns } =&gt; columns.get(index).cloned().unwrap_or(Label::None),</code>
+<a href="#l235" class="line" id="l235">    235</a><code> </code>
+<a href="#l236" class="line" id="l236">    236</a><code>             // And some don&#39;t have any names at all.</code>
+<a href="#l237" class="line" id="l237">    237</a><code>             Self::Values { .. } =&gt; Label::None,</code>
+<a href="#l238" class="line" id="l238">    238</a><code>         }</code>
+<a href="#l239" class="line" id="l239">    239</a><code>     }</code>
+<a href="#l240" class="line" id="l240">    240</a><code> </code>
+<a href="#l241" class="line" id="l241">    241</a><code>     /// Recursively transforms query nodes depth-first by applying the given</code>
+<a href="#l242" class="line" id="l242">    242</a><code>     /// closures before and after descending.</code>
+<a href="#l243" class="line" id="l243">    243</a><code>     pub fn transform(</code>
+<a href="#l244" class="line" id="l244">    244</a><code>         mut self,</code>
+<a href="#l245" class="line" id="l245">    245</a><code>         before: &amp;impl Fn(Self) -&gt; Result&lt;Self&gt;,</code>
+<a href="#l246" class="line" id="l246">    246</a><code>         after: &amp;impl Fn(Self) -&gt; Result&lt;Self&gt;,</code>
+<a href="#l247" class="line" id="l247">    247</a><code>     ) -&gt; Result&lt;Self&gt; {</code>
+<a href="#l248" class="line" id="l248">    248</a><code>         // Helper for transforming boxed nodes.</code>
+<a href="#l249" class="line" id="l249">    249</a><code>         let xform = |mut node: Box&lt;Node&gt;| -&gt; Result&lt;Box&lt;Node&gt;&gt; {</code>
+<a href="#l250" class="line" id="l250">    250</a><code>             *node = node.transform(before, after)?;</code>
+<a href="#l251" class="line" id="l251">    251</a><code>             Ok(node)</code>
+<a href="#l252" class="line" id="l252">    252</a><code>         };</code>
+<a href="#l253" class="line" id="l253">    253</a><code> </code>
+<a href="#l254" class="line" id="l254">    254</a><code>         self = before(self)?;</code>
+<a href="#l255" class="line" id="l255">    255</a><code>         self = match self {</code>
+<a href="#l256" class="line" id="l256">    256</a><code>             Self::Aggregate { source, group_by, aggregates } =&gt; {</code>
+<a href="#l257" class="line" id="l257">    257</a><code>                 Self::Aggregate { source: xform(source)?, group_by, aggregates }</code>
+<a href="#l258" class="line" id="l258">    258</a><code>             }</code>
+<a href="#l259" class="line" id="l259">    259</a><code>             Self::Filter { source, predicate } =&gt; {</code>
+<a href="#l260" class="line" id="l260">    260</a><code>                 Self::Filter { source: xform(source)?, predicate }</code>
+<a href="#l261" class="line" id="l261">    261</a><code>             }</code>
+<a href="#l262" class="line" id="l262">    262</a><code>             Self::HashJoin { left, left_column, right, right_column, outer } =&gt; Self::HashJoin {</code>
+<a href="#l263" class="line" id="l263">    263</a><code>                 left: xform(left)?,</code>
+<a href="#l264" class="line" id="l264">    264</a><code>                 left_column,</code>
+<a href="#l265" class="line" id="l265">    265</a><code>                 right: xform(right)?,</code>
+<a href="#l266" class="line" id="l266">    266</a><code>                 right_column,</code>
+<a href="#l267" class="line" id="l267">    267</a><code>                 outer,</code>
+<a href="#l268" class="line" id="l268">    268</a><code>             },</code>
+<a href="#l269" class="line" id="l269">    269</a><code>             Self::Limit { source, limit } =&gt; Self::Limit { source: xform(source)?, limit },</code>
+<a href="#l270" class="line" id="l270">    270</a><code>             Self::NestedLoopJoin { left, right, predicate, outer } =&gt; {</code>
+<a href="#l271" class="line" id="l271">    271</a><code>                 Self::NestedLoopJoin { left: xform(left)?, right: xform(right)?, predicate, outer }</code>
+<a href="#l272" class="line" id="l272">    272</a><code>             }</code>
+<a href="#l273" class="line" id="l273">    273</a><code>             Self::Offset { source, offset } =&gt; Self::Offset { source: xform(source)?, offset },</code>
+<a href="#l274" class="line" id="l274">    274</a><code>             Self::Order { source, key } =&gt; Self::Order { source: xform(source)?, key },</code>
+<a href="#l275" class="line" id="l275">    275</a><code>             Self::Projection { source, expressions, aliases } =&gt; {</code>
+<a href="#l276" class="line" id="l276">    276</a><code>                 Self::Projection { source: xform(source)?, expressions, aliases }</code>
+<a href="#l277" class="line" id="l277">    277</a><code>             }</code>
+<a href="#l278" class="line" id="l278">    278</a><code>             Self::Remap { source, targets } =&gt; Self::Remap { source: xform(source)?, targets },</code>
+<a href="#l279" class="line" id="l279">    279</a><code> </code>
+<a href="#l280" class="line" id="l280">    280</a><code>             Self::IndexLookup { .. }</code>
+<a href="#l281" class="line" id="l281">    281</a><code>             | Self::KeyLookup { .. }</code>
+<a href="#l282" class="line" id="l282">    282</a><code>             | Self::Nothing { .. }</code>
+<a href="#l283" class="line" id="l283">    283</a><code>             | Self::Scan { .. }</code>
+<a href="#l284" class="line" id="l284">    284</a><code>             | Self::Values { .. } =&gt; self,</code>
+<a href="#l285" class="line" id="l285">    285</a><code>         };</code>
+<a href="#l286" class="line" id="l286">    286</a><code>         self = after(self)?;</code>
+<a href="#l287" class="line" id="l287">    287</a><code>         Ok(self)</code>
+<a href="#l288" class="line" id="l288">    288</a><code>     }</code>
+<a href="#l289" class="line" id="l289">    289</a><code> </code>
+<a href="#l290" class="line" id="l290">    290</a><code>     /// Recursively transforms all node expressions by calling the given</code>
+<a href="#l291" class="line" id="l291">    291</a><code>     /// closures on them before and after descending.</code>
+<a href="#l292" class="line" id="l292">    292</a><code>     pub fn transform_expressions(</code>
+<a href="#l293" class="line" id="l293">    293</a><code>         self,</code>
+<a href="#l294" class="line" id="l294">    294</a><code>         before: &amp;impl Fn(Expression) -&gt; Result&lt;Expression&gt;,</code>
+<a href="#l295" class="line" id="l295">    295</a><code>         after: &amp;impl Fn(Expression) -&gt; Result&lt;Expression&gt;,</code>
+<a href="#l296" class="line" id="l296">    296</a><code>     ) -&gt; Result&lt;Self&gt; {</code>
+<a href="#l297" class="line" id="l297">    297</a><code>         Ok(match self {</code>
+<a href="#l298" class="line" id="l298">    298</a><code>             Self::Filter { source, mut predicate } =&gt; {</code>
+<a href="#l299" class="line" id="l299">    299</a><code>                 predicate = predicate.transform(before, after)?;</code>
+<a href="#l300" class="line" id="l300">    300</a><code>                 Self::Filter { source, predicate }</code>
+<a href="#l301" class="line" id="l301">    301</a><code>             }</code>
+<a href="#l302" class="line" id="l302">    302</a><code>             Self::NestedLoopJoin { left, right, predicate: Some(predicate), outer } =&gt; {</code>
+<a href="#l303" class="line" id="l303">    303</a><code>                 let predicate = Some(predicate.transform(before, after)?);</code>
+<a href="#l304" class="line" id="l304">    304</a><code>                 Self::NestedLoopJoin { left, right, predicate, outer }</code>
+<a href="#l305" class="line" id="l305">    305</a><code>             }</code>
+<a href="#l306" class="line" id="l306">    306</a><code>             Self::Order { source, mut key } =&gt; {</code>
+<a href="#l307" class="line" id="l307">    307</a><code>                 key = key</code>
+<a href="#l308" class="line" id="l308">    308</a><code>                     .into_iter()</code>
+<a href="#l309" class="line" id="l309">    309</a><code>                     .map(|(expr, dir)| Ok((expr.transform(before, after)?, dir)))</code>
+<a href="#l310" class="line" id="l310">    310</a><code>                     .collect::&lt;Result&lt;_&gt;&gt;()?;</code>
+<a href="#l311" class="line" id="l311">    311</a><code>                 Self::Order { source, key }</code>
+<a href="#l312" class="line" id="l312">    312</a><code>             }</code>
+<a href="#l313" class="line" id="l313">    313</a><code>             Self::Projection { source, mut expressions, aliases } =&gt; {</code>
+<a href="#l314" class="line" id="l314">    314</a><code>                 expressions = expressions</code>
+<a href="#l315" class="line" id="l315">    315</a><code>                     .into_iter()</code>
+<a href="#l316" class="line" id="l316">    316</a><code>                     .map(|expr| expr.transform(before, after))</code>
+<a href="#l317" class="line" id="l317">    317</a><code>                     .try_collect()?;</code>
+<a href="#l318" class="line" id="l318">    318</a><code>                 Self::Projection { source, expressions, aliases }</code>
+<a href="#l319" class="line" id="l319">    319</a><code>             }</code>
+<a href="#l320" class="line" id="l320">    320</a><code>             Self::Scan { table, alias, filter: Some(filter) } =&gt; {</code>
+<a href="#l321" class="line" id="l321">    321</a><code>                 let filter = Some(filter.transform(before, after)?);</code>
+<a href="#l322" class="line" id="l322">    322</a><code>                 Self::Scan { table, alias, filter }</code>
+<a href="#l323" class="line" id="l323">    323</a><code>             }</code>
+<a href="#l324" class="line" id="l324">    324</a><code>             Self::Values { mut rows } =&gt; {</code>
+<a href="#l325" class="line" id="l325">    325</a><code>                 rows = rows</code>
+<a href="#l326" class="line" id="l326">    326</a><code>                     .into_iter()</code>
+<a href="#l327" class="line" id="l327">    327</a><code>                     .map(|row| row.into_iter().map(|expr| expr.transform(before, after)).collect())</code>
+<a href="#l328" class="line" id="l328">    328</a><code>                     .try_collect()?;</code>
+<a href="#l329" class="line" id="l329">    329</a><code>                 Self::Values { rows }</code>
+<a href="#l330" class="line" id="l330">    330</a><code>             }</code>
+<a href="#l331" class="line" id="l331">    331</a><code> </code>
+<a href="#l332" class="line" id="l332">    332</a><code>             Self::Aggregate { .. }</code>
+<a href="#l333" class="line" id="l333">    333</a><code>             | Self::HashJoin { .. }</code>
+<a href="#l334" class="line" id="l334">    334</a><code>             | Self::IndexLookup { .. }</code>
+<a href="#l335" class="line" id="l335">    335</a><code>             | Self::KeyLookup { .. }</code>
+<a href="#l336" class="line" id="l336">    336</a><code>             | Self::Limit { .. }</code>
+<a href="#l337" class="line" id="l337">    337</a><code>             | Self::NestedLoopJoin { predicate: None, .. }</code>
+<a href="#l338" class="line" id="l338">    338</a><code>             | Self::Nothing { .. }</code>
+<a href="#l339" class="line" id="l339">    339</a><code>             | Self::Offset { .. }</code>
+<a href="#l340" class="line" id="l340">    340</a><code>             | Self::Remap { .. }</code>
+<a href="#l341" class="line" id="l341">    341</a><code>             | Self::Scan { filter: None, .. } =&gt; self,</code>
+<a href="#l342" class="line" id="l342">    342</a><code>         })</code>
+<a href="#l343" class="line" id="l343">    343</a><code>     }</code>
+<a href="#l344" class="line" id="l344">    344</a><code> }</code>
+<a href="#l345" class="line" id="l345">    345</a><code> </code>
+<a href="#l346" class="line" id="l346">    346</a><code> /// An aggregate function.</code>
+<a href="#l347" class="line" id="l347">    347</a><code> #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]</code>
+<a href="#l348" class="line" id="l348">    348</a><code> pub enum Aggregate {</code>
+<a href="#l349" class="line" id="l349">    349</a><code>     Average(Expression),</code>
+<a href="#l350" class="line" id="l350">    350</a><code>     Count(Expression),</code>
+<a href="#l351" class="line" id="l351">    351</a><code>     Max(Expression),</code>
+<a href="#l352" class="line" id="l352">    352</a><code>     Min(Expression),</code>
+<a href="#l353" class="line" id="l353">    353</a><code>     Sum(Expression),</code>
+<a href="#l354" class="line" id="l354">    354</a><code> }</code>
+<a href="#l355" class="line" id="l355">    355</a><code> </code>
+<a href="#l356" class="line" id="l356">    356</a><code> impl Aggregate {</code>
+<a href="#l357" class="line" id="l357">    357</a><code>     fn format(&amp;self, node: &amp;Node) -&gt; String {</code>
+<a href="#l358" class="line" id="l358">    358</a><code>         match self {</code>
+<a href="#l359" class="line" id="l359">    359</a><code>             Self::Average(expr) =&gt; format!(&quot;avg({})&quot;, expr.format(node)),</code>
+<a href="#l360" class="line" id="l360">    360</a><code>             Self::Count(expr) =&gt; format!(&quot;count({})&quot;, expr.format(node)),</code>
+<a href="#l361" class="line" id="l361">    361</a><code>             Self::Max(expr) =&gt; format!(&quot;max({})&quot;, expr.format(node)),</code>
+<a href="#l362" class="line" id="l362">    362</a><code>             Self::Min(expr) =&gt; format!(&quot;min({})&quot;, expr.format(node)),</code>
+<a href="#l363" class="line" id="l363">    363</a><code>             Self::Sum(expr) =&gt; format!(&quot;sum({})&quot;, expr.format(node)),</code>
+<a href="#l364" class="line" id="l364">    364</a><code>         }</code>
+<a href="#l365" class="line" id="l365">    365</a><code>     }</code>
+<a href="#l366" class="line" id="l366">    366</a><code> }</code>
+<a href="#l367" class="line" id="l367">    367</a><code> </code>
+<a href="#l368" class="line" id="l368">    368</a><code> /// A sort order direction.</code>
+<a href="#l369" class="line" id="l369">    369</a><code> #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]</code>
+<a href="#l370" class="line" id="l370">    370</a><code> pub enum Direction {</code>
+<a href="#l371" class="line" id="l371">    371</a><code>     Ascending,</code>
+<a href="#l372" class="line" id="l372">    372</a><code>     Descending,</code>
+<a href="#l373" class="line" id="l373">    373</a><code> }</code>
+<a href="#l374" class="line" id="l374">    374</a><code> </code>
+<a href="#l375" class="line" id="l375">    375</a><code> impl std::fmt::Display for Direction {</code>
+<a href="#l376" class="line" id="l376">    376</a><code>     fn fmt(&amp;self, f: &amp;mut std::fmt::Formatter&lt;&#39;_&gt;) -&gt; std::fmt::Result {</code>
+<a href="#l377" class="line" id="l377">    377</a><code>         match self {</code>
+<a href="#l378" class="line" id="l378">    378</a><code>             Self::Ascending =&gt; f.write_str(&quot;asc&quot;),</code>
+<a href="#l379" class="line" id="l379">    379</a><code>             Self::Descending =&gt; f.write_str(&quot;desc&quot;),</code>
+<a href="#l380" class="line" id="l380">    380</a><code>         }</code>
+<a href="#l381" class="line" id="l381">    381</a><code>     }</code>
+<a href="#l382" class="line" id="l382">    382</a><code> }</code>
+<a href="#l383" class="line" id="l383">    383</a><code> </code>
+<a href="#l384" class="line" id="l384">    384</a><code> impl From&lt;ast::Direction&gt; for Direction {</code>
+<a href="#l385" class="line" id="l385">    385</a><code>     fn from(dir: ast::Direction) -&gt; Self {</code>
+<a href="#l386" class="line" id="l386">    386</a><code>         match dir {</code>
+<a href="#l387" class="line" id="l387">    387</a><code>             ast::Direction::Ascending =&gt; Self::Ascending,</code>
+<a href="#l388" class="line" id="l388">    388</a><code>             ast::Direction::Descending =&gt; Self::Descending,</code>
+<a href="#l389" class="line" id="l389">    389</a><code>         }</code>
+<a href="#l390" class="line" id="l390">    390</a><code>     }</code>
+<a href="#l391" class="line" id="l391">    391</a><code> }</code>
+<a href="#l392" class="line" id="l392">    392</a><code> </code>
+<a href="#l393" class="line" id="l393">    393</a><code> /// Formats the plan as an EXPLAIN tree.</code>
+<a href="#l394" class="line" id="l394">    394</a><code> impl std::fmt::Display for Plan {</code>
+<a href="#l395" class="line" id="l395">    395</a><code>     fn fmt(&amp;self, f: &amp;mut std::fmt::Formatter&lt;&#39;_&gt;) -&gt; std::fmt::Result {</code>
+<a href="#l396" class="line" id="l396">    396</a><code>         match self {</code>
+<a href="#l397" class="line" id="l397">    397</a><code>             Self::CreateTable { schema } =&gt; write!(f, &quot;CreateTable: {}&quot;, schema.name),</code>
+<a href="#l398" class="line" id="l398">    398</a><code>             Self::DropTable { table, .. } =&gt; write!(f, &quot;DropTable: {table}&quot;),</code>
+<a href="#l399" class="line" id="l399">    399</a><code>             Self::Delete { table, source, .. } =&gt; {</code>
+<a href="#l400" class="line" id="l400">    400</a><code>                 write!(f, &quot;Delete: {table}&quot;)?;</code>
+<a href="#l401" class="line" id="l401">    401</a><code>                 source.format(f, &quot;&quot;, false, true)</code>
+<a href="#l402" class="line" id="l402">    402</a><code>             }</code>
+<a href="#l403" class="line" id="l403">    403</a><code>             Self::Insert { table, source, .. } =&gt; {</code>
+<a href="#l404" class="line" id="l404">    404</a><code>                 write!(f, &quot;Insert: {}&quot;, table.name)?;</code>
+<a href="#l405" class="line" id="l405">    405</a><code>                 source.format(f, &quot;&quot;, false, true)</code>
+<a href="#l406" class="line" id="l406">    406</a><code>             }</code>
+<a href="#l407" class="line" id="l407">    407</a><code>             Self::Update { table, source, expressions, .. } =&gt; {</code>
+<a href="#l408" class="line" id="l408">    408</a><code>                 let expressions = expressions</code>
+<a href="#l409" class="line" id="l409">    409</a><code>                     .iter()</code>
+<a href="#l410" class="line" id="l410">    410</a><code>                     .map(|(i, expr)| format!(&quot;{}={}&quot;, table.columns[*i].name, expr.format(source)))</code>
+<a href="#l411" class="line" id="l411">    411</a><code>                     .join(&quot;, &quot;);</code>
+<a href="#l412" class="line" id="l412">    412</a><code>                 write!(f, &quot;Update: {} ({expressions})&quot;, table.name)?;</code>
+<a href="#l413" class="line" id="l413">    413</a><code>                 source.format(f, &quot;&quot;, false, true)</code>
+<a href="#l414" class="line" id="l414">    414</a><code>             }</code>
+<a href="#l415" class="line" id="l415">    415</a><code>             Self::Select(root) =&gt; root.format(f, &quot;&quot;, true, true),</code>
+<a href="#l416" class="line" id="l416">    416</a><code>         }</code>
+<a href="#l417" class="line" id="l417">    417</a><code>     }</code>
+<a href="#l418" class="line" id="l418">    418</a><code> }</code>
+<a href="#l419" class="line" id="l419">    419</a><code> </code>
+<a href="#l420" class="line" id="l420">    420</a><code> impl std::fmt::Display for Node {</code>
+<a href="#l421" class="line" id="l421">    421</a><code>     fn fmt(&amp;self, f: &amp;mut std::fmt::Formatter&lt;&#39;_&gt;) -&gt; std::fmt::Result {</code>
+<a href="#l422" class="line" id="l422">    422</a><code>         self.format(f, &quot;&quot;, true, true)</code>
+<a href="#l423" class="line" id="l423">    423</a><code>     }</code>
+<a href="#l424" class="line" id="l424">    424</a><code> }</code>
+<a href="#l425" class="line" id="l425">    425</a><code> </code>
+<a href="#l426" class="line" id="l426">    426</a><code> impl Node {</code>
+<a href="#l427" class="line" id="l427">    427</a><code>     /// Recursively formats the node. Prefix is used for tree branch lines. root</code>
+<a href="#l428" class="line" id="l428">    428</a><code>     /// is true if this is the root (first) node, and last_child is true if this</code>
+<a href="#l429" class="line" id="l429">    429</a><code>     /// is the last child node of the parent.</code>
+<a href="#l430" class="line" id="l430">    430</a><code>     pub fn format(</code>
+<a href="#l431" class="line" id="l431">    431</a><code>         &amp;self,</code>
+<a href="#l432" class="line" id="l432">    432</a><code>         f: &amp;mut std::fmt::Formatter&lt;&#39;_&gt;,</code>
+<a href="#l433" class="line" id="l433">    433</a><code>         prefix: &amp;str,</code>
+<a href="#l434" class="line" id="l434">    434</a><code>         root: bool,</code>
+<a href="#l435" class="line" id="l435">    435</a><code>         last_child: bool,</code>
+<a href="#l436" class="line" id="l436">    436</a><code>     ) -&gt; std::fmt::Result {</code>
+<a href="#l437" class="line" id="l437">    437</a><code>         // If this is not the root node, emit a newline after the previous node.</code>
+<a href="#l438" class="line" id="l438">    438</a><code>         // This avoids a spurious newline at the end of the plan.</code>
+<a href="#l439" class="line" id="l439">    439</a><code>         if !root {</code>
+<a href="#l440" class="line" id="l440">    440</a><code>             writeln!(f)?;</code>
+<a href="#l441" class="line" id="l441">    441</a><code>         }</code>
+<a href="#l442" class="line" id="l442">    442</a><code> </code>
+<a href="#l443" class="line" id="l443">    443</a><code>         // Prefix the node with a tree branch line. Modify the prefix for any</code>
+<a href="#l444" class="line" id="l444">    444</a><code>         // child nodes we&#39;ll recurse into.</code>
+<a href="#l445" class="line" id="l445">    445</a><code>         let prefix = if !last_child {</code>
+<a href="#l446" class="line" id="l446">    446</a><code>             write!(f, &quot;{prefix}├─ &quot;)?;</code>
+<a href="#l447" class="line" id="l447">    447</a><code>             format!(&quot;{prefix}│  &quot;)</code>
+<a href="#l448" class="line" id="l448">    448</a><code>         } else if !root {</code>
+<a href="#l449" class="line" id="l449">    449</a><code>             write!(f, &quot;{prefix}└─ &quot;)?;</code>
+<a href="#l450" class="line" id="l450">    450</a><code>             format!(&quot;{prefix}   &quot;)</code>
+<a href="#l451" class="line" id="l451">    451</a><code>         } else {</code>
+<a href="#l452" class="line" id="l452">    452</a><code>             write!(f, &quot;{prefix}&quot;)?;</code>
+<a href="#l453" class="line" id="l453">    453</a><code>             prefix.to_string()</code>
+<a href="#l454" class="line" id="l454">    454</a><code>         };</code>
+<a href="#l455" class="line" id="l455">    455</a><code> </code>
+<a href="#l456" class="line" id="l456">    456</a><code>         // Format the node.</code>
+<a href="#l457" class="line" id="l457">    457</a><code>         match self {</code>
+<a href="#l458" class="line" id="l458">    458</a><code>             Self::Aggregate { source, aggregates, group_by } =&gt; {</code>
+<a href="#l459" class="line" id="l459">    459</a><code>                 let aggregates = group_by</code>
+<a href="#l460" class="line" id="l460">    460</a><code>                     .iter()</code>
+<a href="#l461" class="line" id="l461">    461</a><code>                     .map(|group_by| group_by.format(source))</code>
+<a href="#l462" class="line" id="l462">    462</a><code>                     .chain(aggregates.iter().map(|agg| agg.format(source)))</code>
+<a href="#l463" class="line" id="l463">    463</a><code>                     .join(&quot;, &quot;);</code>
+<a href="#l464" class="line" id="l464">    464</a><code>                 write!(f, &quot;Aggregate: {aggregates}&quot;)?;</code>
+<a href="#l465" class="line" id="l465">    465</a><code>                 source.format(f, &amp;prefix, false, true)?;</code>
+<a href="#l466" class="line" id="l466">    466</a><code>             }</code>
+<a href="#l467" class="line" id="l467">    467</a><code>             Self::Filter { source, predicate } =&gt; {</code>
+<a href="#l468" class="line" id="l468">    468</a><code>                 write!(f, &quot;Filter: {}&quot;, predicate.format(source))?;</code>
+<a href="#l469" class="line" id="l469">    469</a><code>                 source.format(f, &amp;prefix, false, true)?;</code>
+<a href="#l470" class="line" id="l470">    470</a><code>             }</code>
+<a href="#l471" class="line" id="l471">    471</a><code>             Self::HashJoin { left, left_column, right, right_column, outer } =&gt; {</code>
+<a href="#l472" class="line" id="l472">    472</a><code>                 let kind = if *outer { &quot;outer&quot; } else { &quot;inner&quot; };</code>
+<a href="#l473" class="line" id="l473">    473</a><code>                 let left_column = match left.column_label(*left_column) {</code>
+<a href="#l474" class="line" id="l474">    474</a><code>                     Label::None =&gt; format!(&quot;left #{left_column}&quot;),</code>
+<a href="#l475" class="line" id="l475">    475</a><code>                     label =&gt; format!(&quot;{label}&quot;),</code>
+<a href="#l476" class="line" id="l476">    476</a><code>                 };</code>
+<a href="#l477" class="line" id="l477">    477</a><code>                 let right_column = match right.column_label(*right_column) {</code>
+<a href="#l478" class="line" id="l478">    478</a><code>                     Label::None =&gt; format!(&quot;right #{right_column}&quot;),</code>
+<a href="#l479" class="line" id="l479">    479</a><code>                     label =&gt; format!(&quot;{label}&quot;),</code>
+<a href="#l480" class="line" id="l480">    480</a><code>                 };</code>
+<a href="#l481" class="line" id="l481">    481</a><code>                 write!(f, &quot;HashJoin: {kind} on {left_column} = {right_column}&quot;)?;</code>
+<a href="#l482" class="line" id="l482">    482</a><code>                 left.format(f, &amp;prefix, false, false)?;</code>
+<a href="#l483" class="line" id="l483">    483</a><code>                 right.format(f, &amp;prefix, false, true)?;</code>
+<a href="#l484" class="line" id="l484">    484</a><code>             }</code>
+<a href="#l485" class="line" id="l485">    485</a><code>             Self::IndexLookup { table, column, alias, values } =&gt; {</code>
+<a href="#l486" class="line" id="l486">    486</a><code>                 let column = &amp;table.columns[*column].name;</code>
+<a href="#l487" class="line" id="l487">    487</a><code>                 write!(f, &quot;IndexLookup: {}.{column}&quot;, table.name)?;</code>
+<a href="#l488" class="line" id="l488">    488</a><code>                 if let Some(alias) = alias {</code>
+<a href="#l489" class="line" id="l489">    489</a><code>                     write!(f, &quot; as {alias}.{column}&quot;)?;</code>
+<a href="#l490" class="line" id="l490">    490</a><code>                 }</code>
+<a href="#l491" class="line" id="l491">    491</a><code>                 if !values.is_empty() &amp;&amp; values.len() &lt; 10 {</code>
+<a href="#l492" class="line" id="l492">    492</a><code>                     write!(f, &quot; ({})&quot;, values.iter().join(&quot;, &quot;))?;</code>
+<a href="#l493" class="line" id="l493">    493</a><code>                 } else {</code>
+<a href="#l494" class="line" id="l494">    494</a><code>                     write!(f, &quot; ({} values)&quot;, values.len())?;</code>
+<a href="#l495" class="line" id="l495">    495</a><code>                 }</code>
+<a href="#l496" class="line" id="l496">    496</a><code>             }</code>
+<a href="#l497" class="line" id="l497">    497</a><code>             Self::KeyLookup { table, alias, keys } =&gt; {</code>
+<a href="#l498" class="line" id="l498">    498</a><code>                 write!(f, &quot;KeyLookup: {}&quot;, table.name)?;</code>
+<a href="#l499" class="line" id="l499">    499</a><code>                 if let Some(alias) = alias {</code>
+<a href="#l500" class="line" id="l500">    500</a><code>                     write!(f, &quot; as {alias}&quot;)?;</code>
+<a href="#l501" class="line" id="l501">    501</a><code>                 }</code>
+<a href="#l502" class="line" id="l502">    502</a><code>                 if !keys.is_empty() &amp;&amp; keys.len() &lt; 10 {</code>
+<a href="#l503" class="line" id="l503">    503</a><code>                     write!(f, &quot; ({})&quot;, keys.iter().join(&quot;, &quot;))?;</code>
+<a href="#l504" class="line" id="l504">    504</a><code>                 } else {</code>
+<a href="#l505" class="line" id="l505">    505</a><code>                     write!(f, &quot; ({} keys)&quot;, keys.len())?;</code>
+<a href="#l506" class="line" id="l506">    506</a><code>                 }</code>
+<a href="#l507" class="line" id="l507">    507</a><code>             }</code>
+<a href="#l508" class="line" id="l508">    508</a><code>             Self::Limit { source, limit } =&gt; {</code>
+<a href="#l509" class="line" id="l509">    509</a><code>                 write!(f, &quot;Limit: {limit}&quot;)?;</code>
+<a href="#l510" class="line" id="l510">    510</a><code>                 source.format(f, &amp;prefix, false, true)?;</code>
+<a href="#l511" class="line" id="l511">    511</a><code>             }</code>
+<a href="#l512" class="line" id="l512">    512</a><code>             Self::NestedLoopJoin { left, right, predicate, outer, .. } =&gt; {</code>
+<a href="#l513" class="line" id="l513">    513</a><code>                 let kind = if *outer { &quot;outer&quot; } else { &quot;inner&quot; };</code>
+<a href="#l514" class="line" id="l514">    514</a><code>                 write!(f, &quot;NestedLoopJoin: {kind}&quot;)?;</code>
+<a href="#l515" class="line" id="l515">    515</a><code>                 if let Some(predicate) = predicate {</code>
+<a href="#l516" class="line" id="l516">    516</a><code>                     write!(f, &quot; on {}&quot;, predicate.format(self))?;</code>
+<a href="#l517" class="line" id="l517">    517</a><code>                 }</code>
+<a href="#l518" class="line" id="l518">    518</a><code>                 left.format(f, &amp;prefix, false, false)?;</code>
+<a href="#l519" class="line" id="l519">    519</a><code>                 right.format(f, &amp;prefix, false, true)?;</code>
+<a href="#l520" class="line" id="l520">    520</a><code>             }</code>
+<a href="#l521" class="line" id="l521">    521</a><code>             Self::Nothing { .. } =&gt; write!(f, &quot;Nothing&quot;)?,</code>
+<a href="#l522" class="line" id="l522">    522</a><code>             Self::Offset { source, offset } =&gt; {</code>
+<a href="#l523" class="line" id="l523">    523</a><code>                 write!(f, &quot;Offset: {offset}&quot;)?;</code>
+<a href="#l524" class="line" id="l524">    524</a><code>                 source.format(f, &amp;prefix, false, true)?;</code>
+<a href="#l525" class="line" id="l525">    525</a><code>             }</code>
+<a href="#l526" class="line" id="l526">    526</a><code>             Self::Order { source, key: orders } =&gt; {</code>
+<a href="#l527" class="line" id="l527">    527</a><code>                 let orders = orders</code>
+<a href="#l528" class="line" id="l528">    528</a><code>                     .iter()</code>
+<a href="#l529" class="line" id="l529">    529</a><code>                     .map(|(expr, dir)| format!(&quot;{} {dir}&quot;, expr.format(source)))</code>
+<a href="#l530" class="line" id="l530">    530</a><code>                     .join(&quot;, &quot;);</code>
+<a href="#l531" class="line" id="l531">    531</a><code>                 write!(f, &quot;Order: {orders}&quot;)?;</code>
+<a href="#l532" class="line" id="l532">    532</a><code>                 source.format(f, &amp;prefix, false, true)?;</code>
+<a href="#l533" class="line" id="l533">    533</a><code>             }</code>
+<a href="#l534" class="line" id="l534">    534</a><code>             Self::Projection { source, expressions, aliases } =&gt; {</code>
+<a href="#l535" class="line" id="l535">    535</a><code>                 let expressions = expressions</code>
+<a href="#l536" class="line" id="l536">    536</a><code>                     .iter()</code>
+<a href="#l537" class="line" id="l537">    537</a><code>                     .enumerate()</code>
+<a href="#l538" class="line" id="l538">    538</a><code>                     .map(|(i, expr)| match aliases.get(i) {</code>
+<a href="#l539" class="line" id="l539">    539</a><code>                         Some(Label::None) | None =&gt; expr.format(source),</code>
+<a href="#l540" class="line" id="l540">    540</a><code>                         Some(alias) =&gt; format!(&quot;{} as {alias}&quot;, expr.format(source)),</code>
+<a href="#l541" class="line" id="l541">    541</a><code>                     })</code>
+<a href="#l542" class="line" id="l542">    542</a><code>                     .join(&quot;, &quot;);</code>
+<a href="#l543" class="line" id="l543">    543</a><code>                 write!(f, &quot;Projection: {expressions}&quot;)?;</code>
+<a href="#l544" class="line" id="l544">    544</a><code>                 source.format(f, &amp;prefix, false, true)?;</code>
+<a href="#l545" class="line" id="l545">    545</a><code>             }</code>
+<a href="#l546" class="line" id="l546">    546</a><code>             Self::Remap { source, targets } =&gt; {</code>
+<a href="#l547" class="line" id="l547">    547</a><code>                 let remap = remap_sources(targets)</code>
+<a href="#l548" class="line" id="l548">    548</a><code>                     .into_iter()</code>
+<a href="#l549" class="line" id="l549">    549</a><code>                     .map(|from| match from {</code>
+<a href="#l550" class="line" id="l550">    550</a><code>                         Some(from) =&gt; match source.column_label(from) {</code>
+<a href="#l551" class="line" id="l551">    551</a><code>                             Label::None =&gt; format!(&quot;#{from}&quot;),</code>
+<a href="#l552" class="line" id="l552">    552</a><code>                             label =&gt; label.to_string(),</code>
+<a href="#l553" class="line" id="l553">    553</a><code>                         },</code>
+<a href="#l554" class="line" id="l554">    554</a><code>                         None =&gt; &quot;Null&quot;.to_string(),</code>
+<a href="#l555" class="line" id="l555">    555</a><code>                     })</code>
+<a href="#l556" class="line" id="l556">    556</a><code>                     .join(&quot;, &quot;);</code>
+<a href="#l557" class="line" id="l557">    557</a><code>                 write!(f, &quot;Remap: {remap}&quot;)?;</code>
+<a href="#l558" class="line" id="l558">    558</a><code>                 let dropped = targets</code>
+<a href="#l559" class="line" id="l559">    559</a><code>                     .iter()</code>
+<a href="#l560" class="line" id="l560">    560</a><code>                     .enumerate()</code>
+<a href="#l561" class="line" id="l561">    561</a><code>                     .filter_map(|(i, v)| {</code>
+<a href="#l562" class="line" id="l562">    562</a><code>                         v.is_none().then_some(match source.column_label(i) {</code>
+<a href="#l563" class="line" id="l563">    563</a><code>                             Label::None =&gt; format!(&quot;#{i}&quot;),</code>
+<a href="#l564" class="line" id="l564">    564</a><code>                             label =&gt; format!(&quot;{label}&quot;),</code>
+<a href="#l565" class="line" id="l565">    565</a><code>                         })</code>
+<a href="#l566" class="line" id="l566">    566</a><code>                     })</code>
+<a href="#l567" class="line" id="l567">    567</a><code>                     .join(&quot;, &quot;);</code>
+<a href="#l568" class="line" id="l568">    568</a><code>                 if !dropped.is_empty() {</code>
+<a href="#l569" class="line" id="l569">    569</a><code>                     write!(f, &quot; (dropped: {dropped})&quot;)?;</code>
+<a href="#l570" class="line" id="l570">    570</a><code>                 }</code>
+<a href="#l571" class="line" id="l571">    571</a><code>                 source.format(f, &amp;prefix, false, true)?;</code>
+<a href="#l572" class="line" id="l572">    572</a><code>             }</code>
+<a href="#l573" class="line" id="l573">    573</a><code>             Self::Scan { table, alias, filter } =&gt; {</code>
+<a href="#l574" class="line" id="l574">    574</a><code>                 write!(f, &quot;Scan: {}&quot;, table.name)?;</code>
+<a href="#l575" class="line" id="l575">    575</a><code>                 if let Some(alias) = alias {</code>
+<a href="#l576" class="line" id="l576">    576</a><code>                     write!(f, &quot; as {alias}&quot;)?;</code>
+<a href="#l577" class="line" id="l577">    577</a><code>                 }</code>
+<a href="#l578" class="line" id="l578">    578</a><code>                 if let Some(filter) = filter {</code>
+<a href="#l579" class="line" id="l579">    579</a><code>                     write!(f, &quot; ({})&quot;, filter.format(self))?;</code>
+<a href="#l580" class="line" id="l580">    580</a><code>                 }</code>
+<a href="#l581" class="line" id="l581">    581</a><code>             }</code>
+<a href="#l582" class="line" id="l582">    582</a><code>             Self::Values { rows, .. } =&gt; {</code>
+<a href="#l583" class="line" id="l583">    583</a><code>                 write!(f, &quot;Values: &quot;)?;</code>
+<a href="#l584" class="line" id="l584">    584</a><code>                 match rows.len() {</code>
+<a href="#l585" class="line" id="l585">    585</a><code>                     1 if rows[0].is_empty() =&gt; write!(f, &quot;blank row&quot;)?,</code>
+<a href="#l586" class="line" id="l586">    586</a><code>                     1 =&gt; write!(f, &quot;{}&quot;, rows[0].iter().map(|e| e.format(self)).join(&quot;, &quot;))?,</code>
+<a href="#l587" class="line" id="l587">    587</a><code>                     n =&gt; write!(f, &quot;{n} rows&quot;)?,</code>
+<a href="#l588" class="line" id="l588">    588</a><code>                 }</code>
+<a href="#l589" class="line" id="l589">    589</a><code>             }</code>
+<a href="#l590" class="line" id="l590">    590</a><code>         };</code>
+<a href="#l591" class="line" id="l591">    591</a><code>         Ok(())</code>
+<a href="#l592" class="line" id="l592">    592</a><code>     }</code>
+<a href="#l593" class="line" id="l593">    593</a><code> }</code>
+<a href="#l594" class="line" id="l594">    594</a><code> </code>
+<a href="#l595" class="line" id="l595">    595</a><code> /// Inverts a Remap targets vector to a vector of source indexes, with None</code>
+<a href="#l596" class="line" id="l596">    596</a><code> /// for columns that weren&#39;t targeted.</code>
+<a href="#l597" class="line" id="l597">    597</a><code> pub fn remap_sources(targets: &amp;[Option&lt;usize&gt;]) -&gt; Vec&lt;Option&lt;usize&gt;&gt; {</code>
+<a href="#l598" class="line" id="l598">    598</a><code>     let size = targets.iter().filter_map(|v| *v).map(|i| i + 1).max().unwrap_or(0);</code>
+<a href="#l599" class="line" id="l599">    599</a><code>     let mut sources = vec![None; size];</code>
+<a href="#l600" class="line" id="l600">    600</a><code>     for (from, to) in targets.iter().enumerate() {</code>
+<a href="#l601" class="line" id="l601">    601</a><code>         if let Some(to) = to {</code>
+<a href="#l602" class="line" id="l602">    602</a><code>             sources[*to] = Some(from);</code>
+<a href="#l603" class="line" id="l603">    603</a><code>         }</code>
+<a href="#l604" class="line" id="l604">    604</a><code>     }</code>
+<a href="#l605" class="line" id="l605">    605</a><code>     sources</code>
+<a href="#l606" class="line" id="l606">    606</a><code> }</code>
 </pre>
 </div>
 </body>

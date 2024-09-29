@@ -12,171 +12,172 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Source+Code+Pro:ital,wght@0,200..900;1,200..900&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/default.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/base16/tender.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
 <script>hljs.highlightAll();</script>
-</head>
+<style>pre code.hljs {display: inline;padding: 0;} code.hljs {padding: 0;} .hljs {background: initial;}</style></head>
 <body>
 <table><tr><td><a href="../../../../../"><img src="../../../../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
 </span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<br>
 <a href="../../../../log.html">Log</a> | <a href="../../../../files.html">Files</a> | <a href="../../../../refs.html">Refs</a> | <a href="../../../../file/README.md.html">README</a> | <a href="../../../../file/LICENSE.html">LICENSE</a></td></tr></table>
 <hr/>
 <div id="content">
 <p> execute.rs (5753B)</p><hr/><pre id="blob">
-<code><a href="#l1" class="line" id="l1">      1</a> use super::{aggregate, join, source, transform, write};</code>
-<code><a href="#l2" class="line" id="l2">      2</a> use crate::error::Result;</code>
-<code><a href="#l3" class="line" id="l3">      3</a> use crate::sql::engine::{Catalog, Transaction};</code>
-<code><a href="#l4" class="line" id="l4">      4</a> use crate::sql::planner::{Node, Plan};</code>
-<code><a href="#l5" class="line" id="l5">      5</a> use crate::sql::types::{Label, Rows};</code>
-<code><a href="#l6" class="line" id="l6">      6</a> </code>
-<code><a href="#l7" class="line" id="l7">      7</a> /// Executes a plan, returning an execution result.</code>
-<code><a href="#l8" class="line" id="l8">      8</a> ///</code>
-<code><a href="#l9" class="line" id="l9">      9</a> /// Takes the transaction and catalog separately, even though Transaction must</code>
-<code><a href="#l10" class="line" id="l10">     10</a> /// implement Catalog, to ensure the catalog is primarily used during planning.</code>
-<code><a href="#l11" class="line" id="l11">     11</a> pub fn execute_plan(</code>
-<code><a href="#l12" class="line" id="l12">     12</a>     plan: Plan,</code>
-<code><a href="#l13" class="line" id="l13">     13</a>     txn: &amp;impl Transaction,</code>
-<code><a href="#l14" class="line" id="l14">     14</a>     catalog: &amp;impl Catalog,</code>
-<code><a href="#l15" class="line" id="l15">     15</a> ) -&gt; Result&lt;ExecutionResult&gt; {</code>
-<code><a href="#l16" class="line" id="l16">     16</a>     Ok(match plan {</code>
-<code><a href="#l17" class="line" id="l17">     17</a>         Plan::CreateTable { schema } =&gt; {</code>
-<code><a href="#l18" class="line" id="l18">     18</a>             let name = schema.name.clone();</code>
-<code><a href="#l19" class="line" id="l19">     19</a>             catalog.create_table(schema)?;</code>
-<code><a href="#l20" class="line" id="l20">     20</a>             ExecutionResult::CreateTable { name }</code>
-<code><a href="#l21" class="line" id="l21">     21</a>         }</code>
-<code><a href="#l22" class="line" id="l22">     22</a> </code>
-<code><a href="#l23" class="line" id="l23">     23</a>         Plan::DropTable { table, if_exists } =&gt; {</code>
-<code><a href="#l24" class="line" id="l24">     24</a>             let existed = catalog.drop_table(&amp;table, if_exists)?;</code>
-<code><a href="#l25" class="line" id="l25">     25</a>             ExecutionResult::DropTable { name: table, existed }</code>
-<code><a href="#l26" class="line" id="l26">     26</a>         }</code>
-<code><a href="#l27" class="line" id="l27">     27</a> </code>
-<code><a href="#l28" class="line" id="l28">     28</a>         Plan::Delete { table, primary_key, source } =&gt; {</code>
-<code><a href="#l29" class="line" id="l29">     29</a>             let source = execute(source, txn)?;</code>
-<code><a href="#l30" class="line" id="l30">     30</a>             let count = write::delete(txn, table, primary_key, source)?;</code>
-<code><a href="#l31" class="line" id="l31">     31</a>             ExecutionResult::Delete { count }</code>
-<code><a href="#l32" class="line" id="l32">     32</a>         }</code>
-<code><a href="#l33" class="line" id="l33">     33</a> </code>
-<code><a href="#l34" class="line" id="l34">     34</a>         Plan::Insert { table, column_map, source } =&gt; {</code>
-<code><a href="#l35" class="line" id="l35">     35</a>             let source = execute(source, txn)?;</code>
-<code><a href="#l36" class="line" id="l36">     36</a>             let count = write::insert(txn, table, column_map, source)?;</code>
-<code><a href="#l37" class="line" id="l37">     37</a>             ExecutionResult::Insert { count }</code>
-<code><a href="#l38" class="line" id="l38">     38</a>         }</code>
-<code><a href="#l39" class="line" id="l39">     39</a> </code>
-<code><a href="#l40" class="line" id="l40">     40</a>         Plan::Select(root) =&gt; {</code>
-<code><a href="#l41" class="line" id="l41">     41</a>             let columns = (0..root.columns()).map(|i| root.column_label(i)).collect();</code>
-<code><a href="#l42" class="line" id="l42">     42</a>             let rows = execute(root, txn)?;</code>
-<code><a href="#l43" class="line" id="l43">     43</a>             ExecutionResult::Select { rows, columns }</code>
-<code><a href="#l44" class="line" id="l44">     44</a>         }</code>
-<code><a href="#l45" class="line" id="l45">     45</a> </code>
-<code><a href="#l46" class="line" id="l46">     46</a>         Plan::Update { table, primary_key, source, expressions } =&gt; {</code>
-<code><a href="#l47" class="line" id="l47">     47</a>             let source = execute(source, txn)?;</code>
-<code><a href="#l48" class="line" id="l48">     48</a>             let count = write::update(txn, table.name, primary_key, source, expressions)?;</code>
-<code><a href="#l49" class="line" id="l49">     49</a>             ExecutionResult::Update { count }</code>
-<code><a href="#l50" class="line" id="l50">     50</a>         }</code>
-<code><a href="#l51" class="line" id="l51">     51</a>     })</code>
-<code><a href="#l52" class="line" id="l52">     52</a> }</code>
-<code><a href="#l53" class="line" id="l53">     53</a> </code>
-<code><a href="#l54" class="line" id="l54">     54</a> /// Recursively executes a query plan node, returning a row iterator.</code>
-<code><a href="#l55" class="line" id="l55">     55</a> ///</code>
-<code><a href="#l56" class="line" id="l56">     56</a> /// Rows stream through the plan node tree from the branches to the root. Nodes</code>
-<code><a href="#l57" class="line" id="l57">     57</a> /// recursively pull input rows upwards from their child node(s), process them,</code>
-<code><a href="#l58" class="line" id="l58">     58</a> /// and hand the resulting rows off to their parent node.</code>
-<code><a href="#l59" class="line" id="l59">     59</a> ///</code>
-<code><a href="#l60" class="line" id="l60">     60</a> /// Below is an example of an (unoptimized) query plan:</code>
-<code><a href="#l61" class="line" id="l61">     61</a> ///</code>
-<code><a href="#l62" class="line" id="l62">     62</a> /// SELECT title, released, genres.name AS genre</code>
-<code><a href="#l63" class="line" id="l63">     63</a> /// FROM movies INNER JOIN genres ON movies.genre_id = genres.id</code>
-<code><a href="#l64" class="line" id="l64">     64</a> /// WHERE released &gt;= 2000 ORDER BY released</code>
-<code><a href="#l65" class="line" id="l65">     65</a> ///</code>
-<code><a href="#l66" class="line" id="l66">     66</a> /// Order: movies.released desc</code>
-<code><a href="#l67" class="line" id="l67">     67</a> /// └─ Projection: movies.title, movies.released, genres.name as genre</code>
-<code><a href="#l68" class="line" id="l68">     68</a> ///    └─ Filter: movies.released &gt;= 2000</code>
-<code><a href="#l69" class="line" id="l69">     69</a> ///       └─ NestedLoopJoin: inner on movies.genre_id = genres.id</code>
-<code><a href="#l70" class="line" id="l70">     70</a> ///          ├─ Scan: movies</code>
-<code><a href="#l71" class="line" id="l71">     71</a> ///          └─ Scan: genres</code>
-<code><a href="#l72" class="line" id="l72">     72</a> ///</code>
-<code><a href="#l73" class="line" id="l73">     73</a> /// Rows flow from the tree leaves to the root. The Scan nodes read and emit</code>
-<code><a href="#l74" class="line" id="l74">     74</a> /// table rows from storage. They are passed to the NestedLoopJoin node which</code>
-<code><a href="#l75" class="line" id="l75">     75</a> /// joins the rows from the two tables, then the Filter node discards old</code>
-<code><a href="#l76" class="line" id="l76">     76</a> /// movies, the Projection node picks out the requested columns, and the Order</code>
-<code><a href="#l77" class="line" id="l77">     77</a> /// node sorts them before emitting the rows to the client.</code>
-<code><a href="#l78" class="line" id="l78">     78</a> pub fn execute(node: Node, txn: &amp;impl Transaction) -&gt; Result&lt;Rows&gt; {</code>
-<code><a href="#l79" class="line" id="l79">     79</a>     Ok(match node {</code>
-<code><a href="#l80" class="line" id="l80">     80</a>         Node::Aggregate { source, group_by, aggregates } =&gt; {</code>
-<code><a href="#l81" class="line" id="l81">     81</a>             let source = execute(*source, txn)?;</code>
-<code><a href="#l82" class="line" id="l82">     82</a>             aggregate::aggregate(source, group_by, aggregates)?</code>
-<code><a href="#l83" class="line" id="l83">     83</a>         }</code>
-<code><a href="#l84" class="line" id="l84">     84</a> </code>
-<code><a href="#l85" class="line" id="l85">     85</a>         Node::Filter { source, predicate } =&gt; {</code>
-<code><a href="#l86" class="line" id="l86">     86</a>             let source = execute(*source, txn)?;</code>
-<code><a href="#l87" class="line" id="l87">     87</a>             transform::filter(source, predicate)</code>
-<code><a href="#l88" class="line" id="l88">     88</a>         }</code>
-<code><a href="#l89" class="line" id="l89">     89</a> </code>
-<code><a href="#l90" class="line" id="l90">     90</a>         Node::HashJoin { left, left_column, right, right_column, outer } =&gt; {</code>
-<code><a href="#l91" class="line" id="l91">     91</a>             let right_size = right.columns();</code>
-<code><a href="#l92" class="line" id="l92">     92</a>             let left = execute(*left, txn)?;</code>
-<code><a href="#l93" class="line" id="l93">     93</a>             let right = execute(*right, txn)?;</code>
-<code><a href="#l94" class="line" id="l94">     94</a>             join::hash(left, left_column, right, right_column, right_size, outer)?</code>
-<code><a href="#l95" class="line" id="l95">     95</a>         }</code>
-<code><a href="#l96" class="line" id="l96">     96</a> </code>
-<code><a href="#l97" class="line" id="l97">     97</a>         Node::IndexLookup { table, column, values, alias: _ } =&gt; {</code>
-<code><a href="#l98" class="line" id="l98">     98</a>             let column = table.columns.into_iter().nth(column).expect(&quot;invalid column&quot;).name;</code>
-<code><a href="#l99" class="line" id="l99">     99</a>             let table = table.name;</code>
-<code><a href="#l100" class="line" id="l100">    100</a>             source::lookup_index(txn, table, column, values)?</code>
-<code><a href="#l101" class="line" id="l101">    101</a>         }</code>
-<code><a href="#l102" class="line" id="l102">    102</a> </code>
-<code><a href="#l103" class="line" id="l103">    103</a>         Node::KeyLookup { table, keys, alias: _ } =&gt; source::lookup_key(txn, table.name, keys)?,</code>
-<code><a href="#l104" class="line" id="l104">    104</a> </code>
-<code><a href="#l105" class="line" id="l105">    105</a>         Node::Limit { source, limit } =&gt; {</code>
-<code><a href="#l106" class="line" id="l106">    106</a>             let source = execute(*source, txn)?;</code>
-<code><a href="#l107" class="line" id="l107">    107</a>             transform::limit(source, limit)</code>
-<code><a href="#l108" class="line" id="l108">    108</a>         }</code>
-<code><a href="#l109" class="line" id="l109">    109</a> </code>
-<code><a href="#l110" class="line" id="l110">    110</a>         Node::NestedLoopJoin { left, right, predicate, outer } =&gt; {</code>
-<code><a href="#l111" class="line" id="l111">    111</a>             let right_size = right.columns();</code>
-<code><a href="#l112" class="line" id="l112">    112</a>             let left = execute(*left, txn)?;</code>
-<code><a href="#l113" class="line" id="l113">    113</a>             let right = execute(*right, txn)?;</code>
-<code><a href="#l114" class="line" id="l114">    114</a>             join::nested_loop(left, right, right_size, predicate, outer)?</code>
-<code><a href="#l115" class="line" id="l115">    115</a>         }</code>
-<code><a href="#l116" class="line" id="l116">    116</a> </code>
-<code><a href="#l117" class="line" id="l117">    117</a>         Node::Nothing { .. } =&gt; source::nothing(),</code>
-<code><a href="#l118" class="line" id="l118">    118</a> </code>
-<code><a href="#l119" class="line" id="l119">    119</a>         Node::Offset { source, offset } =&gt; {</code>
-<code><a href="#l120" class="line" id="l120">    120</a>             let source = execute(*source, txn)?;</code>
-<code><a href="#l121" class="line" id="l121">    121</a>             transform::offset(source, offset)</code>
-<code><a href="#l122" class="line" id="l122">    122</a>         }</code>
-<code><a href="#l123" class="line" id="l123">    123</a> </code>
-<code><a href="#l124" class="line" id="l124">    124</a>         Node::Order { source, key: orders } =&gt; {</code>
-<code><a href="#l125" class="line" id="l125">    125</a>             let source = execute(*source, txn)?;</code>
-<code><a href="#l126" class="line" id="l126">    126</a>             transform::order(source, orders)?</code>
-<code><a href="#l127" class="line" id="l127">    127</a>         }</code>
-<code><a href="#l128" class="line" id="l128">    128</a> </code>
-<code><a href="#l129" class="line" id="l129">    129</a>         Node::Projection { source, expressions, aliases: _ } =&gt; {</code>
-<code><a href="#l130" class="line" id="l130">    130</a>             let source = execute(*source, txn)?;</code>
-<code><a href="#l131" class="line" id="l131">    131</a>             transform::project(source, expressions)</code>
-<code><a href="#l132" class="line" id="l132">    132</a>         }</code>
-<code><a href="#l133" class="line" id="l133">    133</a> </code>
-<code><a href="#l134" class="line" id="l134">    134</a>         Node::Remap { source, targets } =&gt; {</code>
-<code><a href="#l135" class="line" id="l135">    135</a>             let source = execute(*source, txn)?;</code>
-<code><a href="#l136" class="line" id="l136">    136</a>             transform::remap(source, targets)</code>
-<code><a href="#l137" class="line" id="l137">    137</a>         }</code>
-<code><a href="#l138" class="line" id="l138">    138</a> </code>
-<code><a href="#l139" class="line" id="l139">    139</a>         Node::Scan { table, filter, alias: _ } =&gt; source::scan(txn, table, filter)?,</code>
-<code><a href="#l140" class="line" id="l140">    140</a> </code>
-<code><a href="#l141" class="line" id="l141">    141</a>         Node::Values { rows } =&gt; source::values(rows),</code>
-<code><a href="#l142" class="line" id="l142">    142</a>     })</code>
-<code><a href="#l143" class="line" id="l143">    143</a> }</code>
-<code><a href="#l144" class="line" id="l144">    144</a> </code>
-<code><a href="#l145" class="line" id="l145">    145</a> /// A plan execution result.</code>
-<code><a href="#l146" class="line" id="l146">    146</a> pub enum ExecutionResult {</code>
-<code><a href="#l147" class="line" id="l147">    147</a>     CreateTable { name: String },</code>
-<code><a href="#l148" class="line" id="l148">    148</a>     DropTable { name: String, existed: bool },</code>
-<code><a href="#l149" class="line" id="l149">    149</a>     Delete { count: u64 },</code>
-<code><a href="#l150" class="line" id="l150">    150</a>     Insert { count: u64 },</code>
-<code><a href="#l151" class="line" id="l151">    151</a>     Update { count: u64 },</code>
-<code><a href="#l152" class="line" id="l152">    152</a>     Select { rows: Rows, columns: Vec&lt;Label&gt; },</code>
-<code><a href="#l153" class="line" id="l153">    153</a> }</code>
+<a href="#l1" class="line" id="l1">      1</a><code> use super::{aggregate, join, source, transform, write};</code>
+<a href="#l2" class="line" id="l2">      2</a><code> use crate::error::Result;</code>
+<a href="#l3" class="line" id="l3">      3</a><code> use crate::sql::engine::{Catalog, Transaction};</code>
+<a href="#l4" class="line" id="l4">      4</a><code> use crate::sql::planner::{Node, Plan};</code>
+<a href="#l5" class="line" id="l5">      5</a><code> use crate::sql::types::{Label, Rows};</code>
+<a href="#l6" class="line" id="l6">      6</a><code> </code>
+<a href="#l7" class="line" id="l7">      7</a><code> /// Executes a plan, returning an execution result.</code>
+<a href="#l8" class="line" id="l8">      8</a><code> ///</code>
+<a href="#l9" class="line" id="l9">      9</a><code> /// Takes the transaction and catalog separately, even though Transaction must</code>
+<a href="#l10" class="line" id="l10">     10</a><code> /// implement Catalog, to ensure the catalog is primarily used during planning.</code>
+<a href="#l11" class="line" id="l11">     11</a><code> pub fn execute_plan(</code>
+<a href="#l12" class="line" id="l12">     12</a><code>     plan: Plan,</code>
+<a href="#l13" class="line" id="l13">     13</a><code>     txn: &amp;impl Transaction,</code>
+<a href="#l14" class="line" id="l14">     14</a><code>     catalog: &amp;impl Catalog,</code>
+<a href="#l15" class="line" id="l15">     15</a><code> ) -&gt; Result&lt;ExecutionResult&gt; {</code>
+<a href="#l16" class="line" id="l16">     16</a><code>     Ok(match plan {</code>
+<a href="#l17" class="line" id="l17">     17</a><code>         Plan::CreateTable { schema } =&gt; {</code>
+<a href="#l18" class="line" id="l18">     18</a><code>             let name = schema.name.clone();</code>
+<a href="#l19" class="line" id="l19">     19</a><code>             catalog.create_table(schema)?;</code>
+<a href="#l20" class="line" id="l20">     20</a><code>             ExecutionResult::CreateTable { name }</code>
+<a href="#l21" class="line" id="l21">     21</a><code>         }</code>
+<a href="#l22" class="line" id="l22">     22</a><code> </code>
+<a href="#l23" class="line" id="l23">     23</a><code>         Plan::DropTable { table, if_exists } =&gt; {</code>
+<a href="#l24" class="line" id="l24">     24</a><code>             let existed = catalog.drop_table(&amp;table, if_exists)?;</code>
+<a href="#l25" class="line" id="l25">     25</a><code>             ExecutionResult::DropTable { name: table, existed }</code>
+<a href="#l26" class="line" id="l26">     26</a><code>         }</code>
+<a href="#l27" class="line" id="l27">     27</a><code> </code>
+<a href="#l28" class="line" id="l28">     28</a><code>         Plan::Delete { table, primary_key, source } =&gt; {</code>
+<a href="#l29" class="line" id="l29">     29</a><code>             let source = execute(source, txn)?;</code>
+<a href="#l30" class="line" id="l30">     30</a><code>             let count = write::delete(txn, table, primary_key, source)?;</code>
+<a href="#l31" class="line" id="l31">     31</a><code>             ExecutionResult::Delete { count }</code>
+<a href="#l32" class="line" id="l32">     32</a><code>         }</code>
+<a href="#l33" class="line" id="l33">     33</a><code> </code>
+<a href="#l34" class="line" id="l34">     34</a><code>         Plan::Insert { table, column_map, source } =&gt; {</code>
+<a href="#l35" class="line" id="l35">     35</a><code>             let source = execute(source, txn)?;</code>
+<a href="#l36" class="line" id="l36">     36</a><code>             let count = write::insert(txn, table, column_map, source)?;</code>
+<a href="#l37" class="line" id="l37">     37</a><code>             ExecutionResult::Insert { count }</code>
+<a href="#l38" class="line" id="l38">     38</a><code>         }</code>
+<a href="#l39" class="line" id="l39">     39</a><code> </code>
+<a href="#l40" class="line" id="l40">     40</a><code>         Plan::Select(root) =&gt; {</code>
+<a href="#l41" class="line" id="l41">     41</a><code>             let columns = (0..root.columns()).map(|i| root.column_label(i)).collect();</code>
+<a href="#l42" class="line" id="l42">     42</a><code>             let rows = execute(root, txn)?;</code>
+<a href="#l43" class="line" id="l43">     43</a><code>             ExecutionResult::Select { rows, columns }</code>
+<a href="#l44" class="line" id="l44">     44</a><code>         }</code>
+<a href="#l45" class="line" id="l45">     45</a><code> </code>
+<a href="#l46" class="line" id="l46">     46</a><code>         Plan::Update { table, primary_key, source, expressions } =&gt; {</code>
+<a href="#l47" class="line" id="l47">     47</a><code>             let source = execute(source, txn)?;</code>
+<a href="#l48" class="line" id="l48">     48</a><code>             let count = write::update(txn, table.name, primary_key, source, expressions)?;</code>
+<a href="#l49" class="line" id="l49">     49</a><code>             ExecutionResult::Update { count }</code>
+<a href="#l50" class="line" id="l50">     50</a><code>         }</code>
+<a href="#l51" class="line" id="l51">     51</a><code>     })</code>
+<a href="#l52" class="line" id="l52">     52</a><code> }</code>
+<a href="#l53" class="line" id="l53">     53</a><code> </code>
+<a href="#l54" class="line" id="l54">     54</a><code> /// Recursively executes a query plan node, returning a row iterator.</code>
+<a href="#l55" class="line" id="l55">     55</a><code> ///</code>
+<a href="#l56" class="line" id="l56">     56</a><code> /// Rows stream through the plan node tree from the branches to the root. Nodes</code>
+<a href="#l57" class="line" id="l57">     57</a><code> /// recursively pull input rows upwards from their child node(s), process them,</code>
+<a href="#l58" class="line" id="l58">     58</a><code> /// and hand the resulting rows off to their parent node.</code>
+<a href="#l59" class="line" id="l59">     59</a><code> ///</code>
+<a href="#l60" class="line" id="l60">     60</a><code> /// Below is an example of an (unoptimized) query plan:</code>
+<a href="#l61" class="line" id="l61">     61</a><code> ///</code>
+<a href="#l62" class="line" id="l62">     62</a><code> /// SELECT title, released, genres.name AS genre</code>
+<a href="#l63" class="line" id="l63">     63</a><code> /// FROM movies INNER JOIN genres ON movies.genre_id = genres.id</code>
+<a href="#l64" class="line" id="l64">     64</a><code> /// WHERE released &gt;= 2000 ORDER BY released</code>
+<a href="#l65" class="line" id="l65">     65</a><code> ///</code>
+<a href="#l66" class="line" id="l66">     66</a><code> /// Order: movies.released desc</code>
+<a href="#l67" class="line" id="l67">     67</a><code> /// └─ Projection: movies.title, movies.released, genres.name as genre</code>
+<a href="#l68" class="line" id="l68">     68</a><code> ///    └─ Filter: movies.released &gt;= 2000</code>
+<a href="#l69" class="line" id="l69">     69</a><code> ///       └─ NestedLoopJoin: inner on movies.genre_id = genres.id</code>
+<a href="#l70" class="line" id="l70">     70</a><code> ///          ├─ Scan: movies</code>
+<a href="#l71" class="line" id="l71">     71</a><code> ///          └─ Scan: genres</code>
+<a href="#l72" class="line" id="l72">     72</a><code> ///</code>
+<a href="#l73" class="line" id="l73">     73</a><code> /// Rows flow from the tree leaves to the root. The Scan nodes read and emit</code>
+<a href="#l74" class="line" id="l74">     74</a><code> /// table rows from storage. They are passed to the NestedLoopJoin node which</code>
+<a href="#l75" class="line" id="l75">     75</a><code> /// joins the rows from the two tables, then the Filter node discards old</code>
+<a href="#l76" class="line" id="l76">     76</a><code> /// movies, the Projection node picks out the requested columns, and the Order</code>
+<a href="#l77" class="line" id="l77">     77</a><code> /// node sorts them before emitting the rows to the client.</code>
+<a href="#l78" class="line" id="l78">     78</a><code> pub fn execute(node: Node, txn: &amp;impl Transaction) -&gt; Result&lt;Rows&gt; {</code>
+<a href="#l79" class="line" id="l79">     79</a><code>     Ok(match node {</code>
+<a href="#l80" class="line" id="l80">     80</a><code>         Node::Aggregate { source, group_by, aggregates } =&gt; {</code>
+<a href="#l81" class="line" id="l81">     81</a><code>             let source = execute(*source, txn)?;</code>
+<a href="#l82" class="line" id="l82">     82</a><code>             aggregate::aggregate(source, group_by, aggregates)?</code>
+<a href="#l83" class="line" id="l83">     83</a><code>         }</code>
+<a href="#l84" class="line" id="l84">     84</a><code> </code>
+<a href="#l85" class="line" id="l85">     85</a><code>         Node::Filter { source, predicate } =&gt; {</code>
+<a href="#l86" class="line" id="l86">     86</a><code>             let source = execute(*source, txn)?;</code>
+<a href="#l87" class="line" id="l87">     87</a><code>             transform::filter(source, predicate)</code>
+<a href="#l88" class="line" id="l88">     88</a><code>         }</code>
+<a href="#l89" class="line" id="l89">     89</a><code> </code>
+<a href="#l90" class="line" id="l90">     90</a><code>         Node::HashJoin { left, left_column, right, right_column, outer } =&gt; {</code>
+<a href="#l91" class="line" id="l91">     91</a><code>             let right_size = right.columns();</code>
+<a href="#l92" class="line" id="l92">     92</a><code>             let left = execute(*left, txn)?;</code>
+<a href="#l93" class="line" id="l93">     93</a><code>             let right = execute(*right, txn)?;</code>
+<a href="#l94" class="line" id="l94">     94</a><code>             join::hash(left, left_column, right, right_column, right_size, outer)?</code>
+<a href="#l95" class="line" id="l95">     95</a><code>         }</code>
+<a href="#l96" class="line" id="l96">     96</a><code> </code>
+<a href="#l97" class="line" id="l97">     97</a><code>         Node::IndexLookup { table, column, values, alias: _ } =&gt; {</code>
+<a href="#l98" class="line" id="l98">     98</a><code>             let column = table.columns.into_iter().nth(column).expect(&quot;invalid column&quot;).name;</code>
+<a href="#l99" class="line" id="l99">     99</a><code>             let table = table.name;</code>
+<a href="#l100" class="line" id="l100">    100</a><code>             source::lookup_index(txn, table, column, values)?</code>
+<a href="#l101" class="line" id="l101">    101</a><code>         }</code>
+<a href="#l102" class="line" id="l102">    102</a><code> </code>
+<a href="#l103" class="line" id="l103">    103</a><code>         Node::KeyLookup { table, keys, alias: _ } =&gt; source::lookup_key(txn, table.name, keys)?,</code>
+<a href="#l104" class="line" id="l104">    104</a><code> </code>
+<a href="#l105" class="line" id="l105">    105</a><code>         Node::Limit { source, limit } =&gt; {</code>
+<a href="#l106" class="line" id="l106">    106</a><code>             let source = execute(*source, txn)?;</code>
+<a href="#l107" class="line" id="l107">    107</a><code>             transform::limit(source, limit)</code>
+<a href="#l108" class="line" id="l108">    108</a><code>         }</code>
+<a href="#l109" class="line" id="l109">    109</a><code> </code>
+<a href="#l110" class="line" id="l110">    110</a><code>         Node::NestedLoopJoin { left, right, predicate, outer } =&gt; {</code>
+<a href="#l111" class="line" id="l111">    111</a><code>             let right_size = right.columns();</code>
+<a href="#l112" class="line" id="l112">    112</a><code>             let left = execute(*left, txn)?;</code>
+<a href="#l113" class="line" id="l113">    113</a><code>             let right = execute(*right, txn)?;</code>
+<a href="#l114" class="line" id="l114">    114</a><code>             join::nested_loop(left, right, right_size, predicate, outer)?</code>
+<a href="#l115" class="line" id="l115">    115</a><code>         }</code>
+<a href="#l116" class="line" id="l116">    116</a><code> </code>
+<a href="#l117" class="line" id="l117">    117</a><code>         Node::Nothing { .. } =&gt; source::nothing(),</code>
+<a href="#l118" class="line" id="l118">    118</a><code> </code>
+<a href="#l119" class="line" id="l119">    119</a><code>         Node::Offset { source, offset } =&gt; {</code>
+<a href="#l120" class="line" id="l120">    120</a><code>             let source = execute(*source, txn)?;</code>
+<a href="#l121" class="line" id="l121">    121</a><code>             transform::offset(source, offset)</code>
+<a href="#l122" class="line" id="l122">    122</a><code>         }</code>
+<a href="#l123" class="line" id="l123">    123</a><code> </code>
+<a href="#l124" class="line" id="l124">    124</a><code>         Node::Order { source, key: orders } =&gt; {</code>
+<a href="#l125" class="line" id="l125">    125</a><code>             let source = execute(*source, txn)?;</code>
+<a href="#l126" class="line" id="l126">    126</a><code>             transform::order(source, orders)?</code>
+<a href="#l127" class="line" id="l127">    127</a><code>         }</code>
+<a href="#l128" class="line" id="l128">    128</a><code> </code>
+<a href="#l129" class="line" id="l129">    129</a><code>         Node::Projection { source, expressions, aliases: _ } =&gt; {</code>
+<a href="#l130" class="line" id="l130">    130</a><code>             let source = execute(*source, txn)?;</code>
+<a href="#l131" class="line" id="l131">    131</a><code>             transform::project(source, expressions)</code>
+<a href="#l132" class="line" id="l132">    132</a><code>         }</code>
+<a href="#l133" class="line" id="l133">    133</a><code> </code>
+<a href="#l134" class="line" id="l134">    134</a><code>         Node::Remap { source, targets } =&gt; {</code>
+<a href="#l135" class="line" id="l135">    135</a><code>             let source = execute(*source, txn)?;</code>
+<a href="#l136" class="line" id="l136">    136</a><code>             transform::remap(source, targets)</code>
+<a href="#l137" class="line" id="l137">    137</a><code>         }</code>
+<a href="#l138" class="line" id="l138">    138</a><code> </code>
+<a href="#l139" class="line" id="l139">    139</a><code>         Node::Scan { table, filter, alias: _ } =&gt; source::scan(txn, table, filter)?,</code>
+<a href="#l140" class="line" id="l140">    140</a><code> </code>
+<a href="#l141" class="line" id="l141">    141</a><code>         Node::Values { rows } =&gt; source::values(rows),</code>
+<a href="#l142" class="line" id="l142">    142</a><code>     })</code>
+<a href="#l143" class="line" id="l143">    143</a><code> }</code>
+<a href="#l144" class="line" id="l144">    144</a><code> </code>
+<a href="#l145" class="line" id="l145">    145</a><code> /// A plan execution result.</code>
+<a href="#l146" class="line" id="l146">    146</a><code> pub enum ExecutionResult {</code>
+<a href="#l147" class="line" id="l147">    147</a><code>     CreateTable { name: String },</code>
+<a href="#l148" class="line" id="l148">    148</a><code>     DropTable { name: String, existed: bool },</code>
+<a href="#l149" class="line" id="l149">    149</a><code>     Delete { count: u64 },</code>
+<a href="#l150" class="line" id="l150">    150</a><code>     Insert { count: u64 },</code>
+<a href="#l151" class="line" id="l151">    151</a><code>     Update { count: u64 },</code>
+<a href="#l152" class="line" id="l152">    152</a><code>     Select { rows: Rows, columns: Vec&lt;Label&gt; },</code>
+<a href="#l153" class="line" id="l153">    153</a><code> }</code>
 </pre>
 </div>
 </body>

@@ -12,404 +12,405 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Source+Code+Pro:ital,wght@0,200..900;1,200..900&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/default.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/base16/tender.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
 <script>hljs.highlightAll();</script>
-</head>
+<style>pre code.hljs {display: inline;padding: 0;} code.hljs {padding: 0;} .hljs {background: initial;}</style></head>
 <body>
 <table><tr><td><a href="../../../../"><img src="../../../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
 </span></td></tr><tr class="url"><td></td><td>git clone <a href="https://github.com/erikgrinaker/toydb">https://github.com/erikgrinaker/toydb</a></td></tr><tr><td></td><td>
+<br>
 <a href="../../../log.html">Log</a> | <a href="../../../files.html">Files</a> | <a href="../../../refs.html">Refs</a> | <a href="../../../file/README.md.html">README</a> | <a href="../../../file/LICENSE.html">LICENSE</a></td></tr></table>
 <hr/>
 <div id="content">
 <p> engine.rs (13624B)</p><hr/><pre id="blob">
-<code><a href="#l1" class="line" id="l1">      1</a> use crate::encoding::keycode;</code>
-<code><a href="#l2" class="line" id="l2">      2</a> use crate::error::Result;</code>
-<code><a href="#l3" class="line" id="l3">      3</a> </code>
-<code><a href="#l4" class="line" id="l4">      4</a> use serde::{Deserialize, Serialize};</code>
-<code><a href="#l5" class="line" id="l5">      5</a> </code>
-<code><a href="#l6" class="line" id="l6">      6</a> /// A key/value storage engine storing arbitrary byte strings in lexicographical</code>
-<code><a href="#l7" class="line" id="l7">      7</a> /// key order. Storing keys in order allows for efficient range scans, which is</code>
-<code><a href="#l8" class="line" id="l8">      8</a> /// needed to e.g. scan a single table during SQL execution (where all rows have</code>
-<code><a href="#l9" class="line" id="l9">      9</a> /// keys with a common key prefix for the table). Keys should use the KeyCode</code>
-<code><a href="#l10" class="line" id="l10">     10</a> /// order-preserving encoding, see src/encoding/keycode. Writes are only</code>
-<code><a href="#l11" class="line" id="l11">     11</a> /// guaranteed durable after calling flush().</code>
-<code><a href="#l12" class="line" id="l12">     12</a> ///</code>
-<code><a href="#l13" class="line" id="l13">     13</a> /// Only supports single-threaded use since all methods (including reads) take a</code>
-<code><a href="#l14" class="line" id="l14">     14</a> /// mutable reference -- serialized access can&#39;t be avoided anyway, since both</code>
-<code><a href="#l15" class="line" id="l15">     15</a> /// Raft execution and file access is serial.</code>
-<code><a href="#l16" class="line" id="l16">     16</a> pub trait Engine: Send {</code>
-<code><a href="#l17" class="line" id="l17">     17</a>     /// The iterator returned by scan().</code>
-<code><a href="#l18" class="line" id="l18">     18</a>     type ScanIterator&lt;&#39;a&gt;: ScanIterator + &#39;a</code>
-<code><a href="#l19" class="line" id="l19">     19</a>     where</code>
-<code><a href="#l20" class="line" id="l20">     20</a>         Self: Sized + &#39;a; // omit in trait objects, for object safety</code>
-<code><a href="#l21" class="line" id="l21">     21</a> </code>
-<code><a href="#l22" class="line" id="l22">     22</a>     /// Deletes a key, or does nothing if it does not exist.</code>
-<code><a href="#l23" class="line" id="l23">     23</a>     fn delete(&amp;mut self, key: &amp;[u8]) -&gt; Result&lt;()&gt;;</code>
-<code><a href="#l24" class="line" id="l24">     24</a> </code>
-<code><a href="#l25" class="line" id="l25">     25</a>     /// Flushes any buffered data to the underlying storage medium.</code>
-<code><a href="#l26" class="line" id="l26">     26</a>     fn flush(&amp;mut self) -&gt; Result&lt;()&gt;;</code>
-<code><a href="#l27" class="line" id="l27">     27</a> </code>
-<code><a href="#l28" class="line" id="l28">     28</a>     /// Gets a value for a key, if it exists.</code>
-<code><a href="#l29" class="line" id="l29">     29</a>     fn get(&amp;mut self, key: &amp;[u8]) -&gt; Result&lt;Option&lt;Vec&lt;u8&gt;&gt;&gt;;</code>
-<code><a href="#l30" class="line" id="l30">     30</a> </code>
-<code><a href="#l31" class="line" id="l31">     31</a>     /// Iterates over an ordered range of key/value pairs.</code>
-<code><a href="#l32" class="line" id="l32">     32</a>     fn scan(&amp;mut self, range: impl std::ops::RangeBounds&lt;Vec&lt;u8&gt;&gt;) -&gt; Self::ScanIterator&lt;&#39;_&gt;</code>
-<code><a href="#l33" class="line" id="l33">     33</a>     where</code>
-<code><a href="#l34" class="line" id="l34">     34</a>         Self: Sized; // omit in trait objects, for object safety</code>
-<code><a href="#l35" class="line" id="l35">     35</a> </code>
-<code><a href="#l36" class="line" id="l36">     36</a>     /// Like scan, but can be used from trait objects. The iterator will use</code>
-<code><a href="#l37" class="line" id="l37">     37</a>     /// dynamic dispatch, which has a minor performance penalty.</code>
-<code><a href="#l38" class="line" id="l38">     38</a>     fn scan_dyn(</code>
-<code><a href="#l39" class="line" id="l39">     39</a>         &amp;mut self,</code>
-<code><a href="#l40" class="line" id="l40">     40</a>         range: (std::ops::Bound&lt;Vec&lt;u8&gt;&gt;, std::ops::Bound&lt;Vec&lt;u8&gt;&gt;),</code>
-<code><a href="#l41" class="line" id="l41">     41</a>     ) -&gt; Box&lt;dyn ScanIterator + &#39;_&gt;;</code>
-<code><a href="#l42" class="line" id="l42">     42</a> </code>
-<code><a href="#l43" class="line" id="l43">     43</a>     /// Iterates over all key/value pairs starting with prefix.</code>
-<code><a href="#l44" class="line" id="l44">     44</a>     fn scan_prefix(&amp;mut self, prefix: &amp;[u8]) -&gt; Self::ScanIterator&lt;&#39;_&gt;</code>
-<code><a href="#l45" class="line" id="l45">     45</a>     where</code>
-<code><a href="#l46" class="line" id="l46">     46</a>         Self: Sized, // omit in trait objects, for object safety</code>
-<code><a href="#l47" class="line" id="l47">     47</a>     {</code>
-<code><a href="#l48" class="line" id="l48">     48</a>         self.scan(keycode::prefix_range(prefix))</code>
-<code><a href="#l49" class="line" id="l49">     49</a>     }</code>
-<code><a href="#l50" class="line" id="l50">     50</a> </code>
-<code><a href="#l51" class="line" id="l51">     51</a>     /// Sets a value for a key, replacing the existing value if any.</code>
-<code><a href="#l52" class="line" id="l52">     52</a>     fn set(&amp;mut self, key: &amp;[u8], value: Vec&lt;u8&gt;) -&gt; Result&lt;()&gt;;</code>
-<code><a href="#l53" class="line" id="l53">     53</a> </code>
-<code><a href="#l54" class="line" id="l54">     54</a>     /// Returns engine status.</code>
-<code><a href="#l55" class="line" id="l55">     55</a>     fn status(&amp;mut self) -&gt; Result&lt;Status&gt;;</code>
-<code><a href="#l56" class="line" id="l56">     56</a> }</code>
-<code><a href="#l57" class="line" id="l57">     57</a> </code>
-<code><a href="#l58" class="line" id="l58">     58</a> /// A scan iterator, with a blanket implementation (in lieu of trait aliases).</code>
-<code><a href="#l59" class="line" id="l59">     59</a> pub trait ScanIterator: DoubleEndedIterator&lt;Item = Result&lt;(Vec&lt;u8&gt;, Vec&lt;u8&gt;)&gt;&gt; {}</code>
-<code><a href="#l60" class="line" id="l60">     60</a> </code>
-<code><a href="#l61" class="line" id="l61">     61</a> impl&lt;I: DoubleEndedIterator&lt;Item = Result&lt;(Vec&lt;u8&gt;, Vec&lt;u8&gt;)&gt;&gt;&gt; ScanIterator for I {}</code>
-<code><a href="#l62" class="line" id="l62">     62</a> </code>
-<code><a href="#l63" class="line" id="l63">     63</a> /// Engine status.</code>
-<code><a href="#l64" class="line" id="l64">     64</a> #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]</code>
-<code><a href="#l65" class="line" id="l65">     65</a> pub struct Status {</code>
-<code><a href="#l66" class="line" id="l66">     66</a>     /// The name of the storage engine.</code>
-<code><a href="#l67" class="line" id="l67">     67</a>     pub name: String,</code>
-<code><a href="#l68" class="line" id="l68">     68</a>     /// The number of live keys in the engine.</code>
-<code><a href="#l69" class="line" id="l69">     69</a>     pub keys: u64,</code>
-<code><a href="#l70" class="line" id="l70">     70</a>     /// The logical size of live key/value pairs.</code>
-<code><a href="#l71" class="line" id="l71">     71</a>     pub size: u64,</code>
-<code><a href="#l72" class="line" id="l72">     72</a>     /// The on-disk size of all data, live and garbage.</code>
-<code><a href="#l73" class="line" id="l73">     73</a>     pub total_disk_size: u64,</code>
-<code><a href="#l74" class="line" id="l74">     74</a>     /// The on-disk size of live data.</code>
-<code><a href="#l75" class="line" id="l75">     75</a>     pub live_disk_size: u64,</code>
-<code><a href="#l76" class="line" id="l76">     76</a>     /// The on-disk size of garbage data.</code>
-<code><a href="#l77" class="line" id="l77">     77</a>     pub garbage_disk_size: u64,</code>
-<code><a href="#l78" class="line" id="l78">     78</a> }</code>
-<code><a href="#l79" class="line" id="l79">     79</a> </code>
-<code><a href="#l80" class="line" id="l80">     80</a> impl Status {</code>
-<code><a href="#l81" class="line" id="l81">     81</a>     pub fn garbage_percent(&amp;self) -&gt; f64 {</code>
-<code><a href="#l82" class="line" id="l82">     82</a>         if self.total_disk_size == 0 {</code>
-<code><a href="#l83" class="line" id="l83">     83</a>             return 0.0;</code>
-<code><a href="#l84" class="line" id="l84">     84</a>         }</code>
-<code><a href="#l85" class="line" id="l85">     85</a>         self.garbage_disk_size as f64 / self.total_disk_size as f64 * 100.0</code>
-<code><a href="#l86" class="line" id="l86">     86</a>     }</code>
-<code><a href="#l87" class="line" id="l87">     87</a> }</code>
-<code><a href="#l88" class="line" id="l88">     88</a> </code>
-<code><a href="#l89" class="line" id="l89">     89</a> /// Test helpers for engines.</code>
-<code><a href="#l90" class="line" id="l90">     90</a> #[cfg(test)]</code>
-<code><a href="#l91" class="line" id="l91">     91</a> pub mod test {</code>
-<code><a href="#l92" class="line" id="l92">     92</a>     use super::*;</code>
-<code><a href="#l93" class="line" id="l93">     93</a>     use crate::encoding::format::{self, Formatter as _};</code>
-<code><a href="#l94" class="line" id="l94">     94</a> </code>
-<code><a href="#l95" class="line" id="l95">     95</a>     use crossbeam::channel::Sender;</code>
-<code><a href="#l96" class="line" id="l96">     96</a>     use itertools::Itertools as _;</code>
-<code><a href="#l97" class="line" id="l97">     97</a>     use regex::Regex;</code>
-<code><a href="#l98" class="line" id="l98">     98</a>     use std::fmt::Write as _;</code>
-<code><a href="#l99" class="line" id="l99">     99</a>     use std::{error::Error as StdError, result::Result as StdResult};</code>
-<code><a href="#l100" class="line" id="l100">    100</a> </code>
-<code><a href="#l101" class="line" id="l101">    101</a>     /// Goldenscript runner for engines. All engines use a common set of</code>
-<code><a href="#l102" class="line" id="l102">    102</a>     /// goldenscripts in src/storage/testscripts/engine, as well as their own</code>
-<code><a href="#l103" class="line" id="l103">    103</a>     /// engine-specific tests.</code>
-<code><a href="#l104" class="line" id="l104">    104</a>     pub struct Runner&lt;E: Engine&gt; {</code>
-<code><a href="#l105" class="line" id="l105">    105</a>         pub engine: E,</code>
-<code><a href="#l106" class="line" id="l106">    106</a>     }</code>
-<code><a href="#l107" class="line" id="l107">    107</a> </code>
-<code><a href="#l108" class="line" id="l108">    108</a>     impl&lt;E: Engine&gt; Runner&lt;E&gt; {</code>
-<code><a href="#l109" class="line" id="l109">    109</a>         pub fn new(engine: E) -&gt; Self {</code>
-<code><a href="#l110" class="line" id="l110">    110</a>             Self { engine }</code>
-<code><a href="#l111" class="line" id="l111">    111</a>         }</code>
-<code><a href="#l112" class="line" id="l112">    112</a>     }</code>
-<code><a href="#l113" class="line" id="l113">    113</a> </code>
-<code><a href="#l114" class="line" id="l114">    114</a>     impl&lt;E: Engine&gt; goldenscript::Runner for Runner&lt;E&gt; {</code>
-<code><a href="#l115" class="line" id="l115">    115</a>         fn run(&amp;mut self, command: &amp;goldenscript::Command) -&gt; StdResult&lt;String, Box&lt;dyn StdError&gt;&gt; {</code>
-<code><a href="#l116" class="line" id="l116">    116</a>             let mut output = String::new();</code>
-<code><a href="#l117" class="line" id="l117">    117</a>             match command.name.as_str() {</code>
-<code><a href="#l118" class="line" id="l118">    118</a>                 // delete KEY</code>
-<code><a href="#l119" class="line" id="l119">    119</a>                 &quot;delete&quot; =&gt; {</code>
-<code><a href="#l120" class="line" id="l120">    120</a>                     let mut args = command.consume_args();</code>
-<code><a href="#l121" class="line" id="l121">    121</a>                     let key = decode_binary(&amp;args.next_pos().ok_or(&quot;key not given&quot;)?.value);</code>
-<code><a href="#l122" class="line" id="l122">    122</a>                     args.reject_rest()?;</code>
-<code><a href="#l123" class="line" id="l123">    123</a>                     self.engine.delete(&amp;key)?;</code>
-<code><a href="#l124" class="line" id="l124">    124</a>                 }</code>
-<code><a href="#l125" class="line" id="l125">    125</a> </code>
-<code><a href="#l126" class="line" id="l126">    126</a>                 // get KEY</code>
-<code><a href="#l127" class="line" id="l127">    127</a>                 &quot;get&quot; =&gt; {</code>
-<code><a href="#l128" class="line" id="l128">    128</a>                     let mut args = command.consume_args();</code>
-<code><a href="#l129" class="line" id="l129">    129</a>                     let key = decode_binary(&amp;args.next_pos().ok_or(&quot;key not given&quot;)?.value);</code>
-<code><a href="#l130" class="line" id="l130">    130</a>                     args.reject_rest()?;</code>
-<code><a href="#l131" class="line" id="l131">    131</a>                     let value = self.engine.get(&amp;key)?;</code>
-<code><a href="#l132" class="line" id="l132">    132</a>                     writeln!(output, &quot;{}&quot;, format::Raw::key_maybe_value(&amp;key, value.as_deref()))?;</code>
-<code><a href="#l133" class="line" id="l133">    133</a>                 }</code>
-<code><a href="#l134" class="line" id="l134">    134</a> </code>
-<code><a href="#l135" class="line" id="l135">    135</a>                 // scan [reverse=BOOL] RANGE</code>
-<code><a href="#l136" class="line" id="l136">    136</a>                 &quot;scan&quot; =&gt; {</code>
-<code><a href="#l137" class="line" id="l137">    137</a>                     let mut args = command.consume_args();</code>
-<code><a href="#l138" class="line" id="l138">    138</a>                     let reverse = args.lookup_parse(&quot;reverse&quot;)?.unwrap_or(false);</code>
-<code><a href="#l139" class="line" id="l139">    139</a>                     let range =</code>
-<code><a href="#l140" class="line" id="l140">    140</a>                         parse_key_range(args.next_pos().map(|a| a.value.as_str()).unwrap_or(&quot;..&quot;))?;</code>
-<code><a href="#l141" class="line" id="l141">    141</a>                     args.reject_rest()?;</code>
-<code><a href="#l142" class="line" id="l142">    142</a>                     let items: Vec&lt;_&gt; = if reverse {</code>
-<code><a href="#l143" class="line" id="l143">    143</a>                         self.engine.scan(range).rev().try_collect()?</code>
-<code><a href="#l144" class="line" id="l144">    144</a>                     } else {</code>
-<code><a href="#l145" class="line" id="l145">    145</a>                         self.engine.scan(range).try_collect()?</code>
-<code><a href="#l146" class="line" id="l146">    146</a>                     };</code>
-<code><a href="#l147" class="line" id="l147">    147</a>                     for (key, value) in items {</code>
-<code><a href="#l148" class="line" id="l148">    148</a>                         let fmtkv = format::Raw::key_value(&amp;key, &amp;value);</code>
-<code><a href="#l149" class="line" id="l149">    149</a>                         writeln!(output, &quot;{fmtkv}&quot;)?;</code>
-<code><a href="#l150" class="line" id="l150">    150</a>                     }</code>
-<code><a href="#l151" class="line" id="l151">    151</a>                 }</code>
-<code><a href="#l152" class="line" id="l152">    152</a> </code>
-<code><a href="#l153" class="line" id="l153">    153</a>                 // scan_prefix PREFIX</code>
-<code><a href="#l154" class="line" id="l154">    154</a>                 &quot;scan_prefix&quot; =&gt; {</code>
-<code><a href="#l155" class="line" id="l155">    155</a>                     let mut args = command.consume_args();</code>
-<code><a href="#l156" class="line" id="l156">    156</a>                     let prefix = decode_binary(&amp;args.next_pos().ok_or(&quot;prefix not given&quot;)?.value);</code>
-<code><a href="#l157" class="line" id="l157">    157</a>                     args.reject_rest()?;</code>
-<code><a href="#l158" class="line" id="l158">    158</a>                     let mut scan = self.engine.scan_prefix(&amp;prefix);</code>
-<code><a href="#l159" class="line" id="l159">    159</a>                     while let Some((key, value)) = scan.next().transpose()? {</code>
-<code><a href="#l160" class="line" id="l160">    160</a>                         let fmtkv = format::Raw::key_value(&amp;key, &amp;value);</code>
-<code><a href="#l161" class="line" id="l161">    161</a>                         writeln!(output, &quot;{fmtkv}&quot;)?;</code>
-<code><a href="#l162" class="line" id="l162">    162</a>                     }</code>
-<code><a href="#l163" class="line" id="l163">    163</a>                 }</code>
-<code><a href="#l164" class="line" id="l164">    164</a> </code>
-<code><a href="#l165" class="line" id="l165">    165</a>                 // set KEY=VALUE</code>
-<code><a href="#l166" class="line" id="l166">    166</a>                 &quot;set&quot; =&gt; {</code>
-<code><a href="#l167" class="line" id="l167">    167</a>                     let mut args = command.consume_args();</code>
-<code><a href="#l168" class="line" id="l168">    168</a>                     let kv = args.next_key().ok_or(&quot;key=value not given&quot;)?.clone();</code>
-<code><a href="#l169" class="line" id="l169">    169</a>                     let key = decode_binary(&amp;kv.key.unwrap());</code>
-<code><a href="#l170" class="line" id="l170">    170</a>                     let value = decode_binary(&amp;kv.value);</code>
-<code><a href="#l171" class="line" id="l171">    171</a>                     args.reject_rest()?;</code>
-<code><a href="#l172" class="line" id="l172">    172</a>                     self.engine.set(&amp;key, value)?;</code>
-<code><a href="#l173" class="line" id="l173">    173</a>                 }</code>
-<code><a href="#l174" class="line" id="l174">    174</a> </code>
-<code><a href="#l175" class="line" id="l175">    175</a>                 // status</code>
-<code><a href="#l176" class="line" id="l176">    176</a>                 &quot;status&quot; =&gt; {</code>
-<code><a href="#l177" class="line" id="l177">    177</a>                     command.consume_args().reject_rest()?;</code>
-<code><a href="#l178" class="line" id="l178">    178</a>                     writeln!(output, &quot;{:#?}&quot;, self.engine.status()?)?;</code>
-<code><a href="#l179" class="line" id="l179">    179</a>                 }</code>
-<code><a href="#l180" class="line" id="l180">    180</a> </code>
-<code><a href="#l181" class="line" id="l181">    181</a>                 name =&gt; return Err(format!(&quot;invalid command {name}&quot;).into()),</code>
-<code><a href="#l182" class="line" id="l182">    182</a>             }</code>
-<code><a href="#l183" class="line" id="l183">    183</a>             Ok(output)</code>
-<code><a href="#l184" class="line" id="l184">    184</a>         }</code>
-<code><a href="#l185" class="line" id="l185">    185</a>     }</code>
-<code><a href="#l186" class="line" id="l186">    186</a> </code>
-<code><a href="#l187" class="line" id="l187">    187</a>     /// Decodes a raw byte vector from a Unicode string. Code points in the</code>
-<code><a href="#l188" class="line" id="l188">    188</a>     /// range U+0080 to U+00FF are converted back to bytes 0x80 to 0xff.</code>
-<code><a href="#l189" class="line" id="l189">    189</a>     /// This allows using e.g. \xff in the input string literal, and getting</code>
-<code><a href="#l190" class="line" id="l190">    190</a>     /// back a 0xff byte in the byte vector. Otherwise, char(0xff) yields</code>
-<code><a href="#l191" class="line" id="l191">    191</a>     /// the UTF-8 bytes 0xc3bf, which is the U+00FF code point as UTF-8.</code>
-<code><a href="#l192" class="line" id="l192">    192</a>     /// These characters are effectively represented as ISO-8859-1 rather</code>
-<code><a href="#l193" class="line" id="l193">    193</a>     /// than UTF-8, but it allows precise use of the entire u8 value range.</code>
-<code><a href="#l194" class="line" id="l194">    194</a>     pub fn decode_binary(s: &amp;str) -&gt; Vec&lt;u8&gt; {</code>
-<code><a href="#l195" class="line" id="l195">    195</a>         let mut buf = [0; 4];</code>
-<code><a href="#l196" class="line" id="l196">    196</a>         let mut bytes = Vec::new();</code>
-<code><a href="#l197" class="line" id="l197">    197</a>         for c in s.chars() {</code>
-<code><a href="#l198" class="line" id="l198">    198</a>             // u32 is the Unicode code point, not the UTF-8 encoding.</code>
-<code><a href="#l199" class="line" id="l199">    199</a>             match c as u32 {</code>
-<code><a href="#l200" class="line" id="l200">    200</a>                 b @ 0x80..=0xff =&gt; bytes.push(b as u8),</code>
-<code><a href="#l201" class="line" id="l201">    201</a>                 _ =&gt; bytes.extend(c.encode_utf8(&amp;mut buf).as_bytes()),</code>
-<code><a href="#l202" class="line" id="l202">    202</a>             }</code>
-<code><a href="#l203" class="line" id="l203">    203</a>         }</code>
-<code><a href="#l204" class="line" id="l204">    204</a>         bytes</code>
-<code><a href="#l205" class="line" id="l205">    205</a>     }</code>
-<code><a href="#l206" class="line" id="l206">    206</a> </code>
-<code><a href="#l207" class="line" id="l207">    207</a>     /// Parses an binary key range, using Rust range syntax.</code>
-<code><a href="#l208" class="line" id="l208">    208</a>     pub fn parse_key_range(</code>
-<code><a href="#l209" class="line" id="l209">    209</a>         s: &amp;str,</code>
-<code><a href="#l210" class="line" id="l210">    210</a>     ) -&gt; StdResult&lt;impl std::ops::RangeBounds&lt;Vec&lt;u8&gt;&gt;, Box&lt;dyn StdError&gt;&gt; {</code>
-<code><a href="#l211" class="line" id="l211">    211</a>         use std::ops::Bound;</code>
-<code><a href="#l212" class="line" id="l212">    212</a>         let mut bound = (Bound::&lt;Vec&lt;u8&gt;&gt;::Unbounded, Bound::&lt;Vec&lt;u8&gt;&gt;::Unbounded);</code>
-<code><a href="#l213" class="line" id="l213">    213</a>         let re = Regex::new(r&quot;^(\S+)?\.\.(=)?(\S+)?&quot;).expect(&quot;invalid regex&quot;);</code>
-<code><a href="#l214" class="line" id="l214">    214</a>         let groups = re.captures(s).ok_or_else(|| format!(&quot;invalid range {s}&quot;))?;</code>
-<code><a href="#l215" class="line" id="l215">    215</a>         if let Some(start) = groups.get(1) {</code>
-<code><a href="#l216" class="line" id="l216">    216</a>             bound.0 = Bound::Included(decode_binary(start.as_str()));</code>
-<code><a href="#l217" class="line" id="l217">    217</a>         }</code>
-<code><a href="#l218" class="line" id="l218">    218</a>         if let Some(end) = groups.get(3) {</code>
-<code><a href="#l219" class="line" id="l219">    219</a>             let end = decode_binary(end.as_str());</code>
-<code><a href="#l220" class="line" id="l220">    220</a>             if groups.get(2).is_some() {</code>
-<code><a href="#l221" class="line" id="l221">    221</a>                 bound.1 = Bound::Included(end)</code>
-<code><a href="#l222" class="line" id="l222">    222</a>             } else {</code>
-<code><a href="#l223" class="line" id="l223">    223</a>                 bound.1 = Bound::Excluded(end)</code>
-<code><a href="#l224" class="line" id="l224">    224</a>             }</code>
-<code><a href="#l225" class="line" id="l225">    225</a>         }</code>
-<code><a href="#l226" class="line" id="l226">    226</a>         Ok(bound)</code>
-<code><a href="#l227" class="line" id="l227">    227</a>     }</code>
-<code><a href="#l228" class="line" id="l228">    228</a> </code>
-<code><a href="#l229" class="line" id="l229">    229</a>     /// Wraps another engine and emits write events to the given channel.</code>
-<code><a href="#l230" class="line" id="l230">    230</a>     pub struct Emit&lt;E: Engine&gt; {</code>
-<code><a href="#l231" class="line" id="l231">    231</a>         /// The wrapped engine.</code>
-<code><a href="#l232" class="line" id="l232">    232</a>         inner: E,</code>
-<code><a href="#l233" class="line" id="l233">    233</a>         /// Sends operation events.</code>
-<code><a href="#l234" class="line" id="l234">    234</a>         tx: Sender&lt;Operation&gt;,</code>
-<code><a href="#l235" class="line" id="l235">    235</a>     }</code>
-<code><a href="#l236" class="line" id="l236">    236</a> </code>
-<code><a href="#l237" class="line" id="l237">    237</a>     /// An engine operation emitted by the Emit engine.</code>
-<code><a href="#l238" class="line" id="l238">    238</a>     pub enum Operation {</code>
-<code><a href="#l239" class="line" id="l239">    239</a>         Delete { key: Vec&lt;u8&gt; },</code>
-<code><a href="#l240" class="line" id="l240">    240</a>         Flush,</code>
-<code><a href="#l241" class="line" id="l241">    241</a>         Set { key: Vec&lt;u8&gt;, value: Vec&lt;u8&gt; },</code>
-<code><a href="#l242" class="line" id="l242">    242</a>     }</code>
-<code><a href="#l243" class="line" id="l243">    243</a> </code>
-<code><a href="#l244" class="line" id="l244">    244</a>     impl&lt;E: Engine&gt; Emit&lt;E&gt; {</code>
-<code><a href="#l245" class="line" id="l245">    245</a>         pub fn new(inner: E, tx: Sender&lt;Operation&gt;) -&gt; Self {</code>
-<code><a href="#l246" class="line" id="l246">    246</a>             Self { inner, tx }</code>
-<code><a href="#l247" class="line" id="l247">    247</a>         }</code>
-<code><a href="#l248" class="line" id="l248">    248</a>     }</code>
-<code><a href="#l249" class="line" id="l249">    249</a> </code>
-<code><a href="#l250" class="line" id="l250">    250</a>     impl&lt;E: Engine&gt; Engine for Emit&lt;E&gt; {</code>
-<code><a href="#l251" class="line" id="l251">    251</a>         type ScanIterator&lt;&#39;a&gt; = E::ScanIterator&lt;&#39;a&gt; where E: &#39;a;</code>
-<code><a href="#l252" class="line" id="l252">    252</a> </code>
-<code><a href="#l253" class="line" id="l253">    253</a>         fn flush(&amp;mut self) -&gt; Result&lt;()&gt; {</code>
-<code><a href="#l254" class="line" id="l254">    254</a>             self.inner.flush()?;</code>
-<code><a href="#l255" class="line" id="l255">    255</a>             self.tx.send(Operation::Flush)?;</code>
-<code><a href="#l256" class="line" id="l256">    256</a>             Ok(())</code>
-<code><a href="#l257" class="line" id="l257">    257</a>         }</code>
-<code><a href="#l258" class="line" id="l258">    258</a> </code>
-<code><a href="#l259" class="line" id="l259">    259</a>         fn delete(&amp;mut self, key: &amp;[u8]) -&gt; Result&lt;()&gt; {</code>
-<code><a href="#l260" class="line" id="l260">    260</a>             self.inner.delete(key)?;</code>
-<code><a href="#l261" class="line" id="l261">    261</a>             self.tx.send(Operation::Delete { key: key.to_vec() })?;</code>
-<code><a href="#l262" class="line" id="l262">    262</a>             Ok(())</code>
-<code><a href="#l263" class="line" id="l263">    263</a>         }</code>
-<code><a href="#l264" class="line" id="l264">    264</a> </code>
-<code><a href="#l265" class="line" id="l265">    265</a>         fn get(&amp;mut self, key: &amp;[u8]) -&gt; Result&lt;Option&lt;Vec&lt;u8&gt;&gt;&gt; {</code>
-<code><a href="#l266" class="line" id="l266">    266</a>             self.inner.get(key)</code>
-<code><a href="#l267" class="line" id="l267">    267</a>         }</code>
-<code><a href="#l268" class="line" id="l268">    268</a> </code>
-<code><a href="#l269" class="line" id="l269">    269</a>         fn scan(&amp;mut self, range: impl std::ops::RangeBounds&lt;Vec&lt;u8&gt;&gt;) -&gt; Self::ScanIterator&lt;&#39;_&gt; {</code>
-<code><a href="#l270" class="line" id="l270">    270</a>             self.inner.scan(range)</code>
-<code><a href="#l271" class="line" id="l271">    271</a>         }</code>
-<code><a href="#l272" class="line" id="l272">    272</a> </code>
-<code><a href="#l273" class="line" id="l273">    273</a>         fn scan_dyn(</code>
-<code><a href="#l274" class="line" id="l274">    274</a>             &amp;mut self,</code>
-<code><a href="#l275" class="line" id="l275">    275</a>             range: (std::ops::Bound&lt;Vec&lt;u8&gt;&gt;, std::ops::Bound&lt;Vec&lt;u8&gt;&gt;),</code>
-<code><a href="#l276" class="line" id="l276">    276</a>         ) -&gt; Box&lt;dyn ScanIterator + &#39;_&gt; {</code>
-<code><a href="#l277" class="line" id="l277">    277</a>             Box::new(self.scan(range))</code>
-<code><a href="#l278" class="line" id="l278">    278</a>         }</code>
-<code><a href="#l279" class="line" id="l279">    279</a> </code>
-<code><a href="#l280" class="line" id="l280">    280</a>         fn set(&amp;mut self, key: &amp;[u8], value: Vec&lt;u8&gt;) -&gt; Result&lt;()&gt; {</code>
-<code><a href="#l281" class="line" id="l281">    281</a>             self.inner.set(key, value.clone())?;</code>
-<code><a href="#l282" class="line" id="l282">    282</a>             self.tx.send(Operation::Set { key: key.to_vec(), value })?;</code>
-<code><a href="#l283" class="line" id="l283">    283</a>             Ok(())</code>
-<code><a href="#l284" class="line" id="l284">    284</a>         }</code>
-<code><a href="#l285" class="line" id="l285">    285</a> </code>
-<code><a href="#l286" class="line" id="l286">    286</a>         fn status(&amp;mut self) -&gt; Result&lt;Status&gt; {</code>
-<code><a href="#l287" class="line" id="l287">    287</a>             self.inner.status()</code>
-<code><a href="#l288" class="line" id="l288">    288</a>         }</code>
-<code><a href="#l289" class="line" id="l289">    289</a>     }</code>
-<code><a href="#l290" class="line" id="l290">    290</a> </code>
-<code><a href="#l291" class="line" id="l291">    291</a>     /// An engine that wraps two others and mirrors operations across them,</code>
-<code><a href="#l292" class="line" id="l292">    292</a>     /// panicking if they produce different results. Engine implementations</code>
-<code><a href="#l293" class="line" id="l293">    293</a>     /// should not have any observable differences in behavior.</code>
-<code><a href="#l294" class="line" id="l294">    294</a>     pub struct Mirror&lt;A: Engine, B: Engine&gt; {</code>
-<code><a href="#l295" class="line" id="l295">    295</a>         pub a: A,</code>
-<code><a href="#l296" class="line" id="l296">    296</a>         pub b: B,</code>
-<code><a href="#l297" class="line" id="l297">    297</a>     }</code>
-<code><a href="#l298" class="line" id="l298">    298</a> </code>
-<code><a href="#l299" class="line" id="l299">    299</a>     impl&lt;A: Engine, B: Engine&gt; Mirror&lt;A, B&gt; {</code>
-<code><a href="#l300" class="line" id="l300">    300</a>         pub fn new(a: A, b: B) -&gt; Self {</code>
-<code><a href="#l301" class="line" id="l301">    301</a>             Self { a, b }</code>
-<code><a href="#l302" class="line" id="l302">    302</a>         }</code>
-<code><a href="#l303" class="line" id="l303">    303</a>     }</code>
-<code><a href="#l304" class="line" id="l304">    304</a> </code>
-<code><a href="#l305" class="line" id="l305">    305</a>     impl&lt;A: Engine, B: Engine&gt; Engine for Mirror&lt;A, B&gt; {</code>
-<code><a href="#l306" class="line" id="l306">    306</a>         type ScanIterator&lt;&#39;a&gt; = MirrorIterator&lt;&#39;a, A, B&gt;</code>
-<code><a href="#l307" class="line" id="l307">    307</a>         where</code>
-<code><a href="#l308" class="line" id="l308">    308</a>             Self: Sized,</code>
-<code><a href="#l309" class="line" id="l309">    309</a>             A: &#39;a,</code>
-<code><a href="#l310" class="line" id="l310">    310</a>             B: &#39;a;</code>
-<code><a href="#l311" class="line" id="l311">    311</a> </code>
-<code><a href="#l312" class="line" id="l312">    312</a>         fn delete(&amp;mut self, key: &amp;[u8]) -&gt; Result&lt;()&gt; {</code>
-<code><a href="#l313" class="line" id="l313">    313</a>             self.a.delete(key)?;</code>
-<code><a href="#l314" class="line" id="l314">    314</a>             self.b.delete(key)</code>
-<code><a href="#l315" class="line" id="l315">    315</a>         }</code>
-<code><a href="#l316" class="line" id="l316">    316</a> </code>
-<code><a href="#l317" class="line" id="l317">    317</a>         fn flush(&amp;mut self) -&gt; Result&lt;()&gt; {</code>
-<code><a href="#l318" class="line" id="l318">    318</a>             self.a.flush()?;</code>
-<code><a href="#l319" class="line" id="l319">    319</a>             self.b.flush()</code>
-<code><a href="#l320" class="line" id="l320">    320</a>         }</code>
-<code><a href="#l321" class="line" id="l321">    321</a> </code>
-<code><a href="#l322" class="line" id="l322">    322</a>         fn get(&amp;mut self, key: &amp;[u8]) -&gt; Result&lt;Option&lt;Vec&lt;u8&gt;&gt;&gt; {</code>
-<code><a href="#l323" class="line" id="l323">    323</a>             let a = self.a.get(key)?;</code>
-<code><a href="#l324" class="line" id="l324">    324</a>             let b = self.b.get(key)?;</code>
-<code><a href="#l325" class="line" id="l325">    325</a>             assert_eq!(a, b);</code>
-<code><a href="#l326" class="line" id="l326">    326</a>             Ok(a)</code>
-<code><a href="#l327" class="line" id="l327">    327</a>         }</code>
-<code><a href="#l328" class="line" id="l328">    328</a> </code>
-<code><a href="#l329" class="line" id="l329">    329</a>         fn scan(&amp;mut self, range: impl std::ops::RangeBounds&lt;Vec&lt;u8&gt;&gt;) -&gt; Self::ScanIterator&lt;&#39;_&gt;</code>
-<code><a href="#l330" class="line" id="l330">    330</a>         where</code>
-<code><a href="#l331" class="line" id="l331">    331</a>             Self: Sized,</code>
-<code><a href="#l332" class="line" id="l332">    332</a>         {</code>
-<code><a href="#l333" class="line" id="l333">    333</a>             let a = self.a.scan((range.start_bound().cloned(), range.end_bound().cloned()));</code>
-<code><a href="#l334" class="line" id="l334">    334</a>             let b = self.b.scan(range);</code>
-<code><a href="#l335" class="line" id="l335">    335</a>             MirrorIterator { a, b }</code>
-<code><a href="#l336" class="line" id="l336">    336</a>         }</code>
-<code><a href="#l337" class="line" id="l337">    337</a> </code>
-<code><a href="#l338" class="line" id="l338">    338</a>         fn scan_dyn(</code>
-<code><a href="#l339" class="line" id="l339">    339</a>             &amp;mut self,</code>
-<code><a href="#l340" class="line" id="l340">    340</a>             range: (std::ops::Bound&lt;Vec&lt;u8&gt;&gt;, std::ops::Bound&lt;Vec&lt;u8&gt;&gt;),</code>
-<code><a href="#l341" class="line" id="l341">    341</a>         ) -&gt; Box&lt;dyn ScanIterator + &#39;_&gt; {</code>
-<code><a href="#l342" class="line" id="l342">    342</a>             let a = self.a.scan(range.clone());</code>
-<code><a href="#l343" class="line" id="l343">    343</a>             let b = self.b.scan(range);</code>
-<code><a href="#l344" class="line" id="l344">    344</a>             Box::new(MirrorIterator::&lt;A, B&gt; { a, b })</code>
-<code><a href="#l345" class="line" id="l345">    345</a>         }</code>
-<code><a href="#l346" class="line" id="l346">    346</a> </code>
-<code><a href="#l347" class="line" id="l347">    347</a>         fn set(&amp;mut self, key: &amp;[u8], value: Vec&lt;u8&gt;) -&gt; Result&lt;()&gt; {</code>
-<code><a href="#l348" class="line" id="l348">    348</a>             self.a.set(key, value.clone())?;</code>
-<code><a href="#l349" class="line" id="l349">    349</a>             self.b.set(key, value)</code>
-<code><a href="#l350" class="line" id="l350">    350</a>         }</code>
-<code><a href="#l351" class="line" id="l351">    351</a> </code>
-<code><a href="#l352" class="line" id="l352">    352</a>         fn status(&amp;mut self) -&gt; Result&lt;Status&gt; {</code>
-<code><a href="#l353" class="line" id="l353">    353</a>             let a = self.a.status()?;</code>
-<code><a href="#l354" class="line" id="l354">    354</a>             let b = self.b.status()?;</code>
-<code><a href="#l355" class="line" id="l355">    355</a>             // Only some items are comparable.</code>
-<code><a href="#l356" class="line" id="l356">    356</a>             assert_eq!(a.keys, b.keys);</code>
-<code><a href="#l357" class="line" id="l357">    357</a>             assert_eq!(a.size, b.size);</code>
-<code><a href="#l358" class="line" id="l358">    358</a>             Ok(a)</code>
-<code><a href="#l359" class="line" id="l359">    359</a>         }</code>
-<code><a href="#l360" class="line" id="l360">    360</a>     }</code>
-<code><a href="#l361" class="line" id="l361">    361</a> </code>
-<code><a href="#l362" class="line" id="l362">    362</a>     pub struct MirrorIterator&lt;&#39;a, A: Engine + &#39;a, B: Engine + &#39;a&gt; {</code>
-<code><a href="#l363" class="line" id="l363">    363</a>         a: A::ScanIterator&lt;&#39;a&gt;,</code>
-<code><a href="#l364" class="line" id="l364">    364</a>         b: B::ScanIterator&lt;&#39;a&gt;,</code>
-<code><a href="#l365" class="line" id="l365">    365</a>     }</code>
-<code><a href="#l366" class="line" id="l366">    366</a> </code>
-<code><a href="#l367" class="line" id="l367">    367</a>     impl&lt;&#39;a, A: Engine, B: Engine&gt; Iterator for MirrorIterator&lt;&#39;a, A, B&gt; {</code>
-<code><a href="#l368" class="line" id="l368">    368</a>         type Item = Result&lt;(Vec&lt;u8&gt;, Vec&lt;u8&gt;)&gt;;</code>
-<code><a href="#l369" class="line" id="l369">    369</a> </code>
-<code><a href="#l370" class="line" id="l370">    370</a>         fn next(&amp;mut self) -&gt; Option&lt;Self::Item&gt; {</code>
-<code><a href="#l371" class="line" id="l371">    371</a>             let a = self.a.next();</code>
-<code><a href="#l372" class="line" id="l372">    372</a>             let b = self.b.next();</code>
-<code><a href="#l373" class="line" id="l373">    373</a>             assert_eq!(a, b);</code>
-<code><a href="#l374" class="line" id="l374">    374</a>             a</code>
-<code><a href="#l375" class="line" id="l375">    375</a>         }</code>
-<code><a href="#l376" class="line" id="l376">    376</a>     }</code>
-<code><a href="#l377" class="line" id="l377">    377</a> </code>
-<code><a href="#l378" class="line" id="l378">    378</a>     impl&lt;&#39;a, A: Engine, B: Engine&gt; DoubleEndedIterator for MirrorIterator&lt;&#39;a, A, B&gt; {</code>
-<code><a href="#l379" class="line" id="l379">    379</a>         fn next_back(&amp;mut self) -&gt; Option&lt;Self::Item&gt; {</code>
-<code><a href="#l380" class="line" id="l380">    380</a>             let a = self.a.next_back();</code>
-<code><a href="#l381" class="line" id="l381">    381</a>             let b = self.b.next_back();</code>
-<code><a href="#l382" class="line" id="l382">    382</a>             assert_eq!(a, b);</code>
-<code><a href="#l383" class="line" id="l383">    383</a>             a</code>
-<code><a href="#l384" class="line" id="l384">    384</a>         }</code>
-<code><a href="#l385" class="line" id="l385">    385</a>     }</code>
-<code><a href="#l386" class="line" id="l386">    386</a> }</code>
+<a href="#l1" class="line" id="l1">      1</a><code> use crate::encoding::keycode;</code>
+<a href="#l2" class="line" id="l2">      2</a><code> use crate::error::Result;</code>
+<a href="#l3" class="line" id="l3">      3</a><code> </code>
+<a href="#l4" class="line" id="l4">      4</a><code> use serde::{Deserialize, Serialize};</code>
+<a href="#l5" class="line" id="l5">      5</a><code> </code>
+<a href="#l6" class="line" id="l6">      6</a><code> /// A key/value storage engine storing arbitrary byte strings in lexicographical</code>
+<a href="#l7" class="line" id="l7">      7</a><code> /// key order. Storing keys in order allows for efficient range scans, which is</code>
+<a href="#l8" class="line" id="l8">      8</a><code> /// needed to e.g. scan a single table during SQL execution (where all rows have</code>
+<a href="#l9" class="line" id="l9">      9</a><code> /// keys with a common key prefix for the table). Keys should use the KeyCode</code>
+<a href="#l10" class="line" id="l10">     10</a><code> /// order-preserving encoding, see src/encoding/keycode. Writes are only</code>
+<a href="#l11" class="line" id="l11">     11</a><code> /// guaranteed durable after calling flush().</code>
+<a href="#l12" class="line" id="l12">     12</a><code> ///</code>
+<a href="#l13" class="line" id="l13">     13</a><code> /// Only supports single-threaded use since all methods (including reads) take a</code>
+<a href="#l14" class="line" id="l14">     14</a><code> /// mutable reference -- serialized access can&#39;t be avoided anyway, since both</code>
+<a href="#l15" class="line" id="l15">     15</a><code> /// Raft execution and file access is serial.</code>
+<a href="#l16" class="line" id="l16">     16</a><code> pub trait Engine: Send {</code>
+<a href="#l17" class="line" id="l17">     17</a><code>     /// The iterator returned by scan().</code>
+<a href="#l18" class="line" id="l18">     18</a><code>     type ScanIterator&lt;&#39;a&gt;: ScanIterator + &#39;a</code>
+<a href="#l19" class="line" id="l19">     19</a><code>     where</code>
+<a href="#l20" class="line" id="l20">     20</a><code>         Self: Sized + &#39;a; // omit in trait objects, for object safety</code>
+<a href="#l21" class="line" id="l21">     21</a><code> </code>
+<a href="#l22" class="line" id="l22">     22</a><code>     /// Deletes a key, or does nothing if it does not exist.</code>
+<a href="#l23" class="line" id="l23">     23</a><code>     fn delete(&amp;mut self, key: &amp;[u8]) -&gt; Result&lt;()&gt;;</code>
+<a href="#l24" class="line" id="l24">     24</a><code> </code>
+<a href="#l25" class="line" id="l25">     25</a><code>     /// Flushes any buffered data to the underlying storage medium.</code>
+<a href="#l26" class="line" id="l26">     26</a><code>     fn flush(&amp;mut self) -&gt; Result&lt;()&gt;;</code>
+<a href="#l27" class="line" id="l27">     27</a><code> </code>
+<a href="#l28" class="line" id="l28">     28</a><code>     /// Gets a value for a key, if it exists.</code>
+<a href="#l29" class="line" id="l29">     29</a><code>     fn get(&amp;mut self, key: &amp;[u8]) -&gt; Result&lt;Option&lt;Vec&lt;u8&gt;&gt;&gt;;</code>
+<a href="#l30" class="line" id="l30">     30</a><code> </code>
+<a href="#l31" class="line" id="l31">     31</a><code>     /// Iterates over an ordered range of key/value pairs.</code>
+<a href="#l32" class="line" id="l32">     32</a><code>     fn scan(&amp;mut self, range: impl std::ops::RangeBounds&lt;Vec&lt;u8&gt;&gt;) -&gt; Self::ScanIterator&lt;&#39;_&gt;</code>
+<a href="#l33" class="line" id="l33">     33</a><code>     where</code>
+<a href="#l34" class="line" id="l34">     34</a><code>         Self: Sized; // omit in trait objects, for object safety</code>
+<a href="#l35" class="line" id="l35">     35</a><code> </code>
+<a href="#l36" class="line" id="l36">     36</a><code>     /// Like scan, but can be used from trait objects. The iterator will use</code>
+<a href="#l37" class="line" id="l37">     37</a><code>     /// dynamic dispatch, which has a minor performance penalty.</code>
+<a href="#l38" class="line" id="l38">     38</a><code>     fn scan_dyn(</code>
+<a href="#l39" class="line" id="l39">     39</a><code>         &amp;mut self,</code>
+<a href="#l40" class="line" id="l40">     40</a><code>         range: (std::ops::Bound&lt;Vec&lt;u8&gt;&gt;, std::ops::Bound&lt;Vec&lt;u8&gt;&gt;),</code>
+<a href="#l41" class="line" id="l41">     41</a><code>     ) -&gt; Box&lt;dyn ScanIterator + &#39;_&gt;;</code>
+<a href="#l42" class="line" id="l42">     42</a><code> </code>
+<a href="#l43" class="line" id="l43">     43</a><code>     /// Iterates over all key/value pairs starting with prefix.</code>
+<a href="#l44" class="line" id="l44">     44</a><code>     fn scan_prefix(&amp;mut self, prefix: &amp;[u8]) -&gt; Self::ScanIterator&lt;&#39;_&gt;</code>
+<a href="#l45" class="line" id="l45">     45</a><code>     where</code>
+<a href="#l46" class="line" id="l46">     46</a><code>         Self: Sized, // omit in trait objects, for object safety</code>
+<a href="#l47" class="line" id="l47">     47</a><code>     {</code>
+<a href="#l48" class="line" id="l48">     48</a><code>         self.scan(keycode::prefix_range(prefix))</code>
+<a href="#l49" class="line" id="l49">     49</a><code>     }</code>
+<a href="#l50" class="line" id="l50">     50</a><code> </code>
+<a href="#l51" class="line" id="l51">     51</a><code>     /// Sets a value for a key, replacing the existing value if any.</code>
+<a href="#l52" class="line" id="l52">     52</a><code>     fn set(&amp;mut self, key: &amp;[u8], value: Vec&lt;u8&gt;) -&gt; Result&lt;()&gt;;</code>
+<a href="#l53" class="line" id="l53">     53</a><code> </code>
+<a href="#l54" class="line" id="l54">     54</a><code>     /// Returns engine status.</code>
+<a href="#l55" class="line" id="l55">     55</a><code>     fn status(&amp;mut self) -&gt; Result&lt;Status&gt;;</code>
+<a href="#l56" class="line" id="l56">     56</a><code> }</code>
+<a href="#l57" class="line" id="l57">     57</a><code> </code>
+<a href="#l58" class="line" id="l58">     58</a><code> /// A scan iterator, with a blanket implementation (in lieu of trait aliases).</code>
+<a href="#l59" class="line" id="l59">     59</a><code> pub trait ScanIterator: DoubleEndedIterator&lt;Item = Result&lt;(Vec&lt;u8&gt;, Vec&lt;u8&gt;)&gt;&gt; {}</code>
+<a href="#l60" class="line" id="l60">     60</a><code> </code>
+<a href="#l61" class="line" id="l61">     61</a><code> impl&lt;I: DoubleEndedIterator&lt;Item = Result&lt;(Vec&lt;u8&gt;, Vec&lt;u8&gt;)&gt;&gt;&gt; ScanIterator for I {}</code>
+<a href="#l62" class="line" id="l62">     62</a><code> </code>
+<a href="#l63" class="line" id="l63">     63</a><code> /// Engine status.</code>
+<a href="#l64" class="line" id="l64">     64</a><code> #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]</code>
+<a href="#l65" class="line" id="l65">     65</a><code> pub struct Status {</code>
+<a href="#l66" class="line" id="l66">     66</a><code>     /// The name of the storage engine.</code>
+<a href="#l67" class="line" id="l67">     67</a><code>     pub name: String,</code>
+<a href="#l68" class="line" id="l68">     68</a><code>     /// The number of live keys in the engine.</code>
+<a href="#l69" class="line" id="l69">     69</a><code>     pub keys: u64,</code>
+<a href="#l70" class="line" id="l70">     70</a><code>     /// The logical size of live key/value pairs.</code>
+<a href="#l71" class="line" id="l71">     71</a><code>     pub size: u64,</code>
+<a href="#l72" class="line" id="l72">     72</a><code>     /// The on-disk size of all data, live and garbage.</code>
+<a href="#l73" class="line" id="l73">     73</a><code>     pub total_disk_size: u64,</code>
+<a href="#l74" class="line" id="l74">     74</a><code>     /// The on-disk size of live data.</code>
+<a href="#l75" class="line" id="l75">     75</a><code>     pub live_disk_size: u64,</code>
+<a href="#l76" class="line" id="l76">     76</a><code>     /// The on-disk size of garbage data.</code>
+<a href="#l77" class="line" id="l77">     77</a><code>     pub garbage_disk_size: u64,</code>
+<a href="#l78" class="line" id="l78">     78</a><code> }</code>
+<a href="#l79" class="line" id="l79">     79</a><code> </code>
+<a href="#l80" class="line" id="l80">     80</a><code> impl Status {</code>
+<a href="#l81" class="line" id="l81">     81</a><code>     pub fn garbage_percent(&amp;self) -&gt; f64 {</code>
+<a href="#l82" class="line" id="l82">     82</a><code>         if self.total_disk_size == 0 {</code>
+<a href="#l83" class="line" id="l83">     83</a><code>             return 0.0;</code>
+<a href="#l84" class="line" id="l84">     84</a><code>         }</code>
+<a href="#l85" class="line" id="l85">     85</a><code>         self.garbage_disk_size as f64 / self.total_disk_size as f64 * 100.0</code>
+<a href="#l86" class="line" id="l86">     86</a><code>     }</code>
+<a href="#l87" class="line" id="l87">     87</a><code> }</code>
+<a href="#l88" class="line" id="l88">     88</a><code> </code>
+<a href="#l89" class="line" id="l89">     89</a><code> /// Test helpers for engines.</code>
+<a href="#l90" class="line" id="l90">     90</a><code> #[cfg(test)]</code>
+<a href="#l91" class="line" id="l91">     91</a><code> pub mod test {</code>
+<a href="#l92" class="line" id="l92">     92</a><code>     use super::*;</code>
+<a href="#l93" class="line" id="l93">     93</a><code>     use crate::encoding::format::{self, Formatter as _};</code>
+<a href="#l94" class="line" id="l94">     94</a><code> </code>
+<a href="#l95" class="line" id="l95">     95</a><code>     use crossbeam::channel::Sender;</code>
+<a href="#l96" class="line" id="l96">     96</a><code>     use itertools::Itertools as _;</code>
+<a href="#l97" class="line" id="l97">     97</a><code>     use regex::Regex;</code>
+<a href="#l98" class="line" id="l98">     98</a><code>     use std::fmt::Write as _;</code>
+<a href="#l99" class="line" id="l99">     99</a><code>     use std::{error::Error as StdError, result::Result as StdResult};</code>
+<a href="#l100" class="line" id="l100">    100</a><code> </code>
+<a href="#l101" class="line" id="l101">    101</a><code>     /// Goldenscript runner for engines. All engines use a common set of</code>
+<a href="#l102" class="line" id="l102">    102</a><code>     /// goldenscripts in src/storage/testscripts/engine, as well as their own</code>
+<a href="#l103" class="line" id="l103">    103</a><code>     /// engine-specific tests.</code>
+<a href="#l104" class="line" id="l104">    104</a><code>     pub struct Runner&lt;E: Engine&gt; {</code>
+<a href="#l105" class="line" id="l105">    105</a><code>         pub engine: E,</code>
+<a href="#l106" class="line" id="l106">    106</a><code>     }</code>
+<a href="#l107" class="line" id="l107">    107</a><code> </code>
+<a href="#l108" class="line" id="l108">    108</a><code>     impl&lt;E: Engine&gt; Runner&lt;E&gt; {</code>
+<a href="#l109" class="line" id="l109">    109</a><code>         pub fn new(engine: E) -&gt; Self {</code>
+<a href="#l110" class="line" id="l110">    110</a><code>             Self { engine }</code>
+<a href="#l111" class="line" id="l111">    111</a><code>         }</code>
+<a href="#l112" class="line" id="l112">    112</a><code>     }</code>
+<a href="#l113" class="line" id="l113">    113</a><code> </code>
+<a href="#l114" class="line" id="l114">    114</a><code>     impl&lt;E: Engine&gt; goldenscript::Runner for Runner&lt;E&gt; {</code>
+<a href="#l115" class="line" id="l115">    115</a><code>         fn run(&amp;mut self, command: &amp;goldenscript::Command) -&gt; StdResult&lt;String, Box&lt;dyn StdError&gt;&gt; {</code>
+<a href="#l116" class="line" id="l116">    116</a><code>             let mut output = String::new();</code>
+<a href="#l117" class="line" id="l117">    117</a><code>             match command.name.as_str() {</code>
+<a href="#l118" class="line" id="l118">    118</a><code>                 // delete KEY</code>
+<a href="#l119" class="line" id="l119">    119</a><code>                 &quot;delete&quot; =&gt; {</code>
+<a href="#l120" class="line" id="l120">    120</a><code>                     let mut args = command.consume_args();</code>
+<a href="#l121" class="line" id="l121">    121</a><code>                     let key = decode_binary(&amp;args.next_pos().ok_or(&quot;key not given&quot;)?.value);</code>
+<a href="#l122" class="line" id="l122">    122</a><code>                     args.reject_rest()?;</code>
+<a href="#l123" class="line" id="l123">    123</a><code>                     self.engine.delete(&amp;key)?;</code>
+<a href="#l124" class="line" id="l124">    124</a><code>                 }</code>
+<a href="#l125" class="line" id="l125">    125</a><code> </code>
+<a href="#l126" class="line" id="l126">    126</a><code>                 // get KEY</code>
+<a href="#l127" class="line" id="l127">    127</a><code>                 &quot;get&quot; =&gt; {</code>
+<a href="#l128" class="line" id="l128">    128</a><code>                     let mut args = command.consume_args();</code>
+<a href="#l129" class="line" id="l129">    129</a><code>                     let key = decode_binary(&amp;args.next_pos().ok_or(&quot;key not given&quot;)?.value);</code>
+<a href="#l130" class="line" id="l130">    130</a><code>                     args.reject_rest()?;</code>
+<a href="#l131" class="line" id="l131">    131</a><code>                     let value = self.engine.get(&amp;key)?;</code>
+<a href="#l132" class="line" id="l132">    132</a><code>                     writeln!(output, &quot;{}&quot;, format::Raw::key_maybe_value(&amp;key, value.as_deref()))?;</code>
+<a href="#l133" class="line" id="l133">    133</a><code>                 }</code>
+<a href="#l134" class="line" id="l134">    134</a><code> </code>
+<a href="#l135" class="line" id="l135">    135</a><code>                 // scan [reverse=BOOL] RANGE</code>
+<a href="#l136" class="line" id="l136">    136</a><code>                 &quot;scan&quot; =&gt; {</code>
+<a href="#l137" class="line" id="l137">    137</a><code>                     let mut args = command.consume_args();</code>
+<a href="#l138" class="line" id="l138">    138</a><code>                     let reverse = args.lookup_parse(&quot;reverse&quot;)?.unwrap_or(false);</code>
+<a href="#l139" class="line" id="l139">    139</a><code>                     let range =</code>
+<a href="#l140" class="line" id="l140">    140</a><code>                         parse_key_range(args.next_pos().map(|a| a.value.as_str()).unwrap_or(&quot;..&quot;))?;</code>
+<a href="#l141" class="line" id="l141">    141</a><code>                     args.reject_rest()?;</code>
+<a href="#l142" class="line" id="l142">    142</a><code>                     let items: Vec&lt;_&gt; = if reverse {</code>
+<a href="#l143" class="line" id="l143">    143</a><code>                         self.engine.scan(range).rev().try_collect()?</code>
+<a href="#l144" class="line" id="l144">    144</a><code>                     } else {</code>
+<a href="#l145" class="line" id="l145">    145</a><code>                         self.engine.scan(range).try_collect()?</code>
+<a href="#l146" class="line" id="l146">    146</a><code>                     };</code>
+<a href="#l147" class="line" id="l147">    147</a><code>                     for (key, value) in items {</code>
+<a href="#l148" class="line" id="l148">    148</a><code>                         let fmtkv = format::Raw::key_value(&amp;key, &amp;value);</code>
+<a href="#l149" class="line" id="l149">    149</a><code>                         writeln!(output, &quot;{fmtkv}&quot;)?;</code>
+<a href="#l150" class="line" id="l150">    150</a><code>                     }</code>
+<a href="#l151" class="line" id="l151">    151</a><code>                 }</code>
+<a href="#l152" class="line" id="l152">    152</a><code> </code>
+<a href="#l153" class="line" id="l153">    153</a><code>                 // scan_prefix PREFIX</code>
+<a href="#l154" class="line" id="l154">    154</a><code>                 &quot;scan_prefix&quot; =&gt; {</code>
+<a href="#l155" class="line" id="l155">    155</a><code>                     let mut args = command.consume_args();</code>
+<a href="#l156" class="line" id="l156">    156</a><code>                     let prefix = decode_binary(&amp;args.next_pos().ok_or(&quot;prefix not given&quot;)?.value);</code>
+<a href="#l157" class="line" id="l157">    157</a><code>                     args.reject_rest()?;</code>
+<a href="#l158" class="line" id="l158">    158</a><code>                     let mut scan = self.engine.scan_prefix(&amp;prefix);</code>
+<a href="#l159" class="line" id="l159">    159</a><code>                     while let Some((key, value)) = scan.next().transpose()? {</code>
+<a href="#l160" class="line" id="l160">    160</a><code>                         let fmtkv = format::Raw::key_value(&amp;key, &amp;value);</code>
+<a href="#l161" class="line" id="l161">    161</a><code>                         writeln!(output, &quot;{fmtkv}&quot;)?;</code>
+<a href="#l162" class="line" id="l162">    162</a><code>                     }</code>
+<a href="#l163" class="line" id="l163">    163</a><code>                 }</code>
+<a href="#l164" class="line" id="l164">    164</a><code> </code>
+<a href="#l165" class="line" id="l165">    165</a><code>                 // set KEY=VALUE</code>
+<a href="#l166" class="line" id="l166">    166</a><code>                 &quot;set&quot; =&gt; {</code>
+<a href="#l167" class="line" id="l167">    167</a><code>                     let mut args = command.consume_args();</code>
+<a href="#l168" class="line" id="l168">    168</a><code>                     let kv = args.next_key().ok_or(&quot;key=value not given&quot;)?.clone();</code>
+<a href="#l169" class="line" id="l169">    169</a><code>                     let key = decode_binary(&amp;kv.key.unwrap());</code>
+<a href="#l170" class="line" id="l170">    170</a><code>                     let value = decode_binary(&amp;kv.value);</code>
+<a href="#l171" class="line" id="l171">    171</a><code>                     args.reject_rest()?;</code>
+<a href="#l172" class="line" id="l172">    172</a><code>                     self.engine.set(&amp;key, value)?;</code>
+<a href="#l173" class="line" id="l173">    173</a><code>                 }</code>
+<a href="#l174" class="line" id="l174">    174</a><code> </code>
+<a href="#l175" class="line" id="l175">    175</a><code>                 // status</code>
+<a href="#l176" class="line" id="l176">    176</a><code>                 &quot;status&quot; =&gt; {</code>
+<a href="#l177" class="line" id="l177">    177</a><code>                     command.consume_args().reject_rest()?;</code>
+<a href="#l178" class="line" id="l178">    178</a><code>                     writeln!(output, &quot;{:#?}&quot;, self.engine.status()?)?;</code>
+<a href="#l179" class="line" id="l179">    179</a><code>                 }</code>
+<a href="#l180" class="line" id="l180">    180</a><code> </code>
+<a href="#l181" class="line" id="l181">    181</a><code>                 name =&gt; return Err(format!(&quot;invalid command {name}&quot;).into()),</code>
+<a href="#l182" class="line" id="l182">    182</a><code>             }</code>
+<a href="#l183" class="line" id="l183">    183</a><code>             Ok(output)</code>
+<a href="#l184" class="line" id="l184">    184</a><code>         }</code>
+<a href="#l185" class="line" id="l185">    185</a><code>     }</code>
+<a href="#l186" class="line" id="l186">    186</a><code> </code>
+<a href="#l187" class="line" id="l187">    187</a><code>     /// Decodes a raw byte vector from a Unicode string. Code points in the</code>
+<a href="#l188" class="line" id="l188">    188</a><code>     /// range U+0080 to U+00FF are converted back to bytes 0x80 to 0xff.</code>
+<a href="#l189" class="line" id="l189">    189</a><code>     /// This allows using e.g. \xff in the input string literal, and getting</code>
+<a href="#l190" class="line" id="l190">    190</a><code>     /// back a 0xff byte in the byte vector. Otherwise, char(0xff) yields</code>
+<a href="#l191" class="line" id="l191">    191</a><code>     /// the UTF-8 bytes 0xc3bf, which is the U+00FF code point as UTF-8.</code>
+<a href="#l192" class="line" id="l192">    192</a><code>     /// These characters are effectively represented as ISO-8859-1 rather</code>
+<a href="#l193" class="line" id="l193">    193</a><code>     /// than UTF-8, but it allows precise use of the entire u8 value range.</code>
+<a href="#l194" class="line" id="l194">    194</a><code>     pub fn decode_binary(s: &amp;str) -&gt; Vec&lt;u8&gt; {</code>
+<a href="#l195" class="line" id="l195">    195</a><code>         let mut buf = [0; 4];</code>
+<a href="#l196" class="line" id="l196">    196</a><code>         let mut bytes = Vec::new();</code>
+<a href="#l197" class="line" id="l197">    197</a><code>         for c in s.chars() {</code>
+<a href="#l198" class="line" id="l198">    198</a><code>             // u32 is the Unicode code point, not the UTF-8 encoding.</code>
+<a href="#l199" class="line" id="l199">    199</a><code>             match c as u32 {</code>
+<a href="#l200" class="line" id="l200">    200</a><code>                 b @ 0x80..=0xff =&gt; bytes.push(b as u8),</code>
+<a href="#l201" class="line" id="l201">    201</a><code>                 _ =&gt; bytes.extend(c.encode_utf8(&amp;mut buf).as_bytes()),</code>
+<a href="#l202" class="line" id="l202">    202</a><code>             }</code>
+<a href="#l203" class="line" id="l203">    203</a><code>         }</code>
+<a href="#l204" class="line" id="l204">    204</a><code>         bytes</code>
+<a href="#l205" class="line" id="l205">    205</a><code>     }</code>
+<a href="#l206" class="line" id="l206">    206</a><code> </code>
+<a href="#l207" class="line" id="l207">    207</a><code>     /// Parses an binary key range, using Rust range syntax.</code>
+<a href="#l208" class="line" id="l208">    208</a><code>     pub fn parse_key_range(</code>
+<a href="#l209" class="line" id="l209">    209</a><code>         s: &amp;str,</code>
+<a href="#l210" class="line" id="l210">    210</a><code>     ) -&gt; StdResult&lt;impl std::ops::RangeBounds&lt;Vec&lt;u8&gt;&gt;, Box&lt;dyn StdError&gt;&gt; {</code>
+<a href="#l211" class="line" id="l211">    211</a><code>         use std::ops::Bound;</code>
+<a href="#l212" class="line" id="l212">    212</a><code>         let mut bound = (Bound::&lt;Vec&lt;u8&gt;&gt;::Unbounded, Bound::&lt;Vec&lt;u8&gt;&gt;::Unbounded);</code>
+<a href="#l213" class="line" id="l213">    213</a><code>         let re = Regex::new(r&quot;^(\S+)?\.\.(=)?(\S+)?&quot;).expect(&quot;invalid regex&quot;);</code>
+<a href="#l214" class="line" id="l214">    214</a><code>         let groups = re.captures(s).ok_or_else(|| format!(&quot;invalid range {s}&quot;))?;</code>
+<a href="#l215" class="line" id="l215">    215</a><code>         if let Some(start) = groups.get(1) {</code>
+<a href="#l216" class="line" id="l216">    216</a><code>             bound.0 = Bound::Included(decode_binary(start.as_str()));</code>
+<a href="#l217" class="line" id="l217">    217</a><code>         }</code>
+<a href="#l218" class="line" id="l218">    218</a><code>         if let Some(end) = groups.get(3) {</code>
+<a href="#l219" class="line" id="l219">    219</a><code>             let end = decode_binary(end.as_str());</code>
+<a href="#l220" class="line" id="l220">    220</a><code>             if groups.get(2).is_some() {</code>
+<a href="#l221" class="line" id="l221">    221</a><code>                 bound.1 = Bound::Included(end)</code>
+<a href="#l222" class="line" id="l222">    222</a><code>             } else {</code>
+<a href="#l223" class="line" id="l223">    223</a><code>                 bound.1 = Bound::Excluded(end)</code>
+<a href="#l224" class="line" id="l224">    224</a><code>             }</code>
+<a href="#l225" class="line" id="l225">    225</a><code>         }</code>
+<a href="#l226" class="line" id="l226">    226</a><code>         Ok(bound)</code>
+<a href="#l227" class="line" id="l227">    227</a><code>     }</code>
+<a href="#l228" class="line" id="l228">    228</a><code> </code>
+<a href="#l229" class="line" id="l229">    229</a><code>     /// Wraps another engine and emits write events to the given channel.</code>
+<a href="#l230" class="line" id="l230">    230</a><code>     pub struct Emit&lt;E: Engine&gt; {</code>
+<a href="#l231" class="line" id="l231">    231</a><code>         /// The wrapped engine.</code>
+<a href="#l232" class="line" id="l232">    232</a><code>         inner: E,</code>
+<a href="#l233" class="line" id="l233">    233</a><code>         /// Sends operation events.</code>
+<a href="#l234" class="line" id="l234">    234</a><code>         tx: Sender&lt;Operation&gt;,</code>
+<a href="#l235" class="line" id="l235">    235</a><code>     }</code>
+<a href="#l236" class="line" id="l236">    236</a><code> </code>
+<a href="#l237" class="line" id="l237">    237</a><code>     /// An engine operation emitted by the Emit engine.</code>
+<a href="#l238" class="line" id="l238">    238</a><code>     pub enum Operation {</code>
+<a href="#l239" class="line" id="l239">    239</a><code>         Delete { key: Vec&lt;u8&gt; },</code>
+<a href="#l240" class="line" id="l240">    240</a><code>         Flush,</code>
+<a href="#l241" class="line" id="l241">    241</a><code>         Set { key: Vec&lt;u8&gt;, value: Vec&lt;u8&gt; },</code>
+<a href="#l242" class="line" id="l242">    242</a><code>     }</code>
+<a href="#l243" class="line" id="l243">    243</a><code> </code>
+<a href="#l244" class="line" id="l244">    244</a><code>     impl&lt;E: Engine&gt; Emit&lt;E&gt; {</code>
+<a href="#l245" class="line" id="l245">    245</a><code>         pub fn new(inner: E, tx: Sender&lt;Operation&gt;) -&gt; Self {</code>
+<a href="#l246" class="line" id="l246">    246</a><code>             Self { inner, tx }</code>
+<a href="#l247" class="line" id="l247">    247</a><code>         }</code>
+<a href="#l248" class="line" id="l248">    248</a><code>     }</code>
+<a href="#l249" class="line" id="l249">    249</a><code> </code>
+<a href="#l250" class="line" id="l250">    250</a><code>     impl&lt;E: Engine&gt; Engine for Emit&lt;E&gt; {</code>
+<a href="#l251" class="line" id="l251">    251</a><code>         type ScanIterator&lt;&#39;a&gt; = E::ScanIterator&lt;&#39;a&gt; where E: &#39;a;</code>
+<a href="#l252" class="line" id="l252">    252</a><code> </code>
+<a href="#l253" class="line" id="l253">    253</a><code>         fn flush(&amp;mut self) -&gt; Result&lt;()&gt; {</code>
+<a href="#l254" class="line" id="l254">    254</a><code>             self.inner.flush()?;</code>
+<a href="#l255" class="line" id="l255">    255</a><code>             self.tx.send(Operation::Flush)?;</code>
+<a href="#l256" class="line" id="l256">    256</a><code>             Ok(())</code>
+<a href="#l257" class="line" id="l257">    257</a><code>         }</code>
+<a href="#l258" class="line" id="l258">    258</a><code> </code>
+<a href="#l259" class="line" id="l259">    259</a><code>         fn delete(&amp;mut self, key: &amp;[u8]) -&gt; Result&lt;()&gt; {</code>
+<a href="#l260" class="line" id="l260">    260</a><code>             self.inner.delete(key)?;</code>
+<a href="#l261" class="line" id="l261">    261</a><code>             self.tx.send(Operation::Delete { key: key.to_vec() })?;</code>
+<a href="#l262" class="line" id="l262">    262</a><code>             Ok(())</code>
+<a href="#l263" class="line" id="l263">    263</a><code>         }</code>
+<a href="#l264" class="line" id="l264">    264</a><code> </code>
+<a href="#l265" class="line" id="l265">    265</a><code>         fn get(&amp;mut self, key: &amp;[u8]) -&gt; Result&lt;Option&lt;Vec&lt;u8&gt;&gt;&gt; {</code>
+<a href="#l266" class="line" id="l266">    266</a><code>             self.inner.get(key)</code>
+<a href="#l267" class="line" id="l267">    267</a><code>         }</code>
+<a href="#l268" class="line" id="l268">    268</a><code> </code>
+<a href="#l269" class="line" id="l269">    269</a><code>         fn scan(&amp;mut self, range: impl std::ops::RangeBounds&lt;Vec&lt;u8&gt;&gt;) -&gt; Self::ScanIterator&lt;&#39;_&gt; {</code>
+<a href="#l270" class="line" id="l270">    270</a><code>             self.inner.scan(range)</code>
+<a href="#l271" class="line" id="l271">    271</a><code>         }</code>
+<a href="#l272" class="line" id="l272">    272</a><code> </code>
+<a href="#l273" class="line" id="l273">    273</a><code>         fn scan_dyn(</code>
+<a href="#l274" class="line" id="l274">    274</a><code>             &amp;mut self,</code>
+<a href="#l275" class="line" id="l275">    275</a><code>             range: (std::ops::Bound&lt;Vec&lt;u8&gt;&gt;, std::ops::Bound&lt;Vec&lt;u8&gt;&gt;),</code>
+<a href="#l276" class="line" id="l276">    276</a><code>         ) -&gt; Box&lt;dyn ScanIterator + &#39;_&gt; {</code>
+<a href="#l277" class="line" id="l277">    277</a><code>             Box::new(self.scan(range))</code>
+<a href="#l278" class="line" id="l278">    278</a><code>         }</code>
+<a href="#l279" class="line" id="l279">    279</a><code> </code>
+<a href="#l280" class="line" id="l280">    280</a><code>         fn set(&amp;mut self, key: &amp;[u8], value: Vec&lt;u8&gt;) -&gt; Result&lt;()&gt; {</code>
+<a href="#l281" class="line" id="l281">    281</a><code>             self.inner.set(key, value.clone())?;</code>
+<a href="#l282" class="line" id="l282">    282</a><code>             self.tx.send(Operation::Set { key: key.to_vec(), value })?;</code>
+<a href="#l283" class="line" id="l283">    283</a><code>             Ok(())</code>
+<a href="#l284" class="line" id="l284">    284</a><code>         }</code>
+<a href="#l285" class="line" id="l285">    285</a><code> </code>
+<a href="#l286" class="line" id="l286">    286</a><code>         fn status(&amp;mut self) -&gt; Result&lt;Status&gt; {</code>
+<a href="#l287" class="line" id="l287">    287</a><code>             self.inner.status()</code>
+<a href="#l288" class="line" id="l288">    288</a><code>         }</code>
+<a href="#l289" class="line" id="l289">    289</a><code>     }</code>
+<a href="#l290" class="line" id="l290">    290</a><code> </code>
+<a href="#l291" class="line" id="l291">    291</a><code>     /// An engine that wraps two others and mirrors operations across them,</code>
+<a href="#l292" class="line" id="l292">    292</a><code>     /// panicking if they produce different results. Engine implementations</code>
+<a href="#l293" class="line" id="l293">    293</a><code>     /// should not have any observable differences in behavior.</code>
+<a href="#l294" class="line" id="l294">    294</a><code>     pub struct Mirror&lt;A: Engine, B: Engine&gt; {</code>
+<a href="#l295" class="line" id="l295">    295</a><code>         pub a: A,</code>
+<a href="#l296" class="line" id="l296">    296</a><code>         pub b: B,</code>
+<a href="#l297" class="line" id="l297">    297</a><code>     }</code>
+<a href="#l298" class="line" id="l298">    298</a><code> </code>
+<a href="#l299" class="line" id="l299">    299</a><code>     impl&lt;A: Engine, B: Engine&gt; Mirror&lt;A, B&gt; {</code>
+<a href="#l300" class="line" id="l300">    300</a><code>         pub fn new(a: A, b: B) -&gt; Self {</code>
+<a href="#l301" class="line" id="l301">    301</a><code>             Self { a, b }</code>
+<a href="#l302" class="line" id="l302">    302</a><code>         }</code>
+<a href="#l303" class="line" id="l303">    303</a><code>     }</code>
+<a href="#l304" class="line" id="l304">    304</a><code> </code>
+<a href="#l305" class="line" id="l305">    305</a><code>     impl&lt;A: Engine, B: Engine&gt; Engine for Mirror&lt;A, B&gt; {</code>
+<a href="#l306" class="line" id="l306">    306</a><code>         type ScanIterator&lt;&#39;a&gt; = MirrorIterator&lt;&#39;a, A, B&gt;</code>
+<a href="#l307" class="line" id="l307">    307</a><code>         where</code>
+<a href="#l308" class="line" id="l308">    308</a><code>             Self: Sized,</code>
+<a href="#l309" class="line" id="l309">    309</a><code>             A: &#39;a,</code>
+<a href="#l310" class="line" id="l310">    310</a><code>             B: &#39;a;</code>
+<a href="#l311" class="line" id="l311">    311</a><code> </code>
+<a href="#l312" class="line" id="l312">    312</a><code>         fn delete(&amp;mut self, key: &amp;[u8]) -&gt; Result&lt;()&gt; {</code>
+<a href="#l313" class="line" id="l313">    313</a><code>             self.a.delete(key)?;</code>
+<a href="#l314" class="line" id="l314">    314</a><code>             self.b.delete(key)</code>
+<a href="#l315" class="line" id="l315">    315</a><code>         }</code>
+<a href="#l316" class="line" id="l316">    316</a><code> </code>
+<a href="#l317" class="line" id="l317">    317</a><code>         fn flush(&amp;mut self) -&gt; Result&lt;()&gt; {</code>
+<a href="#l318" class="line" id="l318">    318</a><code>             self.a.flush()?;</code>
+<a href="#l319" class="line" id="l319">    319</a><code>             self.b.flush()</code>
+<a href="#l320" class="line" id="l320">    320</a><code>         }</code>
+<a href="#l321" class="line" id="l321">    321</a><code> </code>
+<a href="#l322" class="line" id="l322">    322</a><code>         fn get(&amp;mut self, key: &amp;[u8]) -&gt; Result&lt;Option&lt;Vec&lt;u8&gt;&gt;&gt; {</code>
+<a href="#l323" class="line" id="l323">    323</a><code>             let a = self.a.get(key)?;</code>
+<a href="#l324" class="line" id="l324">    324</a><code>             let b = self.b.get(key)?;</code>
+<a href="#l325" class="line" id="l325">    325</a><code>             assert_eq!(a, b);</code>
+<a href="#l326" class="line" id="l326">    326</a><code>             Ok(a)</code>
+<a href="#l327" class="line" id="l327">    327</a><code>         }</code>
+<a href="#l328" class="line" id="l328">    328</a><code> </code>
+<a href="#l329" class="line" id="l329">    329</a><code>         fn scan(&amp;mut self, range: impl std::ops::RangeBounds&lt;Vec&lt;u8&gt;&gt;) -&gt; Self::ScanIterator&lt;&#39;_&gt;</code>
+<a href="#l330" class="line" id="l330">    330</a><code>         where</code>
+<a href="#l331" class="line" id="l331">    331</a><code>             Self: Sized,</code>
+<a href="#l332" class="line" id="l332">    332</a><code>         {</code>
+<a href="#l333" class="line" id="l333">    333</a><code>             let a = self.a.scan((range.start_bound().cloned(), range.end_bound().cloned()));</code>
+<a href="#l334" class="line" id="l334">    334</a><code>             let b = self.b.scan(range);</code>
+<a href="#l335" class="line" id="l335">    335</a><code>             MirrorIterator { a, b }</code>
+<a href="#l336" class="line" id="l336">    336</a><code>         }</code>
+<a href="#l337" class="line" id="l337">    337</a><code> </code>
+<a href="#l338" class="line" id="l338">    338</a><code>         fn scan_dyn(</code>
+<a href="#l339" class="line" id="l339">    339</a><code>             &amp;mut self,</code>
+<a href="#l340" class="line" id="l340">    340</a><code>             range: (std::ops::Bound&lt;Vec&lt;u8&gt;&gt;, std::ops::Bound&lt;Vec&lt;u8&gt;&gt;),</code>
+<a href="#l341" class="line" id="l341">    341</a><code>         ) -&gt; Box&lt;dyn ScanIterator + &#39;_&gt; {</code>
+<a href="#l342" class="line" id="l342">    342</a><code>             let a = self.a.scan(range.clone());</code>
+<a href="#l343" class="line" id="l343">    343</a><code>             let b = self.b.scan(range);</code>
+<a href="#l344" class="line" id="l344">    344</a><code>             Box::new(MirrorIterator::&lt;A, B&gt; { a, b })</code>
+<a href="#l345" class="line" id="l345">    345</a><code>         }</code>
+<a href="#l346" class="line" id="l346">    346</a><code> </code>
+<a href="#l347" class="line" id="l347">    347</a><code>         fn set(&amp;mut self, key: &amp;[u8], value: Vec&lt;u8&gt;) -&gt; Result&lt;()&gt; {</code>
+<a href="#l348" class="line" id="l348">    348</a><code>             self.a.set(key, value.clone())?;</code>
+<a href="#l349" class="line" id="l349">    349</a><code>             self.b.set(key, value)</code>
+<a href="#l350" class="line" id="l350">    350</a><code>         }</code>
+<a href="#l351" class="line" id="l351">    351</a><code> </code>
+<a href="#l352" class="line" id="l352">    352</a><code>         fn status(&amp;mut self) -&gt; Result&lt;Status&gt; {</code>
+<a href="#l353" class="line" id="l353">    353</a><code>             let a = self.a.status()?;</code>
+<a href="#l354" class="line" id="l354">    354</a><code>             let b = self.b.status()?;</code>
+<a href="#l355" class="line" id="l355">    355</a><code>             // Only some items are comparable.</code>
+<a href="#l356" class="line" id="l356">    356</a><code>             assert_eq!(a.keys, b.keys);</code>
+<a href="#l357" class="line" id="l357">    357</a><code>             assert_eq!(a.size, b.size);</code>
+<a href="#l358" class="line" id="l358">    358</a><code>             Ok(a)</code>
+<a href="#l359" class="line" id="l359">    359</a><code>         }</code>
+<a href="#l360" class="line" id="l360">    360</a><code>     }</code>
+<a href="#l361" class="line" id="l361">    361</a><code> </code>
+<a href="#l362" class="line" id="l362">    362</a><code>     pub struct MirrorIterator&lt;&#39;a, A: Engine + &#39;a, B: Engine + &#39;a&gt; {</code>
+<a href="#l363" class="line" id="l363">    363</a><code>         a: A::ScanIterator&lt;&#39;a&gt;,</code>
+<a href="#l364" class="line" id="l364">    364</a><code>         b: B::ScanIterator&lt;&#39;a&gt;,</code>
+<a href="#l365" class="line" id="l365">    365</a><code>     }</code>
+<a href="#l366" class="line" id="l366">    366</a><code> </code>
+<a href="#l367" class="line" id="l367">    367</a><code>     impl&lt;&#39;a, A: Engine, B: Engine&gt; Iterator for MirrorIterator&lt;&#39;a, A, B&gt; {</code>
+<a href="#l368" class="line" id="l368">    368</a><code>         type Item = Result&lt;(Vec&lt;u8&gt;, Vec&lt;u8&gt;)&gt;;</code>
+<a href="#l369" class="line" id="l369">    369</a><code> </code>
+<a href="#l370" class="line" id="l370">    370</a><code>         fn next(&amp;mut self) -&gt; Option&lt;Self::Item&gt; {</code>
+<a href="#l371" class="line" id="l371">    371</a><code>             let a = self.a.next();</code>
+<a href="#l372" class="line" id="l372">    372</a><code>             let b = self.b.next();</code>
+<a href="#l373" class="line" id="l373">    373</a><code>             assert_eq!(a, b);</code>
+<a href="#l374" class="line" id="l374">    374</a><code>             a</code>
+<a href="#l375" class="line" id="l375">    375</a><code>         }</code>
+<a href="#l376" class="line" id="l376">    376</a><code>     }</code>
+<a href="#l377" class="line" id="l377">    377</a><code> </code>
+<a href="#l378" class="line" id="l378">    378</a><code>     impl&lt;&#39;a, A: Engine, B: Engine&gt; DoubleEndedIterator for MirrorIterator&lt;&#39;a, A, B&gt; {</code>
+<a href="#l379" class="line" id="l379">    379</a><code>         fn next_back(&amp;mut self) -&gt; Option&lt;Self::Item&gt; {</code>
+<a href="#l380" class="line" id="l380">    380</a><code>             let a = self.a.next_back();</code>
+<a href="#l381" class="line" id="l381">    381</a><code>             let b = self.b.next_back();</code>
+<a href="#l382" class="line" id="l382">    382</a><code>             assert_eq!(a, b);</code>
+<a href="#l383" class="line" id="l383">    383</a><code>             a</code>
+<a href="#l384" class="line" id="l384">    384</a><code>         }</code>
+<a href="#l385" class="line" id="l385">    385</a><code>     }</code>
+<a href="#l386" class="line" id="l386">    386</a><code> }</code>
 </pre>
 </div>
 </body>
