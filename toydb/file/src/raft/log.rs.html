@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
 <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -15,7 +15,7 @@
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/base16/tender.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
-<script>hljs.highlightAll();</script>
+<script> hljs.highlightAll() ;</script>
 <style>pre code.hljs {display: inline;padding: 0;} code.hljs {padding: 0;} .hljs {background: initial;} .hljs-comment{color: rgb(96, 96, 96);}</style></head>
 <body>
 <table><tr><td><a href="../../../../"><img src="../../../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
@@ -25,640 +25,640 @@
 <hr/>
 <div id="content">
 <p> log.rs (27843B)</p><hr/><pre id="blob">
-<a href="#l1" class="line" id="l1">      1</a><code> use super::{NodeID, Term};</code>
-<a href="#l2" class="line" id="l2">      2</a><code> use crate::encoding::{self, bincode, Key as _, Value as _};</code>
-<a href="#l3" class="line" id="l3">      3</a><code> use crate::error::Result;</code>
-<a href="#l4" class="line" id="l4">      4</a><code> use crate::storage;</code>
-<a href="#l5" class="line" id="l5">      5</a><code> </code>
-<a href="#l6" class="line" id="l6">      6</a><code> use serde::{Deserialize, Serialize};</code>
-<a href="#l7" class="line" id="l7">      7</a><code> </code>
-<a href="#l8" class="line" id="l8">      8</a><code> /// A log index. Starts at 1, indicates no index if 0.</code>
-<a href="#l9" class="line" id="l9">      9</a><code> pub type Index = u64;</code>
-<a href="#l10" class="line" id="l10">     10</a><code> </code>
-<a href="#l11" class="line" id="l11">     11</a><code> /// A log entry.</code>
-<a href="#l12" class="line" id="l12">     12</a><code> #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]</code>
-<a href="#l13" class="line" id="l13">     13</a><code> pub struct Entry {</code>
-<a href="#l14" class="line" id="l14">     14</a><code>     /// The entry index.</code>
-<a href="#l15" class="line" id="l15">     15</a><code>     pub index: Index,</code>
-<a href="#l16" class="line" id="l16">     16</a><code>     /// The term in which the entry was added.</code>
-<a href="#l17" class="line" id="l17">     17</a><code>     pub term: Term,</code>
-<a href="#l18" class="line" id="l18">     18</a><code>     /// The state machine command. None (noop) commands are used during leader</code>
-<a href="#l19" class="line" id="l19">     19</a><code>     /// election to commit old entries, see section 5.4.2 in the Raft paper.</code>
-<a href="#l20" class="line" id="l20">     20</a><code>     pub command: Option&lt;Vec&lt;u8&gt;&gt;,</code>
-<a href="#l21" class="line" id="l21">     21</a><code> }</code>
-<a href="#l22" class="line" id="l22">     22</a><code> </code>
-<a href="#l23" class="line" id="l23">     23</a><code> impl encoding::Value for Entry {}</code>
-<a href="#l24" class="line" id="l24">     24</a><code> </code>
-<a href="#l25" class="line" id="l25">     25</a><code> /// A log storage key.</code>
-<a href="#l26" class="line" id="l26">     26</a><code> #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]</code>
-<a href="#l27" class="line" id="l27">     27</a><code> pub enum Key {</code>
-<a href="#l28" class="line" id="l28">     28</a><code>     /// A log entry, storing the term and command.</code>
-<a href="#l29" class="line" id="l29">     29</a><code>     Entry(Index),</code>
-<a href="#l30" class="line" id="l30">     30</a><code>     /// Stores the current term and vote (if any).</code>
-<a href="#l31" class="line" id="l31">     31</a><code>     TermVote,</code>
-<a href="#l32" class="line" id="l32">     32</a><code>     /// Stores the current commit index (if any).</code>
-<a href="#l33" class="line" id="l33">     33</a><code>     CommitIndex,</code>
-<a href="#l34" class="line" id="l34">     34</a><code> }</code>
-<a href="#l35" class="line" id="l35">     35</a><code> </code>
-<a href="#l36" class="line" id="l36">     36</a><code> impl encoding::Key&lt;&#39;_&gt; for Key {}</code>
-<a href="#l37" class="line" id="l37">     37</a><code> </code>
-<a href="#l38" class="line" id="l38">     38</a><code> /// The Raft log stores a sequence of arbitrary commands (typically writes) that</code>
-<a href="#l39" class="line" id="l39">     39</a><code> /// are replicated across nodes and applied sequentially to the local state</code>
-<a href="#l40" class="line" id="l40">     40</a><code> /// machine. Each entry contains an index, command, and the term in which the</code>
-<a href="#l41" class="line" id="l41">     41</a><code> /// leader proposed it. Commands may be noops (None), which are added when a</code>
-<a href="#l42" class="line" id="l42">     42</a><code> /// leader is elected (see section 5.4.2 in the Raft paper). For example:</code>
-<a href="#l43" class="line" id="l43">     43</a><code> ///</code>
-<a href="#l44" class="line" id="l44">     44</a><code> /// Index | Term | Command</code>
-<a href="#l45" class="line" id="l45">     45</a><code> /// ------|------|------------------------------------------------------</code>
-<a href="#l46" class="line" id="l46">     46</a><code> ///   1   |   1  | None</code>
-<a href="#l47" class="line" id="l47">     47</a><code> ///   2   |   1  | CREATE TABLE table (id INT PRIMARY KEY, value STRING)</code>
-<a href="#l48" class="line" id="l48">     48</a><code> ///   3   |   1  | INSERT INTO table VALUES (1, &#39;foo&#39;)</code>
-<a href="#l49" class="line" id="l49">     49</a><code> ///   4   |   2  | None</code>
-<a href="#l50" class="line" id="l50">     50</a><code> ///   5   |   2  | UPDATE table SET value = &#39;bar&#39; WHERE id = 1</code>
-<a href="#l51" class="line" id="l51">     51</a><code> ///   6   |   2  | DELETE FROM table WHERE id = 1</code>
-<a href="#l52" class="line" id="l52">     52</a><code> ///</code>
-<a href="#l53" class="line" id="l53">     53</a><code> /// Note that this is for illustration only, and the actual toyDB Raft commands</code>
-<a href="#l54" class="line" id="l54">     54</a><code> /// are not SQL statements but lower-level write operations.</code>
-<a href="#l55" class="line" id="l55">     55</a><code> ///</code>
-<a href="#l56" class="line" id="l56">     56</a><code> /// A key/value store is used to store the log entries on disk, keyed by index,</code>
-<a href="#l57" class="line" id="l57">     57</a><code> /// along with a few other metadata keys (e.g. who we voted for in this term).</code>
-<a href="#l58" class="line" id="l58">     58</a><code> ///</code>
-<a href="#l59" class="line" id="l59">     59</a><code> /// In the steady state, the log is append-only: when a client submits a</code>
-<a href="#l60" class="line" id="l60">     60</a><code> /// command, the leader appends it to its own log (via [`Log::append`]) and</code>
-<a href="#l61" class="line" id="l61">     61</a><code> /// replicates it to followers who append it to their logs (via</code>
-<a href="#l62" class="line" id="l62">     62</a><code> /// [`Log::splice`]). When an index has been replicated to a majority of nodes</code>
-<a href="#l63" class="line" id="l63">     63</a><code> /// it becomes committed, making the log immutable up to that index and</code>
-<a href="#l64" class="line" id="l64">     64</a><code> /// guaranteeing that all nodes will eventually contain it. Nodes keep track of</code>
-<a href="#l65" class="line" id="l65">     65</a><code> /// the commit index via [`Log::commit`] and apply committed commands to the</code>
-<a href="#l66" class="line" id="l66">     66</a><code> /// state machine.</code>
-<a href="#l67" class="line" id="l67">     67</a><code> ///</code>
-<a href="#l68" class="line" id="l68">     68</a><code> /// However, uncommitted entries can be replaced or removed. A leader may append</code>
-<a href="#l69" class="line" id="l69">     69</a><code> /// entries to its log, but then be unable to reach consensus on them (e.g.</code>
-<a href="#l70" class="line" id="l70">     70</a><code> /// because it is unable to communicate with a majority of nodes). If a</code>
-<a href="#l71" class="line" id="l71">     71</a><code> /// different leader is elected and writes different commands to those same</code>
-<a href="#l72" class="line" id="l72">     72</a><code> /// indexes, then the uncommitted entries will be replaced with entries from the</code>
-<a href="#l73" class="line" id="l73">     73</a><code> /// new leader once the old leader (or a follower) discovers it.</code>
-<a href="#l74" class="line" id="l74">     74</a><code> ///</code>
-<a href="#l75" class="line" id="l75">     75</a><code> /// The Raft log has the following invariants:</code>
-<a href="#l76" class="line" id="l76">     76</a><code> ///</code>
-<a href="#l77" class="line" id="l77">     77</a><code> /// * Entry indexes are contiguous starting at 1 (no index gaps).</code>
-<a href="#l78" class="line" id="l78">     78</a><code> /// * Entry terms never decrease from the previous entry.</code>
-<a href="#l79" class="line" id="l79">     79</a><code> /// * Entry terms are at or below the current term.</code>
-<a href="#l80" class="line" id="l80">     80</a><code> /// * Appended entries are durable (flushed to disk).</code>
-<a href="#l81" class="line" id="l81">     81</a><code> /// * Appended entries use the current term.</code>
-<a href="#l82" class="line" id="l82">     82</a><code> /// * Committed entries are never changed or removed (no log truncation).</code>
-<a href="#l83" class="line" id="l83">     83</a><code> /// * Committed entries will eventually be replicated to all nodes.</code>
-<a href="#l84" class="line" id="l84">     84</a><code> /// * Entries with the same index/term contain the same command.</code>
-<a href="#l85" class="line" id="l85">     85</a><code> /// * If two logs contain a matching index/term, all previous entries</code>
-<a href="#l86" class="line" id="l86">     86</a><code> ///   are identical (see section 5.3 in the Raft paper).</code>
-<a href="#l87" class="line" id="l87">     87</a><code> pub struct Log {</code>
-<a href="#l88" class="line" id="l88">     88</a><code>     /// The underlying storage engine. Uses a trait object instead of generics,</code>
-<a href="#l89" class="line" id="l89">     89</a><code>     /// to allow runtime selection of the engine and avoid propagating the</code>
-<a href="#l90" class="line" id="l90">     90</a><code>     /// generic type parameters throughout Raft.</code>
-<a href="#l91" class="line" id="l91">     91</a><code>     pub engine: Box&lt;dyn storage::Engine&gt;,</code>
-<a href="#l92" class="line" id="l92">     92</a><code>     /// The current term.</code>
-<a href="#l93" class="line" id="l93">     93</a><code>     term: Term,</code>
-<a href="#l94" class="line" id="l94">     94</a><code>     /// Our leader vote in the current term, if any.</code>
-<a href="#l95" class="line" id="l95">     95</a><code>     vote: Option&lt;NodeID&gt;,</code>
-<a href="#l96" class="line" id="l96">     96</a><code>     /// The index of the last stored entry.</code>
-<a href="#l97" class="line" id="l97">     97</a><code>     last_index: Index,</code>
-<a href="#l98" class="line" id="l98">     98</a><code>     /// The term of the last stored entry.</code>
-<a href="#l99" class="line" id="l99">     99</a><code>     last_term: Term,</code>
-<a href="#l100" class="line" id="l100">    100</a><code>     /// The index of the last committed entry.</code>
-<a href="#l101" class="line" id="l101">    101</a><code>     commit_index: Index,</code>
-<a href="#l102" class="line" id="l102">    102</a><code>     /// The term of the last committed entry.</code>
-<a href="#l103" class="line" id="l103">    103</a><code>     commit_term: Term,</code>
-<a href="#l104" class="line" id="l104">    104</a><code>     /// If true, fsync entries to disk when appended. This is mandated by Raft,</code>
-<a href="#l105" class="line" id="l105">    105</a><code>     /// but comes with a hefty performance penalty (especially since we don&#39;t</code>
-<a href="#l106" class="line" id="l106">    106</a><code>     /// optimize for it by batching entries before fsyncing). Disabling it will</code>
-<a href="#l107" class="line" id="l107">    107</a><code>     /// yield much better write performance, but may lose data on host crashes,</code>
-<a href="#l108" class="line" id="l108">    108</a><code>     /// which in some scenarios can cause log entries to become &quot;uncommitted&quot;</code>
-<a href="#l109" class="line" id="l109">    109</a><code>     /// and state machines diverging.</code>
-<a href="#l110" class="line" id="l110">    110</a><code>     fsync: bool,</code>
-<a href="#l111" class="line" id="l111">    111</a><code> }</code>
-<a href="#l112" class="line" id="l112">    112</a><code> </code>
-<a href="#l113" class="line" id="l113">    113</a><code> impl Log {</code>
-<a href="#l114" class="line" id="l114">    114</a><code>     /// Initializes a log using the given storage engine.</code>
-<a href="#l115" class="line" id="l115">    115</a><code>     pub fn new(mut engine: Box&lt;dyn storage::Engine&gt;) -&gt; Result&lt;Self&gt; {</code>
-<a href="#l116" class="line" id="l116">    116</a><code>         use std::ops::Bound::Included;</code>
-<a href="#l117" class="line" id="l117">    117</a><code>         let (term, vote) = engine</code>
-<a href="#l118" class="line" id="l118">    118</a><code>             .get(&amp;Key::TermVote.encode())?</code>
-<a href="#l119" class="line" id="l119">    119</a><code>             .map(|v| bincode::deserialize(&amp;v))</code>
-<a href="#l120" class="line" id="l120">    120</a><code>             .transpose()?</code>
-<a href="#l121" class="line" id="l121">    121</a><code>             .unwrap_or((0, None));</code>
-<a href="#l122" class="line" id="l122">    122</a><code>         let (last_index, last_term) = engine</code>
-<a href="#l123" class="line" id="l123">    123</a><code>             .scan_dyn((Included(Key::Entry(0).encode()), Included(Key::Entry(u64::MAX).encode())))</code>
-<a href="#l124" class="line" id="l124">    124</a><code>             .last()</code>
-<a href="#l125" class="line" id="l125">    125</a><code>             .transpose()?</code>
-<a href="#l126" class="line" id="l126">    126</a><code>             .map(|(_, v)| Entry::decode(&amp;v))</code>
-<a href="#l127" class="line" id="l127">    127</a><code>             .transpose()?</code>
-<a href="#l128" class="line" id="l128">    128</a><code>             .map(|e| (e.index, e.term))</code>
-<a href="#l129" class="line" id="l129">    129</a><code>             .unwrap_or((0, 0));</code>
-<a href="#l130" class="line" id="l130">    130</a><code>         let (commit_index, commit_term) = engine</code>
-<a href="#l131" class="line" id="l131">    131</a><code>             .get(&amp;Key::CommitIndex.encode())?</code>
-<a href="#l132" class="line" id="l132">    132</a><code>             .map(|v| bincode::deserialize(&amp;v))</code>
-<a href="#l133" class="line" id="l133">    133</a><code>             .transpose()?</code>
-<a href="#l134" class="line" id="l134">    134</a><code>             .unwrap_or((0, 0));</code>
-<a href="#l135" class="line" id="l135">    135</a><code>         let fsync = true; // fsync by default (NB: BitCask::flush() is a noop in tests)</code>
-<a href="#l136" class="line" id="l136">    136</a><code>         Ok(Self { engine, term, vote, last_index, last_term, commit_index, commit_term, fsync })</code>
-<a href="#l137" class="line" id="l137">    137</a><code>     }</code>
-<a href="#l138" class="line" id="l138">    138</a><code> </code>
-<a href="#l139" class="line" id="l139">    139</a><code>     /// Controls whether to fsync writes. Disabling this may violate Raft</code>
-<a href="#l140" class="line" id="l140">    140</a><code>     /// guarantees, see comment on fsync attribute.</code>
-<a href="#l141" class="line" id="l141">    141</a><code>     pub fn enable_fsync(&amp;mut self, fsync: bool) {</code>
-<a href="#l142" class="line" id="l142">    142</a><code>         self.fsync = fsync</code>
-<a href="#l143" class="line" id="l143">    143</a><code>     }</code>
-<a href="#l144" class="line" id="l144">    144</a><code> </code>
-<a href="#l145" class="line" id="l145">    145</a><code>     /// Returns the commit index and term.</code>
-<a href="#l146" class="line" id="l146">    146</a><code>     pub fn get_commit_index(&amp;self) -&gt; (Index, Term) {</code>
-<a href="#l147" class="line" id="l147">    147</a><code>         (self.commit_index, self.commit_term)</code>
-<a href="#l148" class="line" id="l148">    148</a><code>     }</code>
-<a href="#l149" class="line" id="l149">    149</a><code> </code>
-<a href="#l150" class="line" id="l150">    150</a><code>     /// Returns the last log index and term.</code>
-<a href="#l151" class="line" id="l151">    151</a><code>     pub fn get_last_index(&amp;self) -&gt; (Index, Term) {</code>
-<a href="#l152" class="line" id="l152">    152</a><code>         (self.last_index, self.last_term)</code>
-<a href="#l153" class="line" id="l153">    153</a><code>     }</code>
-<a href="#l154" class="line" id="l154">    154</a><code> </code>
-<a href="#l155" class="line" id="l155">    155</a><code>     /// Returns the current term (0 if none) and vote.</code>
-<a href="#l156" class="line" id="l156">    156</a><code>     pub fn get_term(&amp;self) -&gt; (Term, Option&lt;NodeID&gt;) {</code>
-<a href="#l157" class="line" id="l157">    157</a><code>         (self.term, self.vote)</code>
-<a href="#l158" class="line" id="l158">    158</a><code>     }</code>
-<a href="#l159" class="line" id="l159">    159</a><code> </code>
-<a href="#l160" class="line" id="l160">    160</a><code>     /// Stores the current term and cast vote (if any). Enforces that the term</code>
-<a href="#l161" class="line" id="l161">    161</a><code>     /// does not regress, and that we only vote for one node in a term. append()</code>
-<a href="#l162" class="line" id="l162">    162</a><code>     /// will use this term, and splice() can&#39;t write entries beyond it.</code>
-<a href="#l163" class="line" id="l163">    163</a><code>     pub fn set_term(&amp;mut self, term: Term, vote: Option&lt;NodeID&gt;) -&gt; Result&lt;()&gt; {</code>
-<a href="#l164" class="line" id="l164">    164</a><code>         assert!(term &gt; 0, &quot;can&#39;t set term 0&quot;);</code>
-<a href="#l165" class="line" id="l165">    165</a><code>         assert!(term &gt;= self.term, &quot;term regression {} → {}&quot;, self.term, term);</code>
-<a href="#l166" class="line" id="l166">    166</a><code>         assert!(term &gt; self.term || self.vote.is_none() || vote == self.vote, &quot;can&#39;t change vote&quot;);</code>
-<a href="#l167" class="line" id="l167">    167</a><code>         if term == self.term &amp;&amp; vote == self.vote {</code>
-<a href="#l168" class="line" id="l168">    168</a><code>             return Ok(());</code>
-<a href="#l169" class="line" id="l169">    169</a><code>         }</code>
-<a href="#l170" class="line" id="l170">    170</a><code>         self.engine.set(&amp;Key::TermVote.encode(), bincode::serialize(&amp;(term, vote)))?;</code>
-<a href="#l171" class="line" id="l171">    171</a><code>         // Always fsync, even with Log.fsync = false. Term changes are rare, so</code>
-<a href="#l172" class="line" id="l172">    172</a><code>         // this doesn&#39;t materially affect performance, and double voting could</code>
-<a href="#l173" class="line" id="l173">    173</a><code>         // lead to multiple leaders and split brain which is really bad.</code>
-<a href="#l174" class="line" id="l174">    174</a><code>         self.engine.flush()?;</code>
-<a href="#l175" class="line" id="l175">    175</a><code>         self.term = term;</code>
-<a href="#l176" class="line" id="l176">    176</a><code>         self.vote = vote;</code>
-<a href="#l177" class="line" id="l177">    177</a><code>         Ok(())</code>
-<a href="#l178" class="line" id="l178">    178</a><code>     }</code>
-<a href="#l179" class="line" id="l179">    179</a><code> </code>
-<a href="#l180" class="line" id="l180">    180</a><code>     /// Appends a command to the log at the current term, and flushes it to</code>
-<a href="#l181" class="line" id="l181">    181</a><code>     /// disk, returning its index. None implies a noop command, typically after</code>
-<a href="#l182" class="line" id="l182">    182</a><code>     /// Raft leader changes.</code>
-<a href="#l183" class="line" id="l183">    183</a><code>     pub fn append(&amp;mut self, command: Option&lt;Vec&lt;u8&gt;&gt;) -&gt; Result&lt;Index&gt; {</code>
-<a href="#l184" class="line" id="l184">    184</a><code>         assert!(self.term &gt; 0, &quot;can&#39;t append entry in term 0&quot;);</code>
-<a href="#l185" class="line" id="l185">    185</a><code>         // We could omit the index in the encoded value, since it&#39;s also stored</code>
-<a href="#l186" class="line" id="l186">    186</a><code>         // in the key, but we keep it simple.</code>
-<a href="#l187" class="line" id="l187">    187</a><code>         let entry = Entry { index: self.last_index + 1, term: self.term, command };</code>
-<a href="#l188" class="line" id="l188">    188</a><code>         self.engine.set(&amp;Key::Entry(entry.index).encode(), entry.encode())?;</code>
-<a href="#l189" class="line" id="l189">    189</a><code>         if self.fsync {</code>
-<a href="#l190" class="line" id="l190">    190</a><code>             self.engine.flush()?;</code>
-<a href="#l191" class="line" id="l191">    191</a><code>         }</code>
-<a href="#l192" class="line" id="l192">    192</a><code>         self.last_index = entry.index;</code>
-<a href="#l193" class="line" id="l193">    193</a><code>         self.last_term = entry.term;</code>
-<a href="#l194" class="line" id="l194">    194</a><code>         Ok(entry.index)</code>
-<a href="#l195" class="line" id="l195">    195</a><code>     }</code>
-<a href="#l196" class="line" id="l196">    196</a><code> </code>
-<a href="#l197" class="line" id="l197">    197</a><code>     /// Commits entries up to and including the given index. The index must</code>
-<a href="#l198" class="line" id="l198">    198</a><code>     /// exist and be at or after the current commit index.</code>
-<a href="#l199" class="line" id="l199">    199</a><code>     pub fn commit(&amp;mut self, index: Index) -&gt; Result&lt;Index&gt; {</code>
-<a href="#l200" class="line" id="l200">    200</a><code>         let term = match self.get(index)? {</code>
-<a href="#l201" class="line" id="l201">    201</a><code>             Some(e) if e.index &lt; self.commit_index =&gt; {</code>
-<a href="#l202" class="line" id="l202">    202</a><code>                 panic!(&quot;commit index regression {} → {}&quot;, self.commit_index, e.index);</code>
-<a href="#l203" class="line" id="l203">    203</a><code>             }</code>
-<a href="#l204" class="line" id="l204">    204</a><code>             Some(e) if e.index == self.commit_index =&gt; return Ok(index),</code>
-<a href="#l205" class="line" id="l205">    205</a><code>             Some(e) =&gt; e.term,</code>
-<a href="#l206" class="line" id="l206">    206</a><code>             None =&gt; panic!(&quot;commit index {index} does not exist&quot;),</code>
-<a href="#l207" class="line" id="l207">    207</a><code>         };</code>
-<a href="#l208" class="line" id="l208">    208</a><code>         self.engine.set(&amp;Key::CommitIndex.encode(), bincode::serialize(&amp;(index, term)))?;</code>
-<a href="#l209" class="line" id="l209">    209</a><code>         // NB: the commit index doesn&#39;t need to be fsynced, since the entries</code>
-<a href="#l210" class="line" id="l210">    210</a><code>         // are fsynced and the commit index can be recovered from a log quorum.</code>
-<a href="#l211" class="line" id="l211">    211</a><code>         self.commit_index = index;</code>
-<a href="#l212" class="line" id="l212">    212</a><code>         self.commit_term = term;</code>
-<a href="#l213" class="line" id="l213">    213</a><code>         Ok(index)</code>
-<a href="#l214" class="line" id="l214">    214</a><code>     }</code>
-<a href="#l215" class="line" id="l215">    215</a><code> </code>
-<a href="#l216" class="line" id="l216">    216</a><code>     /// Fetches an entry at an index, or None if it does not exist.</code>
-<a href="#l217" class="line" id="l217">    217</a><code>     pub fn get(&amp;mut self, index: Index) -&gt; Result&lt;Option&lt;Entry&gt;&gt; {</code>
-<a href="#l218" class="line" id="l218">    218</a><code>         self.engine.get(&amp;Key::Entry(index).encode())?.map(|v| Entry::decode(&amp;v)).transpose()</code>
-<a href="#l219" class="line" id="l219">    219</a><code>     }</code>
-<a href="#l220" class="line" id="l220">    220</a><code> </code>
-<a href="#l221" class="line" id="l221">    221</a><code>     /// Checks if the log contains an entry with the given index and term.</code>
-<a href="#l222" class="line" id="l222">    222</a><code>     pub fn has(&amp;mut self, index: Index, term: Term) -&gt; Result&lt;bool&gt; {</code>
-<a href="#l223" class="line" id="l223">    223</a><code>         // Fast path: check against last_index. This is the common case when</code>
-<a href="#l224" class="line" id="l224">    224</a><code>         // followers process appends or heartbeats.</code>
-<a href="#l225" class="line" id="l225">    225</a><code>         if index == 0 || index &gt; self.last_index {</code>
-<a href="#l226" class="line" id="l226">    226</a><code>             return Ok(false);</code>
-<a href="#l227" class="line" id="l227">    227</a><code>         }</code>
-<a href="#l228" class="line" id="l228">    228</a><code>         if (index, term) == (self.last_index, self.last_term) {</code>
-<a href="#l229" class="line" id="l229">    229</a><code>             return Ok(true);</code>
-<a href="#l230" class="line" id="l230">    230</a><code>         }</code>
-<a href="#l231" class="line" id="l231">    231</a><code>         Ok(self.get(index)?.map(|e| e.term == term).unwrap_or(false))</code>
-<a href="#l232" class="line" id="l232">    232</a><code>     }</code>
-<a href="#l233" class="line" id="l233">    233</a><code> </code>
-<a href="#l234" class="line" id="l234">    234</a><code>     /// Returns an iterator over log entries in the given index range.</code>
-<a href="#l235" class="line" id="l235">    235</a><code>     pub fn scan(&amp;mut self, range: impl std::ops::RangeBounds&lt;Index&gt;) -&gt; Iterator {</code>
-<a href="#l236" class="line" id="l236">    236</a><code>         use std::ops::Bound;</code>
-<a href="#l237" class="line" id="l237">    237</a><code>         let from = match range.start_bound() {</code>
-<a href="#l238" class="line" id="l238">    238</a><code>             Bound::Excluded(&amp;index) =&gt; Bound::Excluded(Key::Entry(index).encode()),</code>
-<a href="#l239" class="line" id="l239">    239</a><code>             Bound::Included(&amp;index) =&gt; Bound::Included(Key::Entry(index).encode()),</code>
-<a href="#l240" class="line" id="l240">    240</a><code>             Bound::Unbounded =&gt; Bound::Included(Key::Entry(0).encode()),</code>
-<a href="#l241" class="line" id="l241">    241</a><code>         };</code>
-<a href="#l242" class="line" id="l242">    242</a><code>         let to = match range.end_bound() {</code>
-<a href="#l243" class="line" id="l243">    243</a><code>             Bound::Excluded(&amp;index) =&gt; Bound::Excluded(Key::Entry(index).encode()),</code>
-<a href="#l244" class="line" id="l244">    244</a><code>             Bound::Included(&amp;index) =&gt; Bound::Included(Key::Entry(index).encode()),</code>
-<a href="#l245" class="line" id="l245">    245</a><code>             Bound::Unbounded =&gt; Bound::Included(Key::Entry(Index::MAX).encode()),</code>
-<a href="#l246" class="line" id="l246">    246</a><code>         };</code>
-<a href="#l247" class="line" id="l247">    247</a><code>         Iterator::new(self.engine.scan_dyn((from, to)))</code>
-<a href="#l248" class="line" id="l248">    248</a><code>     }</code>
-<a href="#l249" class="line" id="l249">    249</a><code> </code>
-<a href="#l250" class="line" id="l250">    250</a><code>     /// Returns an iterator over entries that are ready to apply, starting after</code>
-<a href="#l251" class="line" id="l251">    251</a><code>     /// the current applied index up to the commit index.</code>
-<a href="#l252" class="line" id="l252">    252</a><code>     pub fn scan_apply(&amp;mut self, applied_index: Index) -&gt; Iterator {</code>
-<a href="#l253" class="line" id="l253">    253</a><code>         // NB: we don&#39;t assert that commit_index &gt;= applied_index, because the</code>
-<a href="#l254" class="line" id="l254">    254</a><code>         // local commit index is not flushed to durable storage -- if lost on</code>
-<a href="#l255" class="line" id="l255">    255</a><code>         // restart, it can be recovered from a quorum of logs.</code>
-<a href="#l256" class="line" id="l256">    256</a><code>         if applied_index &gt;= self.commit_index {</code>
-<a href="#l257" class="line" id="l257">    257</a><code>             return Iterator::new(Box::new(std::iter::empty()));</code>
-<a href="#l258" class="line" id="l258">    258</a><code>         }</code>
-<a href="#l259" class="line" id="l259">    259</a><code>         self.scan(applied_index + 1..=self.commit_index)</code>
-<a href="#l260" class="line" id="l260">    260</a><code>     }</code>
-<a href="#l261" class="line" id="l261">    261</a><code> </code>
-<a href="#l262" class="line" id="l262">    262</a><code>     /// Splices a set of entries into the log and flushes it to disk. The</code>
-<a href="#l263" class="line" id="l263">    263</a><code>     /// entries must have contiguous indexes and equal/increasing terms, and the</code>
-<a href="#l264" class="line" id="l264">    264</a><code>     /// first entry must be in the range [1,last_index+1] with a term at or</code>
-<a href="#l265" class="line" id="l265">    265</a><code>     /// above the previous (base) entry&#39;s term and at or below the current term.</code>
-<a href="#l266" class="line" id="l266">    266</a><code>     /// New indexes will be appended. Overlapping indexes with the same term</code>
-<a href="#l267" class="line" id="l267">    267</a><code>     /// must be equal and will be ignored. Overlapping indexes with different</code>
-<a href="#l268" class="line" id="l268">    268</a><code>     /// terms will truncate the existing log at the first conflict and then</code>
-<a href="#l269" class="line" id="l269">    269</a><code>     /// splice the new entries.</code>
-<a href="#l270" class="line" id="l270">    270</a><code>     pub fn splice(&amp;mut self, entries: Vec&lt;Entry&gt;) -&gt; Result&lt;Index&gt; {</code>
-<a href="#l271" class="line" id="l271">    271</a><code>         let (Some(first), Some(last)) = (entries.first(), entries.last()) else {</code>
-<a href="#l272" class="line" id="l272">    272</a><code>             return Ok(self.last_index); // empty input is noop</code>
-<a href="#l273" class="line" id="l273">    273</a><code>         };</code>
-<a href="#l274" class="line" id="l274">    274</a><code> </code>
-<a href="#l275" class="line" id="l275">    275</a><code>         // Check that the entries are well-formed.</code>
-<a href="#l276" class="line" id="l276">    276</a><code>         if first.index == 0 || first.term == 0 {</code>
-<a href="#l277" class="line" id="l277">    277</a><code>             panic!(&quot;spliced entry has index or term 0&quot;);</code>
-<a href="#l278" class="line" id="l278">    278</a><code>         }</code>
-<a href="#l279" class="line" id="l279">    279</a><code>         if !entries.windows(2).all(|w| w[0].index + 1 == w[1].index) {</code>
-<a href="#l280" class="line" id="l280">    280</a><code>             panic!(&quot;spliced entries are not contiguous&quot;);</code>
-<a href="#l281" class="line" id="l281">    281</a><code>         }</code>
-<a href="#l282" class="line" id="l282">    282</a><code>         if !entries.windows(2).all(|w| w[0].term &lt;= w[1].term) {</code>
-<a href="#l283" class="line" id="l283">    283</a><code>             panic!(&quot;spliced entries have term regression&quot;);</code>
-<a href="#l284" class="line" id="l284">    284</a><code>         }</code>
-<a href="#l285" class="line" id="l285">    285</a><code> </code>
-<a href="#l286" class="line" id="l286">    286</a><code>         // Check that the entries connect to the existing log (if any), and that the</code>
-<a href="#l287" class="line" id="l287">    287</a><code>         // term doesn&#39;t regress.</code>
-<a href="#l288" class="line" id="l288">    288</a><code>         assert!(last.term &lt;= self.term, &quot;splice term {} beyond current {}&quot;, last.term, self.term);</code>
-<a href="#l289" class="line" id="l289">    289</a><code>         match self.get(first.index - 1)? {</code>
-<a href="#l290" class="line" id="l290">    290</a><code>             Some(base) if first.term &lt; base.term =&gt; {</code>
-<a href="#l291" class="line" id="l291">    291</a><code>                 panic!(&quot;splice term regression {} → {}&quot;, base.term, first.term)</code>
-<a href="#l292" class="line" id="l292">    292</a><code>             }</code>
-<a href="#l293" class="line" id="l293">    293</a><code>             Some(_) =&gt; {}</code>
-<a href="#l294" class="line" id="l294">    294</a><code>             None if first.index == 1 =&gt; {}</code>
-<a href="#l295" class="line" id="l295">    295</a><code>             None =&gt; panic!(&quot;first index {} must touch existing log&quot;, first.index),</code>
-<a href="#l296" class="line" id="l296">    296</a><code>         }</code>
-<a href="#l297" class="line" id="l297">    297</a><code> </code>
-<a href="#l298" class="line" id="l298">    298</a><code>         // Skip entries that are already in the log.</code>
-<a href="#l299" class="line" id="l299">    299</a><code>         let mut entries = entries.as_slice();</code>
-<a href="#l300" class="line" id="l300">    300</a><code>         let mut scan = self.scan(first.index..=last.index);</code>
-<a href="#l301" class="line" id="l301">    301</a><code>         while let Some(entry) = scan.next().transpose()? {</code>
-<a href="#l302" class="line" id="l302">    302</a><code>             // [0] is ok, because the scan has the same size as entries.</code>
-<a href="#l303" class="line" id="l303">    303</a><code>             assert!(entry.index == entries[0].index, &quot;index mismatch at {entry:?}&quot;);</code>
-<a href="#l304" class="line" id="l304">    304</a><code>             if entry.term != entries[0].term {</code>
-<a href="#l305" class="line" id="l305">    305</a><code>                 break;</code>
-<a href="#l306" class="line" id="l306">    306</a><code>             }</code>
-<a href="#l307" class="line" id="l307">    307</a><code>             assert!(entry.command == entries[0].command, &quot;command mismatch at {entry:?}&quot;);</code>
-<a href="#l308" class="line" id="l308">    308</a><code>             entries = &amp;entries[1..];</code>
-<a href="#l309" class="line" id="l309">    309</a><code>         }</code>
-<a href="#l310" class="line" id="l310">    310</a><code>         drop(scan);</code>
-<a href="#l311" class="line" id="l311">    311</a><code> </code>
-<a href="#l312" class="line" id="l312">    312</a><code>         // If all entries already exist then we&#39;re done.</code>
-<a href="#l313" class="line" id="l313">    313</a><code>         let Some(first) = entries.first() else {</code>
-<a href="#l314" class="line" id="l314">    314</a><code>             return Ok(self.last_index);</code>
-<a href="#l315" class="line" id="l315">    315</a><code>         };</code>
-<a href="#l316" class="line" id="l316">    316</a><code> </code>
-<a href="#l317" class="line" id="l317">    317</a><code>         // Write the entries that weren&#39;t already in the log, and remove the</code>
-<a href="#l318" class="line" id="l318">    318</a><code>         // tail of the old log if any. We can&#39;t write below the commit index,</code>
-<a href="#l319" class="line" id="l319">    319</a><code>         // since these entries must be immutable.</code>
-<a href="#l320" class="line" id="l320">    320</a><code>         assert!(first.index &gt; self.commit_index, &quot;spliced entries below commit index&quot;);</code>
-<a href="#l321" class="line" id="l321">    321</a><code> </code>
-<a href="#l322" class="line" id="l322">    322</a><code>         for entry in entries {</code>
-<a href="#l323" class="line" id="l323">    323</a><code>             self.engine.set(&amp;Key::Entry(entry.index).encode(), entry.encode())?;</code>
-<a href="#l324" class="line" id="l324">    324</a><code>         }</code>
-<a href="#l325" class="line" id="l325">    325</a><code>         for index in last.index + 1..=self.last_index {</code>
-<a href="#l326" class="line" id="l326">    326</a><code>             self.engine.delete(&amp;Key::Entry(index).encode())?;</code>
-<a href="#l327" class="line" id="l327">    327</a><code>         }</code>
-<a href="#l328" class="line" id="l328">    328</a><code>         if self.fsync {</code>
-<a href="#l329" class="line" id="l329">    329</a><code>             self.engine.flush()?;</code>
-<a href="#l330" class="line" id="l330">    330</a><code>         }</code>
-<a href="#l331" class="line" id="l331">    331</a><code> </code>
-<a href="#l332" class="line" id="l332">    332</a><code>         self.last_index = last.index;</code>
-<a href="#l333" class="line" id="l333">    333</a><code>         self.last_term = last.term;</code>
-<a href="#l334" class="line" id="l334">    334</a><code>         Ok(self.last_index)</code>
-<a href="#l335" class="line" id="l335">    335</a><code>     }</code>
-<a href="#l336" class="line" id="l336">    336</a><code> </code>
-<a href="#l337" class="line" id="l337">    337</a><code>     /// Returns log engine status.</code>
-<a href="#l338" class="line" id="l338">    338</a><code>     pub fn status(&amp;mut self) -&gt; Result&lt;storage::Status&gt; {</code>
-<a href="#l339" class="line" id="l339">    339</a><code>         self.engine.status()</code>
-<a href="#l340" class="line" id="l340">    340</a><code>     }</code>
-<a href="#l341" class="line" id="l341">    341</a><code> }</code>
-<a href="#l342" class="line" id="l342">    342</a><code> </code>
-<a href="#l343" class="line" id="l343">    343</a><code> /// A log entry iterator.</code>
-<a href="#l344" class="line" id="l344">    344</a><code> pub struct Iterator&lt;&#39;a&gt; {</code>
-<a href="#l345" class="line" id="l345">    345</a><code>     inner: Box&lt;dyn storage::ScanIterator + &#39;a&gt;,</code>
-<a href="#l346" class="line" id="l346">    346</a><code> }</code>
-<a href="#l347" class="line" id="l347">    347</a><code> </code>
-<a href="#l348" class="line" id="l348">    348</a><code> impl&lt;&#39;a&gt; Iterator&lt;&#39;a&gt; {</code>
-<a href="#l349" class="line" id="l349">    349</a><code>     fn new(inner: Box&lt;dyn storage::ScanIterator + &#39;a&gt;) -&gt; Self {</code>
-<a href="#l350" class="line" id="l350">    350</a><code>         Self { inner }</code>
-<a href="#l351" class="line" id="l351">    351</a><code>     }</code>
-<a href="#l352" class="line" id="l352">    352</a><code> }</code>
-<a href="#l353" class="line" id="l353">    353</a><code> </code>
-<a href="#l354" class="line" id="l354">    354</a><code> impl&lt;&#39;a&gt; std::iter::Iterator for Iterator&lt;&#39;a&gt; {</code>
-<a href="#l355" class="line" id="l355">    355</a><code>     type Item = Result&lt;Entry&gt;;</code>
-<a href="#l356" class="line" id="l356">    356</a><code> </code>
-<a href="#l357" class="line" id="l357">    357</a><code>     fn next(&amp;mut self) -&gt; Option&lt;Self::Item&gt; {</code>
-<a href="#l358" class="line" id="l358">    358</a><code>         self.inner.next().map(|r| r.and_then(|(_, v)| Entry::decode(&amp;v)))</code>
-<a href="#l359" class="line" id="l359">    359</a><code>     }</code>
-<a href="#l360" class="line" id="l360">    360</a><code> }</code>
-<a href="#l361" class="line" id="l361">    361</a><code> </code>
-<a href="#l362" class="line" id="l362">    362</a><code> /// Most Raft tests are Goldenscripts under src/raft/testscripts.</code>
-<a href="#l363" class="line" id="l363">    363</a><code> #[cfg(test)]</code>
-<a href="#l364" class="line" id="l364">    364</a><code> mod tests {</code>
-<a href="#l365" class="line" id="l365">    365</a><code>     use super::*;</code>
-<a href="#l366" class="line" id="l366">    366</a><code>     use crate::encoding::format::{self, Formatter as _};</code>
-<a href="#l367" class="line" id="l367">    367</a><code>     use crate::storage::engine::test as testengine;</code>
-<a href="#l368" class="line" id="l368">    368</a><code> </code>
-<a href="#l369" class="line" id="l369">    369</a><code>     use crossbeam::channel::Receiver;</code>
-<a href="#l370" class="line" id="l370">    370</a><code>     use itertools::Itertools as _;</code>
-<a href="#l371" class="line" id="l371">    371</a><code>     use regex::Regex;</code>
-<a href="#l372" class="line" id="l372">    372</a><code>     use std::fmt::Write as _;</code>
-<a href="#l373" class="line" id="l373">    373</a><code>     use std::{error::Error, result::Result};</code>
-<a href="#l374" class="line" id="l374">    374</a><code>     use test_each_file::test_each_path;</code>
-<a href="#l375" class="line" id="l375">    375</a><code> </code>
-<a href="#l376" class="line" id="l376">    376</a><code>     // Run goldenscript tests in src/raft/testscripts/log.</code>
-<a href="#l377" class="line" id="l377">    377</a><code>     test_each_path! { in &quot;src/raft/testscripts/log&quot; as scripts =&gt; test_goldenscript }</code>
-<a href="#l378" class="line" id="l378">    378</a><code> </code>
-<a href="#l379" class="line" id="l379">    379</a><code>     fn test_goldenscript(path: &amp;std::path::Path) {</code>
-<a href="#l380" class="line" id="l380">    380</a><code>         goldenscript::run(&amp;mut TestRunner::new(), path).expect(&quot;goldenscript failed&quot;)</code>
-<a href="#l381" class="line" id="l381">    381</a><code>     }</code>
-<a href="#l382" class="line" id="l382">    382</a><code> </code>
-<a href="#l383" class="line" id="l383">    383</a><code>     /// Runs Raft log goldenscript tests. For available commands, see run().</code>
-<a href="#l384" class="line" id="l384">    384</a><code>     struct TestRunner {</code>
-<a href="#l385" class="line" id="l385">    385</a><code>         log: Log,</code>
-<a href="#l386" class="line" id="l386">    386</a><code>         op_rx: Receiver&lt;testengine::Operation&gt;,</code>
-<a href="#l387" class="line" id="l387">    387</a><code>         #[allow(dead_code)]</code>
-<a href="#l388" class="line" id="l388">    388</a><code>         tempdir: tempfile::TempDir,</code>
-<a href="#l389" class="line" id="l389">    389</a><code>     }</code>
-<a href="#l390" class="line" id="l390">    390</a><code> </code>
-<a href="#l391" class="line" id="l391">    391</a><code>     impl TestRunner {</code>
-<a href="#l392" class="line" id="l392">    392</a><code>         fn new() -&gt; Self {</code>
-<a href="#l393" class="line" id="l393">    393</a><code>             // Use both a BitCask and a Memory engine, and mirror operations</code>
-<a href="#l394" class="line" id="l394">    394</a><code>             // across them. Emit write events to op_tx.</code>
-<a href="#l395" class="line" id="l395">    395</a><code>             let (op_tx, op_rx) = crossbeam::channel::unbounded();</code>
-<a href="#l396" class="line" id="l396">    396</a><code>             let tempdir = tempfile::TempDir::with_prefix(&quot;toydb&quot;).expect(&quot;tempdir failed&quot;);</code>
-<a href="#l397" class="line" id="l397">    397</a><code>             let bitcask =</code>
-<a href="#l398" class="line" id="l398">    398</a><code>                 storage::BitCask::new(tempdir.path().join(&quot;bitcask&quot;)).expect(&quot;bitcask failed&quot;);</code>
-<a href="#l399" class="line" id="l399">    399</a><code>             let memory = storage::Memory::new();</code>
-<a href="#l400" class="line" id="l400">    400</a><code>             let engine = testengine::Emit::new(testengine::Mirror::new(bitcask, memory), op_tx);</code>
-<a href="#l401" class="line" id="l401">    401</a><code>             let log = Log::new(Box::new(engine)).expect(&quot;log failed&quot;);</code>
-<a href="#l402" class="line" id="l402">    402</a><code>             Self { log, op_rx, tempdir }</code>
-<a href="#l403" class="line" id="l403">    403</a><code>         }</code>
-<a href="#l404" class="line" id="l404">    404</a><code> </code>
-<a href="#l405" class="line" id="l405">    405</a><code>         /// Parses an index@term pair.</code>
-<a href="#l406" class="line" id="l406">    406</a><code>         fn parse_index_term(s: &amp;str) -&gt; Result&lt;(Index, Term), Box&lt;dyn Error&gt;&gt; {</code>
-<a href="#l407" class="line" id="l407">    407</a><code>             let re = Regex::new(r&quot;^(\d+)@(\d+)$&quot;).expect(&quot;invalid regex&quot;);</code>
-<a href="#l408" class="line" id="l408">    408</a><code>             let groups = re.captures(s).ok_or_else(|| format!(&quot;invalid index/term {s}&quot;))?;</code>
-<a href="#l409" class="line" id="l409">    409</a><code>             let index = groups.get(1).unwrap().as_str().parse()?;</code>
-<a href="#l410" class="line" id="l410">    410</a><code>             let term = groups.get(2).unwrap().as_str().parse()?;</code>
-<a href="#l411" class="line" id="l411">    411</a><code>             Ok((index, term))</code>
-<a href="#l412" class="line" id="l412">    412</a><code>         }</code>
-<a href="#l413" class="line" id="l413">    413</a><code> </code>
-<a href="#l414" class="line" id="l414">    414</a><code>         /// Parses an index range, in Rust range syntax.</code>
-<a href="#l415" class="line" id="l415">    415</a><code>         fn parse_index_range(s: &amp;str) -&gt; Result&lt;impl std::ops::RangeBounds&lt;Index&gt;, Box&lt;dyn Error&gt;&gt; {</code>
-<a href="#l416" class="line" id="l416">    416</a><code>             use std::ops::Bound;</code>
-<a href="#l417" class="line" id="l417">    417</a><code>             let mut bound = (Bound::&lt;Index&gt;::Unbounded, Bound::&lt;Index&gt;::Unbounded);</code>
-<a href="#l418" class="line" id="l418">    418</a><code>             let re = Regex::new(r&quot;^(\d+)?\.\.(=)?(\d+)?&quot;).expect(&quot;invalid regex&quot;);</code>
-<a href="#l419" class="line" id="l419">    419</a><code>             let groups = re.captures(s).ok_or_else(|| format!(&quot;invalid range {s}&quot;))?;</code>
-<a href="#l420" class="line" id="l420">    420</a><code>             if let Some(start) = groups.get(1) {</code>
-<a href="#l421" class="line" id="l421">    421</a><code>                 bound.0 = Bound::Included(start.as_str().parse()?);</code>
-<a href="#l422" class="line" id="l422">    422</a><code>             }</code>
-<a href="#l423" class="line" id="l423">    423</a><code>             if let Some(end) = groups.get(3) {</code>
-<a href="#l424" class="line" id="l424">    424</a><code>                 let end = end.as_str().parse()?;</code>
-<a href="#l425" class="line" id="l425">    425</a><code>                 if groups.get(2).is_some() {</code>
-<a href="#l426" class="line" id="l426">    426</a><code>                     bound.1 = Bound::Included(end)</code>
-<a href="#l427" class="line" id="l427">    427</a><code>                 } else {</code>
-<a href="#l428" class="line" id="l428">    428</a><code>                     bound.1 = Bound::Excluded(end)</code>
-<a href="#l429" class="line" id="l429">    429</a><code>                 }</code>
-<a href="#l430" class="line" id="l430">    430</a><code>             }</code>
-<a href="#l431" class="line" id="l431">    431</a><code>             Ok(bound)</code>
-<a href="#l432" class="line" id="l432">    432</a><code>         }</code>
-<a href="#l433" class="line" id="l433">    433</a><code>     }</code>
-<a href="#l434" class="line" id="l434">    434</a><code> </code>
-<a href="#l435" class="line" id="l435">    435</a><code>     impl goldenscript::Runner for TestRunner {</code>
-<a href="#l436" class="line" id="l436">    436</a><code>         fn run(&amp;mut self, command: &amp;goldenscript::Command) -&gt; Result&lt;String, Box&lt;dyn Error&gt;&gt; {</code>
-<a href="#l437" class="line" id="l437">    437</a><code>             let mut output = String::new();</code>
-<a href="#l438" class="line" id="l438">    438</a><code>             let mut tags = command.tags.clone();</code>
-<a href="#l439" class="line" id="l439">    439</a><code> </code>
-<a href="#l440" class="line" id="l440">    440</a><code>             match command.name.as_str() {</code>
-<a href="#l441" class="line" id="l441">    441</a><code>                 // append [COMMAND]</code>
-<a href="#l442" class="line" id="l442">    442</a><code>                 &quot;append&quot; =&gt; {</code>
-<a href="#l443" class="line" id="l443">    443</a><code>                     let mut args = command.consume_args();</code>
-<a href="#l444" class="line" id="l444">    444</a><code>                     let command = args.next_pos().map(|a| a.value.as_bytes().to_vec());</code>
-<a href="#l445" class="line" id="l445">    445</a><code>                     args.reject_rest()?;</code>
-<a href="#l446" class="line" id="l446">    446</a><code>                     let index = self.log.append(command)?;</code>
-<a href="#l447" class="line" id="l447">    447</a><code>                     let entry = self.log.get(index)?.expect(&quot;entry not found&quot;);</code>
-<a href="#l448" class="line" id="l448">    448</a><code>                     let fmtentry = format::Raft::&lt;format::Raw&gt;::entry(&amp;entry);</code>
-<a href="#l449" class="line" id="l449">    449</a><code>                     writeln!(output, &quot;append → {fmtentry}&quot;)?;</code>
-<a href="#l450" class="line" id="l450">    450</a><code>                 }</code>
-<a href="#l451" class="line" id="l451">    451</a><code> </code>
-<a href="#l452" class="line" id="l452">    452</a><code>                 // commit INDEX</code>
-<a href="#l453" class="line" id="l453">    453</a><code>                 &quot;commit&quot; =&gt; {</code>
-<a href="#l454" class="line" id="l454">    454</a><code>                     let mut args = command.consume_args();</code>
-<a href="#l455" class="line" id="l455">    455</a><code>                     let index = args.next_pos().ok_or(&quot;index not given&quot;)?.parse()?;</code>
-<a href="#l456" class="line" id="l456">    456</a><code>                     args.reject_rest()?;</code>
-<a href="#l457" class="line" id="l457">    457</a><code>                     let index = self.log.commit(index)?;</code>
-<a href="#l458" class="line" id="l458">    458</a><code>                     let entry = self.log.get(index)?.expect(&quot;entry not found&quot;);</code>
-<a href="#l459" class="line" id="l459">    459</a><code>                     let fmtentry = format::Raft::&lt;format::Raw&gt;::entry(&amp;entry);</code>
-<a href="#l460" class="line" id="l460">    460</a><code>                     writeln!(output, &quot;commit → {fmtentry}&quot;)?;</code>
-<a href="#l461" class="line" id="l461">    461</a><code>                 }</code>
-<a href="#l462" class="line" id="l462">    462</a><code> </code>
-<a href="#l463" class="line" id="l463">    463</a><code>                 // dump</code>
-<a href="#l464" class="line" id="l464">    464</a><code>                 &quot;dump&quot; =&gt; {</code>
-<a href="#l465" class="line" id="l465">    465</a><code>                     command.consume_args().reject_rest()?;</code>
-<a href="#l466" class="line" id="l466">    466</a><code>                     let range = (std::ops::Bound::Unbounded, std::ops::Bound::Unbounded);</code>
-<a href="#l467" class="line" id="l467">    467</a><code>                     let mut scan = self.log.engine.scan_dyn(range);</code>
-<a href="#l468" class="line" id="l468">    468</a><code>                     while let Some((key, value)) = scan.next().transpose()? {</code>
-<a href="#l469" class="line" id="l469">    469</a><code>                         let fmtkv = format::Raft::&lt;format::Raw&gt;::key_value(&amp;key, &amp;value);</code>
-<a href="#l470" class="line" id="l470">    470</a><code>                         let rawkv = format::Raw::key_value(&amp;key, &amp;value);</code>
-<a href="#l471" class="line" id="l471">    471</a><code>                         writeln!(output, &quot;{fmtkv} [{rawkv}]&quot;)?;</code>
-<a href="#l472" class="line" id="l472">    472</a><code>                     }</code>
-<a href="#l473" class="line" id="l473">    473</a><code>                 }</code>
-<a href="#l474" class="line" id="l474">    474</a><code> </code>
-<a href="#l475" class="line" id="l475">    475</a><code>                 // get INDEX...</code>
-<a href="#l476" class="line" id="l476">    476</a><code>                 &quot;get&quot; =&gt; {</code>
-<a href="#l477" class="line" id="l477">    477</a><code>                     let mut args = command.consume_args();</code>
-<a href="#l478" class="line" id="l478">    478</a><code>                     let indexes: Vec&lt;Index&gt; =</code>
-<a href="#l479" class="line" id="l479">    479</a><code>                         args.rest_pos().iter().map(|a| a.parse()).try_collect()?;</code>
-<a href="#l480" class="line" id="l480">    480</a><code>                     args.reject_rest()?;</code>
-<a href="#l481" class="line" id="l481">    481</a><code>                     for index in indexes {</code>
-<a href="#l482" class="line" id="l482">    482</a><code>                         let entry = self.log.get(index)?;</code>
-<a href="#l483" class="line" id="l483">    483</a><code>                         let fmtentry = entry</code>
-<a href="#l484" class="line" id="l484">    484</a><code>                             .as_ref()</code>
-<a href="#l485" class="line" id="l485">    485</a><code>                             .map(format::Raft::&lt;format::Raw&gt;::entry)</code>
-<a href="#l486" class="line" id="l486">    486</a><code>                             .unwrap_or(&quot;None&quot;.to_string());</code>
-<a href="#l487" class="line" id="l487">    487</a><code>                         writeln!(output, &quot;{fmtentry}&quot;)?;</code>
-<a href="#l488" class="line" id="l488">    488</a><code>                     }</code>
-<a href="#l489" class="line" id="l489">    489</a><code>                 }</code>
-<a href="#l490" class="line" id="l490">    490</a><code> </code>
-<a href="#l491" class="line" id="l491">    491</a><code>                 // get_term</code>
-<a href="#l492" class="line" id="l492">    492</a><code>                 &quot;get_term&quot; =&gt; {</code>
-<a href="#l493" class="line" id="l493">    493</a><code>                     command.consume_args().reject_rest()?;</code>
-<a href="#l494" class="line" id="l494">    494</a><code>                     let (term, vote) = self.log.get_term();</code>
-<a href="#l495" class="line" id="l495">    495</a><code>                     let vote = vote.map(|v| v.to_string()).unwrap_or(&quot;None&quot;.to_string());</code>
-<a href="#l496" class="line" id="l496">    496</a><code>                     writeln!(output, &quot;term={term} vote={vote}&quot;)?;</code>
-<a href="#l497" class="line" id="l497">    497</a><code>                 }</code>
-<a href="#l498" class="line" id="l498">    498</a><code> </code>
-<a href="#l499" class="line" id="l499">    499</a><code>                 // has INDEX@TERM...</code>
-<a href="#l500" class="line" id="l500">    500</a><code>                 &quot;has&quot; =&gt; {</code>
-<a href="#l501" class="line" id="l501">    501</a><code>                     let mut args = command.consume_args();</code>
-<a href="#l502" class="line" id="l502">    502</a><code>                     let indexes: Vec&lt;(Index, Term)&gt; = args</code>
-<a href="#l503" class="line" id="l503">    503</a><code>                         .rest_pos()</code>
-<a href="#l504" class="line" id="l504">    504</a><code>                         .iter()</code>
-<a href="#l505" class="line" id="l505">    505</a><code>                         .map(|a| Self::parse_index_term(&amp;a.value))</code>
-<a href="#l506" class="line" id="l506">    506</a><code>                         .try_collect()?;</code>
-<a href="#l507" class="line" id="l507">    507</a><code>                     args.reject_rest()?;</code>
-<a href="#l508" class="line" id="l508">    508</a><code>                     for (index, term) in indexes {</code>
-<a href="#l509" class="line" id="l509">    509</a><code>                         let has = self.log.has(index, term)?;</code>
-<a href="#l510" class="line" id="l510">    510</a><code>                         writeln!(output, &quot;{has}&quot;)?;</code>
-<a href="#l511" class="line" id="l511">    511</a><code>                     }</code>
-<a href="#l512" class="line" id="l512">    512</a><code>                 }</code>
-<a href="#l513" class="line" id="l513">    513</a><code> </code>
-<a href="#l514" class="line" id="l514">    514</a><code>                 // reload</code>
-<a href="#l515" class="line" id="l515">    515</a><code>                 &quot;reload&quot; =&gt; {</code>
-<a href="#l516" class="line" id="l516">    516</a><code>                     command.consume_args().reject_rest()?;</code>
-<a href="#l517" class="line" id="l517">    517</a><code>                     // To get owned access to the inner engine, temporarily</code>
-<a href="#l518" class="line" id="l518">    518</a><code>                     // replace it with an empty memory engine.</code>
-<a href="#l519" class="line" id="l519">    519</a><code>                     let engine =</code>
-<a href="#l520" class="line" id="l520">    520</a><code>                         std::mem::replace(&amp;mut self.log.engine, Box::new(storage::Memory::new()));</code>
-<a href="#l521" class="line" id="l521">    521</a><code>                     self.log = Log::new(engine)?;</code>
-<a href="#l522" class="line" id="l522">    522</a><code>                 }</code>
-<a href="#l523" class="line" id="l523">    523</a><code> </code>
-<a href="#l524" class="line" id="l524">    524</a><code>                 // scan [RANGE]</code>
-<a href="#l525" class="line" id="l525">    525</a><code>                 &quot;scan&quot; =&gt; {</code>
-<a href="#l526" class="line" id="l526">    526</a><code>                     let mut args = command.consume_args();</code>
-<a href="#l527" class="line" id="l527">    527</a><code>                     let range = Self::parse_index_range(</code>
-<a href="#l528" class="line" id="l528">    528</a><code>                         args.next_pos().map_or(&quot;..&quot;, |a| a.value.as_str()),</code>
-<a href="#l529" class="line" id="l529">    529</a><code>                     )?;</code>
-<a href="#l530" class="line" id="l530">    530</a><code>                     args.reject_rest()?;</code>
-<a href="#l531" class="line" id="l531">    531</a><code>                     let mut scan = self.log.scan(range);</code>
-<a href="#l532" class="line" id="l532">    532</a><code>                     while let Some(entry) = scan.next().transpose()? {</code>
-<a href="#l533" class="line" id="l533">    533</a><code>                         let fmtentry = format::Raft::&lt;format::Raw&gt;::entry(&amp;entry);</code>
-<a href="#l534" class="line" id="l534">    534</a><code>                         writeln!(output, &quot;{fmtentry}&quot;)?;</code>
-<a href="#l535" class="line" id="l535">    535</a><code>                     }</code>
-<a href="#l536" class="line" id="l536">    536</a><code>                 }</code>
-<a href="#l537" class="line" id="l537">    537</a><code> </code>
-<a href="#l538" class="line" id="l538">    538</a><code>                 // scan_apply APPLIED_INDEX</code>
-<a href="#l539" class="line" id="l539">    539</a><code>                 &quot;scan_apply&quot; =&gt; {</code>
-<a href="#l540" class="line" id="l540">    540</a><code>                     let mut args = command.consume_args();</code>
-<a href="#l541" class="line" id="l541">    541</a><code>                     let applied_index =</code>
-<a href="#l542" class="line" id="l542">    542</a><code>                         args.next_pos().ok_or(&quot;applied index not given&quot;)?.parse()?;</code>
-<a href="#l543" class="line" id="l543">    543</a><code>                     args.reject_rest()?;</code>
-<a href="#l544" class="line" id="l544">    544</a><code>                     let mut scan = self.log.scan_apply(applied_index);</code>
-<a href="#l545" class="line" id="l545">    545</a><code>                     while let Some(entry) = scan.next().transpose()? {</code>
-<a href="#l546" class="line" id="l546">    546</a><code>                         let fmtentry = format::Raft::&lt;format::Raw&gt;::entry(&amp;entry);</code>
-<a href="#l547" class="line" id="l547">    547</a><code>                         writeln!(output, &quot;{fmtentry}&quot;)?;</code>
-<a href="#l548" class="line" id="l548">    548</a><code>                     }</code>
-<a href="#l549" class="line" id="l549">    549</a><code>                 }</code>
-<a href="#l550" class="line" id="l550">    550</a><code> </code>
-<a href="#l551" class="line" id="l551">    551</a><code>                 // set_term TERM [VOTE]</code>
-<a href="#l552" class="line" id="l552">    552</a><code>                 &quot;set_term&quot; =&gt; {</code>
-<a href="#l553" class="line" id="l553">    553</a><code>                     let mut args = command.consume_args();</code>
-<a href="#l554" class="line" id="l554">    554</a><code>                     let term = args.next_pos().ok_or(&quot;term not given&quot;)?.parse()?;</code>
-<a href="#l555" class="line" id="l555">    555</a><code>                     let vote = args.next_pos().map(|a| a.parse()).transpose()?;</code>
-<a href="#l556" class="line" id="l556">    556</a><code>                     args.reject_rest()?;</code>
-<a href="#l557" class="line" id="l557">    557</a><code>                     self.log.set_term(term, vote)?;</code>
-<a href="#l558" class="line" id="l558">    558</a><code>                 }</code>
-<a href="#l559" class="line" id="l559">    559</a><code> </code>
-<a href="#l560" class="line" id="l560">    560</a><code>                 // splice [INDEX@TERM=COMMAND...]</code>
-<a href="#l561" class="line" id="l561">    561</a><code>                 &quot;splice&quot; =&gt; {</code>
-<a href="#l562" class="line" id="l562">    562</a><code>                     let mut args = command.consume_args();</code>
-<a href="#l563" class="line" id="l563">    563</a><code>                     let mut entries = Vec::new();</code>
-<a href="#l564" class="line" id="l564">    564</a><code>                     for arg in args.rest_key() {</code>
-<a href="#l565" class="line" id="l565">    565</a><code>                         let (index, term) = Self::parse_index_term(arg.key.as_deref().unwrap())?;</code>
-<a href="#l566" class="line" id="l566">    566</a><code>                         let command = match arg.value.as_str() {</code>
-<a href="#l567" class="line" id="l567">    567</a><code>                             &quot;&quot; =&gt; None,</code>
-<a href="#l568" class="line" id="l568">    568</a><code>                             value =&gt; Some(value.as_bytes().to_vec()),</code>
-<a href="#l569" class="line" id="l569">    569</a><code>                         };</code>
-<a href="#l570" class="line" id="l570">    570</a><code>                         entries.push(Entry { index, term, command });</code>
-<a href="#l571" class="line" id="l571">    571</a><code>                     }</code>
-<a href="#l572" class="line" id="l572">    572</a><code>                     args.reject_rest()?;</code>
-<a href="#l573" class="line" id="l573">    573</a><code>                     let index = self.log.splice(entries)?;</code>
-<a href="#l574" class="line" id="l574">    574</a><code>                     let entry = self.log.get(index)?.expect(&quot;entry not found&quot;);</code>
-<a href="#l575" class="line" id="l575">    575</a><code>                     let fmtentry = format::Raft::&lt;format::Raw&gt;::entry(&amp;entry);</code>
-<a href="#l576" class="line" id="l576">    576</a><code>                     writeln!(output, &quot;splice → {fmtentry}&quot;)?;</code>
-<a href="#l577" class="line" id="l577">    577</a><code>                 }</code>
-<a href="#l578" class="line" id="l578">    578</a><code> </code>
-<a href="#l579" class="line" id="l579">    579</a><code>                 // status [engine=BOOL]</code>
-<a href="#l580" class="line" id="l580">    580</a><code>                 &quot;status&quot; =&gt; {</code>
-<a href="#l581" class="line" id="l581">    581</a><code>                     let mut args = command.consume_args();</code>
-<a href="#l582" class="line" id="l582">    582</a><code>                     let engine = args.lookup_parse(&quot;engine&quot;)?.unwrap_or(false);</code>
-<a href="#l583" class="line" id="l583">    583</a><code>                     args.reject_rest()?;</code>
-<a href="#l584" class="line" id="l584">    584</a><code>                     let (term, vote) = self.log.get_term();</code>
-<a href="#l585" class="line" id="l585">    585</a><code>                     let (last_index, last_term) = self.log.get_last_index();</code>
-<a href="#l586" class="line" id="l586">    586</a><code>                     let (commit_index, commit_term) = self.log.get_commit_index();</code>
-<a href="#l587" class="line" id="l587">    587</a><code>                     let vote = vote.map(|id| id.to_string()).unwrap_or(&quot;None&quot;.to_string());</code>
-<a href="#l588" class="line" id="l588">    588</a><code>                     write!(</code>
-<a href="#l589" class="line" id="l589">    589</a><code>                         output,</code>
-<a href="#l590" class="line" id="l590">    590</a><code>                         &quot;term={term} last={last_index}@{last_term} commit={commit_index}@{commit_term} vote={vote}&quot;,</code>
-<a href="#l591" class="line" id="l591">    591</a><code>                     )?;</code>
-<a href="#l592" class="line" id="l592">    592</a><code>                     if engine {</code>
-<a href="#l593" class="line" id="l593">    593</a><code>                         write!(output, &quot; engine={:#?}&quot;, self.log.status()?)?;</code>
-<a href="#l594" class="line" id="l594">    594</a><code>                     }</code>
-<a href="#l595" class="line" id="l595">    595</a><code>                     writeln!(output)?;</code>
-<a href="#l596" class="line" id="l596">    596</a><code>                 }</code>
-<a href="#l597" class="line" id="l597">    597</a><code> </code>
-<a href="#l598" class="line" id="l598">    598</a><code>                 name =&gt; return Err(format!(&quot;unknown command {name}&quot;).into()),</code>
-<a href="#l599" class="line" id="l599">    599</a><code>             }</code>
-<a href="#l600" class="line" id="l600">    600</a><code> </code>
-<a href="#l601" class="line" id="l601">    601</a><code>             // If requested, output engine operations.</code>
-<a href="#l602" class="line" id="l602">    602</a><code>             if tags.remove(&quot;ops&quot;) {</code>
-<a href="#l603" class="line" id="l603">    603</a><code>                 while let Ok(op) = self.op_rx.try_recv() {</code>
-<a href="#l604" class="line" id="l604">    604</a><code>                     match op {</code>
-<a href="#l605" class="line" id="l605">    605</a><code>                         testengine::Operation::Delete { key } =&gt; {</code>
-<a href="#l606" class="line" id="l606">    606</a><code>                             let fmtkey = format::Raft::&lt;format::Raw&gt;::key(&amp;key);</code>
-<a href="#l607" class="line" id="l607">    607</a><code>                             let rawkey = format::Raw::key(&amp;key);</code>
-<a href="#l608" class="line" id="l608">    608</a><code>                             writeln!(output, &quot;engine delete {fmtkey} [{rawkey}]&quot;)?</code>
-<a href="#l609" class="line" id="l609">    609</a><code>                         }</code>
-<a href="#l610" class="line" id="l610">    610</a><code>                         testengine::Operation::Flush =&gt; writeln!(output, &quot;engine flush&quot;)?,</code>
-<a href="#l611" class="line" id="l611">    611</a><code>                         testengine::Operation::Set { key, value } =&gt; {</code>
-<a href="#l612" class="line" id="l612">    612</a><code>                             let fmtkv = format::Raft::&lt;format::Raw&gt;::key_value(&amp;key, &amp;value);</code>
-<a href="#l613" class="line" id="l613">    613</a><code>                             let rawkv = format::Raw::key_value(&amp;key, &amp;value);</code>
-<a href="#l614" class="line" id="l614">    614</a><code>                             writeln!(output, &quot;engine set {fmtkv} [{rawkv}]&quot;)?</code>
-<a href="#l615" class="line" id="l615">    615</a><code>                         }</code>
-<a href="#l616" class="line" id="l616">    616</a><code>                     }</code>
-<a href="#l617" class="line" id="l617">    617</a><code>                 }</code>
-<a href="#l618" class="line" id="l618">    618</a><code>             }</code>
-<a href="#l619" class="line" id="l619">    619</a><code> </code>
-<a href="#l620" class="line" id="l620">    620</a><code>             if let Some(tag) = tags.iter().next() {</code>
-<a href="#l621" class="line" id="l621">    621</a><code>                 return Err(format!(&quot;unknown tag {tag}&quot;).into());</code>
-<a href="#l622" class="line" id="l622">    622</a><code>             }</code>
-<a href="#l623" class="line" id="l623">    623</a><code> </code>
-<a href="#l624" class="line" id="l624">    624</a><code>             Ok(output)</code>
-<a href="#l625" class="line" id="l625">    625</a><code>         }</code>
-<a href="#l626" class="line" id="l626">    626</a><code> </code>
-<a href="#l627" class="line" id="l627">    627</a><code>         /// If requested via [ops] tag, output engine operations for the command.</code>
-<a href="#l628" class="line" id="l628">    628</a><code>         fn end_command(&amp;mut self, _: &amp;goldenscript::Command) -&gt; Result&lt;String, Box&lt;dyn Error&gt;&gt; {</code>
-<a href="#l629" class="line" id="l629">    629</a><code>             // Drain any remaining engine operations.</code>
-<a href="#l630" class="line" id="l630">    630</a><code>             while self.op_rx.try_recv().is_ok() {}</code>
-<a href="#l631" class="line" id="l631">    631</a><code>             Ok(String::new())</code>
-<a href="#l632" class="line" id="l632">    632</a><code>         }</code>
-<a href="#l633" class="line" id="l633">    633</a><code>     }</code>
-<a href="#l634" class="line" id="l634">    634</a><code> }</code>
+<a href="#l1" class="line" id="l1">      1</a><code class="language-rust"> use super::{NodeID, Term};</code>
+<a href="#l2" class="line" id="l2">      2</a><code class="language-rust"> use crate::encoding::{self, bincode, Key as _, Value as _};</code>
+<a href="#l3" class="line" id="l3">      3</a><code class="language-rust"> use crate::error::Result;</code>
+<a href="#l4" class="line" id="l4">      4</a><code class="language-rust"> use crate::storage;</code>
+<a href="#l5" class="line" id="l5">      5</a><code class="language-rust"> </code>
+<a href="#l6" class="line" id="l6">      6</a><code class="language-rust"> use serde::{Deserialize, Serialize};</code>
+<a href="#l7" class="line" id="l7">      7</a><code class="language-rust"> </code>
+<a href="#l8" class="line" id="l8">      8</a><code class="language-rust"> /// A log index. Starts at 1, indicates no index if 0.</code>
+<a href="#l9" class="line" id="l9">      9</a><code class="language-rust"> pub type Index = u64;</code>
+<a href="#l10" class="line" id="l10">     10</a><code class="language-rust"> </code>
+<a href="#l11" class="line" id="l11">     11</a><code class="language-rust"> /// A log entry.</code>
+<a href="#l12" class="line" id="l12">     12</a><code class="language-rust"> #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]</code>
+<a href="#l13" class="line" id="l13">     13</a><code class="language-rust"> pub struct Entry {</code>
+<a href="#l14" class="line" id="l14">     14</a><code class="language-rust">     /// The entry index.</code>
+<a href="#l15" class="line" id="l15">     15</a><code class="language-rust">     pub index: Index,</code>
+<a href="#l16" class="line" id="l16">     16</a><code class="language-rust">     /// The term in which the entry was added.</code>
+<a href="#l17" class="line" id="l17">     17</a><code class="language-rust">     pub term: Term,</code>
+<a href="#l18" class="line" id="l18">     18</a><code class="language-rust">     /// The state machine command. None (noop) commands are used during leader</code>
+<a href="#l19" class="line" id="l19">     19</a><code class="language-rust">     /// election to commit old entries, see section 5.4.2 in the Raft paper.</code>
+<a href="#l20" class="line" id="l20">     20</a><code class="language-rust">     pub command: Option&lt;Vec&lt;u8&gt;&gt;,</code>
+<a href="#l21" class="line" id="l21">     21</a><code class="language-rust"> }</code>
+<a href="#l22" class="line" id="l22">     22</a><code class="language-rust"> </code>
+<a href="#l23" class="line" id="l23">     23</a><code class="language-rust"> impl encoding::Value for Entry {}</code>
+<a href="#l24" class="line" id="l24">     24</a><code class="language-rust"> </code>
+<a href="#l25" class="line" id="l25">     25</a><code class="language-rust"> /// A log storage key.</code>
+<a href="#l26" class="line" id="l26">     26</a><code class="language-rust"> #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]</code>
+<a href="#l27" class="line" id="l27">     27</a><code class="language-rust"> pub enum Key {</code>
+<a href="#l28" class="line" id="l28">     28</a><code class="language-rust">     /// A log entry, storing the term and command.</code>
+<a href="#l29" class="line" id="l29">     29</a><code class="language-rust">     Entry(Index),</code>
+<a href="#l30" class="line" id="l30">     30</a><code class="language-rust">     /// Stores the current term and vote (if any).</code>
+<a href="#l31" class="line" id="l31">     31</a><code class="language-rust">     TermVote,</code>
+<a href="#l32" class="line" id="l32">     32</a><code class="language-rust">     /// Stores the current commit index (if any).</code>
+<a href="#l33" class="line" id="l33">     33</a><code class="language-rust">     CommitIndex,</code>
+<a href="#l34" class="line" id="l34">     34</a><code class="language-rust"> }</code>
+<a href="#l35" class="line" id="l35">     35</a><code class="language-rust"> </code>
+<a href="#l36" class="line" id="l36">     36</a><code class="language-rust"> impl encoding::Key&lt;&#39;_&gt; for Key {}</code>
+<a href="#l37" class="line" id="l37">     37</a><code class="language-rust"> </code>
+<a href="#l38" class="line" id="l38">     38</a><code class="language-rust"> /// The Raft log stores a sequence of arbitrary commands (typically writes) that</code>
+<a href="#l39" class="line" id="l39">     39</a><code class="language-rust"> /// are replicated across nodes and applied sequentially to the local state</code>
+<a href="#l40" class="line" id="l40">     40</a><code class="language-rust"> /// machine. Each entry contains an index, command, and the term in which the</code>
+<a href="#l41" class="line" id="l41">     41</a><code class="language-rust"> /// leader proposed it. Commands may be noops (None), which are added when a</code>
+<a href="#l42" class="line" id="l42">     42</a><code class="language-rust"> /// leader is elected (see section 5.4.2 in the Raft paper). For example:</code>
+<a href="#l43" class="line" id="l43">     43</a><code class="language-rust"> ///</code>
+<a href="#l44" class="line" id="l44">     44</a><code class="language-rust"> /// Index | Term | Command</code>
+<a href="#l45" class="line" id="l45">     45</a><code class="language-rust"> /// ------|------|------------------------------------------------------</code>
+<a href="#l46" class="line" id="l46">     46</a><code class="language-rust"> ///   1   |   1  | None</code>
+<a href="#l47" class="line" id="l47">     47</a><code class="language-rust"> ///   2   |   1  | CREATE TABLE table (id INT PRIMARY KEY, value STRING)</code>
+<a href="#l48" class="line" id="l48">     48</a><code class="language-rust"> ///   3   |   1  | INSERT INTO table VALUES (1, &#39;foo&#39;)</code>
+<a href="#l49" class="line" id="l49">     49</a><code class="language-rust"> ///   4   |   2  | None</code>
+<a href="#l50" class="line" id="l50">     50</a><code class="language-rust"> ///   5   |   2  | UPDATE table SET value = &#39;bar&#39; WHERE id = 1</code>
+<a href="#l51" class="line" id="l51">     51</a><code class="language-rust"> ///   6   |   2  | DELETE FROM table WHERE id = 1</code>
+<a href="#l52" class="line" id="l52">     52</a><code class="language-rust"> ///</code>
+<a href="#l53" class="line" id="l53">     53</a><code class="language-rust"> /// Note that this is for illustration only, and the actual toyDB Raft commands</code>
+<a href="#l54" class="line" id="l54">     54</a><code class="language-rust"> /// are not SQL statements but lower-level write operations.</code>
+<a href="#l55" class="line" id="l55">     55</a><code class="language-rust"> ///</code>
+<a href="#l56" class="line" id="l56">     56</a><code class="language-rust"> /// A key/value store is used to store the log entries on disk, keyed by index,</code>
+<a href="#l57" class="line" id="l57">     57</a><code class="language-rust"> /// along with a few other metadata keys (e.g. who we voted for in this term).</code>
+<a href="#l58" class="line" id="l58">     58</a><code class="language-rust"> ///</code>
+<a href="#l59" class="line" id="l59">     59</a><code class="language-rust"> /// In the steady state, the log is append-only: when a client submits a</code>
+<a href="#l60" class="line" id="l60">     60</a><code class="language-rust"> /// command, the leader appends it to its own log (via [`Log::append`]) and</code>
+<a href="#l61" class="line" id="l61">     61</a><code class="language-rust"> /// replicates it to followers who append it to their logs (via</code>
+<a href="#l62" class="line" id="l62">     62</a><code class="language-rust"> /// [`Log::splice`]). When an index has been replicated to a majority of nodes</code>
+<a href="#l63" class="line" id="l63">     63</a><code class="language-rust"> /// it becomes committed, making the log immutable up to that index and</code>
+<a href="#l64" class="line" id="l64">     64</a><code class="language-rust"> /// guaranteeing that all nodes will eventually contain it. Nodes keep track of</code>
+<a href="#l65" class="line" id="l65">     65</a><code class="language-rust"> /// the commit index via [`Log::commit`] and apply committed commands to the</code>
+<a href="#l66" class="line" id="l66">     66</a><code class="language-rust"> /// state machine.</code>
+<a href="#l67" class="line" id="l67">     67</a><code class="language-rust"> ///</code>
+<a href="#l68" class="line" id="l68">     68</a><code class="language-rust"> /// However, uncommitted entries can be replaced or removed. A leader may append</code>
+<a href="#l69" class="line" id="l69">     69</a><code class="language-rust"> /// entries to its log, but then be unable to reach consensus on them (e.g.</code>
+<a href="#l70" class="line" id="l70">     70</a><code class="language-rust"> /// because it is unable to communicate with a majority of nodes). If a</code>
+<a href="#l71" class="line" id="l71">     71</a><code class="language-rust"> /// different leader is elected and writes different commands to those same</code>
+<a href="#l72" class="line" id="l72">     72</a><code class="language-rust"> /// indexes, then the uncommitted entries will be replaced with entries from the</code>
+<a href="#l73" class="line" id="l73">     73</a><code class="language-rust"> /// new leader once the old leader (or a follower) discovers it.</code>
+<a href="#l74" class="line" id="l74">     74</a><code class="language-rust"> ///</code>
+<a href="#l75" class="line" id="l75">     75</a><code class="language-rust"> /// The Raft log has the following invariants:</code>
+<a href="#l76" class="line" id="l76">     76</a><code class="language-rust"> ///</code>
+<a href="#l77" class="line" id="l77">     77</a><code class="language-rust"> /// * Entry indexes are contiguous starting at 1 (no index gaps).</code>
+<a href="#l78" class="line" id="l78">     78</a><code class="language-rust"> /// * Entry terms never decrease from the previous entry.</code>
+<a href="#l79" class="line" id="l79">     79</a><code class="language-rust"> /// * Entry terms are at or below the current term.</code>
+<a href="#l80" class="line" id="l80">     80</a><code class="language-rust"> /// * Appended entries are durable (flushed to disk).</code>
+<a href="#l81" class="line" id="l81">     81</a><code class="language-rust"> /// * Appended entries use the current term.</code>
+<a href="#l82" class="line" id="l82">     82</a><code class="language-rust"> /// * Committed entries are never changed or removed (no log truncation).</code>
+<a href="#l83" class="line" id="l83">     83</a><code class="language-rust"> /// * Committed entries will eventually be replicated to all nodes.</code>
+<a href="#l84" class="line" id="l84">     84</a><code class="language-rust"> /// * Entries with the same index/term contain the same command.</code>
+<a href="#l85" class="line" id="l85">     85</a><code class="language-rust"> /// * If two logs contain a matching index/term, all previous entries</code>
+<a href="#l86" class="line" id="l86">     86</a><code class="language-rust"> ///   are identical (see section 5.3 in the Raft paper).</code>
+<a href="#l87" class="line" id="l87">     87</a><code class="language-rust"> pub struct Log {</code>
+<a href="#l88" class="line" id="l88">     88</a><code class="language-rust">     /// The underlying storage engine. Uses a trait object instead of generics,</code>
+<a href="#l89" class="line" id="l89">     89</a><code class="language-rust">     /// to allow runtime selection of the engine and avoid propagating the</code>
+<a href="#l90" class="line" id="l90">     90</a><code class="language-rust">     /// generic type parameters throughout Raft.</code>
+<a href="#l91" class="line" id="l91">     91</a><code class="language-rust">     pub engine: Box&lt;dyn storage::Engine&gt;,</code>
+<a href="#l92" class="line" id="l92">     92</a><code class="language-rust">     /// The current term.</code>
+<a href="#l93" class="line" id="l93">     93</a><code class="language-rust">     term: Term,</code>
+<a href="#l94" class="line" id="l94">     94</a><code class="language-rust">     /// Our leader vote in the current term, if any.</code>
+<a href="#l95" class="line" id="l95">     95</a><code class="language-rust">     vote: Option&lt;NodeID&gt;,</code>
+<a href="#l96" class="line" id="l96">     96</a><code class="language-rust">     /// The index of the last stored entry.</code>
+<a href="#l97" class="line" id="l97">     97</a><code class="language-rust">     last_index: Index,</code>
+<a href="#l98" class="line" id="l98">     98</a><code class="language-rust">     /// The term of the last stored entry.</code>
+<a href="#l99" class="line" id="l99">     99</a><code class="language-rust">     last_term: Term,</code>
+<a href="#l100" class="line" id="l100">    100</a><code class="language-rust">     /// The index of the last committed entry.</code>
+<a href="#l101" class="line" id="l101">    101</a><code class="language-rust">     commit_index: Index,</code>
+<a href="#l102" class="line" id="l102">    102</a><code class="language-rust">     /// The term of the last committed entry.</code>
+<a href="#l103" class="line" id="l103">    103</a><code class="language-rust">     commit_term: Term,</code>
+<a href="#l104" class="line" id="l104">    104</a><code class="language-rust">     /// If true, fsync entries to disk when appended. This is mandated by Raft,</code>
+<a href="#l105" class="line" id="l105">    105</a><code class="language-rust">     /// but comes with a hefty performance penalty (especially since we don&#39;t</code>
+<a href="#l106" class="line" id="l106">    106</a><code class="language-rust">     /// optimize for it by batching entries before fsyncing). Disabling it will</code>
+<a href="#l107" class="line" id="l107">    107</a><code class="language-rust">     /// yield much better write performance, but may lose data on host crashes,</code>
+<a href="#l108" class="line" id="l108">    108</a><code class="language-rust">     /// which in some scenarios can cause log entries to become &quot;uncommitted&quot;</code>
+<a href="#l109" class="line" id="l109">    109</a><code class="language-rust">     /// and state machines diverging.</code>
+<a href="#l110" class="line" id="l110">    110</a><code class="language-rust">     fsync: bool,</code>
+<a href="#l111" class="line" id="l111">    111</a><code class="language-rust"> }</code>
+<a href="#l112" class="line" id="l112">    112</a><code class="language-rust"> </code>
+<a href="#l113" class="line" id="l113">    113</a><code class="language-rust"> impl Log {</code>
+<a href="#l114" class="line" id="l114">    114</a><code class="language-rust">     /// Initializes a log using the given storage engine.</code>
+<a href="#l115" class="line" id="l115">    115</a><code class="language-rust">     pub fn new(mut engine: Box&lt;dyn storage::Engine&gt;) -&gt; Result&lt;Self&gt; {</code>
+<a href="#l116" class="line" id="l116">    116</a><code class="language-rust">         use std::ops::Bound::Included;</code>
+<a href="#l117" class="line" id="l117">    117</a><code class="language-rust">         let (term, vote) = engine</code>
+<a href="#l118" class="line" id="l118">    118</a><code class="language-rust">             .get(&amp;Key::TermVote.encode())?</code>
+<a href="#l119" class="line" id="l119">    119</a><code class="language-rust">             .map(|v| bincode::deserialize(&amp;v))</code>
+<a href="#l120" class="line" id="l120">    120</a><code class="language-rust">             .transpose()?</code>
+<a href="#l121" class="line" id="l121">    121</a><code class="language-rust">             .unwrap_or((0, None));</code>
+<a href="#l122" class="line" id="l122">    122</a><code class="language-rust">         let (last_index, last_term) = engine</code>
+<a href="#l123" class="line" id="l123">    123</a><code class="language-rust">             .scan_dyn((Included(Key::Entry(0).encode()), Included(Key::Entry(u64::MAX).encode())))</code>
+<a href="#l124" class="line" id="l124">    124</a><code class="language-rust">             .last()</code>
+<a href="#l125" class="line" id="l125">    125</a><code class="language-rust">             .transpose()?</code>
+<a href="#l126" class="line" id="l126">    126</a><code class="language-rust">             .map(|(_, v)| Entry::decode(&amp;v))</code>
+<a href="#l127" class="line" id="l127">    127</a><code class="language-rust">             .transpose()?</code>
+<a href="#l128" class="line" id="l128">    128</a><code class="language-rust">             .map(|e| (e.index, e.term))</code>
+<a href="#l129" class="line" id="l129">    129</a><code class="language-rust">             .unwrap_or((0, 0));</code>
+<a href="#l130" class="line" id="l130">    130</a><code class="language-rust">         let (commit_index, commit_term) = engine</code>
+<a href="#l131" class="line" id="l131">    131</a><code class="language-rust">             .get(&amp;Key::CommitIndex.encode())?</code>
+<a href="#l132" class="line" id="l132">    132</a><code class="language-rust">             .map(|v| bincode::deserialize(&amp;v))</code>
+<a href="#l133" class="line" id="l133">    133</a><code class="language-rust">             .transpose()?</code>
+<a href="#l134" class="line" id="l134">    134</a><code class="language-rust">             .unwrap_or((0, 0));</code>
+<a href="#l135" class="line" id="l135">    135</a><code class="language-rust">         let fsync = true; // fsync by default (NB: BitCask::flush() is a noop in tests)</code>
+<a href="#l136" class="line" id="l136">    136</a><code class="language-rust">         Ok(Self { engine, term, vote, last_index, last_term, commit_index, commit_term, fsync })</code>
+<a href="#l137" class="line" id="l137">    137</a><code class="language-rust">     }</code>
+<a href="#l138" class="line" id="l138">    138</a><code class="language-rust"> </code>
+<a href="#l139" class="line" id="l139">    139</a><code class="language-rust">     /// Controls whether to fsync writes. Disabling this may violate Raft</code>
+<a href="#l140" class="line" id="l140">    140</a><code class="language-rust">     /// guarantees, see comment on fsync attribute.</code>
+<a href="#l141" class="line" id="l141">    141</a><code class="language-rust">     pub fn enable_fsync(&amp;mut self, fsync: bool) {</code>
+<a href="#l142" class="line" id="l142">    142</a><code class="language-rust">         self.fsync = fsync</code>
+<a href="#l143" class="line" id="l143">    143</a><code class="language-rust">     }</code>
+<a href="#l144" class="line" id="l144">    144</a><code class="language-rust"> </code>
+<a href="#l145" class="line" id="l145">    145</a><code class="language-rust">     /// Returns the commit index and term.</code>
+<a href="#l146" class="line" id="l146">    146</a><code class="language-rust">     pub fn get_commit_index(&amp;self) -&gt; (Index, Term) {</code>
+<a href="#l147" class="line" id="l147">    147</a><code class="language-rust">         (self.commit_index, self.commit_term)</code>
+<a href="#l148" class="line" id="l148">    148</a><code class="language-rust">     }</code>
+<a href="#l149" class="line" id="l149">    149</a><code class="language-rust"> </code>
+<a href="#l150" class="line" id="l150">    150</a><code class="language-rust">     /// Returns the last log index and term.</code>
+<a href="#l151" class="line" id="l151">    151</a><code class="language-rust">     pub fn get_last_index(&amp;self) -&gt; (Index, Term) {</code>
+<a href="#l152" class="line" id="l152">    152</a><code class="language-rust">         (self.last_index, self.last_term)</code>
+<a href="#l153" class="line" id="l153">    153</a><code class="language-rust">     }</code>
+<a href="#l154" class="line" id="l154">    154</a><code class="language-rust"> </code>
+<a href="#l155" class="line" id="l155">    155</a><code class="language-rust">     /// Returns the current term (0 if none) and vote.</code>
+<a href="#l156" class="line" id="l156">    156</a><code class="language-rust">     pub fn get_term(&amp;self) -&gt; (Term, Option&lt;NodeID&gt;) {</code>
+<a href="#l157" class="line" id="l157">    157</a><code class="language-rust">         (self.term, self.vote)</code>
+<a href="#l158" class="line" id="l158">    158</a><code class="language-rust">     }</code>
+<a href="#l159" class="line" id="l159">    159</a><code class="language-rust"> </code>
+<a href="#l160" class="line" id="l160">    160</a><code class="language-rust">     /// Stores the current term and cast vote (if any). Enforces that the term</code>
+<a href="#l161" class="line" id="l161">    161</a><code class="language-rust">     /// does not regress, and that we only vote for one node in a term. append()</code>
+<a href="#l162" class="line" id="l162">    162</a><code class="language-rust">     /// will use this term, and splice() can&#39;t write entries beyond it.</code>
+<a href="#l163" class="line" id="l163">    163</a><code class="language-rust">     pub fn set_term(&amp;mut self, term: Term, vote: Option&lt;NodeID&gt;) -&gt; Result&lt;()&gt; {</code>
+<a href="#l164" class="line" id="l164">    164</a><code class="language-rust">         assert!(term &gt; 0, &quot;can&#39;t set term 0&quot;);</code>
+<a href="#l165" class="line" id="l165">    165</a><code class="language-rust">         assert!(term &gt;= self.term, &quot;term regression {} → {}&quot;, self.term, term);</code>
+<a href="#l166" class="line" id="l166">    166</a><code class="language-rust">         assert!(term &gt; self.term || self.vote.is_none() || vote == self.vote, &quot;can&#39;t change vote&quot;);</code>
+<a href="#l167" class="line" id="l167">    167</a><code class="language-rust">         if term == self.term &amp;&amp; vote == self.vote {</code>
+<a href="#l168" class="line" id="l168">    168</a><code class="language-rust">             return Ok(());</code>
+<a href="#l169" class="line" id="l169">    169</a><code class="language-rust">         }</code>
+<a href="#l170" class="line" id="l170">    170</a><code class="language-rust">         self.engine.set(&amp;Key::TermVote.encode(), bincode::serialize(&amp;(term, vote)))?;</code>
+<a href="#l171" class="line" id="l171">    171</a><code class="language-rust">         // Always fsync, even with Log.fsync = false. Term changes are rare, so</code>
+<a href="#l172" class="line" id="l172">    172</a><code class="language-rust">         // this doesn&#39;t materially affect performance, and double voting could</code>
+<a href="#l173" class="line" id="l173">    173</a><code class="language-rust">         // lead to multiple leaders and split brain which is really bad.</code>
+<a href="#l174" class="line" id="l174">    174</a><code class="language-rust">         self.engine.flush()?;</code>
+<a href="#l175" class="line" id="l175">    175</a><code class="language-rust">         self.term = term;</code>
+<a href="#l176" class="line" id="l176">    176</a><code class="language-rust">         self.vote = vote;</code>
+<a href="#l177" class="line" id="l177">    177</a><code class="language-rust">         Ok(())</code>
+<a href="#l178" class="line" id="l178">    178</a><code class="language-rust">     }</code>
+<a href="#l179" class="line" id="l179">    179</a><code class="language-rust"> </code>
+<a href="#l180" class="line" id="l180">    180</a><code class="language-rust">     /// Appends a command to the log at the current term, and flushes it to</code>
+<a href="#l181" class="line" id="l181">    181</a><code class="language-rust">     /// disk, returning its index. None implies a noop command, typically after</code>
+<a href="#l182" class="line" id="l182">    182</a><code class="language-rust">     /// Raft leader changes.</code>
+<a href="#l183" class="line" id="l183">    183</a><code class="language-rust">     pub fn append(&amp;mut self, command: Option&lt;Vec&lt;u8&gt;&gt;) -&gt; Result&lt;Index&gt; {</code>
+<a href="#l184" class="line" id="l184">    184</a><code class="language-rust">         assert!(self.term &gt; 0, &quot;can&#39;t append entry in term 0&quot;);</code>
+<a href="#l185" class="line" id="l185">    185</a><code class="language-rust">         // We could omit the index in the encoded value, since it&#39;s also stored</code>
+<a href="#l186" class="line" id="l186">    186</a><code class="language-rust">         // in the key, but we keep it simple.</code>
+<a href="#l187" class="line" id="l187">    187</a><code class="language-rust">         let entry = Entry { index: self.last_index + 1, term: self.term, command };</code>
+<a href="#l188" class="line" id="l188">    188</a><code class="language-rust">         self.engine.set(&amp;Key::Entry(entry.index).encode(), entry.encode())?;</code>
+<a href="#l189" class="line" id="l189">    189</a><code class="language-rust">         if self.fsync {</code>
+<a href="#l190" class="line" id="l190">    190</a><code class="language-rust">             self.engine.flush()?;</code>
+<a href="#l191" class="line" id="l191">    191</a><code class="language-rust">         }</code>
+<a href="#l192" class="line" id="l192">    192</a><code class="language-rust">         self.last_index = entry.index;</code>
+<a href="#l193" class="line" id="l193">    193</a><code class="language-rust">         self.last_term = entry.term;</code>
+<a href="#l194" class="line" id="l194">    194</a><code class="language-rust">         Ok(entry.index)</code>
+<a href="#l195" class="line" id="l195">    195</a><code class="language-rust">     }</code>
+<a href="#l196" class="line" id="l196">    196</a><code class="language-rust"> </code>
+<a href="#l197" class="line" id="l197">    197</a><code class="language-rust">     /// Commits entries up to and including the given index. The index must</code>
+<a href="#l198" class="line" id="l198">    198</a><code class="language-rust">     /// exist and be at or after the current commit index.</code>
+<a href="#l199" class="line" id="l199">    199</a><code class="language-rust">     pub fn commit(&amp;mut self, index: Index) -&gt; Result&lt;Index&gt; {</code>
+<a href="#l200" class="line" id="l200">    200</a><code class="language-rust">         let term = match self.get(index)? {</code>
+<a href="#l201" class="line" id="l201">    201</a><code class="language-rust">             Some(e) if e.index &lt; self.commit_index =&gt; {</code>
+<a href="#l202" class="line" id="l202">    202</a><code class="language-rust">                 panic!(&quot;commit index regression {} → {}&quot;, self.commit_index, e.index);</code>
+<a href="#l203" class="line" id="l203">    203</a><code class="language-rust">             }</code>
+<a href="#l204" class="line" id="l204">    204</a><code class="language-rust">             Some(e) if e.index == self.commit_index =&gt; return Ok(index),</code>
+<a href="#l205" class="line" id="l205">    205</a><code class="language-rust">             Some(e) =&gt; e.term,</code>
+<a href="#l206" class="line" id="l206">    206</a><code class="language-rust">             None =&gt; panic!(&quot;commit index {index} does not exist&quot;),</code>
+<a href="#l207" class="line" id="l207">    207</a><code class="language-rust">         };</code>
+<a href="#l208" class="line" id="l208">    208</a><code class="language-rust">         self.engine.set(&amp;Key::CommitIndex.encode(), bincode::serialize(&amp;(index, term)))?;</code>
+<a href="#l209" class="line" id="l209">    209</a><code class="language-rust">         // NB: the commit index doesn&#39;t need to be fsynced, since the entries</code>
+<a href="#l210" class="line" id="l210">    210</a><code class="language-rust">         // are fsynced and the commit index can be recovered from a log quorum.</code>
+<a href="#l211" class="line" id="l211">    211</a><code class="language-rust">         self.commit_index = index;</code>
+<a href="#l212" class="line" id="l212">    212</a><code class="language-rust">         self.commit_term = term;</code>
+<a href="#l213" class="line" id="l213">    213</a><code class="language-rust">         Ok(index)</code>
+<a href="#l214" class="line" id="l214">    214</a><code class="language-rust">     }</code>
+<a href="#l215" class="line" id="l215">    215</a><code class="language-rust"> </code>
+<a href="#l216" class="line" id="l216">    216</a><code class="language-rust">     /// Fetches an entry at an index, or None if it does not exist.</code>
+<a href="#l217" class="line" id="l217">    217</a><code class="language-rust">     pub fn get(&amp;mut self, index: Index) -&gt; Result&lt;Option&lt;Entry&gt;&gt; {</code>
+<a href="#l218" class="line" id="l218">    218</a><code class="language-rust">         self.engine.get(&amp;Key::Entry(index).encode())?.map(|v| Entry::decode(&amp;v)).transpose()</code>
+<a href="#l219" class="line" id="l219">    219</a><code class="language-rust">     }</code>
+<a href="#l220" class="line" id="l220">    220</a><code class="language-rust"> </code>
+<a href="#l221" class="line" id="l221">    221</a><code class="language-rust">     /// Checks if the log contains an entry with the given index and term.</code>
+<a href="#l222" class="line" id="l222">    222</a><code class="language-rust">     pub fn has(&amp;mut self, index: Index, term: Term) -&gt; Result&lt;bool&gt; {</code>
+<a href="#l223" class="line" id="l223">    223</a><code class="language-rust">         // Fast path: check against last_index. This is the common case when</code>
+<a href="#l224" class="line" id="l224">    224</a><code class="language-rust">         // followers process appends or heartbeats.</code>
+<a href="#l225" class="line" id="l225">    225</a><code class="language-rust">         if index == 0 || index &gt; self.last_index {</code>
+<a href="#l226" class="line" id="l226">    226</a><code class="language-rust">             return Ok(false);</code>
+<a href="#l227" class="line" id="l227">    227</a><code class="language-rust">         }</code>
+<a href="#l228" class="line" id="l228">    228</a><code class="language-rust">         if (index, term) == (self.last_index, self.last_term) {</code>
+<a href="#l229" class="line" id="l229">    229</a><code class="language-rust">             return Ok(true);</code>
+<a href="#l230" class="line" id="l230">    230</a><code class="language-rust">         }</code>
+<a href="#l231" class="line" id="l231">    231</a><code class="language-rust">         Ok(self.get(index)?.map(|e| e.term == term).unwrap_or(false))</code>
+<a href="#l232" class="line" id="l232">    232</a><code class="language-rust">     }</code>
+<a href="#l233" class="line" id="l233">    233</a><code class="language-rust"> </code>
+<a href="#l234" class="line" id="l234">    234</a><code class="language-rust">     /// Returns an iterator over log entries in the given index range.</code>
+<a href="#l235" class="line" id="l235">    235</a><code class="language-rust">     pub fn scan(&amp;mut self, range: impl std::ops::RangeBounds&lt;Index&gt;) -&gt; Iterator {</code>
+<a href="#l236" class="line" id="l236">    236</a><code class="language-rust">         use std::ops::Bound;</code>
+<a href="#l237" class="line" id="l237">    237</a><code class="language-rust">         let from = match range.start_bound() {</code>
+<a href="#l238" class="line" id="l238">    238</a><code class="language-rust">             Bound::Excluded(&amp;index) =&gt; Bound::Excluded(Key::Entry(index).encode()),</code>
+<a href="#l239" class="line" id="l239">    239</a><code class="language-rust">             Bound::Included(&amp;index) =&gt; Bound::Included(Key::Entry(index).encode()),</code>
+<a href="#l240" class="line" id="l240">    240</a><code class="language-rust">             Bound::Unbounded =&gt; Bound::Included(Key::Entry(0).encode()),</code>
+<a href="#l241" class="line" id="l241">    241</a><code class="language-rust">         };</code>
+<a href="#l242" class="line" id="l242">    242</a><code class="language-rust">         let to = match range.end_bound() {</code>
+<a href="#l243" class="line" id="l243">    243</a><code class="language-rust">             Bound::Excluded(&amp;index) =&gt; Bound::Excluded(Key::Entry(index).encode()),</code>
+<a href="#l244" class="line" id="l244">    244</a><code class="language-rust">             Bound::Included(&amp;index) =&gt; Bound::Included(Key::Entry(index).encode()),</code>
+<a href="#l245" class="line" id="l245">    245</a><code class="language-rust">             Bound::Unbounded =&gt; Bound::Included(Key::Entry(Index::MAX).encode()),</code>
+<a href="#l246" class="line" id="l246">    246</a><code class="language-rust">         };</code>
+<a href="#l247" class="line" id="l247">    247</a><code class="language-rust">         Iterator::new(self.engine.scan_dyn((from, to)))</code>
+<a href="#l248" class="line" id="l248">    248</a><code class="language-rust">     }</code>
+<a href="#l249" class="line" id="l249">    249</a><code class="language-rust"> </code>
+<a href="#l250" class="line" id="l250">    250</a><code class="language-rust">     /// Returns an iterator over entries that are ready to apply, starting after</code>
+<a href="#l251" class="line" id="l251">    251</a><code class="language-rust">     /// the current applied index up to the commit index.</code>
+<a href="#l252" class="line" id="l252">    252</a><code class="language-rust">     pub fn scan_apply(&amp;mut self, applied_index: Index) -&gt; Iterator {</code>
+<a href="#l253" class="line" id="l253">    253</a><code class="language-rust">         // NB: we don&#39;t assert that commit_index &gt;= applied_index, because the</code>
+<a href="#l254" class="line" id="l254">    254</a><code class="language-rust">         // local commit index is not flushed to durable storage -- if lost on</code>
+<a href="#l255" class="line" id="l255">    255</a><code class="language-rust">         // restart, it can be recovered from a quorum of logs.</code>
+<a href="#l256" class="line" id="l256">    256</a><code class="language-rust">         if applied_index &gt;= self.commit_index {</code>
+<a href="#l257" class="line" id="l257">    257</a><code class="language-rust">             return Iterator::new(Box::new(std::iter::empty()));</code>
+<a href="#l258" class="line" id="l258">    258</a><code class="language-rust">         }</code>
+<a href="#l259" class="line" id="l259">    259</a><code class="language-rust">         self.scan(applied_index + 1..=self.commit_index)</code>
+<a href="#l260" class="line" id="l260">    260</a><code class="language-rust">     }</code>
+<a href="#l261" class="line" id="l261">    261</a><code class="language-rust"> </code>
+<a href="#l262" class="line" id="l262">    262</a><code class="language-rust">     /// Splices a set of entries into the log and flushes it to disk. The</code>
+<a href="#l263" class="line" id="l263">    263</a><code class="language-rust">     /// entries must have contiguous indexes and equal/increasing terms, and the</code>
+<a href="#l264" class="line" id="l264">    264</a><code class="language-rust">     /// first entry must be in the range [1,last_index+1] with a term at or</code>
+<a href="#l265" class="line" id="l265">    265</a><code class="language-rust">     /// above the previous (base) entry&#39;s term and at or below the current term.</code>
+<a href="#l266" class="line" id="l266">    266</a><code class="language-rust">     /// New indexes will be appended. Overlapping indexes with the same term</code>
+<a href="#l267" class="line" id="l267">    267</a><code class="language-rust">     /// must be equal and will be ignored. Overlapping indexes with different</code>
+<a href="#l268" class="line" id="l268">    268</a><code class="language-rust">     /// terms will truncate the existing log at the first conflict and then</code>
+<a href="#l269" class="line" id="l269">    269</a><code class="language-rust">     /// splice the new entries.</code>
+<a href="#l270" class="line" id="l270">    270</a><code class="language-rust">     pub fn splice(&amp;mut self, entries: Vec&lt;Entry&gt;) -&gt; Result&lt;Index&gt; {</code>
+<a href="#l271" class="line" id="l271">    271</a><code class="language-rust">         let (Some(first), Some(last)) = (entries.first(), entries.last()) else {</code>
+<a href="#l272" class="line" id="l272">    272</a><code class="language-rust">             return Ok(self.last_index); // empty input is noop</code>
+<a href="#l273" class="line" id="l273">    273</a><code class="language-rust">         };</code>
+<a href="#l274" class="line" id="l274">    274</a><code class="language-rust"> </code>
+<a href="#l275" class="line" id="l275">    275</a><code class="language-rust">         // Check that the entries are well-formed.</code>
+<a href="#l276" class="line" id="l276">    276</a><code class="language-rust">         if first.index == 0 || first.term == 0 {</code>
+<a href="#l277" class="line" id="l277">    277</a><code class="language-rust">             panic!(&quot;spliced entry has index or term 0&quot;);</code>
+<a href="#l278" class="line" id="l278">    278</a><code class="language-rust">         }</code>
+<a href="#l279" class="line" id="l279">    279</a><code class="language-rust">         if !entries.windows(2).all(|w| w[0].index + 1 == w[1].index) {</code>
+<a href="#l280" class="line" id="l280">    280</a><code class="language-rust">             panic!(&quot;spliced entries are not contiguous&quot;);</code>
+<a href="#l281" class="line" id="l281">    281</a><code class="language-rust">         }</code>
+<a href="#l282" class="line" id="l282">    282</a><code class="language-rust">         if !entries.windows(2).all(|w| w[0].term &lt;= w[1].term) {</code>
+<a href="#l283" class="line" id="l283">    283</a><code class="language-rust">             panic!(&quot;spliced entries have term regression&quot;);</code>
+<a href="#l284" class="line" id="l284">    284</a><code class="language-rust">         }</code>
+<a href="#l285" class="line" id="l285">    285</a><code class="language-rust"> </code>
+<a href="#l286" class="line" id="l286">    286</a><code class="language-rust">         // Check that the entries connect to the existing log (if any), and that the</code>
+<a href="#l287" class="line" id="l287">    287</a><code class="language-rust">         // term doesn&#39;t regress.</code>
+<a href="#l288" class="line" id="l288">    288</a><code class="language-rust">         assert!(last.term &lt;= self.term, &quot;splice term {} beyond current {}&quot;, last.term, self.term);</code>
+<a href="#l289" class="line" id="l289">    289</a><code class="language-rust">         match self.get(first.index - 1)? {</code>
+<a href="#l290" class="line" id="l290">    290</a><code class="language-rust">             Some(base) if first.term &lt; base.term =&gt; {</code>
+<a href="#l291" class="line" id="l291">    291</a><code class="language-rust">                 panic!(&quot;splice term regression {} → {}&quot;, base.term, first.term)</code>
+<a href="#l292" class="line" id="l292">    292</a><code class="language-rust">             }</code>
+<a href="#l293" class="line" id="l293">    293</a><code class="language-rust">             Some(_) =&gt; {}</code>
+<a href="#l294" class="line" id="l294">    294</a><code class="language-rust">             None if first.index == 1 =&gt; {}</code>
+<a href="#l295" class="line" id="l295">    295</a><code class="language-rust">             None =&gt; panic!(&quot;first index {} must touch existing log&quot;, first.index),</code>
+<a href="#l296" class="line" id="l296">    296</a><code class="language-rust">         }</code>
+<a href="#l297" class="line" id="l297">    297</a><code class="language-rust"> </code>
+<a href="#l298" class="line" id="l298">    298</a><code class="language-rust">         // Skip entries that are already in the log.</code>
+<a href="#l299" class="line" id="l299">    299</a><code class="language-rust">         let mut entries = entries.as_slice();</code>
+<a href="#l300" class="line" id="l300">    300</a><code class="language-rust">         let mut scan = self.scan(first.index..=last.index);</code>
+<a href="#l301" class="line" id="l301">    301</a><code class="language-rust">         while let Some(entry) = scan.next().transpose()? {</code>
+<a href="#l302" class="line" id="l302">    302</a><code class="language-rust">             // [0] is ok, because the scan has the same size as entries.</code>
+<a href="#l303" class="line" id="l303">    303</a><code class="language-rust">             assert!(entry.index == entries[0].index, &quot;index mismatch at {entry:?}&quot;);</code>
+<a href="#l304" class="line" id="l304">    304</a><code class="language-rust">             if entry.term != entries[0].term {</code>
+<a href="#l305" class="line" id="l305">    305</a><code class="language-rust">                 break;</code>
+<a href="#l306" class="line" id="l306">    306</a><code class="language-rust">             }</code>
+<a href="#l307" class="line" id="l307">    307</a><code class="language-rust">             assert!(entry.command == entries[0].command, &quot;command mismatch at {entry:?}&quot;);</code>
+<a href="#l308" class="line" id="l308">    308</a><code class="language-rust">             entries = &amp;entries[1..];</code>
+<a href="#l309" class="line" id="l309">    309</a><code class="language-rust">         }</code>
+<a href="#l310" class="line" id="l310">    310</a><code class="language-rust">         drop(scan);</code>
+<a href="#l311" class="line" id="l311">    311</a><code class="language-rust"> </code>
+<a href="#l312" class="line" id="l312">    312</a><code class="language-rust">         // If all entries already exist then we&#39;re done.</code>
+<a href="#l313" class="line" id="l313">    313</a><code class="language-rust">         let Some(first) = entries.first() else {</code>
+<a href="#l314" class="line" id="l314">    314</a><code class="language-rust">             return Ok(self.last_index);</code>
+<a href="#l315" class="line" id="l315">    315</a><code class="language-rust">         };</code>
+<a href="#l316" class="line" id="l316">    316</a><code class="language-rust"> </code>
+<a href="#l317" class="line" id="l317">    317</a><code class="language-rust">         // Write the entries that weren&#39;t already in the log, and remove the</code>
+<a href="#l318" class="line" id="l318">    318</a><code class="language-rust">         // tail of the old log if any. We can&#39;t write below the commit index,</code>
+<a href="#l319" class="line" id="l319">    319</a><code class="language-rust">         // since these entries must be immutable.</code>
+<a href="#l320" class="line" id="l320">    320</a><code class="language-rust">         assert!(first.index &gt; self.commit_index, &quot;spliced entries below commit index&quot;);</code>
+<a href="#l321" class="line" id="l321">    321</a><code class="language-rust"> </code>
+<a href="#l322" class="line" id="l322">    322</a><code class="language-rust">         for entry in entries {</code>
+<a href="#l323" class="line" id="l323">    323</a><code class="language-rust">             self.engine.set(&amp;Key::Entry(entry.index).encode(), entry.encode())?;</code>
+<a href="#l324" class="line" id="l324">    324</a><code class="language-rust">         }</code>
+<a href="#l325" class="line" id="l325">    325</a><code class="language-rust">         for index in last.index + 1..=self.last_index {</code>
+<a href="#l326" class="line" id="l326">    326</a><code class="language-rust">             self.engine.delete(&amp;Key::Entry(index).encode())?;</code>
+<a href="#l327" class="line" id="l327">    327</a><code class="language-rust">         }</code>
+<a href="#l328" class="line" id="l328">    328</a><code class="language-rust">         if self.fsync {</code>
+<a href="#l329" class="line" id="l329">    329</a><code class="language-rust">             self.engine.flush()?;</code>
+<a href="#l330" class="line" id="l330">    330</a><code class="language-rust">         }</code>
+<a href="#l331" class="line" id="l331">    331</a><code class="language-rust"> </code>
+<a href="#l332" class="line" id="l332">    332</a><code class="language-rust">         self.last_index = last.index;</code>
+<a href="#l333" class="line" id="l333">    333</a><code class="language-rust">         self.last_term = last.term;</code>
+<a href="#l334" class="line" id="l334">    334</a><code class="language-rust">         Ok(self.last_index)</code>
+<a href="#l335" class="line" id="l335">    335</a><code class="language-rust">     }</code>
+<a href="#l336" class="line" id="l336">    336</a><code class="language-rust"> </code>
+<a href="#l337" class="line" id="l337">    337</a><code class="language-rust">     /// Returns log engine status.</code>
+<a href="#l338" class="line" id="l338">    338</a><code class="language-rust">     pub fn status(&amp;mut self) -&gt; Result&lt;storage::Status&gt; {</code>
+<a href="#l339" class="line" id="l339">    339</a><code class="language-rust">         self.engine.status()</code>
+<a href="#l340" class="line" id="l340">    340</a><code class="language-rust">     }</code>
+<a href="#l341" class="line" id="l341">    341</a><code class="language-rust"> }</code>
+<a href="#l342" class="line" id="l342">    342</a><code class="language-rust"> </code>
+<a href="#l343" class="line" id="l343">    343</a><code class="language-rust"> /// A log entry iterator.</code>
+<a href="#l344" class="line" id="l344">    344</a><code class="language-rust"> pub struct Iterator&lt;&#39;a&gt; {</code>
+<a href="#l345" class="line" id="l345">    345</a><code class="language-rust">     inner: Box&lt;dyn storage::ScanIterator + &#39;a&gt;,</code>
+<a href="#l346" class="line" id="l346">    346</a><code class="language-rust"> }</code>
+<a href="#l347" class="line" id="l347">    347</a><code class="language-rust"> </code>
+<a href="#l348" class="line" id="l348">    348</a><code class="language-rust"> impl&lt;&#39;a&gt; Iterator&lt;&#39;a&gt; {</code>
+<a href="#l349" class="line" id="l349">    349</a><code class="language-rust">     fn new(inner: Box&lt;dyn storage::ScanIterator + &#39;a&gt;) -&gt; Self {</code>
+<a href="#l350" class="line" id="l350">    350</a><code class="language-rust">         Self { inner }</code>
+<a href="#l351" class="line" id="l351">    351</a><code class="language-rust">     }</code>
+<a href="#l352" class="line" id="l352">    352</a><code class="language-rust"> }</code>
+<a href="#l353" class="line" id="l353">    353</a><code class="language-rust"> </code>
+<a href="#l354" class="line" id="l354">    354</a><code class="language-rust"> impl&lt;&#39;a&gt; std::iter::Iterator for Iterator&lt;&#39;a&gt; {</code>
+<a href="#l355" class="line" id="l355">    355</a><code class="language-rust">     type Item = Result&lt;Entry&gt;;</code>
+<a href="#l356" class="line" id="l356">    356</a><code class="language-rust"> </code>
+<a href="#l357" class="line" id="l357">    357</a><code class="language-rust">     fn next(&amp;mut self) -&gt; Option&lt;Self::Item&gt; {</code>
+<a href="#l358" class="line" id="l358">    358</a><code class="language-rust">         self.inner.next().map(|r| r.and_then(|(_, v)| Entry::decode(&amp;v)))</code>
+<a href="#l359" class="line" id="l359">    359</a><code class="language-rust">     }</code>
+<a href="#l360" class="line" id="l360">    360</a><code class="language-rust"> }</code>
+<a href="#l361" class="line" id="l361">    361</a><code class="language-rust"> </code>
+<a href="#l362" class="line" id="l362">    362</a><code class="language-rust"> /// Most Raft tests are Goldenscripts under src/raft/testscripts.</code>
+<a href="#l363" class="line" id="l363">    363</a><code class="language-rust"> #[cfg(test)]</code>
+<a href="#l364" class="line" id="l364">    364</a><code class="language-rust"> mod tests {</code>
+<a href="#l365" class="line" id="l365">    365</a><code class="language-rust">     use super::*;</code>
+<a href="#l366" class="line" id="l366">    366</a><code class="language-rust">     use crate::encoding::format::{self, Formatter as _};</code>
+<a href="#l367" class="line" id="l367">    367</a><code class="language-rust">     use crate::storage::engine::test as testengine;</code>
+<a href="#l368" class="line" id="l368">    368</a><code class="language-rust"> </code>
+<a href="#l369" class="line" id="l369">    369</a><code class="language-rust">     use crossbeam::channel::Receiver;</code>
+<a href="#l370" class="line" id="l370">    370</a><code class="language-rust">     use itertools::Itertools as _;</code>
+<a href="#l371" class="line" id="l371">    371</a><code class="language-rust">     use regex::Regex;</code>
+<a href="#l372" class="line" id="l372">    372</a><code class="language-rust">     use std::fmt::Write as _;</code>
+<a href="#l373" class="line" id="l373">    373</a><code class="language-rust">     use std::{error::Error, result::Result};</code>
+<a href="#l374" class="line" id="l374">    374</a><code class="language-rust">     use test_each_file::test_each_path;</code>
+<a href="#l375" class="line" id="l375">    375</a><code class="language-rust"> </code>
+<a href="#l376" class="line" id="l376">    376</a><code class="language-rust">     // Run goldenscript tests in src/raft/testscripts/log.</code>
+<a href="#l377" class="line" id="l377">    377</a><code class="language-rust">     test_each_path! { in &quot;src/raft/testscripts/log&quot; as scripts =&gt; test_goldenscript }</code>
+<a href="#l378" class="line" id="l378">    378</a><code class="language-rust"> </code>
+<a href="#l379" class="line" id="l379">    379</a><code class="language-rust">     fn test_goldenscript(path: &amp;std::path::Path) {</code>
+<a href="#l380" class="line" id="l380">    380</a><code class="language-rust">         goldenscript::run(&amp;mut TestRunner::new(), path).expect(&quot;goldenscript failed&quot;)</code>
+<a href="#l381" class="line" id="l381">    381</a><code class="language-rust">     }</code>
+<a href="#l382" class="line" id="l382">    382</a><code class="language-rust"> </code>
+<a href="#l383" class="line" id="l383">    383</a><code class="language-rust">     /// Runs Raft log goldenscript tests. For available commands, see run().</code>
+<a href="#l384" class="line" id="l384">    384</a><code class="language-rust">     struct TestRunner {</code>
+<a href="#l385" class="line" id="l385">    385</a><code class="language-rust">         log: Log,</code>
+<a href="#l386" class="line" id="l386">    386</a><code class="language-rust">         op_rx: Receiver&lt;testengine::Operation&gt;,</code>
+<a href="#l387" class="line" id="l387">    387</a><code class="language-rust">         #[allow(dead_code)]</code>
+<a href="#l388" class="line" id="l388">    388</a><code class="language-rust">         tempdir: tempfile::TempDir,</code>
+<a href="#l389" class="line" id="l389">    389</a><code class="language-rust">     }</code>
+<a href="#l390" class="line" id="l390">    390</a><code class="language-rust"> </code>
+<a href="#l391" class="line" id="l391">    391</a><code class="language-rust">     impl TestRunner {</code>
+<a href="#l392" class="line" id="l392">    392</a><code class="language-rust">         fn new() -&gt; Self {</code>
+<a href="#l393" class="line" id="l393">    393</a><code class="language-rust">             // Use both a BitCask and a Memory engine, and mirror operations</code>
+<a href="#l394" class="line" id="l394">    394</a><code class="language-rust">             // across them. Emit write events to op_tx.</code>
+<a href="#l395" class="line" id="l395">    395</a><code class="language-rust">             let (op_tx, op_rx) = crossbeam::channel::unbounded();</code>
+<a href="#l396" class="line" id="l396">    396</a><code class="language-rust">             let tempdir = tempfile::TempDir::with_prefix(&quot;toydb&quot;).expect(&quot;tempdir failed&quot;);</code>
+<a href="#l397" class="line" id="l397">    397</a><code class="language-rust">             let bitcask =</code>
+<a href="#l398" class="line" id="l398">    398</a><code class="language-rust">                 storage::BitCask::new(tempdir.path().join(&quot;bitcask&quot;)).expect(&quot;bitcask failed&quot;);</code>
+<a href="#l399" class="line" id="l399">    399</a><code class="language-rust">             let memory = storage::Memory::new();</code>
+<a href="#l400" class="line" id="l400">    400</a><code class="language-rust">             let engine = testengine::Emit::new(testengine::Mirror::new(bitcask, memory), op_tx);</code>
+<a href="#l401" class="line" id="l401">    401</a><code class="language-rust">             let log = Log::new(Box::new(engine)).expect(&quot;log failed&quot;);</code>
+<a href="#l402" class="line" id="l402">    402</a><code class="language-rust">             Self { log, op_rx, tempdir }</code>
+<a href="#l403" class="line" id="l403">    403</a><code class="language-rust">         }</code>
+<a href="#l404" class="line" id="l404">    404</a><code class="language-rust"> </code>
+<a href="#l405" class="line" id="l405">    405</a><code class="language-rust">         /// Parses an index@term pair.</code>
+<a href="#l406" class="line" id="l406">    406</a><code class="language-rust">         fn parse_index_term(s: &amp;str) -&gt; Result&lt;(Index, Term), Box&lt;dyn Error&gt;&gt; {</code>
+<a href="#l407" class="line" id="l407">    407</a><code class="language-rust">             let re = Regex::new(r&quot;^(\d+)@(\d+)$&quot;).expect(&quot;invalid regex&quot;);</code>
+<a href="#l408" class="line" id="l408">    408</a><code class="language-rust">             let groups = re.captures(s).ok_or_else(|| format!(&quot;invalid index/term {s}&quot;))?;</code>
+<a href="#l409" class="line" id="l409">    409</a><code class="language-rust">             let index = groups.get(1).unwrap().as_str().parse()?;</code>
+<a href="#l410" class="line" id="l410">    410</a><code class="language-rust">             let term = groups.get(2).unwrap().as_str().parse()?;</code>
+<a href="#l411" class="line" id="l411">    411</a><code class="language-rust">             Ok((index, term))</code>
+<a href="#l412" class="line" id="l412">    412</a><code class="language-rust">         }</code>
+<a href="#l413" class="line" id="l413">    413</a><code class="language-rust"> </code>
+<a href="#l414" class="line" id="l414">    414</a><code class="language-rust">         /// Parses an index range, in Rust range syntax.</code>
+<a href="#l415" class="line" id="l415">    415</a><code class="language-rust">         fn parse_index_range(s: &amp;str) -&gt; Result&lt;impl std::ops::RangeBounds&lt;Index&gt;, Box&lt;dyn Error&gt;&gt; {</code>
+<a href="#l416" class="line" id="l416">    416</a><code class="language-rust">             use std::ops::Bound;</code>
+<a href="#l417" class="line" id="l417">    417</a><code class="language-rust">             let mut bound = (Bound::&lt;Index&gt;::Unbounded, Bound::&lt;Index&gt;::Unbounded);</code>
+<a href="#l418" class="line" id="l418">    418</a><code class="language-rust">             let re = Regex::new(r&quot;^(\d+)?\.\.(=)?(\d+)?&quot;).expect(&quot;invalid regex&quot;);</code>
+<a href="#l419" class="line" id="l419">    419</a><code class="language-rust">             let groups = re.captures(s).ok_or_else(|| format!(&quot;invalid range {s}&quot;))?;</code>
+<a href="#l420" class="line" id="l420">    420</a><code class="language-rust">             if let Some(start) = groups.get(1) {</code>
+<a href="#l421" class="line" id="l421">    421</a><code class="language-rust">                 bound.0 = Bound::Included(start.as_str().parse()?);</code>
+<a href="#l422" class="line" id="l422">    422</a><code class="language-rust">             }</code>
+<a href="#l423" class="line" id="l423">    423</a><code class="language-rust">             if let Some(end) = groups.get(3) {</code>
+<a href="#l424" class="line" id="l424">    424</a><code class="language-rust">                 let end = end.as_str().parse()?;</code>
+<a href="#l425" class="line" id="l425">    425</a><code class="language-rust">                 if groups.get(2).is_some() {</code>
+<a href="#l426" class="line" id="l426">    426</a><code class="language-rust">                     bound.1 = Bound::Included(end)</code>
+<a href="#l427" class="line" id="l427">    427</a><code class="language-rust">                 } else {</code>
+<a href="#l428" class="line" id="l428">    428</a><code class="language-rust">                     bound.1 = Bound::Excluded(end)</code>
+<a href="#l429" class="line" id="l429">    429</a><code class="language-rust">                 }</code>
+<a href="#l430" class="line" id="l430">    430</a><code class="language-rust">             }</code>
+<a href="#l431" class="line" id="l431">    431</a><code class="language-rust">             Ok(bound)</code>
+<a href="#l432" class="line" id="l432">    432</a><code class="language-rust">         }</code>
+<a href="#l433" class="line" id="l433">    433</a><code class="language-rust">     }</code>
+<a href="#l434" class="line" id="l434">    434</a><code class="language-rust"> </code>
+<a href="#l435" class="line" id="l435">    435</a><code class="language-rust">     impl goldenscript::Runner for TestRunner {</code>
+<a href="#l436" class="line" id="l436">    436</a><code class="language-rust">         fn run(&amp;mut self, command: &amp;goldenscript::Command) -&gt; Result&lt;String, Box&lt;dyn Error&gt;&gt; {</code>
+<a href="#l437" class="line" id="l437">    437</a><code class="language-rust">             let mut output = String::new();</code>
+<a href="#l438" class="line" id="l438">    438</a><code class="language-rust">             let mut tags = command.tags.clone();</code>
+<a href="#l439" class="line" id="l439">    439</a><code class="language-rust"> </code>
+<a href="#l440" class="line" id="l440">    440</a><code class="language-rust">             match command.name.as_str() {</code>
+<a href="#l441" class="line" id="l441">    441</a><code class="language-rust">                 // append [COMMAND]</code>
+<a href="#l442" class="line" id="l442">    442</a><code class="language-rust">                 &quot;append&quot; =&gt; {</code>
+<a href="#l443" class="line" id="l443">    443</a><code class="language-rust">                     let mut args = command.consume_args();</code>
+<a href="#l444" class="line" id="l444">    444</a><code class="language-rust">                     let command = args.next_pos().map(|a| a.value.as_bytes().to_vec());</code>
+<a href="#l445" class="line" id="l445">    445</a><code class="language-rust">                     args.reject_rest()?;</code>
+<a href="#l446" class="line" id="l446">    446</a><code class="language-rust">                     let index = self.log.append(command)?;</code>
+<a href="#l447" class="line" id="l447">    447</a><code class="language-rust">                     let entry = self.log.get(index)?.expect(&quot;entry not found&quot;);</code>
+<a href="#l448" class="line" id="l448">    448</a><code class="language-rust">                     let fmtentry = format::Raft::&lt;format::Raw&gt;::entry(&amp;entry);</code>
+<a href="#l449" class="line" id="l449">    449</a><code class="language-rust">                     writeln!(output, &quot;append → {fmtentry}&quot;)?;</code>
+<a href="#l450" class="line" id="l450">    450</a><code class="language-rust">                 }</code>
+<a href="#l451" class="line" id="l451">    451</a><code class="language-rust"> </code>
+<a href="#l452" class="line" id="l452">    452</a><code class="language-rust">                 // commit INDEX</code>
+<a href="#l453" class="line" id="l453">    453</a><code class="language-rust">                 &quot;commit&quot; =&gt; {</code>
+<a href="#l454" class="line" id="l454">    454</a><code class="language-rust">                     let mut args = command.consume_args();</code>
+<a href="#l455" class="line" id="l455">    455</a><code class="language-rust">                     let index = args.next_pos().ok_or(&quot;index not given&quot;)?.parse()?;</code>
+<a href="#l456" class="line" id="l456">    456</a><code class="language-rust">                     args.reject_rest()?;</code>
+<a href="#l457" class="line" id="l457">    457</a><code class="language-rust">                     let index = self.log.commit(index)?;</code>
+<a href="#l458" class="line" id="l458">    458</a><code class="language-rust">                     let entry = self.log.get(index)?.expect(&quot;entry not found&quot;);</code>
+<a href="#l459" class="line" id="l459">    459</a><code class="language-rust">                     let fmtentry = format::Raft::&lt;format::Raw&gt;::entry(&amp;entry);</code>
+<a href="#l460" class="line" id="l460">    460</a><code class="language-rust">                     writeln!(output, &quot;commit → {fmtentry}&quot;)?;</code>
+<a href="#l461" class="line" id="l461">    461</a><code class="language-rust">                 }</code>
+<a href="#l462" class="line" id="l462">    462</a><code class="language-rust"> </code>
+<a href="#l463" class="line" id="l463">    463</a><code class="language-rust">                 // dump</code>
+<a href="#l464" class="line" id="l464">    464</a><code class="language-rust">                 &quot;dump&quot; =&gt; {</code>
+<a href="#l465" class="line" id="l465">    465</a><code class="language-rust">                     command.consume_args().reject_rest()?;</code>
+<a href="#l466" class="line" id="l466">    466</a><code class="language-rust">                     let range = (std::ops::Bound::Unbounded, std::ops::Bound::Unbounded);</code>
+<a href="#l467" class="line" id="l467">    467</a><code class="language-rust">                     let mut scan = self.log.engine.scan_dyn(range);</code>
+<a href="#l468" class="line" id="l468">    468</a><code class="language-rust">                     while let Some((key, value)) = scan.next().transpose()? {</code>
+<a href="#l469" class="line" id="l469">    469</a><code class="language-rust">                         let fmtkv = format::Raft::&lt;format::Raw&gt;::key_value(&amp;key, &amp;value);</code>
+<a href="#l470" class="line" id="l470">    470</a><code class="language-rust">                         let rawkv = format::Raw::key_value(&amp;key, &amp;value);</code>
+<a href="#l471" class="line" id="l471">    471</a><code class="language-rust">                         writeln!(output, &quot;{fmtkv} [{rawkv}]&quot;)?;</code>
+<a href="#l472" class="line" id="l472">    472</a><code class="language-rust">                     }</code>
+<a href="#l473" class="line" id="l473">    473</a><code class="language-rust">                 }</code>
+<a href="#l474" class="line" id="l474">    474</a><code class="language-rust"> </code>
+<a href="#l475" class="line" id="l475">    475</a><code class="language-rust">                 // get INDEX...</code>
+<a href="#l476" class="line" id="l476">    476</a><code class="language-rust">                 &quot;get&quot; =&gt; {</code>
+<a href="#l477" class="line" id="l477">    477</a><code class="language-rust">                     let mut args = command.consume_args();</code>
+<a href="#l478" class="line" id="l478">    478</a><code class="language-rust">                     let indexes: Vec&lt;Index&gt; =</code>
+<a href="#l479" class="line" id="l479">    479</a><code class="language-rust">                         args.rest_pos().iter().map(|a| a.parse()).try_collect()?;</code>
+<a href="#l480" class="line" id="l480">    480</a><code class="language-rust">                     args.reject_rest()?;</code>
+<a href="#l481" class="line" id="l481">    481</a><code class="language-rust">                     for index in indexes {</code>
+<a href="#l482" class="line" id="l482">    482</a><code class="language-rust">                         let entry = self.log.get(index)?;</code>
+<a href="#l483" class="line" id="l483">    483</a><code class="language-rust">                         let fmtentry = entry</code>
+<a href="#l484" class="line" id="l484">    484</a><code class="language-rust">                             .as_ref()</code>
+<a href="#l485" class="line" id="l485">    485</a><code class="language-rust">                             .map(format::Raft::&lt;format::Raw&gt;::entry)</code>
+<a href="#l486" class="line" id="l486">    486</a><code class="language-rust">                             .unwrap_or(&quot;None&quot;.to_string());</code>
+<a href="#l487" class="line" id="l487">    487</a><code class="language-rust">                         writeln!(output, &quot;{fmtentry}&quot;)?;</code>
+<a href="#l488" class="line" id="l488">    488</a><code class="language-rust">                     }</code>
+<a href="#l489" class="line" id="l489">    489</a><code class="language-rust">                 }</code>
+<a href="#l490" class="line" id="l490">    490</a><code class="language-rust"> </code>
+<a href="#l491" class="line" id="l491">    491</a><code class="language-rust">                 // get_term</code>
+<a href="#l492" class="line" id="l492">    492</a><code class="language-rust">                 &quot;get_term&quot; =&gt; {</code>
+<a href="#l493" class="line" id="l493">    493</a><code class="language-rust">                     command.consume_args().reject_rest()?;</code>
+<a href="#l494" class="line" id="l494">    494</a><code class="language-rust">                     let (term, vote) = self.log.get_term();</code>
+<a href="#l495" class="line" id="l495">    495</a><code class="language-rust">                     let vote = vote.map(|v| v.to_string()).unwrap_or(&quot;None&quot;.to_string());</code>
+<a href="#l496" class="line" id="l496">    496</a><code class="language-rust">                     writeln!(output, &quot;term={term} vote={vote}&quot;)?;</code>
+<a href="#l497" class="line" id="l497">    497</a><code class="language-rust">                 }</code>
+<a href="#l498" class="line" id="l498">    498</a><code class="language-rust"> </code>
+<a href="#l499" class="line" id="l499">    499</a><code class="language-rust">                 // has INDEX@TERM...</code>
+<a href="#l500" class="line" id="l500">    500</a><code class="language-rust">                 &quot;has&quot; =&gt; {</code>
+<a href="#l501" class="line" id="l501">    501</a><code class="language-rust">                     let mut args = command.consume_args();</code>
+<a href="#l502" class="line" id="l502">    502</a><code class="language-rust">                     let indexes: Vec&lt;(Index, Term)&gt; = args</code>
+<a href="#l503" class="line" id="l503">    503</a><code class="language-rust">                         .rest_pos()</code>
+<a href="#l504" class="line" id="l504">    504</a><code class="language-rust">                         .iter()</code>
+<a href="#l505" class="line" id="l505">    505</a><code class="language-rust">                         .map(|a| Self::parse_index_term(&amp;a.value))</code>
+<a href="#l506" class="line" id="l506">    506</a><code class="language-rust">                         .try_collect()?;</code>
+<a href="#l507" class="line" id="l507">    507</a><code class="language-rust">                     args.reject_rest()?;</code>
+<a href="#l508" class="line" id="l508">    508</a><code class="language-rust">                     for (index, term) in indexes {</code>
+<a href="#l509" class="line" id="l509">    509</a><code class="language-rust">                         let has = self.log.has(index, term)?;</code>
+<a href="#l510" class="line" id="l510">    510</a><code class="language-rust">                         writeln!(output, &quot;{has}&quot;)?;</code>
+<a href="#l511" class="line" id="l511">    511</a><code class="language-rust">                     }</code>
+<a href="#l512" class="line" id="l512">    512</a><code class="language-rust">                 }</code>
+<a href="#l513" class="line" id="l513">    513</a><code class="language-rust"> </code>
+<a href="#l514" class="line" id="l514">    514</a><code class="language-rust">                 // reload</code>
+<a href="#l515" class="line" id="l515">    515</a><code class="language-rust">                 &quot;reload&quot; =&gt; {</code>
+<a href="#l516" class="line" id="l516">    516</a><code class="language-rust">                     command.consume_args().reject_rest()?;</code>
+<a href="#l517" class="line" id="l517">    517</a><code class="language-rust">                     // To get owned access to the inner engine, temporarily</code>
+<a href="#l518" class="line" id="l518">    518</a><code class="language-rust">                     // replace it with an empty memory engine.</code>
+<a href="#l519" class="line" id="l519">    519</a><code class="language-rust">                     let engine =</code>
+<a href="#l520" class="line" id="l520">    520</a><code class="language-rust">                         std::mem::replace(&amp;mut self.log.engine, Box::new(storage::Memory::new()));</code>
+<a href="#l521" class="line" id="l521">    521</a><code class="language-rust">                     self.log = Log::new(engine)?;</code>
+<a href="#l522" class="line" id="l522">    522</a><code class="language-rust">                 }</code>
+<a href="#l523" class="line" id="l523">    523</a><code class="language-rust"> </code>
+<a href="#l524" class="line" id="l524">    524</a><code class="language-rust">                 // scan [RANGE]</code>
+<a href="#l525" class="line" id="l525">    525</a><code class="language-rust">                 &quot;scan&quot; =&gt; {</code>
+<a href="#l526" class="line" id="l526">    526</a><code class="language-rust">                     let mut args = command.consume_args();</code>
+<a href="#l527" class="line" id="l527">    527</a><code class="language-rust">                     let range = Self::parse_index_range(</code>
+<a href="#l528" class="line" id="l528">    528</a><code class="language-rust">                         args.next_pos().map_or(&quot;..&quot;, |a| a.value.as_str()),</code>
+<a href="#l529" class="line" id="l529">    529</a><code class="language-rust">                     )?;</code>
+<a href="#l530" class="line" id="l530">    530</a><code class="language-rust">                     args.reject_rest()?;</code>
+<a href="#l531" class="line" id="l531">    531</a><code class="language-rust">                     let mut scan = self.log.scan(range);</code>
+<a href="#l532" class="line" id="l532">    532</a><code class="language-rust">                     while let Some(entry) = scan.next().transpose()? {</code>
+<a href="#l533" class="line" id="l533">    533</a><code class="language-rust">                         let fmtentry = format::Raft::&lt;format::Raw&gt;::entry(&amp;entry);</code>
+<a href="#l534" class="line" id="l534">    534</a><code class="language-rust">                         writeln!(output, &quot;{fmtentry}&quot;)?;</code>
+<a href="#l535" class="line" id="l535">    535</a><code class="language-rust">                     }</code>
+<a href="#l536" class="line" id="l536">    536</a><code class="language-rust">                 }</code>
+<a href="#l537" class="line" id="l537">    537</a><code class="language-rust"> </code>
+<a href="#l538" class="line" id="l538">    538</a><code class="language-rust">                 // scan_apply APPLIED_INDEX</code>
+<a href="#l539" class="line" id="l539">    539</a><code class="language-rust">                 &quot;scan_apply&quot; =&gt; {</code>
+<a href="#l540" class="line" id="l540">    540</a><code class="language-rust">                     let mut args = command.consume_args();</code>
+<a href="#l541" class="line" id="l541">    541</a><code class="language-rust">                     let applied_index =</code>
+<a href="#l542" class="line" id="l542">    542</a><code class="language-rust">                         args.next_pos().ok_or(&quot;applied index not given&quot;)?.parse()?;</code>
+<a href="#l543" class="line" id="l543">    543</a><code class="language-rust">                     args.reject_rest()?;</code>
+<a href="#l544" class="line" id="l544">    544</a><code class="language-rust">                     let mut scan = self.log.scan_apply(applied_index);</code>
+<a href="#l545" class="line" id="l545">    545</a><code class="language-rust">                     while let Some(entry) = scan.next().transpose()? {</code>
+<a href="#l546" class="line" id="l546">    546</a><code class="language-rust">                         let fmtentry = format::Raft::&lt;format::Raw&gt;::entry(&amp;entry);</code>
+<a href="#l547" class="line" id="l547">    547</a><code class="language-rust">                         writeln!(output, &quot;{fmtentry}&quot;)?;</code>
+<a href="#l548" class="line" id="l548">    548</a><code class="language-rust">                     }</code>
+<a href="#l549" class="line" id="l549">    549</a><code class="language-rust">                 }</code>
+<a href="#l550" class="line" id="l550">    550</a><code class="language-rust"> </code>
+<a href="#l551" class="line" id="l551">    551</a><code class="language-rust">                 // set_term TERM [VOTE]</code>
+<a href="#l552" class="line" id="l552">    552</a><code class="language-rust">                 &quot;set_term&quot; =&gt; {</code>
+<a href="#l553" class="line" id="l553">    553</a><code class="language-rust">                     let mut args = command.consume_args();</code>
+<a href="#l554" class="line" id="l554">    554</a><code class="language-rust">                     let term = args.next_pos().ok_or(&quot;term not given&quot;)?.parse()?;</code>
+<a href="#l555" class="line" id="l555">    555</a><code class="language-rust">                     let vote = args.next_pos().map(|a| a.parse()).transpose()?;</code>
+<a href="#l556" class="line" id="l556">    556</a><code class="language-rust">                     args.reject_rest()?;</code>
+<a href="#l557" class="line" id="l557">    557</a><code class="language-rust">                     self.log.set_term(term, vote)?;</code>
+<a href="#l558" class="line" id="l558">    558</a><code class="language-rust">                 }</code>
+<a href="#l559" class="line" id="l559">    559</a><code class="language-rust"> </code>
+<a href="#l560" class="line" id="l560">    560</a><code class="language-rust">                 // splice [INDEX@TERM=COMMAND...]</code>
+<a href="#l561" class="line" id="l561">    561</a><code class="language-rust">                 &quot;splice&quot; =&gt; {</code>
+<a href="#l562" class="line" id="l562">    562</a><code class="language-rust">                     let mut args = command.consume_args();</code>
+<a href="#l563" class="line" id="l563">    563</a><code class="language-rust">                     let mut entries = Vec::new();</code>
+<a href="#l564" class="line" id="l564">    564</a><code class="language-rust">                     for arg in args.rest_key() {</code>
+<a href="#l565" class="line" id="l565">    565</a><code class="language-rust">                         let (index, term) = Self::parse_index_term(arg.key.as_deref().unwrap())?;</code>
+<a href="#l566" class="line" id="l566">    566</a><code class="language-rust">                         let command = match arg.value.as_str() {</code>
+<a href="#l567" class="line" id="l567">    567</a><code class="language-rust">                             &quot;&quot; =&gt; None,</code>
+<a href="#l568" class="line" id="l568">    568</a><code class="language-rust">                             value =&gt; Some(value.as_bytes().to_vec()),</code>
+<a href="#l569" class="line" id="l569">    569</a><code class="language-rust">                         };</code>
+<a href="#l570" class="line" id="l570">    570</a><code class="language-rust">                         entries.push(Entry { index, term, command });</code>
+<a href="#l571" class="line" id="l571">    571</a><code class="language-rust">                     }</code>
+<a href="#l572" class="line" id="l572">    572</a><code class="language-rust">                     args.reject_rest()?;</code>
+<a href="#l573" class="line" id="l573">    573</a><code class="language-rust">                     let index = self.log.splice(entries)?;</code>
+<a href="#l574" class="line" id="l574">    574</a><code class="language-rust">                     let entry = self.log.get(index)?.expect(&quot;entry not found&quot;);</code>
+<a href="#l575" class="line" id="l575">    575</a><code class="language-rust">                     let fmtentry = format::Raft::&lt;format::Raw&gt;::entry(&amp;entry);</code>
+<a href="#l576" class="line" id="l576">    576</a><code class="language-rust">                     writeln!(output, &quot;splice → {fmtentry}&quot;)?;</code>
+<a href="#l577" class="line" id="l577">    577</a><code class="language-rust">                 }</code>
+<a href="#l578" class="line" id="l578">    578</a><code class="language-rust"> </code>
+<a href="#l579" class="line" id="l579">    579</a><code class="language-rust">                 // status [engine=BOOL]</code>
+<a href="#l580" class="line" id="l580">    580</a><code class="language-rust">                 &quot;status&quot; =&gt; {</code>
+<a href="#l581" class="line" id="l581">    581</a><code class="language-rust">                     let mut args = command.consume_args();</code>
+<a href="#l582" class="line" id="l582">    582</a><code class="language-rust">                     let engine = args.lookup_parse(&quot;engine&quot;)?.unwrap_or(false);</code>
+<a href="#l583" class="line" id="l583">    583</a><code class="language-rust">                     args.reject_rest()?;</code>
+<a href="#l584" class="line" id="l584">    584</a><code class="language-rust">                     let (term, vote) = self.log.get_term();</code>
+<a href="#l585" class="line" id="l585">    585</a><code class="language-rust">                     let (last_index, last_term) = self.log.get_last_index();</code>
+<a href="#l586" class="line" id="l586">    586</a><code class="language-rust">                     let (commit_index, commit_term) = self.log.get_commit_index();</code>
+<a href="#l587" class="line" id="l587">    587</a><code class="language-rust">                     let vote = vote.map(|id| id.to_string()).unwrap_or(&quot;None&quot;.to_string());</code>
+<a href="#l588" class="line" id="l588">    588</a><code class="language-rust">                     write!(</code>
+<a href="#l589" class="line" id="l589">    589</a><code class="language-rust">                         output,</code>
+<a href="#l590" class="line" id="l590">    590</a><code class="language-rust">                         &quot;term={term} last={last_index}@{last_term} commit={commit_index}@{commit_term} vote={vote}&quot;,</code>
+<a href="#l591" class="line" id="l591">    591</a><code class="language-rust">                     )?;</code>
+<a href="#l592" class="line" id="l592">    592</a><code class="language-rust">                     if engine {</code>
+<a href="#l593" class="line" id="l593">    593</a><code class="language-rust">                         write!(output, &quot; engine={:#?}&quot;, self.log.status()?)?;</code>
+<a href="#l594" class="line" id="l594">    594</a><code class="language-rust">                     }</code>
+<a href="#l595" class="line" id="l595">    595</a><code class="language-rust">                     writeln!(output)?;</code>
+<a href="#l596" class="line" id="l596">    596</a><code class="language-rust">                 }</code>
+<a href="#l597" class="line" id="l597">    597</a><code class="language-rust"> </code>
+<a href="#l598" class="line" id="l598">    598</a><code class="language-rust">                 name =&gt; return Err(format!(&quot;unknown command {name}&quot;).into()),</code>
+<a href="#l599" class="line" id="l599">    599</a><code class="language-rust">             }</code>
+<a href="#l600" class="line" id="l600">    600</a><code class="language-rust"> </code>
+<a href="#l601" class="line" id="l601">    601</a><code class="language-rust">             // If requested, output engine operations.</code>
+<a href="#l602" class="line" id="l602">    602</a><code class="language-rust">             if tags.remove(&quot;ops&quot;) {</code>
+<a href="#l603" class="line" id="l603">    603</a><code class="language-rust">                 while let Ok(op) = self.op_rx.try_recv() {</code>
+<a href="#l604" class="line" id="l604">    604</a><code class="language-rust">                     match op {</code>
+<a href="#l605" class="line" id="l605">    605</a><code class="language-rust">                         testengine::Operation::Delete { key } =&gt; {</code>
+<a href="#l606" class="line" id="l606">    606</a><code class="language-rust">                             let fmtkey = format::Raft::&lt;format::Raw&gt;::key(&amp;key);</code>
+<a href="#l607" class="line" id="l607">    607</a><code class="language-rust">                             let rawkey = format::Raw::key(&amp;key);</code>
+<a href="#l608" class="line" id="l608">    608</a><code class="language-rust">                             writeln!(output, &quot;engine delete {fmtkey} [{rawkey}]&quot;)?</code>
+<a href="#l609" class="line" id="l609">    609</a><code class="language-rust">                         }</code>
+<a href="#l610" class="line" id="l610">    610</a><code class="language-rust">                         testengine::Operation::Flush =&gt; writeln!(output, &quot;engine flush&quot;)?,</code>
+<a href="#l611" class="line" id="l611">    611</a><code class="language-rust">                         testengine::Operation::Set { key, value } =&gt; {</code>
+<a href="#l612" class="line" id="l612">    612</a><code class="language-rust">                             let fmtkv = format::Raft::&lt;format::Raw&gt;::key_value(&amp;key, &amp;value);</code>
+<a href="#l613" class="line" id="l613">    613</a><code class="language-rust">                             let rawkv = format::Raw::key_value(&amp;key, &amp;value);</code>
+<a href="#l614" class="line" id="l614">    614</a><code class="language-rust">                             writeln!(output, &quot;engine set {fmtkv} [{rawkv}]&quot;)?</code>
+<a href="#l615" class="line" id="l615">    615</a><code class="language-rust">                         }</code>
+<a href="#l616" class="line" id="l616">    616</a><code class="language-rust">                     }</code>
+<a href="#l617" class="line" id="l617">    617</a><code class="language-rust">                 }</code>
+<a href="#l618" class="line" id="l618">    618</a><code class="language-rust">             }</code>
+<a href="#l619" class="line" id="l619">    619</a><code class="language-rust"> </code>
+<a href="#l620" class="line" id="l620">    620</a><code class="language-rust">             if let Some(tag) = tags.iter().next() {</code>
+<a href="#l621" class="line" id="l621">    621</a><code class="language-rust">                 return Err(format!(&quot;unknown tag {tag}&quot;).into());</code>
+<a href="#l622" class="line" id="l622">    622</a><code class="language-rust">             }</code>
+<a href="#l623" class="line" id="l623">    623</a><code class="language-rust"> </code>
+<a href="#l624" class="line" id="l624">    624</a><code class="language-rust">             Ok(output)</code>
+<a href="#l625" class="line" id="l625">    625</a><code class="language-rust">         }</code>
+<a href="#l626" class="line" id="l626">    626</a><code class="language-rust"> </code>
+<a href="#l627" class="line" id="l627">    627</a><code class="language-rust">         /// If requested via [ops] tag, output engine operations for the command.</code>
+<a href="#l628" class="line" id="l628">    628</a><code class="language-rust">         fn end_command(&amp;mut self, _: &amp;goldenscript::Command) -&gt; Result&lt;String, Box&lt;dyn Error&gt;&gt; {</code>
+<a href="#l629" class="line" id="l629">    629</a><code class="language-rust">             // Drain any remaining engine operations.</code>
+<a href="#l630" class="line" id="l630">    630</a><code class="language-rust">             while self.op_rx.try_recv().is_ok() {}</code>
+<a href="#l631" class="line" id="l631">    631</a><code class="language-rust">             Ok(String::new())</code>
+<a href="#l632" class="line" id="l632">    632</a><code class="language-rust">         }</code>
+<a href="#l633" class="line" id="l633">    633</a><code class="language-rust">     }</code>
+<a href="#l634" class="line" id="l634">    634</a><code class="language-rust"> }</code>
 </pre>
 </div>
 </body>

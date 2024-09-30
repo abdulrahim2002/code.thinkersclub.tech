@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
 <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -15,7 +15,7 @@
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/base16/tender.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
-<script>hljs.highlightAll();</script>
+<script> hljs.highlightAll() ;</script>
 <style>pre code.hljs {display: inline;padding: 0;} code.hljs {padding: 0;} .hljs {background: initial;} .hljs-comment{color: rgb(96, 96, 96);}</style></head>
 <body>
 <table><tr><td><a href="../../../../../"><img src="../../../../logo.png" alt="" width="32" height="32" /></a></td><td><h1>toydb</h1><span class="desc">An SQL engine written in Rust
@@ -25,405 +25,405 @@
 <hr/>
 <div id="content">
 <p> raft.rs (15042B)</p><hr/><pre id="blob">
-<a href="#l1" class="line" id="l1">      1</a><code> use super::{Catalog, Engine as _, Transaction as _};</code>
-<a href="#l2" class="line" id="l2">      2</a><code> use crate::encoding::{self, bincode, Value as _};</code>
-<a href="#l3" class="line" id="l3">      3</a><code> use crate::errdata;</code>
-<a href="#l4" class="line" id="l4">      4</a><code> use crate::error::Result;</code>
-<a href="#l5" class="line" id="l5">      5</a><code> use crate::raft;</code>
-<a href="#l6" class="line" id="l6">      6</a><code> use crate::sql::types::{Expression, Row, Rows, Table, Value};</code>
-<a href="#l7" class="line" id="l7">      7</a><code> use crate::storage::{self, mvcc};</code>
-<a href="#l8" class="line" id="l8">      8</a><code> </code>
-<a href="#l9" class="line" id="l9">      9</a><code> use crossbeam::channel::Sender;</code>
-<a href="#l10" class="line" id="l10">     10</a><code> use serde::{de::DeserializeOwned, Deserialize, Serialize};</code>
-<a href="#l11" class="line" id="l11">     11</a><code> use std::borrow::Cow;</code>
-<a href="#l12" class="line" id="l12">     12</a><code> use std::collections::{BTreeMap, BTreeSet};</code>
-<a href="#l13" class="line" id="l13">     13</a><code> </code>
-<a href="#l14" class="line" id="l14">     14</a><code> /// A Raft-based SQL engine. This dispatches to the `Local` engine for local</code>
-<a href="#l15" class="line" id="l15">     15</a><code> /// storage and processing on each node, but plumbs read/write commands through</code>
-<a href="#l16" class="line" id="l16">     16</a><code> /// Raft for distributed consensus.</code>
-<a href="#l17" class="line" id="l17">     17</a><code> ///</code>
-<a href="#l18" class="line" id="l18">     18</a><code> /// The `Raft` engine itself is simply a Raft client which sends `raft::Request`</code>
-<a href="#l19" class="line" id="l19">     19</a><code> /// requests to the local Raft node for processing. These requests are received</code>
-<a href="#l20" class="line" id="l20">     20</a><code> /// and processed by the Raft engine&#39;s `State` state machine running below Raft</code>
-<a href="#l21" class="line" id="l21">     21</a><code> /// on each node, which forwards the commands to a `Local` SQL engine which</code>
-<a href="#l22" class="line" id="l22">     22</a><code> /// actually executes them using a `storage::Engine` for local storage.</code>
-<a href="#l23" class="line" id="l23">     23</a><code> ///</code>
-<a href="#l24" class="line" id="l24">     24</a><code> /// For more details on how SQL statements flow through the engine, see the</code>
-<a href="#l25" class="line" id="l25">     25</a><code> /// `sql` module documentation.</code>
-<a href="#l26" class="line" id="l26">     26</a><code> pub struct Raft {</code>
-<a href="#l27" class="line" id="l27">     27</a><code>     /// Sends requests to the local Raft node, along with a response channel.</code>
-<a href="#l28" class="line" id="l28">     28</a><code>     tx: Sender&lt;(raft::Request, Sender&lt;Result&lt;raft::Response&gt;&gt;)&gt;,</code>
-<a href="#l29" class="line" id="l29">     29</a><code> }</code>
-<a href="#l30" class="line" id="l30">     30</a><code> </code>
-<a href="#l31" class="line" id="l31">     31</a><code> impl Raft {</code>
-<a href="#l32" class="line" id="l32">     32</a><code>     /// The unversioned key used to store the applied index. Just uses a string</code>
-<a href="#l33" class="line" id="l33">     33</a><code>     /// for simplicity.</code>
-<a href="#l34" class="line" id="l34">     34</a><code>     pub const APPLIED_INDEX_KEY: &amp;&#39;static [u8] = b&quot;applied_index&quot;;</code>
-<a href="#l35" class="line" id="l35">     35</a><code> </code>
-<a href="#l36" class="line" id="l36">     36</a><code>     /// Creates a new Raft-based SQL engine, given a Raft request channel to the</code>
-<a href="#l37" class="line" id="l37">     37</a><code>     /// local Raft node.</code>
-<a href="#l38" class="line" id="l38">     38</a><code>     pub fn new(tx: Sender&lt;(raft::Request, Sender&lt;Result&lt;raft::Response&gt;&gt;)&gt;) -&gt; Self {</code>
-<a href="#l39" class="line" id="l39">     39</a><code>         Self { tx }</code>
-<a href="#l40" class="line" id="l40">     40</a><code>     }</code>
-<a href="#l41" class="line" id="l41">     41</a><code> </code>
-<a href="#l42" class="line" id="l42">     42</a><code>     /// Creates the Raft-managed state machine for the Raft engine. Receives</code>
-<a href="#l43" class="line" id="l43">     43</a><code>     /// commands from the Raft engine and executes them on a `Local` engine.</code>
-<a href="#l44" class="line" id="l44">     44</a><code>     pub fn new_state&lt;E: storage::Engine + &#39;static&gt;(engine: E) -&gt; Result&lt;State&lt;E&gt;&gt; {</code>
-<a href="#l45" class="line" id="l45">     45</a><code>         State::new(engine)</code>
-<a href="#l46" class="line" id="l46">     46</a><code>     }</code>
-<a href="#l47" class="line" id="l47">     47</a><code> </code>
-<a href="#l48" class="line" id="l48">     48</a><code>     /// Executes a request against the Raft cluster, waiting for the response.</code>
-<a href="#l49" class="line" id="l49">     49</a><code>     fn execute(&amp;self, request: raft::Request) -&gt; Result&lt;raft::Response&gt; {</code>
-<a href="#l50" class="line" id="l50">     50</a><code>         let (response_tx, response_rx) = crossbeam::channel::bounded(1);</code>
-<a href="#l51" class="line" id="l51">     51</a><code>         self.tx.send((request, response_tx))?;</code>
-<a href="#l52" class="line" id="l52">     52</a><code>         response_rx.recv()?</code>
-<a href="#l53" class="line" id="l53">     53</a><code>     }</code>
-<a href="#l54" class="line" id="l54">     54</a><code> </code>
-<a href="#l55" class="line" id="l55">     55</a><code>     /// Writes through Raft, deserializing the response into the return type.</code>
-<a href="#l56" class="line" id="l56">     56</a><code>     fn write&lt;V: DeserializeOwned&gt;(&amp;self, write: Write) -&gt; Result&lt;V&gt; {</code>
-<a href="#l57" class="line" id="l57">     57</a><code>         match self.execute(raft::Request::Write(write.encode()))? {</code>
-<a href="#l58" class="line" id="l58">     58</a><code>             raft::Response::Write(response) =&gt; bincode::deserialize(&amp;response),</code>
-<a href="#l59" class="line" id="l59">     59</a><code>             response =&gt; errdata!(&quot;unexpected Raft write response {response:?}&quot;),</code>
-<a href="#l60" class="line" id="l60">     60</a><code>         }</code>
-<a href="#l61" class="line" id="l61">     61</a><code>     }</code>
-<a href="#l62" class="line" id="l62">     62</a><code> </code>
-<a href="#l63" class="line" id="l63">     63</a><code>     /// Reads from Raft, deserializing the response into the return type.</code>
-<a href="#l64" class="line" id="l64">     64</a><code>     fn read&lt;V: DeserializeOwned&gt;(&amp;self, read: Read) -&gt; Result&lt;V&gt; {</code>
-<a href="#l65" class="line" id="l65">     65</a><code>         match self.execute(raft::Request::Read(read.encode()))? {</code>
-<a href="#l66" class="line" id="l66">     66</a><code>             raft::Response::Read(response) =&gt; bincode::deserialize(&amp;response),</code>
-<a href="#l67" class="line" id="l67">     67</a><code>             response =&gt; errdata!(&quot;unexpected Raft read response {response:?}&quot;),</code>
-<a href="#l68" class="line" id="l68">     68</a><code>         }</code>
-<a href="#l69" class="line" id="l69">     69</a><code>     }</code>
-<a href="#l70" class="line" id="l70">     70</a><code> </code>
-<a href="#l71" class="line" id="l71">     71</a><code>     /// Raft SQL engine status.</code>
-<a href="#l72" class="line" id="l72">     72</a><code>     pub fn status(&amp;self) -&gt; Result&lt;Status&gt; {</code>
-<a href="#l73" class="line" id="l73">     73</a><code>         let raft = match self.execute(raft::Request::Status)? {</code>
-<a href="#l74" class="line" id="l74">     74</a><code>             raft::Response::Status(status) =&gt; status,</code>
-<a href="#l75" class="line" id="l75">     75</a><code>             response =&gt; return errdata!(&quot;unexpected Raft status response {response:?}&quot;),</code>
-<a href="#l76" class="line" id="l76">     76</a><code>         };</code>
-<a href="#l77" class="line" id="l77">     77</a><code>         let mvcc = self.read(Read::Status)?;</code>
-<a href="#l78" class="line" id="l78">     78</a><code>         Ok(Status { raft, mvcc })</code>
-<a href="#l79" class="line" id="l79">     79</a><code>     }</code>
-<a href="#l80" class="line" id="l80">     80</a><code> }</code>
-<a href="#l81" class="line" id="l81">     81</a><code> </code>
-<a href="#l82" class="line" id="l82">     82</a><code> impl&lt;&#39;a&gt; super::Engine&lt;&#39;a&gt; for Raft {</code>
-<a href="#l83" class="line" id="l83">     83</a><code>     type Transaction = Transaction&lt;&#39;a&gt;;</code>
-<a href="#l84" class="line" id="l84">     84</a><code> </code>
-<a href="#l85" class="line" id="l85">     85</a><code>     fn begin(&amp;&#39;a self) -&gt; Result&lt;Self::Transaction&gt; {</code>
-<a href="#l86" class="line" id="l86">     86</a><code>         Transaction::begin(self, false, None)</code>
-<a href="#l87" class="line" id="l87">     87</a><code>     }</code>
-<a href="#l88" class="line" id="l88">     88</a><code> </code>
-<a href="#l89" class="line" id="l89">     89</a><code>     fn begin_read_only(&amp;&#39;a self) -&gt; Result&lt;Self::Transaction&gt; {</code>
-<a href="#l90" class="line" id="l90">     90</a><code>         Transaction::begin(self, true, None)</code>
-<a href="#l91" class="line" id="l91">     91</a><code>     }</code>
-<a href="#l92" class="line" id="l92">     92</a><code> </code>
-<a href="#l93" class="line" id="l93">     93</a><code>     fn begin_as_of(&amp;&#39;a self, version: mvcc::Version) -&gt; Result&lt;Self::Transaction&gt; {</code>
-<a href="#l94" class="line" id="l94">     94</a><code>         Transaction::begin(self, true, Some(version))</code>
-<a href="#l95" class="line" id="l95">     95</a><code>     }</code>
-<a href="#l96" class="line" id="l96">     96</a><code> }</code>
-<a href="#l97" class="line" id="l97">     97</a><code> </code>
-<a href="#l98" class="line" id="l98">     98</a><code> /// A Raft SQL engine transaction.</code>
-<a href="#l99" class="line" id="l99">     99</a><code> ///</code>
-<a href="#l100" class="line" id="l100">    100</a><code> /// This keeps track of the transaction state in memory, for the benefit of</code>
-<a href="#l101" class="line" id="l101">    101</a><code> /// read-only transactions. An `mvcc::Transaction` normally encapsulates this</code>
-<a href="#l102" class="line" id="l102">    102</a><code> /// and manages it in memory, but since `mvcc::Transaction` runs below Raft, it</code>
-<a href="#l103" class="line" id="l103">    103</a><code> /// can&#39;t maintain this state between individual requests (which could execute</code>
-<a href="#l104" class="line" id="l104">    104</a><code> /// on different leaders). Instead, we use `mvcc::Transaction::resume` to resume</code>
-<a href="#l105" class="line" id="l105">    105</a><code> /// the transaction using the provided transaction state for each request.</code>
-<a href="#l106" class="line" id="l106">    106</a><code> pub struct Transaction&lt;&#39;a&gt; {</code>
-<a href="#l107" class="line" id="l107">    107</a><code>     /// The Raft SQL engine, used to communicate with Raft.</code>
-<a href="#l108" class="line" id="l108">    108</a><code>     engine: &amp;&#39;a Raft,</code>
-<a href="#l109" class="line" id="l109">    109</a><code>     /// The MVCC transaction state.</code>
-<a href="#l110" class="line" id="l110">    110</a><code>     state: mvcc::TransactionState,</code>
-<a href="#l111" class="line" id="l111">    111</a><code> }</code>
-<a href="#l112" class="line" id="l112">    112</a><code> </code>
-<a href="#l113" class="line" id="l113">    113</a><code> impl&lt;&#39;a&gt; Transaction&lt;&#39;a&gt; {</code>
-<a href="#l114" class="line" id="l114">    114</a><code>     /// Starts a transaction in the given mode.</code>
-<a href="#l115" class="line" id="l115">    115</a><code>     fn begin(engine: &amp;&#39;a Raft, read_only: bool, as_of: Option&lt;mvcc::Version&gt;) -&gt; Result&lt;Self&gt; {</code>
-<a href="#l116" class="line" id="l116">    116</a><code>         assert!(as_of.is_none() || read_only, &quot;can&#39;t use as_of without read_only&quot;);</code>
-<a href="#l117" class="line" id="l117">    117</a><code>         // Read-only transactions don&#39;t need to persist anything, they just need</code>
-<a href="#l118" class="line" id="l118">    118</a><code>         // to grab the current transaction state, so submit them as reads to</code>
-<a href="#l119" class="line" id="l119">    119</a><code>         // avoid a replication roundtrip.</code>
-<a href="#l120" class="line" id="l120">    120</a><code>         let state = if read_only || as_of.is_some() {</code>
-<a href="#l121" class="line" id="l121">    121</a><code>             engine.read(Read::BeginReadOnly { as_of })?</code>
-<a href="#l122" class="line" id="l122">    122</a><code>         } else {</code>
-<a href="#l123" class="line" id="l123">    123</a><code>             engine.write(Write::Begin)?</code>
-<a href="#l124" class="line" id="l124">    124</a><code>         };</code>
-<a href="#l125" class="line" id="l125">    125</a><code>         Ok(Self { engine, state })</code>
-<a href="#l126" class="line" id="l126">    126</a><code>     }</code>
-<a href="#l127" class="line" id="l127">    127</a><code> }</code>
-<a href="#l128" class="line" id="l128">    128</a><code> </code>
-<a href="#l129" class="line" id="l129">    129</a><code> impl&lt;&#39;a&gt; super::Transaction for Transaction&lt;&#39;a&gt; {</code>
-<a href="#l130" class="line" id="l130">    130</a><code>     fn state(&amp;self) -&gt; &amp;mvcc::TransactionState {</code>
-<a href="#l131" class="line" id="l131">    131</a><code>         &amp;self.state</code>
-<a href="#l132" class="line" id="l132">    132</a><code>     }</code>
-<a href="#l133" class="line" id="l133">    133</a><code> </code>
-<a href="#l134" class="line" id="l134">    134</a><code>     fn commit(self) -&gt; Result&lt;()&gt; {</code>
-<a href="#l135" class="line" id="l135">    135</a><code>         if self.state.read_only {</code>
-<a href="#l136" class="line" id="l136">    136</a><code>             return Ok(()); // noop</code>
-<a href="#l137" class="line" id="l137">    137</a><code>         }</code>
-<a href="#l138" class="line" id="l138">    138</a><code>         self.engine.write(Write::Commit(self.state.into()))</code>
-<a href="#l139" class="line" id="l139">    139</a><code>     }</code>
-<a href="#l140" class="line" id="l140">    140</a><code> </code>
-<a href="#l141" class="line" id="l141">    141</a><code>     fn rollback(self) -&gt; Result&lt;()&gt; {</code>
-<a href="#l142" class="line" id="l142">    142</a><code>         if self.state.read_only {</code>
-<a href="#l143" class="line" id="l143">    143</a><code>             return Ok(()); // noop</code>
-<a href="#l144" class="line" id="l144">    144</a><code>         }</code>
-<a href="#l145" class="line" id="l145">    145</a><code>         self.engine.write(Write::Rollback(self.state.into()))</code>
-<a href="#l146" class="line" id="l146">    146</a><code>     }</code>
-<a href="#l147" class="line" id="l147">    147</a><code> </code>
-<a href="#l148" class="line" id="l148">    148</a><code>     fn delete(&amp;self, table: &amp;str, ids: &amp;[Value]) -&gt; Result&lt;()&gt; {</code>
-<a href="#l149" class="line" id="l149">    149</a><code>         self.engine.write(Write::Delete {</code>
-<a href="#l150" class="line" id="l150">    150</a><code>             txn: (&amp;self.state).into(),</code>
-<a href="#l151" class="line" id="l151">    151</a><code>             table: table.into(),</code>
-<a href="#l152" class="line" id="l152">    152</a><code>             ids: ids.into(),</code>
-<a href="#l153" class="line" id="l153">    153</a><code>         })</code>
-<a href="#l154" class="line" id="l154">    154</a><code>     }</code>
-<a href="#l155" class="line" id="l155">    155</a><code> </code>
-<a href="#l156" class="line" id="l156">    156</a><code>     fn get(&amp;self, table: &amp;str, ids: &amp;[Value]) -&gt; Result&lt;Vec&lt;Row&gt;&gt; {</code>
-<a href="#l157" class="line" id="l157">    157</a><code>         self.engine.read(Read::Get {</code>
-<a href="#l158" class="line" id="l158">    158</a><code>             txn: (&amp;self.state).into(),</code>
-<a href="#l159" class="line" id="l159">    159</a><code>             table: table.into(),</code>
-<a href="#l160" class="line" id="l160">    160</a><code>             ids: ids.into(),</code>
-<a href="#l161" class="line" id="l161">    161</a><code>         })</code>
-<a href="#l162" class="line" id="l162">    162</a><code>     }</code>
-<a href="#l163" class="line" id="l163">    163</a><code> </code>
-<a href="#l164" class="line" id="l164">    164</a><code>     fn insert(&amp;self, table: &amp;str, rows: Vec&lt;Row&gt;) -&gt; Result&lt;()&gt; {</code>
-<a href="#l165" class="line" id="l165">    165</a><code>         self.engine.write(Write::Insert { txn: (&amp;self.state).into(), table: table.into(), rows })</code>
-<a href="#l166" class="line" id="l166">    166</a><code>     }</code>
-<a href="#l167" class="line" id="l167">    167</a><code> </code>
-<a href="#l168" class="line" id="l168">    168</a><code>     fn lookup_index(&amp;self, table: &amp;str, column: &amp;str, values: &amp;[Value]) -&gt; Result&lt;BTreeSet&lt;Value&gt;&gt; {</code>
-<a href="#l169" class="line" id="l169">    169</a><code>         self.engine.read(Read::LookupIndex {</code>
-<a href="#l170" class="line" id="l170">    170</a><code>             txn: (&amp;self.state).into(),</code>
-<a href="#l171" class="line" id="l171">    171</a><code>             table: table.into(),</code>
-<a href="#l172" class="line" id="l172">    172</a><code>             column: column.into(),</code>
-<a href="#l173" class="line" id="l173">    173</a><code>             values: values.into(),</code>
-<a href="#l174" class="line" id="l174">    174</a><code>         })</code>
-<a href="#l175" class="line" id="l175">    175</a><code>     }</code>
-<a href="#l176" class="line" id="l176">    176</a><code> </code>
-<a href="#l177" class="line" id="l177">    177</a><code>     fn scan(&amp;self, table: &amp;str, filter: Option&lt;Expression&gt;) -&gt; Result&lt;Rows&gt; {</code>
-<a href="#l178" class="line" id="l178">    178</a><code>         let scan: Vec&lt;Row&gt; = self.engine.read(Read::Scan {</code>
-<a href="#l179" class="line" id="l179">    179</a><code>             txn: (&amp;self.state).into(),</code>
-<a href="#l180" class="line" id="l180">    180</a><code>             table: table.into(),</code>
-<a href="#l181" class="line" id="l181">    181</a><code>             filter,</code>
-<a href="#l182" class="line" id="l182">    182</a><code>         })?;</code>
-<a href="#l183" class="line" id="l183">    183</a><code>         Ok(Box::new(scan.into_iter().map(Ok)))</code>
-<a href="#l184" class="line" id="l184">    184</a><code>     }</code>
-<a href="#l185" class="line" id="l185">    185</a><code> </code>
-<a href="#l186" class="line" id="l186">    186</a><code>     fn update(&amp;self, table: &amp;str, rows: BTreeMap&lt;Value, Row&gt;) -&gt; Result&lt;()&gt; {</code>
-<a href="#l187" class="line" id="l187">    187</a><code>         self.engine.write(Write::Update { txn: (&amp;self.state).into(), table: table.into(), rows })</code>
-<a href="#l188" class="line" id="l188">    188</a><code>     }</code>
-<a href="#l189" class="line" id="l189">    189</a><code> }</code>
-<a href="#l190" class="line" id="l190">    190</a><code> </code>
-<a href="#l191" class="line" id="l191">    191</a><code> impl&lt;&#39;a&gt; Catalog for Transaction&lt;&#39;a&gt; {</code>
-<a href="#l192" class="line" id="l192">    192</a><code>     fn create_table(&amp;self, schema: Table) -&gt; Result&lt;()&gt; {</code>
-<a href="#l193" class="line" id="l193">    193</a><code>         self.engine.write(Write::CreateTable { txn: (&amp;self.state).into(), schema })</code>
-<a href="#l194" class="line" id="l194">    194</a><code>     }</code>
-<a href="#l195" class="line" id="l195">    195</a><code> </code>
-<a href="#l196" class="line" id="l196">    196</a><code>     fn drop_table(&amp;self, table: &amp;str, if_exists: bool) -&gt; Result&lt;bool&gt; {</code>
-<a href="#l197" class="line" id="l197">    197</a><code>         self.engine.write(Write::DropTable {</code>
-<a href="#l198" class="line" id="l198">    198</a><code>             txn: (&amp;self.state).into(),</code>
-<a href="#l199" class="line" id="l199">    199</a><code>             table: table.into(),</code>
-<a href="#l200" class="line" id="l200">    200</a><code>             if_exists,</code>
-<a href="#l201" class="line" id="l201">    201</a><code>         })</code>
-<a href="#l202" class="line" id="l202">    202</a><code>     }</code>
-<a href="#l203" class="line" id="l203">    203</a><code> </code>
-<a href="#l204" class="line" id="l204">    204</a><code>     fn get_table(&amp;self, table: &amp;str) -&gt; Result&lt;Option&lt;Table&gt;&gt; {</code>
-<a href="#l205" class="line" id="l205">    205</a><code>         self.engine.read(Read::GetTable { txn: (&amp;self.state).into(), table: table.into() })</code>
-<a href="#l206" class="line" id="l206">    206</a><code>     }</code>
-<a href="#l207" class="line" id="l207">    207</a><code> </code>
-<a href="#l208" class="line" id="l208">    208</a><code>     fn list_tables(&amp;self) -&gt; Result&lt;Vec&lt;Table&gt;&gt; {</code>
-<a href="#l209" class="line" id="l209">    209</a><code>         self.engine.read(Read::ListTables { txn: (&amp;self.state).into() })</code>
-<a href="#l210" class="line" id="l210">    210</a><code>     }</code>
-<a href="#l211" class="line" id="l211">    211</a><code> }</code>
-<a href="#l212" class="line" id="l212">    212</a><code> </code>
-<a href="#l213" class="line" id="l213">    213</a><code> /// The state machine for the Raft SQL engine. Receives commands from the Raft</code>
-<a href="#l214" class="line" id="l214">    214</a><code> /// SQL engine and dispatches to a `Local` SQL engine which does the actual</code>
-<a href="#l215" class="line" id="l215">    215</a><code> /// work, using a `storage::Engine` for storage.</code>
-<a href="#l216" class="line" id="l216">    216</a><code> ///</code>
-<a href="#l217" class="line" id="l217">    217</a><code> /// For simplicity, we don&#39;t attempt to stream large requests or responses,</code>
-<a href="#l218" class="line" id="l218">    218</a><code> /// instead simply delivering them as one large chunk. This means that e.g. a</code>
-<a href="#l219" class="line" id="l219">    219</a><code> /// full table scan will pull the entire table into memory, serialize it, and</code>
-<a href="#l220" class="line" id="l220">    220</a><code> /// send it across the network as one message. The simplest way to address this</code>
-<a href="#l221" class="line" id="l221">    221</a><code> /// would likely be to send row batches, but this is fine for our purposes.</code>
-<a href="#l222" class="line" id="l222">    222</a><code> pub struct State&lt;E: storage::Engine + &#39;static&gt; {</code>
-<a href="#l223" class="line" id="l223">    223</a><code>     /// The local SQL engine.</code>
-<a href="#l224" class="line" id="l224">    224</a><code>     local: super::Local&lt;E&gt;,</code>
-<a href="#l225" class="line" id="l225">    225</a><code>     /// The last applied index. This tells Raft which command to apply next.</code>
-<a href="#l226" class="line" id="l226">    226</a><code>     applied_index: raft::Index,</code>
-<a href="#l227" class="line" id="l227">    227</a><code> }</code>
-<a href="#l228" class="line" id="l228">    228</a><code> </code>
-<a href="#l229" class="line" id="l229">    229</a><code> impl&lt;E: storage::Engine&gt; State&lt;E&gt; {</code>
-<a href="#l230" class="line" id="l230">    230</a><code>     /// Creates a new Raft state maching using the given storage engine for</code>
-<a href="#l231" class="line" id="l231">    231</a><code>     /// local storage.</code>
-<a href="#l232" class="line" id="l232">    232</a><code>     pub fn new(engine: E) -&gt; Result&lt;Self&gt; {</code>
-<a href="#l233" class="line" id="l233">    233</a><code>         let local = super::Local::new(engine);</code>
-<a href="#l234" class="line" id="l234">    234</a><code>         let applied_index = local</code>
-<a href="#l235" class="line" id="l235">    235</a><code>             .get_unversioned(Raft::APPLIED_INDEX_KEY)?</code>
-<a href="#l236" class="line" id="l236">    236</a><code>             .map(|b| bincode::deserialize(&amp;b))</code>
-<a href="#l237" class="line" id="l237">    237</a><code>             .transpose()?</code>
-<a href="#l238" class="line" id="l238">    238</a><code>             .unwrap_or(0);</code>
-<a href="#l239" class="line" id="l239">    239</a><code>         Ok(State { local, applied_index })</code>
-<a href="#l240" class="line" id="l240">    240</a><code>     }</code>
-<a href="#l241" class="line" id="l241">    241</a><code> </code>
-<a href="#l242" class="line" id="l242">    242</a><code>     /// Executes a write command.</code>
-<a href="#l243" class="line" id="l243">    243</a><code>     fn write(&amp;self, command: Write) -&gt; Result&lt;Vec&lt;u8&gt;&gt; {</code>
-<a href="#l244" class="line" id="l244">    244</a><code>         Ok(match command {</code>
-<a href="#l245" class="line" id="l245">    245</a><code>             Write::Begin =&gt; self.local.begin()?.state().encode(),</code>
-<a href="#l246" class="line" id="l246">    246</a><code>             Write::Commit(txn) =&gt; {</code>
-<a href="#l247" class="line" id="l247">    247</a><code>                 bincode::serialize(&amp;self.local.resume(txn.into_owned())?.commit()?)</code>
-<a href="#l248" class="line" id="l248">    248</a><code>             }</code>
-<a href="#l249" class="line" id="l249">    249</a><code>             Write::Rollback(txn) =&gt; {</code>
-<a href="#l250" class="line" id="l250">    250</a><code>                 bincode::serialize(&amp;self.local.resume(txn.into_owned())?.rollback()?)</code>
-<a href="#l251" class="line" id="l251">    251</a><code>             }</code>
-<a href="#l252" class="line" id="l252">    252</a><code> </code>
-<a href="#l253" class="line" id="l253">    253</a><code>             Write::Delete { txn, table, ids } =&gt; {</code>
-<a href="#l254" class="line" id="l254">    254</a><code>                 bincode::serialize(&amp;self.local.resume(txn.into_owned())?.delete(&amp;table, &amp;ids)?)</code>
-<a href="#l255" class="line" id="l255">    255</a><code>             }</code>
-<a href="#l256" class="line" id="l256">    256</a><code>             Write::Insert { txn, table, rows } =&gt; {</code>
-<a href="#l257" class="line" id="l257">    257</a><code>                 bincode::serialize(&amp;self.local.resume(txn.into_owned())?.insert(&amp;table, rows)?)</code>
-<a href="#l258" class="line" id="l258">    258</a><code>             }</code>
-<a href="#l259" class="line" id="l259">    259</a><code>             Write::Update { txn, table, rows } =&gt; {</code>
-<a href="#l260" class="line" id="l260">    260</a><code>                 bincode::serialize(&amp;self.local.resume(txn.into_owned())?.update(&amp;table, rows)?)</code>
-<a href="#l261" class="line" id="l261">    261</a><code>             }</code>
-<a href="#l262" class="line" id="l262">    262</a><code> </code>
-<a href="#l263" class="line" id="l263">    263</a><code>             Write::CreateTable { txn, schema } =&gt; {</code>
-<a href="#l264" class="line" id="l264">    264</a><code>                 bincode::serialize(&amp;self.local.resume(txn.into_owned())?.create_table(schema)?)</code>
-<a href="#l265" class="line" id="l265">    265</a><code>             }</code>
-<a href="#l266" class="line" id="l266">    266</a><code>             Write::DropTable { txn, table, if_exists } =&gt; bincode::serialize(</code>
-<a href="#l267" class="line" id="l267">    267</a><code>                 &amp;self.local.resume(txn.into_owned())?.drop_table(&amp;table, if_exists)?,</code>
-<a href="#l268" class="line" id="l268">    268</a><code>             ),</code>
-<a href="#l269" class="line" id="l269">    269</a><code>         })</code>
-<a href="#l270" class="line" id="l270">    270</a><code>     }</code>
-<a href="#l271" class="line" id="l271">    271</a><code> }</code>
-<a href="#l272" class="line" id="l272">    272</a><code> </code>
-<a href="#l273" class="line" id="l273">    273</a><code> impl&lt;E: storage::Engine&gt; raft::State for State&lt;E&gt; {</code>
-<a href="#l274" class="line" id="l274">    274</a><code>     fn get_applied_index(&amp;self) -&gt; raft::Index {</code>
-<a href="#l275" class="line" id="l275">    275</a><code>         self.applied_index</code>
-<a href="#l276" class="line" id="l276">    276</a><code>     }</code>
-<a href="#l277" class="line" id="l277">    277</a><code> </code>
-<a href="#l278" class="line" id="l278">    278</a><code>     fn apply(&amp;mut self, entry: raft::Entry) -&gt; Result&lt;Vec&lt;u8&gt;&gt; {</code>
-<a href="#l279" class="line" id="l279">    279</a><code>         assert_eq!(entry.index, self.applied_index + 1, &quot;entry index not after applied index&quot;);</code>
-<a href="#l280" class="line" id="l280">    280</a><code> </code>
-<a href="#l281" class="line" id="l281">    281</a><code>         let result = match &amp;entry.command {</code>
-<a href="#l282" class="line" id="l282">    282</a><code>             Some(command) =&gt; match self.write(Write::decode(command)?) {</code>
-<a href="#l283" class="line" id="l283">    283</a><code>                 // Panic on non-deterministic apply failures, to prevent replica</code>
-<a href="#l284" class="line" id="l284">    284</a><code>                 // divergence. See [`raft::State`] docs for details.</code>
-<a href="#l285" class="line" id="l285">    285</a><code>                 Err(e) if !e.is_deterministic() =&gt; panic!(&quot;non-deterministic apply failure: {e}&quot;),</code>
-<a href="#l286" class="line" id="l286">    286</a><code>                 result =&gt; result,</code>
-<a href="#l287" class="line" id="l287">    287</a><code>             },</code>
-<a href="#l288" class="line" id="l288">    288</a><code>             // Raft submits noop commands on leader changes. Ignore them, but</code>
-<a href="#l289" class="line" id="l289">    289</a><code>             // record the applied index below.</code>
-<a href="#l290" class="line" id="l290">    290</a><code>             None =&gt; Ok(Vec::new()),</code>
-<a href="#l291" class="line" id="l291">    291</a><code>         };</code>
-<a href="#l292" class="line" id="l292">    292</a><code> </code>
-<a href="#l293" class="line" id="l293">    293</a><code>         // Persist the applied index. We don&#39;t have to flush, because it&#39;s ok to</code>
-<a href="#l294" class="line" id="l294">    294</a><code>         // lose a tail of the state machine writes (e.g. if the machine</code>
-<a href="#l295" class="line" id="l295">    295</a><code>         // crashes). Raft will replay the log from the last known applied index.</code>
-<a href="#l296" class="line" id="l296">    296</a><code>         self.applied_index = entry.index;</code>
-<a href="#l297" class="line" id="l297">    297</a><code>         self.local.set_unversioned(Raft::APPLIED_INDEX_KEY, bincode::serialize(&amp;entry.index))?;</code>
-<a href="#l298" class="line" id="l298">    298</a><code>         result</code>
-<a href="#l299" class="line" id="l299">    299</a><code>     }</code>
-<a href="#l300" class="line" id="l300">    300</a><code> </code>
-<a href="#l301" class="line" id="l301">    301</a><code>     fn read(&amp;self, command: Vec&lt;u8&gt;) -&gt; Result&lt;Vec&lt;u8&gt;&gt; {</code>
-<a href="#l302" class="line" id="l302">    302</a><code>         Ok(match Read::decode(&amp;command)? {</code>
-<a href="#l303" class="line" id="l303">    303</a><code>             Read::BeginReadOnly { as_of } =&gt; {</code>
-<a href="#l304" class="line" id="l304">    304</a><code>                 let txn = match as_of {</code>
-<a href="#l305" class="line" id="l305">    305</a><code>                     Some(version) =&gt; self.local.begin_as_of(version)?,</code>
-<a href="#l306" class="line" id="l306">    306</a><code>                     None =&gt; self.local.begin_read_only()?,</code>
-<a href="#l307" class="line" id="l307">    307</a><code>                 };</code>
-<a href="#l308" class="line" id="l308">    308</a><code>                 txn.state().encode()</code>
-<a href="#l309" class="line" id="l309">    309</a><code>             }</code>
-<a href="#l310" class="line" id="l310">    310</a><code>             Read::Status =&gt; self.local.mvcc.status()?.encode(),</code>
-<a href="#l311" class="line" id="l311">    311</a><code> </code>
-<a href="#l312" class="line" id="l312">    312</a><code>             Read::Get { txn, table, ids } =&gt; {</code>
-<a href="#l313" class="line" id="l313">    313</a><code>                 self.local.resume(txn.into_owned())?.get(&amp;table, &amp;ids)?.encode()</code>
-<a href="#l314" class="line" id="l314">    314</a><code>             }</code>
-<a href="#l315" class="line" id="l315">    315</a><code>             Read::LookupIndex { txn, table, column, values } =&gt; self</code>
-<a href="#l316" class="line" id="l316">    316</a><code>                 .local</code>
-<a href="#l317" class="line" id="l317">    317</a><code>                 .resume(txn.into_owned())?</code>
-<a href="#l318" class="line" id="l318">    318</a><code>                 .lookup_index(&amp;table, &amp;column, &amp;values)?</code>
-<a href="#l319" class="line" id="l319">    319</a><code>                 .encode(),</code>
-<a href="#l320" class="line" id="l320">    320</a><code>             Read::Scan { txn, table, filter } =&gt; {</code>
-<a href="#l321" class="line" id="l321">    321</a><code>                 // For simplicity, buffer the entire scan. See `State` comment.</code>
-<a href="#l322" class="line" id="l322">    322</a><code>                 self.local</code>
-<a href="#l323" class="line" id="l323">    323</a><code>                     .resume(txn.into_owned())?</code>
-<a href="#l324" class="line" id="l324">    324</a><code>                     .scan(&amp;table, filter)?</code>
-<a href="#l325" class="line" id="l325">    325</a><code>                     .collect::&lt;Result&lt;Vec&lt;Row&gt;&gt;&gt;()?</code>
-<a href="#l326" class="line" id="l326">    326</a><code>                     .encode()</code>
-<a href="#l327" class="line" id="l327">    327</a><code>             }</code>
-<a href="#l328" class="line" id="l328">    328</a><code> </code>
-<a href="#l329" class="line" id="l329">    329</a><code>             Read::GetTable { txn, table } =&gt; {</code>
-<a href="#l330" class="line" id="l330">    330</a><code>                 self.local.resume(txn.into_owned())?.get_table(&amp;table)?.encode()</code>
-<a href="#l331" class="line" id="l331">    331</a><code>             }</code>
-<a href="#l332" class="line" id="l332">    332</a><code>             Read::ListTables { txn } =&gt; {</code>
-<a href="#l333" class="line" id="l333">    333</a><code>                 self.local.resume(txn.into_owned())?.list_tables()?.encode()</code>
-<a href="#l334" class="line" id="l334">    334</a><code>             }</code>
-<a href="#l335" class="line" id="l335">    335</a><code>         })</code>
-<a href="#l336" class="line" id="l336">    336</a><code>     }</code>
-<a href="#l337" class="line" id="l337">    337</a><code> }</code>
-<a href="#l338" class="line" id="l338">    338</a><code> </code>
-<a href="#l339" class="line" id="l339">    339</a><code> /// A Raft engine read. Values correspond to engine method parameters. Uses</code>
-<a href="#l340" class="line" id="l340">    340</a><code> /// Cows to allow borrowed encoding and owned decoding.</code>
-<a href="#l341" class="line" id="l341">    341</a><code> #[derive(Debug, Serialize, Deserialize)]</code>
-<a href="#l342" class="line" id="l342">    342</a><code> pub enum Read&lt;&#39;a&gt; {</code>
-<a href="#l343" class="line" id="l343">    343</a><code>     BeginReadOnly {</code>
-<a href="#l344" class="line" id="l344">    344</a><code>         as_of: Option&lt;mvcc::Version&gt;,</code>
-<a href="#l345" class="line" id="l345">    345</a><code>     },</code>
-<a href="#l346" class="line" id="l346">    346</a><code>     Status,</code>
-<a href="#l347" class="line" id="l347">    347</a><code> </code>
-<a href="#l348" class="line" id="l348">    348</a><code>     Get {</code>
-<a href="#l349" class="line" id="l349">    349</a><code>         txn: Cow&lt;&#39;a, mvcc::TransactionState&gt;,</code>
-<a href="#l350" class="line" id="l350">    350</a><code>         table: Cow&lt;&#39;a, str&gt;,</code>
-<a href="#l351" class="line" id="l351">    351</a><code>         ids: Cow&lt;&#39;a, [Value]&gt;,</code>
-<a href="#l352" class="line" id="l352">    352</a><code>     },</code>
-<a href="#l353" class="line" id="l353">    353</a><code>     LookupIndex {</code>
-<a href="#l354" class="line" id="l354">    354</a><code>         txn: Cow&lt;&#39;a, mvcc::TransactionState&gt;,</code>
-<a href="#l355" class="line" id="l355">    355</a><code>         table: Cow&lt;&#39;a, str&gt;,</code>
-<a href="#l356" class="line" id="l356">    356</a><code>         column: Cow&lt;&#39;a, str&gt;,</code>
-<a href="#l357" class="line" id="l357">    357</a><code>         values: Cow&lt;&#39;a, [Value]&gt;,</code>
-<a href="#l358" class="line" id="l358">    358</a><code>     },</code>
-<a href="#l359" class="line" id="l359">    359</a><code>     Scan {</code>
-<a href="#l360" class="line" id="l360">    360</a><code>         txn: Cow&lt;&#39;a, mvcc::TransactionState&gt;,</code>
-<a href="#l361" class="line" id="l361">    361</a><code>         table: Cow&lt;&#39;a, str&gt;,</code>
-<a href="#l362" class="line" id="l362">    362</a><code>         filter: Option&lt;Expression&gt;,</code>
-<a href="#l363" class="line" id="l363">    363</a><code>     },</code>
-<a href="#l364" class="line" id="l364">    364</a><code> </code>
-<a href="#l365" class="line" id="l365">    365</a><code>     GetTable {</code>
-<a href="#l366" class="line" id="l366">    366</a><code>         txn: Cow&lt;&#39;a, mvcc::TransactionState&gt;,</code>
-<a href="#l367" class="line" id="l367">    367</a><code>         table: Cow&lt;&#39;a, str&gt;,</code>
-<a href="#l368" class="line" id="l368">    368</a><code>     },</code>
-<a href="#l369" class="line" id="l369">    369</a><code>     ListTables {</code>
-<a href="#l370" class="line" id="l370">    370</a><code>         txn: Cow&lt;&#39;a, mvcc::TransactionState&gt;,</code>
-<a href="#l371" class="line" id="l371">    371</a><code>     },</code>
-<a href="#l372" class="line" id="l372">    372</a><code> }</code>
-<a href="#l373" class="line" id="l373">    373</a><code> </code>
-<a href="#l374" class="line" id="l374">    374</a><code> impl&lt;&#39;a&gt; encoding::Value for Read&lt;&#39;a&gt; {}</code>
-<a href="#l375" class="line" id="l375">    375</a><code> </code>
-<a href="#l376" class="line" id="l376">    376</a><code> /// A Raft engine write. Values correspond to engine method parameters. Uses</code>
-<a href="#l377" class="line" id="l377">    377</a><code> /// Cows to allow borrowed encoding (for borrowed params) and owned decoding.</code>
-<a href="#l378" class="line" id="l378">    378</a><code> #[derive(Debug, Serialize, Deserialize)]</code>
-<a href="#l379" class="line" id="l379">    379</a><code> pub enum Write&lt;&#39;a&gt; {</code>
-<a href="#l380" class="line" id="l380">    380</a><code>     Begin,</code>
-<a href="#l381" class="line" id="l381">    381</a><code>     Commit(Cow&lt;&#39;a, mvcc::TransactionState&gt;),</code>
-<a href="#l382" class="line" id="l382">    382</a><code>     Rollback(Cow&lt;&#39;a, mvcc::TransactionState&gt;),</code>
-<a href="#l383" class="line" id="l383">    383</a><code> </code>
-<a href="#l384" class="line" id="l384">    384</a><code>     Delete { txn: Cow&lt;&#39;a, mvcc::TransactionState&gt;, table: Cow&lt;&#39;a, str&gt;, ids: Cow&lt;&#39;a, [Value]&gt; },</code>
-<a href="#l385" class="line" id="l385">    385</a><code>     Insert { txn: Cow&lt;&#39;a, mvcc::TransactionState&gt;, table: Cow&lt;&#39;a, str&gt;, rows: Vec&lt;Row&gt; },</code>
-<a href="#l386" class="line" id="l386">    386</a><code>     Update { txn: Cow&lt;&#39;a, mvcc::TransactionState&gt;, table: Cow&lt;&#39;a, str&gt;, rows: BTreeMap&lt;Value, Row&gt; },</code>
-<a href="#l387" class="line" id="l387">    387</a><code> </code>
-<a href="#l388" class="line" id="l388">    388</a><code>     CreateTable { txn: Cow&lt;&#39;a, mvcc::TransactionState&gt;, schema: Table },</code>
-<a href="#l389" class="line" id="l389">    389</a><code>     DropTable { txn: Cow&lt;&#39;a, mvcc::TransactionState&gt;, table: Cow&lt;&#39;a, str&gt;, if_exists: bool },</code>
-<a href="#l390" class="line" id="l390">    390</a><code> }</code>
-<a href="#l391" class="line" id="l391">    391</a><code> </code>
-<a href="#l392" class="line" id="l392">    392</a><code> impl&lt;&#39;a&gt; encoding::Value for Write&lt;&#39;a&gt; {}</code>
-<a href="#l393" class="line" id="l393">    393</a><code> </code>
-<a href="#l394" class="line" id="l394">    394</a><code> /// Raft SQL engine status.</code>
-<a href="#l395" class="line" id="l395">    395</a><code> #[derive(Serialize, Deserialize)]</code>
-<a href="#l396" class="line" id="l396">    396</a><code> pub struct Status {</code>
-<a href="#l397" class="line" id="l397">    397</a><code>     pub raft: raft::Status,</code>
-<a href="#l398" class="line" id="l398">    398</a><code>     pub mvcc: mvcc::Status,</code>
-<a href="#l399" class="line" id="l399">    399</a><code> }</code>
+<a href="#l1" class="line" id="l1">      1</a><code class="language-rust"> use super::{Catalog, Engine as _, Transaction as _};</code>
+<a href="#l2" class="line" id="l2">      2</a><code class="language-rust"> use crate::encoding::{self, bincode, Value as _};</code>
+<a href="#l3" class="line" id="l3">      3</a><code class="language-rust"> use crate::errdata;</code>
+<a href="#l4" class="line" id="l4">      4</a><code class="language-rust"> use crate::error::Result;</code>
+<a href="#l5" class="line" id="l5">      5</a><code class="language-rust"> use crate::raft;</code>
+<a href="#l6" class="line" id="l6">      6</a><code class="language-rust"> use crate::sql::types::{Expression, Row, Rows, Table, Value};</code>
+<a href="#l7" class="line" id="l7">      7</a><code class="language-rust"> use crate::storage::{self, mvcc};</code>
+<a href="#l8" class="line" id="l8">      8</a><code class="language-rust"> </code>
+<a href="#l9" class="line" id="l9">      9</a><code class="language-rust"> use crossbeam::channel::Sender;</code>
+<a href="#l10" class="line" id="l10">     10</a><code class="language-rust"> use serde::{de::DeserializeOwned, Deserialize, Serialize};</code>
+<a href="#l11" class="line" id="l11">     11</a><code class="language-rust"> use std::borrow::Cow;</code>
+<a href="#l12" class="line" id="l12">     12</a><code class="language-rust"> use std::collections::{BTreeMap, BTreeSet};</code>
+<a href="#l13" class="line" id="l13">     13</a><code class="language-rust"> </code>
+<a href="#l14" class="line" id="l14">     14</a><code class="language-rust"> /// A Raft-based SQL engine. This dispatches to the `Local` engine for local</code>
+<a href="#l15" class="line" id="l15">     15</a><code class="language-rust"> /// storage and processing on each node, but plumbs read/write commands through</code>
+<a href="#l16" class="line" id="l16">     16</a><code class="language-rust"> /// Raft for distributed consensus.</code>
+<a href="#l17" class="line" id="l17">     17</a><code class="language-rust"> ///</code>
+<a href="#l18" class="line" id="l18">     18</a><code class="language-rust"> /// The `Raft` engine itself is simply a Raft client which sends `raft::Request`</code>
+<a href="#l19" class="line" id="l19">     19</a><code class="language-rust"> /// requests to the local Raft node for processing. These requests are received</code>
+<a href="#l20" class="line" id="l20">     20</a><code class="language-rust"> /// and processed by the Raft engine&#39;s `State` state machine running below Raft</code>
+<a href="#l21" class="line" id="l21">     21</a><code class="language-rust"> /// on each node, which forwards the commands to a `Local` SQL engine which</code>
+<a href="#l22" class="line" id="l22">     22</a><code class="language-rust"> /// actually executes them using a `storage::Engine` for local storage.</code>
+<a href="#l23" class="line" id="l23">     23</a><code class="language-rust"> ///</code>
+<a href="#l24" class="line" id="l24">     24</a><code class="language-rust"> /// For more details on how SQL statements flow through the engine, see the</code>
+<a href="#l25" class="line" id="l25">     25</a><code class="language-rust"> /// `sql` module documentation.</code>
+<a href="#l26" class="line" id="l26">     26</a><code class="language-rust"> pub struct Raft {</code>
+<a href="#l27" class="line" id="l27">     27</a><code class="language-rust">     /// Sends requests to the local Raft node, along with a response channel.</code>
+<a href="#l28" class="line" id="l28">     28</a><code class="language-rust">     tx: Sender&lt;(raft::Request, Sender&lt;Result&lt;raft::Response&gt;&gt;)&gt;,</code>
+<a href="#l29" class="line" id="l29">     29</a><code class="language-rust"> }</code>
+<a href="#l30" class="line" id="l30">     30</a><code class="language-rust"> </code>
+<a href="#l31" class="line" id="l31">     31</a><code class="language-rust"> impl Raft {</code>
+<a href="#l32" class="line" id="l32">     32</a><code class="language-rust">     /// The unversioned key used to store the applied index. Just uses a string</code>
+<a href="#l33" class="line" id="l33">     33</a><code class="language-rust">     /// for simplicity.</code>
+<a href="#l34" class="line" id="l34">     34</a><code class="language-rust">     pub const APPLIED_INDEX_KEY: &amp;&#39;static [u8] = b&quot;applied_index&quot;;</code>
+<a href="#l35" class="line" id="l35">     35</a><code class="language-rust"> </code>
+<a href="#l36" class="line" id="l36">     36</a><code class="language-rust">     /// Creates a new Raft-based SQL engine, given a Raft request channel to the</code>
+<a href="#l37" class="line" id="l37">     37</a><code class="language-rust">     /// local Raft node.</code>
+<a href="#l38" class="line" id="l38">     38</a><code class="language-rust">     pub fn new(tx: Sender&lt;(raft::Request, Sender&lt;Result&lt;raft::Response&gt;&gt;)&gt;) -&gt; Self {</code>
+<a href="#l39" class="line" id="l39">     39</a><code class="language-rust">         Self { tx }</code>
+<a href="#l40" class="line" id="l40">     40</a><code class="language-rust">     }</code>
+<a href="#l41" class="line" id="l41">     41</a><code class="language-rust"> </code>
+<a href="#l42" class="line" id="l42">     42</a><code class="language-rust">     /// Creates the Raft-managed state machine for the Raft engine. Receives</code>
+<a href="#l43" class="line" id="l43">     43</a><code class="language-rust">     /// commands from the Raft engine and executes them on a `Local` engine.</code>
+<a href="#l44" class="line" id="l44">     44</a><code class="language-rust">     pub fn new_state&lt;E: storage::Engine + &#39;static&gt;(engine: E) -&gt; Result&lt;State&lt;E&gt;&gt; {</code>
+<a href="#l45" class="line" id="l45">     45</a><code class="language-rust">         State::new(engine)</code>
+<a href="#l46" class="line" id="l46">     46</a><code class="language-rust">     }</code>
+<a href="#l47" class="line" id="l47">     47</a><code class="language-rust"> </code>
+<a href="#l48" class="line" id="l48">     48</a><code class="language-rust">     /// Executes a request against the Raft cluster, waiting for the response.</code>
+<a href="#l49" class="line" id="l49">     49</a><code class="language-rust">     fn execute(&amp;self, request: raft::Request) -&gt; Result&lt;raft::Response&gt; {</code>
+<a href="#l50" class="line" id="l50">     50</a><code class="language-rust">         let (response_tx, response_rx) = crossbeam::channel::bounded(1);</code>
+<a href="#l51" class="line" id="l51">     51</a><code class="language-rust">         self.tx.send((request, response_tx))?;</code>
+<a href="#l52" class="line" id="l52">     52</a><code class="language-rust">         response_rx.recv()?</code>
+<a href="#l53" class="line" id="l53">     53</a><code class="language-rust">     }</code>
+<a href="#l54" class="line" id="l54">     54</a><code class="language-rust"> </code>
+<a href="#l55" class="line" id="l55">     55</a><code class="language-rust">     /// Writes through Raft, deserializing the response into the return type.</code>
+<a href="#l56" class="line" id="l56">     56</a><code class="language-rust">     fn write&lt;V: DeserializeOwned&gt;(&amp;self, write: Write) -&gt; Result&lt;V&gt; {</code>
+<a href="#l57" class="line" id="l57">     57</a><code class="language-rust">         match self.execute(raft::Request::Write(write.encode()))? {</code>
+<a href="#l58" class="line" id="l58">     58</a><code class="language-rust">             raft::Response::Write(response) =&gt; bincode::deserialize(&amp;response),</code>
+<a href="#l59" class="line" id="l59">     59</a><code class="language-rust">             response =&gt; errdata!(&quot;unexpected Raft write response {response:?}&quot;),</code>
+<a href="#l60" class="line" id="l60">     60</a><code class="language-rust">         }</code>
+<a href="#l61" class="line" id="l61">     61</a><code class="language-rust">     }</code>
+<a href="#l62" class="line" id="l62">     62</a><code class="language-rust"> </code>
+<a href="#l63" class="line" id="l63">     63</a><code class="language-rust">     /// Reads from Raft, deserializing the response into the return type.</code>
+<a href="#l64" class="line" id="l64">     64</a><code class="language-rust">     fn read&lt;V: DeserializeOwned&gt;(&amp;self, read: Read) -&gt; Result&lt;V&gt; {</code>
+<a href="#l65" class="line" id="l65">     65</a><code class="language-rust">         match self.execute(raft::Request::Read(read.encode()))? {</code>
+<a href="#l66" class="line" id="l66">     66</a><code class="language-rust">             raft::Response::Read(response) =&gt; bincode::deserialize(&amp;response),</code>
+<a href="#l67" class="line" id="l67">     67</a><code class="language-rust">             response =&gt; errdata!(&quot;unexpected Raft read response {response:?}&quot;),</code>
+<a href="#l68" class="line" id="l68">     68</a><code class="language-rust">         }</code>
+<a href="#l69" class="line" id="l69">     69</a><code class="language-rust">     }</code>
+<a href="#l70" class="line" id="l70">     70</a><code class="language-rust"> </code>
+<a href="#l71" class="line" id="l71">     71</a><code class="language-rust">     /// Raft SQL engine status.</code>
+<a href="#l72" class="line" id="l72">     72</a><code class="language-rust">     pub fn status(&amp;self) -&gt; Result&lt;Status&gt; {</code>
+<a href="#l73" class="line" id="l73">     73</a><code class="language-rust">         let raft = match self.execute(raft::Request::Status)? {</code>
+<a href="#l74" class="line" id="l74">     74</a><code class="language-rust">             raft::Response::Status(status) =&gt; status,</code>
+<a href="#l75" class="line" id="l75">     75</a><code class="language-rust">             response =&gt; return errdata!(&quot;unexpected Raft status response {response:?}&quot;),</code>
+<a href="#l76" class="line" id="l76">     76</a><code class="language-rust">         };</code>
+<a href="#l77" class="line" id="l77">     77</a><code class="language-rust">         let mvcc = self.read(Read::Status)?;</code>
+<a href="#l78" class="line" id="l78">     78</a><code class="language-rust">         Ok(Status { raft, mvcc })</code>
+<a href="#l79" class="line" id="l79">     79</a><code class="language-rust">     }</code>
+<a href="#l80" class="line" id="l80">     80</a><code class="language-rust"> }</code>
+<a href="#l81" class="line" id="l81">     81</a><code class="language-rust"> </code>
+<a href="#l82" class="line" id="l82">     82</a><code class="language-rust"> impl&lt;&#39;a&gt; super::Engine&lt;&#39;a&gt; for Raft {</code>
+<a href="#l83" class="line" id="l83">     83</a><code class="language-rust">     type Transaction = Transaction&lt;&#39;a&gt;;</code>
+<a href="#l84" class="line" id="l84">     84</a><code class="language-rust"> </code>
+<a href="#l85" class="line" id="l85">     85</a><code class="language-rust">     fn begin(&amp;&#39;a self) -&gt; Result&lt;Self::Transaction&gt; {</code>
+<a href="#l86" class="line" id="l86">     86</a><code class="language-rust">         Transaction::begin(self, false, None)</code>
+<a href="#l87" class="line" id="l87">     87</a><code class="language-rust">     }</code>
+<a href="#l88" class="line" id="l88">     88</a><code class="language-rust"> </code>
+<a href="#l89" class="line" id="l89">     89</a><code class="language-rust">     fn begin_read_only(&amp;&#39;a self) -&gt; Result&lt;Self::Transaction&gt; {</code>
+<a href="#l90" class="line" id="l90">     90</a><code class="language-rust">         Transaction::begin(self, true, None)</code>
+<a href="#l91" class="line" id="l91">     91</a><code class="language-rust">     }</code>
+<a href="#l92" class="line" id="l92">     92</a><code class="language-rust"> </code>
+<a href="#l93" class="line" id="l93">     93</a><code class="language-rust">     fn begin_as_of(&amp;&#39;a self, version: mvcc::Version) -&gt; Result&lt;Self::Transaction&gt; {</code>
+<a href="#l94" class="line" id="l94">     94</a><code class="language-rust">         Transaction::begin(self, true, Some(version))</code>
+<a href="#l95" class="line" id="l95">     95</a><code class="language-rust">     }</code>
+<a href="#l96" class="line" id="l96">     96</a><code class="language-rust"> }</code>
+<a href="#l97" class="line" id="l97">     97</a><code class="language-rust"> </code>
+<a href="#l98" class="line" id="l98">     98</a><code class="language-rust"> /// A Raft SQL engine transaction.</code>
+<a href="#l99" class="line" id="l99">     99</a><code class="language-rust"> ///</code>
+<a href="#l100" class="line" id="l100">    100</a><code class="language-rust"> /// This keeps track of the transaction state in memory, for the benefit of</code>
+<a href="#l101" class="line" id="l101">    101</a><code class="language-rust"> /// read-only transactions. An `mvcc::Transaction` normally encapsulates this</code>
+<a href="#l102" class="line" id="l102">    102</a><code class="language-rust"> /// and manages it in memory, but since `mvcc::Transaction` runs below Raft, it</code>
+<a href="#l103" class="line" id="l103">    103</a><code class="language-rust"> /// can&#39;t maintain this state between individual requests (which could execute</code>
+<a href="#l104" class="line" id="l104">    104</a><code class="language-rust"> /// on different leaders). Instead, we use `mvcc::Transaction::resume` to resume</code>
+<a href="#l105" class="line" id="l105">    105</a><code class="language-rust"> /// the transaction using the provided transaction state for each request.</code>
+<a href="#l106" class="line" id="l106">    106</a><code class="language-rust"> pub struct Transaction&lt;&#39;a&gt; {</code>
+<a href="#l107" class="line" id="l107">    107</a><code class="language-rust">     /// The Raft SQL engine, used to communicate with Raft.</code>
+<a href="#l108" class="line" id="l108">    108</a><code class="language-rust">     engine: &amp;&#39;a Raft,</code>
+<a href="#l109" class="line" id="l109">    109</a><code class="language-rust">     /// The MVCC transaction state.</code>
+<a href="#l110" class="line" id="l110">    110</a><code class="language-rust">     state: mvcc::TransactionState,</code>
+<a href="#l111" class="line" id="l111">    111</a><code class="language-rust"> }</code>
+<a href="#l112" class="line" id="l112">    112</a><code class="language-rust"> </code>
+<a href="#l113" class="line" id="l113">    113</a><code class="language-rust"> impl&lt;&#39;a&gt; Transaction&lt;&#39;a&gt; {</code>
+<a href="#l114" class="line" id="l114">    114</a><code class="language-rust">     /// Starts a transaction in the given mode.</code>
+<a href="#l115" class="line" id="l115">    115</a><code class="language-rust">     fn begin(engine: &amp;&#39;a Raft, read_only: bool, as_of: Option&lt;mvcc::Version&gt;) -&gt; Result&lt;Self&gt; {</code>
+<a href="#l116" class="line" id="l116">    116</a><code class="language-rust">         assert!(as_of.is_none() || read_only, &quot;can&#39;t use as_of without read_only&quot;);</code>
+<a href="#l117" class="line" id="l117">    117</a><code class="language-rust">         // Read-only transactions don&#39;t need to persist anything, they just need</code>
+<a href="#l118" class="line" id="l118">    118</a><code class="language-rust">         // to grab the current transaction state, so submit them as reads to</code>
+<a href="#l119" class="line" id="l119">    119</a><code class="language-rust">         // avoid a replication roundtrip.</code>
+<a href="#l120" class="line" id="l120">    120</a><code class="language-rust">         let state = if read_only || as_of.is_some() {</code>
+<a href="#l121" class="line" id="l121">    121</a><code class="language-rust">             engine.read(Read::BeginReadOnly { as_of })?</code>
+<a href="#l122" class="line" id="l122">    122</a><code class="language-rust">         } else {</code>
+<a href="#l123" class="line" id="l123">    123</a><code class="language-rust">             engine.write(Write::Begin)?</code>
+<a href="#l124" class="line" id="l124">    124</a><code class="language-rust">         };</code>
+<a href="#l125" class="line" id="l125">    125</a><code class="language-rust">         Ok(Self { engine, state })</code>
+<a href="#l126" class="line" id="l126">    126</a><code class="language-rust">     }</code>
+<a href="#l127" class="line" id="l127">    127</a><code class="language-rust"> }</code>
+<a href="#l128" class="line" id="l128">    128</a><code class="language-rust"> </code>
+<a href="#l129" class="line" id="l129">    129</a><code class="language-rust"> impl&lt;&#39;a&gt; super::Transaction for Transaction&lt;&#39;a&gt; {</code>
+<a href="#l130" class="line" id="l130">    130</a><code class="language-rust">     fn state(&amp;self) -&gt; &amp;mvcc::TransactionState {</code>
+<a href="#l131" class="line" id="l131">    131</a><code class="language-rust">         &amp;self.state</code>
+<a href="#l132" class="line" id="l132">    132</a><code class="language-rust">     }</code>
+<a href="#l133" class="line" id="l133">    133</a><code class="language-rust"> </code>
+<a href="#l134" class="line" id="l134">    134</a><code class="language-rust">     fn commit(self) -&gt; Result&lt;()&gt; {</code>
+<a href="#l135" class="line" id="l135">    135</a><code class="language-rust">         if self.state.read_only {</code>
+<a href="#l136" class="line" id="l136">    136</a><code class="language-rust">             return Ok(()); // noop</code>
+<a href="#l137" class="line" id="l137">    137</a><code class="language-rust">         }</code>
+<a href="#l138" class="line" id="l138">    138</a><code class="language-rust">         self.engine.write(Write::Commit(self.state.into()))</code>
+<a href="#l139" class="line" id="l139">    139</a><code class="language-rust">     }</code>
+<a href="#l140" class="line" id="l140">    140</a><code class="language-rust"> </code>
+<a href="#l141" class="line" id="l141">    141</a><code class="language-rust">     fn rollback(self) -&gt; Result&lt;()&gt; {</code>
+<a href="#l142" class="line" id="l142">    142</a><code class="language-rust">         if self.state.read_only {</code>
+<a href="#l143" class="line" id="l143">    143</a><code class="language-rust">             return Ok(()); // noop</code>
+<a href="#l144" class="line" id="l144">    144</a><code class="language-rust">         }</code>
+<a href="#l145" class="line" id="l145">    145</a><code class="language-rust">         self.engine.write(Write::Rollback(self.state.into()))</code>
+<a href="#l146" class="line" id="l146">    146</a><code class="language-rust">     }</code>
+<a href="#l147" class="line" id="l147">    147</a><code class="language-rust"> </code>
+<a href="#l148" class="line" id="l148">    148</a><code class="language-rust">     fn delete(&amp;self, table: &amp;str, ids: &amp;[Value]) -&gt; Result&lt;()&gt; {</code>
+<a href="#l149" class="line" id="l149">    149</a><code class="language-rust">         self.engine.write(Write::Delete {</code>
+<a href="#l150" class="line" id="l150">    150</a><code class="language-rust">             txn: (&amp;self.state).into(),</code>
+<a href="#l151" class="line" id="l151">    151</a><code class="language-rust">             table: table.into(),</code>
+<a href="#l152" class="line" id="l152">    152</a><code class="language-rust">             ids: ids.into(),</code>
+<a href="#l153" class="line" id="l153">    153</a><code class="language-rust">         })</code>
+<a href="#l154" class="line" id="l154">    154</a><code class="language-rust">     }</code>
+<a href="#l155" class="line" id="l155">    155</a><code class="language-rust"> </code>
+<a href="#l156" class="line" id="l156">    156</a><code class="language-rust">     fn get(&amp;self, table: &amp;str, ids: &amp;[Value]) -&gt; Result&lt;Vec&lt;Row&gt;&gt; {</code>
+<a href="#l157" class="line" id="l157">    157</a><code class="language-rust">         self.engine.read(Read::Get {</code>
+<a href="#l158" class="line" id="l158">    158</a><code class="language-rust">             txn: (&amp;self.state).into(),</code>
+<a href="#l159" class="line" id="l159">    159</a><code class="language-rust">             table: table.into(),</code>
+<a href="#l160" class="line" id="l160">    160</a><code class="language-rust">             ids: ids.into(),</code>
+<a href="#l161" class="line" id="l161">    161</a><code class="language-rust">         })</code>
+<a href="#l162" class="line" id="l162">    162</a><code class="language-rust">     }</code>
+<a href="#l163" class="line" id="l163">    163</a><code class="language-rust"> </code>
+<a href="#l164" class="line" id="l164">    164</a><code class="language-rust">     fn insert(&amp;self, table: &amp;str, rows: Vec&lt;Row&gt;) -&gt; Result&lt;()&gt; {</code>
+<a href="#l165" class="line" id="l165">    165</a><code class="language-rust">         self.engine.write(Write::Insert { txn: (&amp;self.state).into(), table: table.into(), rows })</code>
+<a href="#l166" class="line" id="l166">    166</a><code class="language-rust">     }</code>
+<a href="#l167" class="line" id="l167">    167</a><code class="language-rust"> </code>
+<a href="#l168" class="line" id="l168">    168</a><code class="language-rust">     fn lookup_index(&amp;self, table: &amp;str, column: &amp;str, values: &amp;[Value]) -&gt; Result&lt;BTreeSet&lt;Value&gt;&gt; {</code>
+<a href="#l169" class="line" id="l169">    169</a><code class="language-rust">         self.engine.read(Read::LookupIndex {</code>
+<a href="#l170" class="line" id="l170">    170</a><code class="language-rust">             txn: (&amp;self.state).into(),</code>
+<a href="#l171" class="line" id="l171">    171</a><code class="language-rust">             table: table.into(),</code>
+<a href="#l172" class="line" id="l172">    172</a><code class="language-rust">             column: column.into(),</code>
+<a href="#l173" class="line" id="l173">    173</a><code class="language-rust">             values: values.into(),</code>
+<a href="#l174" class="line" id="l174">    174</a><code class="language-rust">         })</code>
+<a href="#l175" class="line" id="l175">    175</a><code class="language-rust">     }</code>
+<a href="#l176" class="line" id="l176">    176</a><code class="language-rust"> </code>
+<a href="#l177" class="line" id="l177">    177</a><code class="language-rust">     fn scan(&amp;self, table: &amp;str, filter: Option&lt;Expression&gt;) -&gt; Result&lt;Rows&gt; {</code>
+<a href="#l178" class="line" id="l178">    178</a><code class="language-rust">         let scan: Vec&lt;Row&gt; = self.engine.read(Read::Scan {</code>
+<a href="#l179" class="line" id="l179">    179</a><code class="language-rust">             txn: (&amp;self.state).into(),</code>
+<a href="#l180" class="line" id="l180">    180</a><code class="language-rust">             table: table.into(),</code>
+<a href="#l181" class="line" id="l181">    181</a><code class="language-rust">             filter,</code>
+<a href="#l182" class="line" id="l182">    182</a><code class="language-rust">         })?;</code>
+<a href="#l183" class="line" id="l183">    183</a><code class="language-rust">         Ok(Box::new(scan.into_iter().map(Ok)))</code>
+<a href="#l184" class="line" id="l184">    184</a><code class="language-rust">     }</code>
+<a href="#l185" class="line" id="l185">    185</a><code class="language-rust"> </code>
+<a href="#l186" class="line" id="l186">    186</a><code class="language-rust">     fn update(&amp;self, table: &amp;str, rows: BTreeMap&lt;Value, Row&gt;) -&gt; Result&lt;()&gt; {</code>
+<a href="#l187" class="line" id="l187">    187</a><code class="language-rust">         self.engine.write(Write::Update { txn: (&amp;self.state).into(), table: table.into(), rows })</code>
+<a href="#l188" class="line" id="l188">    188</a><code class="language-rust">     }</code>
+<a href="#l189" class="line" id="l189">    189</a><code class="language-rust"> }</code>
+<a href="#l190" class="line" id="l190">    190</a><code class="language-rust"> </code>
+<a href="#l191" class="line" id="l191">    191</a><code class="language-rust"> impl&lt;&#39;a&gt; Catalog for Transaction&lt;&#39;a&gt; {</code>
+<a href="#l192" class="line" id="l192">    192</a><code class="language-rust">     fn create_table(&amp;self, schema: Table) -&gt; Result&lt;()&gt; {</code>
+<a href="#l193" class="line" id="l193">    193</a><code class="language-rust">         self.engine.write(Write::CreateTable { txn: (&amp;self.state).into(), schema })</code>
+<a href="#l194" class="line" id="l194">    194</a><code class="language-rust">     }</code>
+<a href="#l195" class="line" id="l195">    195</a><code class="language-rust"> </code>
+<a href="#l196" class="line" id="l196">    196</a><code class="language-rust">     fn drop_table(&amp;self, table: &amp;str, if_exists: bool) -&gt; Result&lt;bool&gt; {</code>
+<a href="#l197" class="line" id="l197">    197</a><code class="language-rust">         self.engine.write(Write::DropTable {</code>
+<a href="#l198" class="line" id="l198">    198</a><code class="language-rust">             txn: (&amp;self.state).into(),</code>
+<a href="#l199" class="line" id="l199">    199</a><code class="language-rust">             table: table.into(),</code>
+<a href="#l200" class="line" id="l200">    200</a><code class="language-rust">             if_exists,</code>
+<a href="#l201" class="line" id="l201">    201</a><code class="language-rust">         })</code>
+<a href="#l202" class="line" id="l202">    202</a><code class="language-rust">     }</code>
+<a href="#l203" class="line" id="l203">    203</a><code class="language-rust"> </code>
+<a href="#l204" class="line" id="l204">    204</a><code class="language-rust">     fn get_table(&amp;self, table: &amp;str) -&gt; Result&lt;Option&lt;Table&gt;&gt; {</code>
+<a href="#l205" class="line" id="l205">    205</a><code class="language-rust">         self.engine.read(Read::GetTable { txn: (&amp;self.state).into(), table: table.into() })</code>
+<a href="#l206" class="line" id="l206">    206</a><code class="language-rust">     }</code>
+<a href="#l207" class="line" id="l207">    207</a><code class="language-rust"> </code>
+<a href="#l208" class="line" id="l208">    208</a><code class="language-rust">     fn list_tables(&amp;self) -&gt; Result&lt;Vec&lt;Table&gt;&gt; {</code>
+<a href="#l209" class="line" id="l209">    209</a><code class="language-rust">         self.engine.read(Read::ListTables { txn: (&amp;self.state).into() })</code>
+<a href="#l210" class="line" id="l210">    210</a><code class="language-rust">     }</code>
+<a href="#l211" class="line" id="l211">    211</a><code class="language-rust"> }</code>
+<a href="#l212" class="line" id="l212">    212</a><code class="language-rust"> </code>
+<a href="#l213" class="line" id="l213">    213</a><code class="language-rust"> /// The state machine for the Raft SQL engine. Receives commands from the Raft</code>
+<a href="#l214" class="line" id="l214">    214</a><code class="language-rust"> /// SQL engine and dispatches to a `Local` SQL engine which does the actual</code>
+<a href="#l215" class="line" id="l215">    215</a><code class="language-rust"> /// work, using a `storage::Engine` for storage.</code>
+<a href="#l216" class="line" id="l216">    216</a><code class="language-rust"> ///</code>
+<a href="#l217" class="line" id="l217">    217</a><code class="language-rust"> /// For simplicity, we don&#39;t attempt to stream large requests or responses,</code>
+<a href="#l218" class="line" id="l218">    218</a><code class="language-rust"> /// instead simply delivering them as one large chunk. This means that e.g. a</code>
+<a href="#l219" class="line" id="l219">    219</a><code class="language-rust"> /// full table scan will pull the entire table into memory, serialize it, and</code>
+<a href="#l220" class="line" id="l220">    220</a><code class="language-rust"> /// send it across the network as one message. The simplest way to address this</code>
+<a href="#l221" class="line" id="l221">    221</a><code class="language-rust"> /// would likely be to send row batches, but this is fine for our purposes.</code>
+<a href="#l222" class="line" id="l222">    222</a><code class="language-rust"> pub struct State&lt;E: storage::Engine + &#39;static&gt; {</code>
+<a href="#l223" class="line" id="l223">    223</a><code class="language-rust">     /// The local SQL engine.</code>
+<a href="#l224" class="line" id="l224">    224</a><code class="language-rust">     local: super::Local&lt;E&gt;,</code>
+<a href="#l225" class="line" id="l225">    225</a><code class="language-rust">     /// The last applied index. This tells Raft which command to apply next.</code>
+<a href="#l226" class="line" id="l226">    226</a><code class="language-rust">     applied_index: raft::Index,</code>
+<a href="#l227" class="line" id="l227">    227</a><code class="language-rust"> }</code>
+<a href="#l228" class="line" id="l228">    228</a><code class="language-rust"> </code>
+<a href="#l229" class="line" id="l229">    229</a><code class="language-rust"> impl&lt;E: storage::Engine&gt; State&lt;E&gt; {</code>
+<a href="#l230" class="line" id="l230">    230</a><code class="language-rust">     /// Creates a new Raft state maching using the given storage engine for</code>
+<a href="#l231" class="line" id="l231">    231</a><code class="language-rust">     /// local storage.</code>
+<a href="#l232" class="line" id="l232">    232</a><code class="language-rust">     pub fn new(engine: E) -&gt; Result&lt;Self&gt; {</code>
+<a href="#l233" class="line" id="l233">    233</a><code class="language-rust">         let local = super::Local::new(engine);</code>
+<a href="#l234" class="line" id="l234">    234</a><code class="language-rust">         let applied_index = local</code>
+<a href="#l235" class="line" id="l235">    235</a><code class="language-rust">             .get_unversioned(Raft::APPLIED_INDEX_KEY)?</code>
+<a href="#l236" class="line" id="l236">    236</a><code class="language-rust">             .map(|b| bincode::deserialize(&amp;b))</code>
+<a href="#l237" class="line" id="l237">    237</a><code class="language-rust">             .transpose()?</code>
+<a href="#l238" class="line" id="l238">    238</a><code class="language-rust">             .unwrap_or(0);</code>
+<a href="#l239" class="line" id="l239">    239</a><code class="language-rust">         Ok(State { local, applied_index })</code>
+<a href="#l240" class="line" id="l240">    240</a><code class="language-rust">     }</code>
+<a href="#l241" class="line" id="l241">    241</a><code class="language-rust"> </code>
+<a href="#l242" class="line" id="l242">    242</a><code class="language-rust">     /// Executes a write command.</code>
+<a href="#l243" class="line" id="l243">    243</a><code class="language-rust">     fn write(&amp;self, command: Write) -&gt; Result&lt;Vec&lt;u8&gt;&gt; {</code>
+<a href="#l244" class="line" id="l244">    244</a><code class="language-rust">         Ok(match command {</code>
+<a href="#l245" class="line" id="l245">    245</a><code class="language-rust">             Write::Begin =&gt; self.local.begin()?.state().encode(),</code>
+<a href="#l246" class="line" id="l246">    246</a><code class="language-rust">             Write::Commit(txn) =&gt; {</code>
+<a href="#l247" class="line" id="l247">    247</a><code class="language-rust">                 bincode::serialize(&amp;self.local.resume(txn.into_owned())?.commit()?)</code>
+<a href="#l248" class="line" id="l248">    248</a><code class="language-rust">             }</code>
+<a href="#l249" class="line" id="l249">    249</a><code class="language-rust">             Write::Rollback(txn) =&gt; {</code>
+<a href="#l250" class="line" id="l250">    250</a><code class="language-rust">                 bincode::serialize(&amp;self.local.resume(txn.into_owned())?.rollback()?)</code>
+<a href="#l251" class="line" id="l251">    251</a><code class="language-rust">             }</code>
+<a href="#l252" class="line" id="l252">    252</a><code class="language-rust"> </code>
+<a href="#l253" class="line" id="l253">    253</a><code class="language-rust">             Write::Delete { txn, table, ids } =&gt; {</code>
+<a href="#l254" class="line" id="l254">    254</a><code class="language-rust">                 bincode::serialize(&amp;self.local.resume(txn.into_owned())?.delete(&amp;table, &amp;ids)?)</code>
+<a href="#l255" class="line" id="l255">    255</a><code class="language-rust">             }</code>
+<a href="#l256" class="line" id="l256">    256</a><code class="language-rust">             Write::Insert { txn, table, rows } =&gt; {</code>
+<a href="#l257" class="line" id="l257">    257</a><code class="language-rust">                 bincode::serialize(&amp;self.local.resume(txn.into_owned())?.insert(&amp;table, rows)?)</code>
+<a href="#l258" class="line" id="l258">    258</a><code class="language-rust">             }</code>
+<a href="#l259" class="line" id="l259">    259</a><code class="language-rust">             Write::Update { txn, table, rows } =&gt; {</code>
+<a href="#l260" class="line" id="l260">    260</a><code class="language-rust">                 bincode::serialize(&amp;self.local.resume(txn.into_owned())?.update(&amp;table, rows)?)</code>
+<a href="#l261" class="line" id="l261">    261</a><code class="language-rust">             }</code>
+<a href="#l262" class="line" id="l262">    262</a><code class="language-rust"> </code>
+<a href="#l263" class="line" id="l263">    263</a><code class="language-rust">             Write::CreateTable { txn, schema } =&gt; {</code>
+<a href="#l264" class="line" id="l264">    264</a><code class="language-rust">                 bincode::serialize(&amp;self.local.resume(txn.into_owned())?.create_table(schema)?)</code>
+<a href="#l265" class="line" id="l265">    265</a><code class="language-rust">             }</code>
+<a href="#l266" class="line" id="l266">    266</a><code class="language-rust">             Write::DropTable { txn, table, if_exists } =&gt; bincode::serialize(</code>
+<a href="#l267" class="line" id="l267">    267</a><code class="language-rust">                 &amp;self.local.resume(txn.into_owned())?.drop_table(&amp;table, if_exists)?,</code>
+<a href="#l268" class="line" id="l268">    268</a><code class="language-rust">             ),</code>
+<a href="#l269" class="line" id="l269">    269</a><code class="language-rust">         })</code>
+<a href="#l270" class="line" id="l270">    270</a><code class="language-rust">     }</code>
+<a href="#l271" class="line" id="l271">    271</a><code class="language-rust"> }</code>
+<a href="#l272" class="line" id="l272">    272</a><code class="language-rust"> </code>
+<a href="#l273" class="line" id="l273">    273</a><code class="language-rust"> impl&lt;E: storage::Engine&gt; raft::State for State&lt;E&gt; {</code>
+<a href="#l274" class="line" id="l274">    274</a><code class="language-rust">     fn get_applied_index(&amp;self) -&gt; raft::Index {</code>
+<a href="#l275" class="line" id="l275">    275</a><code class="language-rust">         self.applied_index</code>
+<a href="#l276" class="line" id="l276">    276</a><code class="language-rust">     }</code>
+<a href="#l277" class="line" id="l277">    277</a><code class="language-rust"> </code>
+<a href="#l278" class="line" id="l278">    278</a><code class="language-rust">     fn apply(&amp;mut self, entry: raft::Entry) -&gt; Result&lt;Vec&lt;u8&gt;&gt; {</code>
+<a href="#l279" class="line" id="l279">    279</a><code class="language-rust">         assert_eq!(entry.index, self.applied_index + 1, &quot;entry index not after applied index&quot;);</code>
+<a href="#l280" class="line" id="l280">    280</a><code class="language-rust"> </code>
+<a href="#l281" class="line" id="l281">    281</a><code class="language-rust">         let result = match &amp;entry.command {</code>
+<a href="#l282" class="line" id="l282">    282</a><code class="language-rust">             Some(command) =&gt; match self.write(Write::decode(command)?) {</code>
+<a href="#l283" class="line" id="l283">    283</a><code class="language-rust">                 // Panic on non-deterministic apply failures, to prevent replica</code>
+<a href="#l284" class="line" id="l284">    284</a><code class="language-rust">                 // divergence. See [`raft::State`] docs for details.</code>
+<a href="#l285" class="line" id="l285">    285</a><code class="language-rust">                 Err(e) if !e.is_deterministic() =&gt; panic!(&quot;non-deterministic apply failure: {e}&quot;),</code>
+<a href="#l286" class="line" id="l286">    286</a><code class="language-rust">                 result =&gt; result,</code>
+<a href="#l287" class="line" id="l287">    287</a><code class="language-rust">             },</code>
+<a href="#l288" class="line" id="l288">    288</a><code class="language-rust">             // Raft submits noop commands on leader changes. Ignore them, but</code>
+<a href="#l289" class="line" id="l289">    289</a><code class="language-rust">             // record the applied index below.</code>
+<a href="#l290" class="line" id="l290">    290</a><code class="language-rust">             None =&gt; Ok(Vec::new()),</code>
+<a href="#l291" class="line" id="l291">    291</a><code class="language-rust">         };</code>
+<a href="#l292" class="line" id="l292">    292</a><code class="language-rust"> </code>
+<a href="#l293" class="line" id="l293">    293</a><code class="language-rust">         // Persist the applied index. We don&#39;t have to flush, because it&#39;s ok to</code>
+<a href="#l294" class="line" id="l294">    294</a><code class="language-rust">         // lose a tail of the state machine writes (e.g. if the machine</code>
+<a href="#l295" class="line" id="l295">    295</a><code class="language-rust">         // crashes). Raft will replay the log from the last known applied index.</code>
+<a href="#l296" class="line" id="l296">    296</a><code class="language-rust">         self.applied_index = entry.index;</code>
+<a href="#l297" class="line" id="l297">    297</a><code class="language-rust">         self.local.set_unversioned(Raft::APPLIED_INDEX_KEY, bincode::serialize(&amp;entry.index))?;</code>
+<a href="#l298" class="line" id="l298">    298</a><code class="language-rust">         result</code>
+<a href="#l299" class="line" id="l299">    299</a><code class="language-rust">     }</code>
+<a href="#l300" class="line" id="l300">    300</a><code class="language-rust"> </code>
+<a href="#l301" class="line" id="l301">    301</a><code class="language-rust">     fn read(&amp;self, command: Vec&lt;u8&gt;) -&gt; Result&lt;Vec&lt;u8&gt;&gt; {</code>
+<a href="#l302" class="line" id="l302">    302</a><code class="language-rust">         Ok(match Read::decode(&amp;command)? {</code>
+<a href="#l303" class="line" id="l303">    303</a><code class="language-rust">             Read::BeginReadOnly { as_of } =&gt; {</code>
+<a href="#l304" class="line" id="l304">    304</a><code class="language-rust">                 let txn = match as_of {</code>
+<a href="#l305" class="line" id="l305">    305</a><code class="language-rust">                     Some(version) =&gt; self.local.begin_as_of(version)?,</code>
+<a href="#l306" class="line" id="l306">    306</a><code class="language-rust">                     None =&gt; self.local.begin_read_only()?,</code>
+<a href="#l307" class="line" id="l307">    307</a><code class="language-rust">                 };</code>
+<a href="#l308" class="line" id="l308">    308</a><code class="language-rust">                 txn.state().encode()</code>
+<a href="#l309" class="line" id="l309">    309</a><code class="language-rust">             }</code>
+<a href="#l310" class="line" id="l310">    310</a><code class="language-rust">             Read::Status =&gt; self.local.mvcc.status()?.encode(),</code>
+<a href="#l311" class="line" id="l311">    311</a><code class="language-rust"> </code>
+<a href="#l312" class="line" id="l312">    312</a><code class="language-rust">             Read::Get { txn, table, ids } =&gt; {</code>
+<a href="#l313" class="line" id="l313">    313</a><code class="language-rust">                 self.local.resume(txn.into_owned())?.get(&amp;table, &amp;ids)?.encode()</code>
+<a href="#l314" class="line" id="l314">    314</a><code class="language-rust">             }</code>
+<a href="#l315" class="line" id="l315">    315</a><code class="language-rust">             Read::LookupIndex { txn, table, column, values } =&gt; self</code>
+<a href="#l316" class="line" id="l316">    316</a><code class="language-rust">                 .local</code>
+<a href="#l317" class="line" id="l317">    317</a><code class="language-rust">                 .resume(txn.into_owned())?</code>
+<a href="#l318" class="line" id="l318">    318</a><code class="language-rust">                 .lookup_index(&amp;table, &amp;column, &amp;values)?</code>
+<a href="#l319" class="line" id="l319">    319</a><code class="language-rust">                 .encode(),</code>
+<a href="#l320" class="line" id="l320">    320</a><code class="language-rust">             Read::Scan { txn, table, filter } =&gt; {</code>
+<a href="#l321" class="line" id="l321">    321</a><code class="language-rust">                 // For simplicity, buffer the entire scan. See `State` comment.</code>
+<a href="#l322" class="line" id="l322">    322</a><code class="language-rust">                 self.local</code>
+<a href="#l323" class="line" id="l323">    323</a><code class="language-rust">                     .resume(txn.into_owned())?</code>
+<a href="#l324" class="line" id="l324">    324</a><code class="language-rust">                     .scan(&amp;table, filter)?</code>
+<a href="#l325" class="line" id="l325">    325</a><code class="language-rust">                     .collect::&lt;Result&lt;Vec&lt;Row&gt;&gt;&gt;()?</code>
+<a href="#l326" class="line" id="l326">    326</a><code class="language-rust">                     .encode()</code>
+<a href="#l327" class="line" id="l327">    327</a><code class="language-rust">             }</code>
+<a href="#l328" class="line" id="l328">    328</a><code class="language-rust"> </code>
+<a href="#l329" class="line" id="l329">    329</a><code class="language-rust">             Read::GetTable { txn, table } =&gt; {</code>
+<a href="#l330" class="line" id="l330">    330</a><code class="language-rust">                 self.local.resume(txn.into_owned())?.get_table(&amp;table)?.encode()</code>
+<a href="#l331" class="line" id="l331">    331</a><code class="language-rust">             }</code>
+<a href="#l332" class="line" id="l332">    332</a><code class="language-rust">             Read::ListTables { txn } =&gt; {</code>
+<a href="#l333" class="line" id="l333">    333</a><code class="language-rust">                 self.local.resume(txn.into_owned())?.list_tables()?.encode()</code>
+<a href="#l334" class="line" id="l334">    334</a><code class="language-rust">             }</code>
+<a href="#l335" class="line" id="l335">    335</a><code class="language-rust">         })</code>
+<a href="#l336" class="line" id="l336">    336</a><code class="language-rust">     }</code>
+<a href="#l337" class="line" id="l337">    337</a><code class="language-rust"> }</code>
+<a href="#l338" class="line" id="l338">    338</a><code class="language-rust"> </code>
+<a href="#l339" class="line" id="l339">    339</a><code class="language-rust"> /// A Raft engine read. Values correspond to engine method parameters. Uses</code>
+<a href="#l340" class="line" id="l340">    340</a><code class="language-rust"> /// Cows to allow borrowed encoding and owned decoding.</code>
+<a href="#l341" class="line" id="l341">    341</a><code class="language-rust"> #[derive(Debug, Serialize, Deserialize)]</code>
+<a href="#l342" class="line" id="l342">    342</a><code class="language-rust"> pub enum Read&lt;&#39;a&gt; {</code>
+<a href="#l343" class="line" id="l343">    343</a><code class="language-rust">     BeginReadOnly {</code>
+<a href="#l344" class="line" id="l344">    344</a><code class="language-rust">         as_of: Option&lt;mvcc::Version&gt;,</code>
+<a href="#l345" class="line" id="l345">    345</a><code class="language-rust">     },</code>
+<a href="#l346" class="line" id="l346">    346</a><code class="language-rust">     Status,</code>
+<a href="#l347" class="line" id="l347">    347</a><code class="language-rust"> </code>
+<a href="#l348" class="line" id="l348">    348</a><code class="language-rust">     Get {</code>
+<a href="#l349" class="line" id="l349">    349</a><code class="language-rust">         txn: Cow&lt;&#39;a, mvcc::TransactionState&gt;,</code>
+<a href="#l350" class="line" id="l350">    350</a><code class="language-rust">         table: Cow&lt;&#39;a, str&gt;,</code>
+<a href="#l351" class="line" id="l351">    351</a><code class="language-rust">         ids: Cow&lt;&#39;a, [Value]&gt;,</code>
+<a href="#l352" class="line" id="l352">    352</a><code class="language-rust">     },</code>
+<a href="#l353" class="line" id="l353">    353</a><code class="language-rust">     LookupIndex {</code>
+<a href="#l354" class="line" id="l354">    354</a><code class="language-rust">         txn: Cow&lt;&#39;a, mvcc::TransactionState&gt;,</code>
+<a href="#l355" class="line" id="l355">    355</a><code class="language-rust">         table: Cow&lt;&#39;a, str&gt;,</code>
+<a href="#l356" class="line" id="l356">    356</a><code class="language-rust">         column: Cow&lt;&#39;a, str&gt;,</code>
+<a href="#l357" class="line" id="l357">    357</a><code class="language-rust">         values: Cow&lt;&#39;a, [Value]&gt;,</code>
+<a href="#l358" class="line" id="l358">    358</a><code class="language-rust">     },</code>
+<a href="#l359" class="line" id="l359">    359</a><code class="language-rust">     Scan {</code>
+<a href="#l360" class="line" id="l360">    360</a><code class="language-rust">         txn: Cow&lt;&#39;a, mvcc::TransactionState&gt;,</code>
+<a href="#l361" class="line" id="l361">    361</a><code class="language-rust">         table: Cow&lt;&#39;a, str&gt;,</code>
+<a href="#l362" class="line" id="l362">    362</a><code class="language-rust">         filter: Option&lt;Expression&gt;,</code>
+<a href="#l363" class="line" id="l363">    363</a><code class="language-rust">     },</code>
+<a href="#l364" class="line" id="l364">    364</a><code class="language-rust"> </code>
+<a href="#l365" class="line" id="l365">    365</a><code class="language-rust">     GetTable {</code>
+<a href="#l366" class="line" id="l366">    366</a><code class="language-rust">         txn: Cow&lt;&#39;a, mvcc::TransactionState&gt;,</code>
+<a href="#l367" class="line" id="l367">    367</a><code class="language-rust">         table: Cow&lt;&#39;a, str&gt;,</code>
+<a href="#l368" class="line" id="l368">    368</a><code class="language-rust">     },</code>
+<a href="#l369" class="line" id="l369">    369</a><code class="language-rust">     ListTables {</code>
+<a href="#l370" class="line" id="l370">    370</a><code class="language-rust">         txn: Cow&lt;&#39;a, mvcc::TransactionState&gt;,</code>
+<a href="#l371" class="line" id="l371">    371</a><code class="language-rust">     },</code>
+<a href="#l372" class="line" id="l372">    372</a><code class="language-rust"> }</code>
+<a href="#l373" class="line" id="l373">    373</a><code class="language-rust"> </code>
+<a href="#l374" class="line" id="l374">    374</a><code class="language-rust"> impl&lt;&#39;a&gt; encoding::Value for Read&lt;&#39;a&gt; {}</code>
+<a href="#l375" class="line" id="l375">    375</a><code class="language-rust"> </code>
+<a href="#l376" class="line" id="l376">    376</a><code class="language-rust"> /// A Raft engine write. Values correspond to engine method parameters. Uses</code>
+<a href="#l377" class="line" id="l377">    377</a><code class="language-rust"> /// Cows to allow borrowed encoding (for borrowed params) and owned decoding.</code>
+<a href="#l378" class="line" id="l378">    378</a><code class="language-rust"> #[derive(Debug, Serialize, Deserialize)]</code>
+<a href="#l379" class="line" id="l379">    379</a><code class="language-rust"> pub enum Write&lt;&#39;a&gt; {</code>
+<a href="#l380" class="line" id="l380">    380</a><code class="language-rust">     Begin,</code>
+<a href="#l381" class="line" id="l381">    381</a><code class="language-rust">     Commit(Cow&lt;&#39;a, mvcc::TransactionState&gt;),</code>
+<a href="#l382" class="line" id="l382">    382</a><code class="language-rust">     Rollback(Cow&lt;&#39;a, mvcc::TransactionState&gt;),</code>
+<a href="#l383" class="line" id="l383">    383</a><code class="language-rust"> </code>
+<a href="#l384" class="line" id="l384">    384</a><code class="language-rust">     Delete { txn: Cow&lt;&#39;a, mvcc::TransactionState&gt;, table: Cow&lt;&#39;a, str&gt;, ids: Cow&lt;&#39;a, [Value]&gt; },</code>
+<a href="#l385" class="line" id="l385">    385</a><code class="language-rust">     Insert { txn: Cow&lt;&#39;a, mvcc::TransactionState&gt;, table: Cow&lt;&#39;a, str&gt;, rows: Vec&lt;Row&gt; },</code>
+<a href="#l386" class="line" id="l386">    386</a><code class="language-rust">     Update { txn: Cow&lt;&#39;a, mvcc::TransactionState&gt;, table: Cow&lt;&#39;a, str&gt;, rows: BTreeMap&lt;Value, Row&gt; },</code>
+<a href="#l387" class="line" id="l387">    387</a><code class="language-rust"> </code>
+<a href="#l388" class="line" id="l388">    388</a><code class="language-rust">     CreateTable { txn: Cow&lt;&#39;a, mvcc::TransactionState&gt;, schema: Table },</code>
+<a href="#l389" class="line" id="l389">    389</a><code class="language-rust">     DropTable { txn: Cow&lt;&#39;a, mvcc::TransactionState&gt;, table: Cow&lt;&#39;a, str&gt;, if_exists: bool },</code>
+<a href="#l390" class="line" id="l390">    390</a><code class="language-rust"> }</code>
+<a href="#l391" class="line" id="l391">    391</a><code class="language-rust"> </code>
+<a href="#l392" class="line" id="l392">    392</a><code class="language-rust"> impl&lt;&#39;a&gt; encoding::Value for Write&lt;&#39;a&gt; {}</code>
+<a href="#l393" class="line" id="l393">    393</a><code class="language-rust"> </code>
+<a href="#l394" class="line" id="l394">    394</a><code class="language-rust"> /// Raft SQL engine status.</code>
+<a href="#l395" class="line" id="l395">    395</a><code class="language-rust"> #[derive(Serialize, Deserialize)]</code>
+<a href="#l396" class="line" id="l396">    396</a><code class="language-rust"> pub struct Status {</code>
+<a href="#l397" class="line" id="l397">    397</a><code class="language-rust">     pub raft: raft::Status,</code>
+<a href="#l398" class="line" id="l398">    398</a><code class="language-rust">     pub mvcc: mvcc::Status,</code>
+<a href="#l399" class="line" id="l399">    399</a><code class="language-rust"> }</code>
 </pre>
 </div>
 </body>
