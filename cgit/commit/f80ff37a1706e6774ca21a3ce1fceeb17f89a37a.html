@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Handle missing default branch and error out on invalid branch names - cgit - Web based git repository viewer
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="cgit.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="cgit.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Source+Code+Pro:ital,wght@0,200..900;1,200..900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/base16/tender.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script> hljs.highlightAll() ;</script>
+<style>pre code.hljs {display: inline;padding: 0;} code.hljs {padding: 0;} .hljs {background: initial;} .hljs-comment{color: rgb(96, 96, 96);}</style></head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>cgit</h1><span class="desc">Web based git repository viewer
+</span></td></tr><tr><td></td><td>
+<br>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/.gitmodules.html">Submodules</a> | <a href="../file/README.html">README</a> | <a href="../file/COPYING.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/f80ff37a1706e6774ca21a3ce1fceeb17f89a37a.html">f80ff37a1706e6774ca21a3ce1fceeb17f89a37a</a>
+<b>parent</b> <a href="../commit/620bb3e5e4ff87da740fe7232ba74330b5f862d4.html">620bb3e5e4ff87da740fe7232ba74330b5f862d4</a>
+<b>Author:</b> Lars Hjemli &lt;<a href="mailto:hjemli@gmail.com">hjemli@gmail.com</a>&gt;
+<b>Date:</b>   Fri,  4 Jan 2008 13:43:40 +0100
+
+Handle missing default branch and error out on invalid branch names
+
+When no branch is specified and the repository does not have a default branch,
+use the first branch.
+
+Also, print sensible errormessages when the repository does not contain any
+branches and when invalid branchnames are specified.
+
+Signed-off-by: Lars Hjemli &lt;hjemli@gmail.com&gt;
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">cgit.c</a></td><td> | </td><td class="num">62</td><td><span class="i">++++++++++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d">----</span></td></tr>
+</table></pre><pre>1 file changed, 58 insertions(+), 4 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/cgit.c.html">cgit.c</a> b/<a href="../file/cgit.c.html">cgit.c</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -45,13 +45,44 @@ static int cgit_prepare_cache(struct cacheitem *item)
+</a> 	return 1;
+ }
+ 
+<a href="#h0-0-3" id="h0-0-3" class="i">+struct refmatch {
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+	char *req_ref;
+</a><a href="#h0-0-5" id="h0-0-5" class="i">+	char *first_ref;
+</a><a href="#h0-0-6" id="h0-0-6" class="i">+	int match;
+</a><a href="#h0-0-7" id="h0-0-7" class="i">+};
+</a><a href="#h0-0-8" id="h0-0-8" class="i">+
+</a><a href="#h0-0-9" id="h0-0-9" class="i">+int find_current_ref(const char *refname, const unsigned char *sha1,
+</a><a href="#h0-0-10" id="h0-0-10" class="i">+		     int flags, void *cb_data)
+</a><a href="#h0-0-11" id="h0-0-11" class="i">+{
+</a><a href="#h0-0-12" id="h0-0-12" class="i">+	struct refmatch *info;
+</a><a href="#h0-0-13" id="h0-0-13" class="i">+
+</a><a href="#h0-0-14" id="h0-0-14" class="i">+	info = (struct refmatch *)cb_data;
+</a><a href="#h0-0-15" id="h0-0-15" class="i">+	if (!strcmp(refname, info-&gt;req_ref))
+</a><a href="#h0-0-16" id="h0-0-16" class="i">+		info-&gt;match = 1;
+</a><a href="#h0-0-17" id="h0-0-17" class="i">+	if (!info-&gt;first_ref)
+</a><a href="#h0-0-18" id="h0-0-18" class="i">+		info-&gt;first_ref = xstrdup(refname);
+</a><a href="#h0-0-19" id="h0-0-19" class="i">+	return info-&gt;match;
+</a><a href="#h0-0-20" id="h0-0-20" class="i">+}
+</a><a href="#h0-0-21" id="h0-0-21" class="i">+
+</a><a href="#h0-0-22" id="h0-0-22" class="i">+char *find_default_branch(struct repoinfo *repo)
+</a><a href="#h0-0-23" id="h0-0-23" class="i">+{
+</a><a href="#h0-0-24" id="h0-0-24" class="i">+	struct refmatch info;
+</a><a href="#h0-0-25" id="h0-0-25" class="i">+
+</a><a href="#h0-0-26" id="h0-0-26" class="i">+	info.req_ref = repo-&gt;defbranch;
+</a><a href="#h0-0-27" id="h0-0-27" class="i">+	info.first_ref = NULL;
+</a><a href="#h0-0-28" id="h0-0-28" class="i">+	info.match = 0;
+</a><a href="#h0-0-29" id="h0-0-29" class="i">+	for_each_branch_ref(find_current_ref, &amp;info);
+</a><a href="#h0-0-30" id="h0-0-30" class="i">+	if (info.match)
+</a><a href="#h0-0-31" id="h0-0-31" class="i">+		return info.req_ref;
+</a><a href="#h0-0-32" id="h0-0-32" class="i">+	else
+</a><a href="#h0-0-33" id="h0-0-33" class="i">+		return info.first_ref;
+</a><a href="#h0-0-34" id="h0-0-34" class="i">+}
+</a><a href="#h0-0-35" id="h0-0-35" class="i">+
+</a> static void cgit_print_repo_page(struct cacheitem *item)
+ {
+<a href="#h0-0-38" id="h0-0-38" class="d">-	char *title;
+</a><a href="#h0-0-39" id="h0-0-39" class="i">+	char *title, *tmp;
+</a> 	int show_search;
+<a href="#h0-0-41" id="h0-0-41" class="d">-
+</a><a href="#h0-0-42" id="h0-0-42" class="d">-	if (!cgit_query_head)
+</a><a href="#h0-0-43" id="h0-0-43" class="d">-		cgit_query_head = cgit_repo-&gt;defbranch;
+</a><a href="#h0-0-44" id="h0-0-44" class="i">+	unsigned char sha1[20];
+</a> 
+ 	if (chdir(cgit_repo-&gt;path)) {
+ 		title = fmt(&quot;%s - %s&quot;, cgit_root_title, &quot;Bad request&quot;);
+<a href="#h0-1" id="h0-1" class="h">@@ -67,6 +98,29 @@ static void cgit_print_repo_page(struct cacheitem *item)
+</a> 	show_search = 0;
+ 	setenv(&quot;GIT_DIR&quot;, cgit_repo-&gt;path, 1);
+ 
+<a href="#h0-1-3" id="h0-1-3" class="i">+	if (!cgit_query_head) {
+</a><a href="#h0-1-4" id="h0-1-4" class="i">+		cgit_query_head = xstrdup(find_default_branch(cgit_repo));
+</a><a href="#h0-1-5" id="h0-1-5" class="i">+		cgit_repo-&gt;defbranch = cgit_query_head;
+</a><a href="#h0-1-6" id="h0-1-6" class="i">+	}
+</a><a href="#h0-1-7" id="h0-1-7" class="i">+
+</a><a href="#h0-1-8" id="h0-1-8" class="i">+	if (!cgit_query_head) {
+</a><a href="#h0-1-9" id="h0-1-9" class="i">+		cgit_print_docstart(title, item);
+</a><a href="#h0-1-10" id="h0-1-10" class="i">+		cgit_print_pageheader(title, 0);
+</a><a href="#h0-1-11" id="h0-1-11" class="i">+		cgit_print_error(&quot;Repository seems to be empty&quot;);
+</a><a href="#h0-1-12" id="h0-1-12" class="i">+		cgit_print_docend();
+</a><a href="#h0-1-13" id="h0-1-13" class="i">+		return;
+</a><a href="#h0-1-14" id="h0-1-14" class="i">+	}
+</a><a href="#h0-1-15" id="h0-1-15" class="i">+
+</a><a href="#h0-1-16" id="h0-1-16" class="i">+	if (get_sha1(cgit_query_head, sha1)) {
+</a><a href="#h0-1-17" id="h0-1-17" class="i">+		tmp = xstrdup(cgit_query_head);
+</a><a href="#h0-1-18" id="h0-1-18" class="i">+		cgit_query_head = cgit_repo-&gt;defbranch;
+</a><a href="#h0-1-19" id="h0-1-19" class="i">+		cgit_print_docstart(title, item);
+</a><a href="#h0-1-20" id="h0-1-20" class="i">+		cgit_print_pageheader(title, 0);
+</a><a href="#h0-1-21" id="h0-1-21" class="i">+		cgit_print_error(fmt(&quot;Invalid branch: %s&quot;, tmp));
+</a><a href="#h0-1-22" id="h0-1-22" class="i">+		cgit_print_docend();
+</a><a href="#h0-1-23" id="h0-1-23" class="i">+		return;
+</a><a href="#h0-1-24" id="h0-1-24" class="i">+	}
+</a><a href="#h0-1-25" id="h0-1-25" class="i">+
+</a> 	if ((cgit_cmd == CMD_SNAPSHOT) &amp;&amp; cgit_repo-&gt;snapshots) {
+ 		cgit_print_snapshot(item, cgit_query_head, cgit_query_sha1,
+ 				    cgit_repobasename(cgit_repo-&gt;url),
+</pre>
+</div>
+</body>
+</html>

@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Makefile: re-use Git&#39;s Makefile where possible - cgit - Web based git repository viewer
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="cgit.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="cgit.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Source+Code+Pro:ital,wght@0,200..900;1,200..900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/base16/tender.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script> hljs.highlightAll() ;</script>
+<style>pre code.hljs {display: inline;padding: 0;} code.hljs {padding: 0;} .hljs {background: initial;} .hljs-comment{color: rgb(96, 96, 96);}</style></head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>cgit</h1><span class="desc">Web based git repository viewer
+</span></td></tr><tr><td></td><td>
+<br>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/.gitmodules.html">Submodules</a> | <a href="../file/README.html">README</a> | <a href="../file/COPYING.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/5f323c1ff45c10d8f8b0a673d2fe7e98272f5d78.html">5f323c1ff45c10d8f8b0a673d2fe7e98272f5d78</a>
+<b>parent</b> <a href="../commit/e1e0e038fd0fee3fe10524d7466deab03e78deb5.html">e1e0e038fd0fee3fe10524d7466deab03e78deb5</a>
+<b>Author:</b> John Keeping &lt;<a href="mailto:john@keeping.me.uk">john@keeping.me.uk</a>&gt;
+<b>Date:</b>   Wed,  6 Mar 2013 21:22:06 +0000
+
+Makefile: re-use Git&#39;s Makefile where possible
+
+Git does quite a lot of platform-specific detection in its Makefile,
+which can result in it defining preprocessor variables that are used in
+its header files.  If CGit does not define the same variables it can
+result in different sizes of some structures in different places in the
+same application.
+
+For example, on Solaris Git uses it&#39;s &quot;compat&quot; regex library which has a
+different sized regex_t structure than that available in the platform
+regex.h.  This has a knock-on effect on the size of &quot;struct rev_info&quot;
+and leads to hard to diagnose runtime issues.
+
+In order to avoid all of this, introduce a &quot;cgit.mk&quot; file that includes
+Git&#39;s Makefile and make all of the existing logic apply to CGit&#39;s
+objects as well.  This is slightly complicated because Git&#39;s Makefile
+must run in Git&#39;s directory, so all references to CGit files need to be
+prefixed with &quot;../&quot;.
+
+In addition, OBJECTS is a simply expanded variable in Git&#39;s Makefile so
+we cannot just add our objects to it.  Instead we must copy the two
+applicable rules into &quot;cgit.mk&quot;.  This has the advantage that we can
+split CGit-specific CFLAGS from Git&#39;s CFLAGS and hence avoid rebuilding
+all of Git whenever a CGit-specific value changes.
+
+Signed-off-by: John Keeping &lt;john@keeping.me.uk&gt;
+Acked-by: Jamie Couture &lt;jamie.couture@gmail.com&gt;
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">.gitignore</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">Makefile</a></td><td> | </td><td class="num">124</td><td><span class="i">++++</span><span class="d">---------------------------------------------------------------------------</span></td></tr>
+<tr><td class="A">A</td><td><a href="#h2">cgit.mk</a></td><td> | </td><td class="num">74</td><td><span class="i">++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d"></span></td></tr>
+</table></pre><pre>3 files changed, 80 insertions(+), 119 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/.gitignore.html">.gitignore</a> b/<a href="../file/.gitignore.html">.gitignore</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -1,6 +1,7 @@
+</a> # Files I don&#39;t care to see in git-status/commit
+ cgit
+ cgit.conf
+<a href="#h0-0-3" id="h0-0-3" class="i">+CGIT-CFLAGS
+</a> VERSION
+ cgitrc.5
+ cgitrc.5.fo
+<b>diff --git a/<a id="h1" href="../file/Makefile.html">Makefile</a> b/<a href="../file/Makefile.html">Makefile</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -23,13 +23,6 @@ DOC_MAN5 = $(patsubst %.txt,%,$(MAN5_TXT))
+</a> DOC_HTML = $(patsubst %.txt,%.html,$(MAN_TXT))
+ DOC_PDF  = $(patsubst %.txt,%.pdf,$(MAN_TXT))
+ 
+<a href="#h1-0-3" id="h1-0-3" class="d">-# Define NO_STRCASESTR if you don&#39;t have strcasestr.
+</a><a href="#h1-0-4" id="h1-0-4" class="d">-#
+</a><a href="#h1-0-5" id="h1-0-5" class="d">-# Define NO_OPENSSL to disable linking with OpenSSL and use bundled SHA1
+</a><a href="#h1-0-6" id="h1-0-6" class="d">-# implementation (slower).
+</a><a href="#h1-0-7" id="h1-0-7" class="d">-#
+</a><a href="#h1-0-8" id="h1-0-8" class="d">-# Define NEEDS_LIBICONV if linking with libc is not enough (eg. Darwin).
+</a><a href="#h1-0-9" id="h1-0-9" class="d">-#
+</a> # Define NO_C99_FORMAT if your formatted IO functions (printf/scanf et.al.)
+ # do not support the &#39;size specifiers&#39; introduced by C99, namely ll, hh,
+ # j, z, t. (representing long long int, char, intmax_t, size_t, ptrdiff_t).
+<a href="#h1-1" id="h1-1" class="h">@@ -39,22 +32,12 @@ DOC_PDF  = $(patsubst %.txt,%.pdf,$(MAN_TXT))
+</a> #-include config.mak
+ 
+ #
+<a href="#h1-1-3" id="h1-1-3" class="d">-# Platform specific tweaks
+</a><a href="#h1-1-4" id="h1-1-4" class="d">-#
+</a><a href="#h1-1-5" id="h1-1-5" class="d">-
+</a><a href="#h1-1-6" id="h1-1-6" class="d">-VERSION: force-version
+</a><a href="#h1-1-7" id="h1-1-7" class="d">-	@./gen-version.sh &quot;$(CGIT_VERSION)&quot;
+</a><a href="#h1-1-8" id="h1-1-8" class="d">--include VERSION
+</a><a href="#h1-1-9" id="h1-1-9" class="d">-
+</a><a href="#h1-1-10" id="h1-1-10" class="d">-uname_S := $(shell sh -c &#39;uname -s 2&gt;/dev/null || echo not&#39;)
+</a><a href="#h1-1-11" id="h1-1-11" class="d">-uname_O := $(shell sh -c &#39;uname -o 2&gt;/dev/null || echo not&#39;)
+</a><a href="#h1-1-12" id="h1-1-12" class="d">-uname_R := $(shell sh -c &#39;uname -r 2&gt;/dev/null || echo not&#39;)
+</a><a href="#h1-1-13" id="h1-1-13" class="d">-
+</a><a href="#h1-1-14" id="h1-1-14" class="d">-#
+</a> # Let the user override the above settings.
+ #
+ -include cgit.conf
+ 
+<a href="#h1-1-19" id="h1-1-19" class="i">+export CGIT_SCRIPT_NAME CGIT_SCRIPT_PATH CGIT_DATA_PATH CGIT_CONFIG CACHE_ROOT
+</a><a href="#h1-1-20" id="h1-1-20" class="i">+
+</a> #
+ # Define a way to invoke make in subdirs quietly, shamelessly ripped
+ # from git.git
+<a href="#h1-2" id="h1-2" class="h">@@ -69,8 +52,6 @@ NO_SUBDIR = :
+</a> endif
+ 
+ ifndef V
+<a href="#h1-2-3" id="h1-2-3" class="d">-	QUIET_CC       = @echo &#39;   &#39; CC $@;
+</a><a href="#h1-2-4" id="h1-2-4" class="d">-	QUIET_LINK     = @echo &#39;   &#39; LINK $@;
+</a> 	QUIET_SUBDIR0  = +@subdir=
+ 	QUIET_SUBDIR1  = ;$(NO_SUBDIR) echo &#39;   &#39; SUBDIR $$subdir; \
+ 			 $(MAKE) $(PRINT_DIR) -C $$subdir
+<a href="#h1-3" id="h1-3" class="h">@@ -78,107 +59,12 @@ ifndef V
+</a> 	export V
+ endif
+ 
+<a href="#h1-3-3" id="h1-3-3" class="d">-LDFLAGS ?=
+</a><a href="#h1-3-4" id="h1-3-4" class="d">-CFLAGS ?= -g -Wall
+</a><a href="#h1-3-5" id="h1-3-5" class="d">-CFLAGS += -Igit
+</a><a href="#h1-3-6" id="h1-3-6" class="d">-CFLAGS += -DSHA1_HEADER=&#39;$(SHA1_HEADER)&#39;
+</a><a href="#h1-3-7" id="h1-3-7" class="d">-CFLAGS += -DCGIT_VERSION=&#39;&quot;$(CGIT_VERSION)&quot;&#39;
+</a><a href="#h1-3-8" id="h1-3-8" class="d">-CFLAGS += -DCGIT_CONFIG=&#39;&quot;$(CGIT_CONFIG)&quot;&#39;
+</a><a href="#h1-3-9" id="h1-3-9" class="d">-CFLAGS += -DCGIT_SCRIPT_NAME=&#39;&quot;$(CGIT_SCRIPT_NAME)&quot;&#39;
+</a><a href="#h1-3-10" id="h1-3-10" class="d">-CFLAGS += -DCGIT_CACHE_ROOT=&#39;&quot;$(CACHE_ROOT)&quot;&#39;
+</a><a href="#h1-3-11" id="h1-3-11" class="d">-
+</a><a href="#h1-3-12" id="h1-3-12" class="d">-ifeq ($(uname_O),Cygwin)
+</a><a href="#h1-3-13" id="h1-3-13" class="d">-	NO_STRCASESTR = YesPlease
+</a><a href="#h1-3-14" id="h1-3-14" class="d">-	NEEDS_LIBICONV = YesPlease
+</a><a href="#h1-3-15" id="h1-3-15" class="d">-endif
+</a><a href="#h1-3-16" id="h1-3-16" class="d">-
+</a><a href="#h1-3-17" id="h1-3-17" class="d">-ifeq ($(uname_S),$(filter $(uname_S),FreeBSD OpenBSD))
+</a><a href="#h1-3-18" id="h1-3-18" class="d">-	# Apparantly libiconv is installed in /usr/local on BSD
+</a><a href="#h1-3-19" id="h1-3-19" class="d">-	LDFLAGS += -L/usr/local/lib
+</a><a href="#h1-3-20" id="h1-3-20" class="d">-	CFLAGS += -I/usr/local/include
+</a><a href="#h1-3-21" id="h1-3-21" class="d">-	NEEDS_LIBICONV = yes
+</a><a href="#h1-3-22" id="h1-3-22" class="d">-endif
+</a><a href="#h1-3-23" id="h1-3-23" class="d">-
+</a><a href="#h1-3-24" id="h1-3-24" class="d">-GIT_OPTIONS = prefix=/usr NO_GETTEXT=1
+</a><a href="#h1-3-25" id="h1-3-25" class="d">-OBJECTS =
+</a><a href="#h1-3-26" id="h1-3-26" class="d">-
+</a><a href="#h1-3-27" id="h1-3-27" class="d">-ifdef NO_ICONV
+</a><a href="#h1-3-28" id="h1-3-28" class="d">-	CFLAGS += -DNO_ICONV
+</a><a href="#h1-3-29" id="h1-3-29" class="d">-endif
+</a><a href="#h1-3-30" id="h1-3-30" class="d">-ifdef NO_STRCASESTR
+</a><a href="#h1-3-31" id="h1-3-31" class="d">-	CFLAGS += -DNO_STRCASESTR
+</a><a href="#h1-3-32" id="h1-3-32" class="d">-endif
+</a><a href="#h1-3-33" id="h1-3-33" class="d">-ifdef NO_C99_FORMAT
+</a><a href="#h1-3-34" id="h1-3-34" class="d">-	CFLAGS += -DNO_C99_FORMAT
+</a><a href="#h1-3-35" id="h1-3-35" class="d">-endif
+</a><a href="#h1-3-36" id="h1-3-36" class="d">-ifdef NO_OPENSSL
+</a><a href="#h1-3-37" id="h1-3-37" class="d">-	CFLAGS += -DNO_OPENSSL
+</a><a href="#h1-3-38" id="h1-3-38" class="d">-	GIT_OPTIONS += NO_OPENSSL=1
+</a><a href="#h1-3-39" id="h1-3-39" class="d">-else
+</a><a href="#h1-3-40" id="h1-3-40" class="d">-	LDLIBS += -lcrypto
+</a><a href="#h1-3-41" id="h1-3-41" class="d">-endif
+</a><a href="#h1-3-42" id="h1-3-42" class="d">-
+</a><a href="#h1-3-43" id="h1-3-43" class="d">-ifdef NEEDS_LIBICONV
+</a><a href="#h1-3-44" id="h1-3-44" class="d">-	LDLIBS += -liconv
+</a><a href="#h1-3-45" id="h1-3-45" class="d">-endif
+</a><a href="#h1-3-46" id="h1-3-46" class="d">-
+</a><a href="#h1-3-47" id="h1-3-47" class="d">-LDLIBS += git/libgit.a git/xdiff/lib.a -lz -lpthread
+</a><a href="#h1-3-48" id="h1-3-48" class="d">-
+</a><a href="#h1-3-49" id="h1-3-49" class="d">-OBJECTS += cgit.o
+</a><a href="#h1-3-50" id="h1-3-50" class="d">-OBJECTS += cache.o
+</a><a href="#h1-3-51" id="h1-3-51" class="d">-OBJECTS += cmd.o
+</a><a href="#h1-3-52" id="h1-3-52" class="d">-OBJECTS += configfile.o
+</a><a href="#h1-3-53" id="h1-3-53" class="d">-OBJECTS += html.o
+</a><a href="#h1-3-54" id="h1-3-54" class="d">-OBJECTS += parsing.o
+</a><a href="#h1-3-55" id="h1-3-55" class="d">-OBJECTS += scan-tree.o
+</a><a href="#h1-3-56" id="h1-3-56" class="d">-OBJECTS += shared.o
+</a><a href="#h1-3-57" id="h1-3-57" class="d">-OBJECTS += ui-atom.o
+</a><a href="#h1-3-58" id="h1-3-58" class="d">-OBJECTS += ui-blob.o
+</a><a href="#h1-3-59" id="h1-3-59" class="d">-OBJECTS += ui-clone.o
+</a><a href="#h1-3-60" id="h1-3-60" class="d">-OBJECTS += ui-commit.o
+</a><a href="#h1-3-61" id="h1-3-61" class="d">-OBJECTS += ui-diff.o
+</a><a href="#h1-3-62" id="h1-3-62" class="d">-OBJECTS += ui-log.o
+</a><a href="#h1-3-63" id="h1-3-63" class="d">-OBJECTS += ui-patch.o
+</a><a href="#h1-3-64" id="h1-3-64" class="d">-OBJECTS += ui-plain.o
+</a><a href="#h1-3-65" id="h1-3-65" class="d">-OBJECTS += ui-refs.o
+</a><a href="#h1-3-66" id="h1-3-66" class="d">-OBJECTS += ui-repolist.o
+</a><a href="#h1-3-67" id="h1-3-67" class="d">-OBJECTS += ui-shared.o
+</a><a href="#h1-3-68" id="h1-3-68" class="d">-OBJECTS += ui-snapshot.o
+</a><a href="#h1-3-69" id="h1-3-69" class="d">-OBJECTS += ui-ssdiff.o
+</a><a href="#h1-3-70" id="h1-3-70" class="d">-OBJECTS += ui-stats.o
+</a><a href="#h1-3-71" id="h1-3-71" class="d">-OBJECTS += ui-summary.o
+</a><a href="#h1-3-72" id="h1-3-72" class="d">-OBJECTS += ui-tag.o
+</a><a href="#h1-3-73" id="h1-3-73" class="d">-OBJECTS += ui-tree.o
+</a><a href="#h1-3-74" id="h1-3-74" class="d">-OBJECTS += vector.o
+</a><a href="#h1-3-75" id="h1-3-75" class="d">-
+</a><a href="#h1-3-76" id="h1-3-76" class="d">-dep_files := $(foreach f,$(OBJECTS),$(dir $f).deps/$(notdir $f).d)
+</a><a href="#h1-3-77" id="h1-3-77" class="d">-dep_dirs := $(addsuffix .deps,$(sort $(dir $OBJECTS)))
+</a><a href="#h1-3-78" id="h1-3-78" class="d">-
+</a><a href="#h1-3-79" id="h1-3-79" class="d">-$(dep_dirs):
+</a><a href="#h1-3-80" id="h1-3-80" class="d">-	@mkdir -p $@
+</a><a href="#h1-3-81" id="h1-3-81" class="d">-
+</a><a href="#h1-3-82" id="h1-3-82" class="d">-missing_dep_dirs := $(filter-out $(wildcard $(dep_dirs)),$(dep_dirs))
+</a><a href="#h1-3-83" id="h1-3-83" class="d">-dep_file = $(dir $@).deps/$(notdir $@).d
+</a><a href="#h1-3-84" id="h1-3-84" class="d">-dep_args = -MF $(dep_file) -MMD -MP
+</a><a href="#h1-3-85" id="h1-3-85" class="d">-
+</a> .SUFFIXES:
+ 
+<a href="#h1-3-88" id="h1-3-88" class="d">-$(OBJECTS): %.o: %.c $(missing_dep_dirs)
+</a><a href="#h1-3-89" id="h1-3-89" class="d">-	$(QUIET_CC)$(CC) -o $*.o -c $(dep_args) $(CFLAGS) $&lt;
+</a><a href="#h1-3-90" id="h1-3-90" class="d">-
+</a><a href="#h1-3-91" id="h1-3-91" class="d">-dep_files_present := $(wildcard $(dep_files))
+</a><a href="#h1-3-92" id="h1-3-92" class="d">-ifneq ($(dep_files_present),)
+</a><a href="#h1-3-93" id="h1-3-93" class="d">-include $(dep_files_present)
+</a><a href="#h1-3-94" id="h1-3-94" class="d">-endif
+</a><a href="#h1-3-95" id="h1-3-95" class="d">-
+</a> all:: cgit
+ 
+<a href="#h1-3-98" id="h1-3-98" class="d">-cgit: VERSION $(OBJECTS) libgit
+</a><a href="#h1-3-99" id="h1-3-99" class="d">-	$(QUIET_LINK)$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(OBJECTS) $(LDLIBS)
+</a><a href="#h1-3-100" id="h1-3-100" class="d">-
+</a><a href="#h1-3-101" id="h1-3-101" class="d">-libgit:
+</a><a href="#h1-3-102" id="h1-3-102" class="d">-	$(QUIET_SUBDIR0)git $(QUIET_SUBDIR1) NO_CURL=1 $(GIT_OPTIONS) libgit.a
+</a><a href="#h1-3-103" id="h1-3-103" class="d">-	$(QUIET_SUBDIR0)git $(QUIET_SUBDIR1) NO_CURL=1 $(GIT_OPTIONS) xdiff/lib.a
+</a><a href="#h1-3-104" id="h1-3-104" class="i">+cgit:
+</a><a href="#h1-3-105" id="h1-3-105" class="i">+	$(QUIET_SUBDIR0)git $(QUIET_SUBDIR1) -f ../cgit.mk ../cgit NO_CURL=1
+</a> 
+ test: all
+ 	$(QUIET_SUBDIR0)tests $(QUIET_SUBDIR1) all
+<a href="#h1-4" id="h1-4" class="h">@@ -259,7 +145,7 @@ get-git:
+</a> tags:
+ 	$(QUIET_TAGS)find . -name &#39;*.[ch]&#39; | xargs ctags
+ 
+<a href="#h1-4-3" id="h1-4-3" class="d">-.PHONY: all cgit get-git libgit force-version
+</a><a href="#h1-4-4" id="h1-4-4" class="i">+.PHONY: all cgit get-git
+</a> .PHONY: clean clean-doc cleanall
+ .PHONY: doc doc-html doc-man doc-pdf
+ .PHONY: install install-doc install-html install-man install-pdf
+<b>diff --git a/<a id="h2" href="../file/cgit.mk.html">cgit.mk</a> b/<a href="../file/cgit.mk.html">cgit.mk</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -0,0 +1,74 @@
+</a><a href="#h2-0-0" id="h2-0-0" class="i">+# This Makefile is run in the &quot;git&quot; directory in order to re-use Git&#39;s
+</a><a href="#h2-0-1" id="h2-0-1" class="i">+# build variables and operating system detection.  Hence all files in
+</a><a href="#h2-0-2" id="h2-0-2" class="i">+# CGit&#39;s directory must be prefixed with &quot;../&quot;.
+</a><a href="#h2-0-3" id="h2-0-3" class="i">+include Makefile
+</a><a href="#h2-0-4" id="h2-0-4" class="i">+
+</a><a href="#h2-0-5" id="h2-0-5" class="i">+CGIT_PREFIX = ../
+</a><a href="#h2-0-6" id="h2-0-6" class="i">+
+</a><a href="#h2-0-7" id="h2-0-7" class="i">+# The CGIT_* variables are inherited when this file is called from the
+</a><a href="#h2-0-8" id="h2-0-8" class="i">+# main Makefile - they are defined there.
+</a><a href="#h2-0-9" id="h2-0-9" class="i">+
+</a><a href="#h2-0-10" id="h2-0-10" class="i">+$(CGIT_PREFIX)VERSION: force-version
+</a><a href="#h2-0-11" id="h2-0-11" class="i">+	@cd $(CGIT_PREFIX) &amp;&amp; ./gen-version.sh &quot;$(CGIT_VERSION)&quot;
+</a><a href="#h2-0-12" id="h2-0-12" class="i">+-include $(CGIT_PREFIX)VERSION
+</a><a href="#h2-0-13" id="h2-0-13" class="i">+.PHONY: force-version
+</a><a href="#h2-0-14" id="h2-0-14" class="i">+
+</a><a href="#h2-0-15" id="h2-0-15" class="i">+# CGIT_CFLAGS is a separate variable so that we can track it separately
+</a><a href="#h2-0-16" id="h2-0-16" class="i">+# and avoid rebuilding all of Git when these variables change.
+</a><a href="#h2-0-17" id="h2-0-17" class="i">+CGIT_CFLAGS += -DCGIT_VERSION=&#39;&quot;$(CGIT_VERSION)&quot;&#39;
+</a><a href="#h2-0-18" id="h2-0-18" class="i">+CGIT_CFLAGS += -DCGIT_CONFIG=&#39;&quot;$(CGIT_CONFIG)&quot;&#39;
+</a><a href="#h2-0-19" id="h2-0-19" class="i">+CGIT_CFLAGS += -DCGIT_SCRIPT_NAME=&#39;&quot;$(CGIT_SCRIPT_NAME)&quot;&#39;
+</a><a href="#h2-0-20" id="h2-0-20" class="i">+CGIT_CFLAGS += -DCGIT_CACHE_ROOT=&#39;&quot;$(CACHE_ROOT)&quot;&#39;
+</a><a href="#h2-0-21" id="h2-0-21" class="i">+
+</a><a href="#h2-0-22" id="h2-0-22" class="i">+ifdef NO_C99_FORMAT
+</a><a href="#h2-0-23" id="h2-0-23" class="i">+	CFLAGS += -DNO_C99_FORMAT
+</a><a href="#h2-0-24" id="h2-0-24" class="i">+endif
+</a><a href="#h2-0-25" id="h2-0-25" class="i">+
+</a><a href="#h2-0-26" id="h2-0-26" class="i">+CGIT_OBJ_NAMES += cgit.o
+</a><a href="#h2-0-27" id="h2-0-27" class="i">+CGIT_OBJ_NAMES += cache.o
+</a><a href="#h2-0-28" id="h2-0-28" class="i">+CGIT_OBJ_NAMES += cmd.o
+</a><a href="#h2-0-29" id="h2-0-29" class="i">+CGIT_OBJ_NAMES += configfile.o
+</a><a href="#h2-0-30" id="h2-0-30" class="i">+CGIT_OBJ_NAMES += html.o
+</a><a href="#h2-0-31" id="h2-0-31" class="i">+CGIT_OBJ_NAMES += parsing.o
+</a><a href="#h2-0-32" id="h2-0-32" class="i">+CGIT_OBJ_NAMES += scan-tree.o
+</a><a href="#h2-0-33" id="h2-0-33" class="i">+CGIT_OBJ_NAMES += shared.o
+</a><a href="#h2-0-34" id="h2-0-34" class="i">+CGIT_OBJ_NAMES += ui-atom.o
+</a><a href="#h2-0-35" id="h2-0-35" class="i">+CGIT_OBJ_NAMES += ui-blob.o
+</a><a href="#h2-0-36" id="h2-0-36" class="i">+CGIT_OBJ_NAMES += ui-clone.o
+</a><a href="#h2-0-37" id="h2-0-37" class="i">+CGIT_OBJ_NAMES += ui-commit.o
+</a><a href="#h2-0-38" id="h2-0-38" class="i">+CGIT_OBJ_NAMES += ui-diff.o
+</a><a href="#h2-0-39" id="h2-0-39" class="i">+CGIT_OBJ_NAMES += ui-log.o
+</a><a href="#h2-0-40" id="h2-0-40" class="i">+CGIT_OBJ_NAMES += ui-patch.o
+</a><a href="#h2-0-41" id="h2-0-41" class="i">+CGIT_OBJ_NAMES += ui-plain.o
+</a><a href="#h2-0-42" id="h2-0-42" class="i">+CGIT_OBJ_NAMES += ui-refs.o
+</a><a href="#h2-0-43" id="h2-0-43" class="i">+CGIT_OBJ_NAMES += ui-repolist.o
+</a><a href="#h2-0-44" id="h2-0-44" class="i">+CGIT_OBJ_NAMES += ui-shared.o
+</a><a href="#h2-0-45" id="h2-0-45" class="i">+CGIT_OBJ_NAMES += ui-snapshot.o
+</a><a href="#h2-0-46" id="h2-0-46" class="i">+CGIT_OBJ_NAMES += ui-ssdiff.o
+</a><a href="#h2-0-47" id="h2-0-47" class="i">+CGIT_OBJ_NAMES += ui-stats.o
+</a><a href="#h2-0-48" id="h2-0-48" class="i">+CGIT_OBJ_NAMES += ui-summary.o
+</a><a href="#h2-0-49" id="h2-0-49" class="i">+CGIT_OBJ_NAMES += ui-tag.o
+</a><a href="#h2-0-50" id="h2-0-50" class="i">+CGIT_OBJ_NAMES += ui-tree.o
+</a><a href="#h2-0-51" id="h2-0-51" class="i">+CGIT_OBJ_NAMES += vector.o
+</a><a href="#h2-0-52" id="h2-0-52" class="i">+
+</a><a href="#h2-0-53" id="h2-0-53" class="i">+CGIT_OBJS := $(addprefix $(CGIT_PREFIX),$(CGIT_OBJ_NAMES))
+</a><a href="#h2-0-54" id="h2-0-54" class="i">+
+</a><a href="#h2-0-55" id="h2-0-55" class="i">+ifeq ($(wildcard $(CGIT_PREFIX).depend),)
+</a><a href="#h2-0-56" id="h2-0-56" class="i">+missing_dep_dirs += $(CGIT_PREFIX).depend
+</a><a href="#h2-0-57" id="h2-0-57" class="i">+endif
+</a><a href="#h2-0-58" id="h2-0-58" class="i">+
+</a><a href="#h2-0-59" id="h2-0-59" class="i">+$(CGIT_PREFIX).depend:
+</a><a href="#h2-0-60" id="h2-0-60" class="i">+	@mkdir -p $@
+</a><a href="#h2-0-61" id="h2-0-61" class="i">+
+</a><a href="#h2-0-62" id="h2-0-62" class="i">+$(CGIT_PREFIX)CGIT-CFLAGS: FORCE
+</a><a href="#h2-0-63" id="h2-0-63" class="i">+	@FLAGS=&#39;$(subst &#39;,&#39;\&#39;&#39;,$(CGIT_CFLAGS))&#39;; \
+</a><a href="#h2-0-64" id="h2-0-64" class="i">+	    if test x&quot;$$FLAGS&quot; != x&quot;`cat ../CGIT-CFLAGS 2&gt;/dev/null`&quot; ; then \
+</a><a href="#h2-0-65" id="h2-0-65" class="i">+		echo 1&gt;&amp;2 &quot;    * new CGit build flags&quot;; \
+</a><a href="#h2-0-66" id="h2-0-66" class="i">+		echo &quot;$$FLAGS&quot; &gt;$(CGIT_PREFIX)CGIT-CFLAGS; \
+</a><a href="#h2-0-67" id="h2-0-67" class="i">+            fi
+</a><a href="#h2-0-68" id="h2-0-68" class="i">+
+</a><a href="#h2-0-69" id="h2-0-69" class="i">+$(CGIT_OBJS): %.o: %.c GIT-CFLAGS $(CGIT_PREFIX)CGIT-CFLAGS $(missing_dep_dirs)
+</a><a href="#h2-0-70" id="h2-0-70" class="i">+	$(QUIET_CC)$(CC) -o $*.o -c $(dep_args) $(ALL_CFLAGS) $(EXTRA_CPPFLAGS) $(CGIT_CFLAGS) $&lt;
+</a><a href="#h2-0-71" id="h2-0-71" class="i">+
+</a><a href="#h2-0-72" id="h2-0-72" class="i">+$(CGIT_PREFIX)cgit: $(CGIT_OBJS) GIT-LDFLAGS $(GITLIBS)
+</a><a href="#h2-0-73" id="h2-0-73" class="i">+	$(QUIET_LINK)$(CC) $(ALL_CFLAGS) -o $@ $(ALL_LDFLAGS) $(filter %.o,$^) $(LIBS)
+</a></pre>
+</div>
+</body>
+</html>

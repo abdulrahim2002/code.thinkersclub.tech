@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Do not load user or system gitconfig and gitattributes - cgit - Web based git repository viewer
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="cgit.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="cgit.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Source+Code+Pro:ital,wght@0,200..900;1,200..900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/base16/tender.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script> hljs.highlightAll() ;</script>
+<style>pre code.hljs {display: inline;padding: 0;} code.hljs {padding: 0;} .hljs {background: initial;} .hljs-comment{color: rgb(96, 96, 96);}</style></head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>cgit</h1><span class="desc">Web based git repository viewer
+</span></td></tr><tr><td></td><td>
+<br>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/.gitmodules.html">Submodules</a> | <a href="../file/README.html">README</a> | <a href="../file/COPYING.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/8a92df033e974af6338b530a0d78d1bdb0b0f918.html">8a92df033e974af6338b530a0d78d1bdb0b0f918</a>
+<b>parent</b> <a href="../commit/fb3655df3bf85bd405c5921bbd4b3a54c705c839.html">fb3655df3bf85bd405c5921bbd4b3a54c705c839</a>
+<b>Author:</b> Jason A. Donenfeld &lt;<a href="mailto:Jason@zx2c4.com">Jason@zx2c4.com</a>&gt;
+<b>Date:</b>   Mon,  8 Apr 2013 21:12:19 +0200
+
+Do not load user or system gitconfig and gitattributes
+
+While doing any kind of git loading, unset HOME variables and set
+NOSYSTEM variables so that cgit does not load any settings that a user
+may have set for his own /usr/bin/git usage.
+
+This fixes a fatal error introduced with git 1.8, whereupon git would
+fatally exit when failing to access particular files.
+
+The result of this is that only repo-local configuration files are
+accessed:
+
+zx2c4@thinkpad ~/Projects/cgit $ HOME=/root QUERY_STRING=&quot;url=foo/log&quot;
+CGIT_CONFIG=tests/trash/cgitrc strace -e access ./cgit &gt;/dev/null
+access(&quot;/etc/ld.so.preload&quot;, R_OK)      = -1 ENOENT (No such file or directory)
+access(&quot;repos/foo/.git/objects&quot;, X_OK) = 0
+access(&quot;repos/foo/.git/refs&quot;, X_OK) = 0
+access(&quot;repos/foo/.git/config&quot;, R_OK) = 0
+access(&quot;repos/foo/.git/config&quot;, R_OK) = 0
+access(&quot;repos/foo/.git/objects/b3/bafdbf0183f4897ef8b1319cb8c490ed54717e&quot;, F_OK) = 0
+access(&quot;repos/foo/.git/objects/b3/bafdbf0183f4897ef8b1319cb8c490ed54717e&quot;, F_OK) = 0
+access(&quot;repos/foo/.git/objects/b3/bafdbf0183f4897ef8b1319cb8c490ed54717e&quot;, F_OK) = 0
+access(&quot;repos/foo/.git/objects/b3/bafdbf0183f4897ef8b1319cb8c490ed54717e&quot;, F_OK) = 0
++++ exited with 0 +++
+
+Reported-by: Ferry Huberts &lt;ferry.huberts@pelagic.nl&gt;
+Tested-by: Jason A. Donenfeld &lt;Jason@zx2c4.com&gt;
+Tested-by: Ferry Huberts &lt;ferry.huberts@pelagic.nl&gt;
+Signed-off-by: Jason A. Donenfeld &lt;Jason@zx2c4.com&gt;
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">cgit.c</a></td><td> | </td><td class="num">24</td><td><span class="i">++++++++++++++++++++++++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">ui-commit.c</a></td><td> | </td><td class="num">1</td><td><span class="i"></span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">ui-log.c</a></td><td> | </td><td class="num">1</td><td><span class="i"></span><span class="d">-</span></td></tr>
+</table></pre><pre>3 files changed, 24 insertions(+), 2 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/cgit.c.html">cgit.c</a> b/<a href="../file/cgit.c.html">cgit.c</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -459,12 +459,36 @@ static char *guess_defbranch(void)
+</a> 
+ static int prepare_repo_cmd(struct cgit_context *ctx)
+ {
+<a href="#h0-0-3" id="h0-0-3" class="i">+	char *user_home;
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+	char *xdg_home;
+</a> 	unsigned char sha1[20];
+ 	int nongit = 0;
+ 	int rc;
+ 
+<a href="#h0-0-9" id="h0-0-9" class="i">+	/* The path to the git repository. */
+</a> 	setenv(&quot;GIT_DIR&quot;, ctx-&gt;repo-&gt;path, 1);
+<a href="#h0-0-11" id="h0-0-11" class="i">+
+</a><a href="#h0-0-12" id="h0-0-12" class="i">+	/* Do not look in /etc/ for gitconfig and gitattributes. */
+</a><a href="#h0-0-13" id="h0-0-13" class="i">+	setenv(&quot;GIT_CONFIG_NOSYSTEM&quot;, &quot;1&quot;, 1);
+</a><a href="#h0-0-14" id="h0-0-14" class="i">+	setenv(&quot;GIT_ATTR_NOSYSTEM&quot;, &quot;1&quot;, 1);
+</a><a href="#h0-0-15" id="h0-0-15" class="i">+
+</a><a href="#h0-0-16" id="h0-0-16" class="i">+	/* We unset HOME and XDG_CONFIG_HOME before calling the git setup function
+</a><a href="#h0-0-17" id="h0-0-17" class="i">+	 * so that we don&#39;t make unneccessary filesystem accesses. */
+</a><a href="#h0-0-18" id="h0-0-18" class="i">+	user_home = getenv(&quot;HOME&quot;);
+</a><a href="#h0-0-19" id="h0-0-19" class="i">+	xdg_home = getenv(&quot;XDG_CONFIG_HOME&quot;);
+</a><a href="#h0-0-20" id="h0-0-20" class="i">+	unsetenv(&quot;HOME&quot;);
+</a><a href="#h0-0-21" id="h0-0-21" class="i">+	unsetenv(&quot;XDG_CONFIG_HOME&quot;);
+</a><a href="#h0-0-22" id="h0-0-22" class="i">+
+</a><a href="#h0-0-23" id="h0-0-23" class="i">+	/* Setup the git directory and initialize the notes system. Both of these
+</a><a href="#h0-0-24" id="h0-0-24" class="i">+	 * load local configuration from the git repository, so we do them both while
+</a><a href="#h0-0-25" id="h0-0-25" class="i">+	 * the HOME variables are unset. */
+</a> 	setup_git_directory_gently(&amp;nongit);
+<a href="#h0-0-27" id="h0-0-27" class="i">+	init_display_notes(NULL);
+</a><a href="#h0-0-28" id="h0-0-28" class="i">+
+</a><a href="#h0-0-29" id="h0-0-29" class="i">+	/* We restore the unset variables afterward. */
+</a><a href="#h0-0-30" id="h0-0-30" class="i">+	setenv(&quot;HOME&quot;, user_home, 1);
+</a><a href="#h0-0-31" id="h0-0-31" class="i">+	setenv(&quot;XDG_CONFIG_HOME&quot;, xdg_home, 1);
+</a><a href="#h0-0-32" id="h0-0-32" class="i">+
+</a> 	if (nongit) {
+ 		const char *name = ctx-&gt;repo-&gt;name;
+ 		rc = errno;
+<b>diff --git a/<a id="h1" href="../file/ui-commit.c.html">ui-commit.c</a> b/<a href="../file/ui-commit.c.html">ui-commit.c</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -37,7 +37,6 @@ void cgit_print_commit(char *hex, const char *prefix)
+</a> 	}
+ 	info = cgit_parse_commit(commit);
+ 
+<a href="#h1-0-3" id="h1-0-3" class="d">-	init_display_notes(NULL);
+</a> 	format_display_notes(sha1, &amp;notes, PAGE_ENCODING, 0);
+ 
+ 	load_ref_decorations(DECORATE_FULL_REFS);
+<b>diff --git a/<a id="h2" href="../file/ui-log.c.html">ui-log.c</a> b/<a href="../file/ui-log.c.html">ui-log.c</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -403,7 +403,6 @@ void cgit_print_log(const char *tip, int ofs, int cnt, char *grep, char *pattern
+</a> 		commit-&gt;parents = NULL;
+ 	}
+ 
+<a href="#h2-0-3" id="h2-0-3" class="d">-	init_display_notes(NULL);
+</a> 	for (i = 0; i &lt; cnt &amp;&amp; (commit = get_revision(&amp;rev)) != NULL; i++) {
+ 		print_commit(commit, &amp;rev);
+ 		free(commit-&gt;buffer);
+</pre>
+</div>
+</body>
+</html>

@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>cache: use sendfile() instead of a pair of read() + write() - cgit - Web based git repository viewer
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="cgit.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="cgit.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Source+Code+Pro:ital,wght@0,200..900;1,200..900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/base16/tender.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script> hljs.highlightAll() ;</script>
+<style>pre code.hljs {display: inline;padding: 0;} code.hljs {padding: 0;} .hljs {background: initial;} .hljs-comment{color: rgb(96, 96, 96);}</style></head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>cgit</h1><span class="desc">Web based git repository viewer
+</span></td></tr><tr><td></td><td>
+<br>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/.gitmodules.html">Submodules</a> | <a href="../file/README.html">README</a> | <a href="../file/COPYING.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/d3581b58890389794de5d5222c91a0129873e95c.html">d3581b58890389794de5d5222c91a0129873e95c</a>
+<b>parent</b> <a href="../commit/ea7210bef377be4ffb088a1a8e5a9dd354f82afb.html">ea7210bef377be4ffb088a1a8e5a9dd354f82afb</a>
+<b>Author:</b> Sebastian Andrzej Siewior &lt;<a href="mailto:sebastian@breakpoint.cc">sebastian@breakpoint.cc</a>&gt;
+<b>Date:</b>   Sat, 18 Jan 2014 21:24:58 +0100
+
+cache: use sendfile() instead of a pair of read() + write()
+
+sendfile() does the same job and avoids to copy the content into userland
+and back. One has to define NO_SENDFILE in case the OS (kernel / libc)
+does not supported. It is disabled by default on non-linux environemnts.
+According to the glibc, sendfile64() was added in Linux 2.4 (so it has
+been there for a while) but after browsing over the mapage of FreeBSD&#39;s I
+noticed that the prototype is little different.
+
+Signed-off-by: Sebastian Andrzej Siewior &lt;sebastian@breakpoint.cc&gt;
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">Makefile</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">cache.c</a></td><td> | </td><td class="num">26</td><td><span class="i">+++++++++++++++++++++++++</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">cgit.mk</a></td><td> | </td><td class="num">8</td><td><span class="i">++++++++</span><span class="d"></span></td></tr>
+</table></pre><pre>3 files changed, 34 insertions(+), 1 deletion(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/Makefile.html">Makefile</a> b/<a href="../file/Makefile.html">Makefile</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -29,6 +29,7 @@ DOC_PDF  = $(patsubst %.txt,%.pdf,$(MAN_TXT))
+</a> # j, z, t. (representing long long int, char, intmax_t, size_t, ptrdiff_t).
+ # some C compilers supported these specifiers prior to C99 as an extension.
+ #
+<a href="#h0-0-3" id="h0-0-3" class="i">+# Define HAVE_LINUX_SENDFILE to use sendfile()
+</a> 
+ #-include config.mak
+ 
+<b>diff --git a/<a id="h1" href="../file/cache.c.html">cache.c</a> b/<a href="../file/cache.c.html">cache.c</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -13,6 +13,9 @@
+</a>  *
+  */
+ 
+<a href="#h1-0-3" id="h1-0-3" class="i">+#ifdef HAVE_LINUX_SENDFILE
+</a><a href="#h1-0-4" id="h1-0-4" class="i">+#include &lt;sys/sendfile.h&gt;
+</a><a href="#h1-0-5" id="h1-0-5" class="i">+#endif
+</a> #include &quot;cgit.h&quot;
+ #include &quot;cache.h&quot;
+ #include &quot;html.h&quot;
+<a href="#h1-1" id="h1-1" class="h">@@ -30,7 +33,6 @@ struct cache_slot {
+</a> 	const char *lock_name;
+ 	int match;
+ 	struct stat cache_st;
+<a href="#h1-1-3" id="h1-1-3" class="d">-	struct stat lock_st;
+</a> 	int bufsize;
+ 	char buf[CACHE_BUFSIZE];
+ };
+<a href="#h1-2" id="h1-2" class="h">@@ -81,6 +83,23 @@ static int close_slot(struct cache_slot *slot)
+</a> /* Print the content of the active cache slot (but skip the key). */
+ static int print_slot(struct cache_slot *slot)
+ {
+<a href="#h1-2-3" id="h1-2-3" class="i">+#ifdef HAVE_LINUX_SENDFILE
+</a><a href="#h1-2-4" id="h1-2-4" class="i">+	off_t start_off;
+</a><a href="#h1-2-5" id="h1-2-5" class="i">+	int ret;
+</a><a href="#h1-2-6" id="h1-2-6" class="i">+
+</a><a href="#h1-2-7" id="h1-2-7" class="i">+	start_off = slot-&gt;keylen + 1;
+</a><a href="#h1-2-8" id="h1-2-8" class="i">+
+</a><a href="#h1-2-9" id="h1-2-9" class="i">+	do {
+</a><a href="#h1-2-10" id="h1-2-10" class="i">+		ret = sendfile(STDOUT_FILENO, slot-&gt;cache_fd, &amp;start_off,
+</a><a href="#h1-2-11" id="h1-2-11" class="i">+				slot-&gt;cache_st.st_size - start_off);
+</a><a href="#h1-2-12" id="h1-2-12" class="i">+		if (ret &lt; 0) {
+</a><a href="#h1-2-13" id="h1-2-13" class="i">+			if (errno == EAGAIN || errno == EINTR)
+</a><a href="#h1-2-14" id="h1-2-14" class="i">+				continue;
+</a><a href="#h1-2-15" id="h1-2-15" class="i">+			return errno;
+</a><a href="#h1-2-16" id="h1-2-16" class="i">+		}
+</a><a href="#h1-2-17" id="h1-2-17" class="i">+		return 0;
+</a><a href="#h1-2-18" id="h1-2-18" class="i">+	} while (1);
+</a><a href="#h1-2-19" id="h1-2-19" class="i">+#else
+</a> 	ssize_t i, j;
+ 
+ 	i = lseek(slot-&gt;cache_fd, slot-&gt;keylen + 1, SEEK_SET);
+<a href="#h1-3" id="h1-3" class="h">@@ -97,6 +116,7 @@ static int print_slot(struct cache_slot *slot)
+</a> 		return errno;
+ 	else
+ 		return 0;
+<a href="#h1-3-3" id="h1-3-3" class="i">+#endif
+</a> }
+ 
+ /* Check if the slot has expired */
+<a href="#h1-4" id="h1-4" class="h">@@ -188,6 +208,10 @@ static int fill_slot(struct cache_slot *slot)
+</a> 	/* Generate cache content */
+ 	slot-&gt;fn();
+ 
+<a href="#h1-4-3" id="h1-4-3" class="i">+	/* update stat info */
+</a><a href="#h1-4-4" id="h1-4-4" class="i">+	if (fstat(slot-&gt;lock_fd, &amp;slot-&gt;cache_st))
+</a><a href="#h1-4-5" id="h1-4-5" class="i">+		return errno;
+</a><a href="#h1-4-6" id="h1-4-6" class="i">+
+</a> 	/* Restore stdout */
+ 	if (dup2(tmp, STDOUT_FILENO) == -1)
+ 		return errno;
+<b>diff --git a/<a id="h2" href="../file/cgit.mk.html">cgit.mk</a> b/<a href="../file/cgit.mk.html">cgit.mk</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -68,6 +68,14 @@ ifeq ($(findstring BSD,$(uname_S)),)
+</a> 	CGIT_LIBS += -ldl
+ endif
+ 
+<a href="#h2-0-3" id="h2-0-3" class="i">+# glibc 2.1+ offers sendfile which the most common C library on Linux
+</a><a href="#h2-0-4" id="h2-0-4" class="i">+ifeq ($(uname_S),Linux)
+</a><a href="#h2-0-5" id="h2-0-5" class="i">+	HAVE_LINUX_SENDFILE = YesPlease
+</a><a href="#h2-0-6" id="h2-0-6" class="i">+endif
+</a><a href="#h2-0-7" id="h2-0-7" class="i">+
+</a><a href="#h2-0-8" id="h2-0-8" class="i">+ifdef HAVE_LINUX_SENDFILE
+</a><a href="#h2-0-9" id="h2-0-9" class="i">+	CGIT_CFLAGS += -DHAVE_LINUX_SENDFILE
+</a><a href="#h2-0-10" id="h2-0-10" class="i">+endif
+</a> 
+ CGIT_OBJ_NAMES += cgit.o
+ CGIT_OBJ_NAMES += cache.o
+</pre>
+</div>
+</body>
+</html>

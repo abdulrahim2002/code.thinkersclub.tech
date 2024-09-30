@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Add standard interface for file diff functions - cgit - Web based git repository viewer
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="cgit.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="cgit.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Source+Code+Pro:ital,wght@0,200..900;1,200..900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/base16/tender.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script> hljs.highlightAll() ;</script>
+<style>pre code.hljs {display: inline;padding: 0;} code.hljs {padding: 0;} .hljs {background: initial;} .hljs-comment{color: rgb(96, 96, 96);}</style></head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>cgit</h1><span class="desc">Web based git repository viewer
+</span></td></tr><tr><td></td><td>
+<br>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/.gitmodules.html">Submodules</a> | <a href="../file/README.html">README</a> | <a href="../file/COPYING.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/c4ef667961ef4668c9449124f97d55b9ac46c059.html">c4ef667961ef4668c9449124f97d55b9ac46c059</a>
+<b>parent</b> <a href="../commit/48dc00342effe3ba530ff6cbb79e5d0d5fc740fd.html">48dc00342effe3ba530ff6cbb79e5d0d5fc740fd</a>
+<b>Author:</b> Lars Hjemli &lt;<a href="mailto:hjemli@gmail.com">hjemli@gmail.com</a>&gt;
+<b>Date:</b>   Sun, 13 May 2007 14:21:19 +0200
+
+Add standard interface for file diff functions
+
+Signed-off-by: Lars Hjemli &lt;hjemli@gmail.com&gt;
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">cgit.h</a></td><td> | </td><td class="num">7</td><td><span class="i">+++++++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">shared.c</a></td><td> | </td><td class="num">79</td><td><span class="i">+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d"></span></td></tr>
+</table></pre><pre>2 files changed, 86 insertions(+), 0 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/cgit.h.html">cgit.h</a> b/<a href="../file/cgit.h.html">cgit.h</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -20,6 +20,7 @@
+</a> 
+ typedef void (*configfn)(const char *name, const char *value);
+ typedef void (*filepair_fn)(struct diff_filepair *pair);
+<a href="#h0-0-3" id="h0-0-3" class="i">+typedef void (*linediff_fn)(char *line, int len);
+</a> 
+ struct cacheitem {
+ 	char *name;
+<a href="#h0-1" id="h0-1" class="h">@@ -117,9 +118,15 @@ extern int chk_positive(int result, char *msg);
+</a> extern int hextoint(char c);
+ 
+ extern void *cgit_free_commitinfo(struct commitinfo *info);
+<a href="#h0-1-3" id="h0-1-3" class="i">+
+</a><a href="#h0-1-4" id="h0-1-4" class="i">+extern int cgit_diff_files(const unsigned char *old_sha1,
+</a><a href="#h0-1-5" id="h0-1-5" class="i">+			   const unsigned char *new_sha1,
+</a><a href="#h0-1-6" id="h0-1-6" class="i">+			   linediff_fn fn);
+</a><a href="#h0-1-7" id="h0-1-7" class="i">+
+</a> extern void cgit_diff_tree(const unsigned char *old_sha1,
+ 			   const unsigned char *new_sha1,
+ 			   filepair_fn fn);
+<a href="#h0-1-11" id="h0-1-11" class="i">+
+</a> extern void cgit_diff_commit(struct commit *commit, filepair_fn fn);
+ 
+ extern char *fmt(const char *format,...);
+<b>diff --git a/<a id="h1" href="../file/shared.c.html">shared.c</a> b/<a href="../file/shared.c.html">shared.c</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -207,6 +207,85 @@ void cgit_diff_tree_cb(struct diff_queue_struct *q,
+</a> 	}
+ }
+ 
+<a href="#h1-0-3" id="h1-0-3" class="i">+static int load_mmfile(mmfile_t *file, const unsigned char *sha1)
+</a><a href="#h1-0-4" id="h1-0-4" class="i">+{
+</a><a href="#h1-0-5" id="h1-0-5" class="i">+	enum object_type type;
+</a><a href="#h1-0-6" id="h1-0-6" class="i">+
+</a><a href="#h1-0-7" id="h1-0-7" class="i">+	if (is_null_sha1(sha1)) {
+</a><a href="#h1-0-8" id="h1-0-8" class="i">+		file-&gt;ptr = (char *)&quot;&quot;;
+</a><a href="#h1-0-9" id="h1-0-9" class="i">+		file-&gt;size = 0;
+</a><a href="#h1-0-10" id="h1-0-10" class="i">+	} else {
+</a><a href="#h1-0-11" id="h1-0-11" class="i">+		file-&gt;ptr = read_sha1_file(sha1, &amp;type, &amp;file-&gt;size);
+</a><a href="#h1-0-12" id="h1-0-12" class="i">+	}
+</a><a href="#h1-0-13" id="h1-0-13" class="i">+	return 1;
+</a><a href="#h1-0-14" id="h1-0-14" class="i">+}
+</a><a href="#h1-0-15" id="h1-0-15" class="i">+
+</a><a href="#h1-0-16" id="h1-0-16" class="i">+/*
+</a><a href="#h1-0-17" id="h1-0-17" class="i">+ * Receive diff-buffers from xdiff and concatenate them as
+</a><a href="#h1-0-18" id="h1-0-18" class="i">+ * needed across multiple callbacks.
+</a><a href="#h1-0-19" id="h1-0-19" class="i">+ *
+</a><a href="#h1-0-20" id="h1-0-20" class="i">+ * This is basically a copy of xdiff-interface.c/xdiff_outf(),
+</a><a href="#h1-0-21" id="h1-0-21" class="i">+ * ripped from git and modified to use globals instead of
+</a><a href="#h1-0-22" id="h1-0-22" class="i">+ * a special callback-struct.
+</a><a href="#h1-0-23" id="h1-0-23" class="i">+ */
+</a><a href="#h1-0-24" id="h1-0-24" class="i">+char *diffbuf = NULL;
+</a><a href="#h1-0-25" id="h1-0-25" class="i">+int buflen = 0;
+</a><a href="#h1-0-26" id="h1-0-26" class="i">+
+</a><a href="#h1-0-27" id="h1-0-27" class="i">+int filediff_cb(void *priv, mmbuffer_t *mb, int nbuf)
+</a><a href="#h1-0-28" id="h1-0-28" class="i">+{
+</a><a href="#h1-0-29" id="h1-0-29" class="i">+	int i;
+</a><a href="#h1-0-30" id="h1-0-30" class="i">+
+</a><a href="#h1-0-31" id="h1-0-31" class="i">+	for (i = 0; i &lt; nbuf; i++) {
+</a><a href="#h1-0-32" id="h1-0-32" class="i">+		if (mb[i].ptr[mb[i].size-1] != &#39;\n&#39;) {
+</a><a href="#h1-0-33" id="h1-0-33" class="i">+			/* Incomplete line */
+</a><a href="#h1-0-34" id="h1-0-34" class="i">+			diffbuf = xrealloc(diffbuf, buflen + mb[i].size);
+</a><a href="#h1-0-35" id="h1-0-35" class="i">+			memcpy(diffbuf + buflen, mb[i].ptr, mb[i].size);
+</a><a href="#h1-0-36" id="h1-0-36" class="i">+			buflen += mb[i].size;
+</a><a href="#h1-0-37" id="h1-0-37" class="i">+			continue;
+</a><a href="#h1-0-38" id="h1-0-38" class="i">+		}
+</a><a href="#h1-0-39" id="h1-0-39" class="i">+
+</a><a href="#h1-0-40" id="h1-0-40" class="i">+		/* we have a complete line */
+</a><a href="#h1-0-41" id="h1-0-41" class="i">+		if (!diffbuf) {
+</a><a href="#h1-0-42" id="h1-0-42" class="i">+			((linediff_fn)priv)(mb[i].ptr, mb[i].size);
+</a><a href="#h1-0-43" id="h1-0-43" class="i">+			continue;
+</a><a href="#h1-0-44" id="h1-0-44" class="i">+		}
+</a><a href="#h1-0-45" id="h1-0-45" class="i">+		diffbuf = xrealloc(diffbuf, buflen + mb[i].size);
+</a><a href="#h1-0-46" id="h1-0-46" class="i">+		memcpy(diffbuf + buflen, mb[i].ptr, mb[i].size);
+</a><a href="#h1-0-47" id="h1-0-47" class="i">+		((linediff_fn)priv)(diffbuf, buflen + mb[i].size);
+</a><a href="#h1-0-48" id="h1-0-48" class="i">+		free(diffbuf);
+</a><a href="#h1-0-49" id="h1-0-49" class="i">+		diffbuf = NULL;
+</a><a href="#h1-0-50" id="h1-0-50" class="i">+		buflen = 0;
+</a><a href="#h1-0-51" id="h1-0-51" class="i">+	}
+</a><a href="#h1-0-52" id="h1-0-52" class="i">+	if (diffbuf) {
+</a><a href="#h1-0-53" id="h1-0-53" class="i">+		((linediff_fn)priv)(diffbuf, buflen);
+</a><a href="#h1-0-54" id="h1-0-54" class="i">+		free(diffbuf);
+</a><a href="#h1-0-55" id="h1-0-55" class="i">+		diffbuf = NULL;
+</a><a href="#h1-0-56" id="h1-0-56" class="i">+		buflen = 0;
+</a><a href="#h1-0-57" id="h1-0-57" class="i">+	}
+</a><a href="#h1-0-58" id="h1-0-58" class="i">+	return 0;
+</a><a href="#h1-0-59" id="h1-0-59" class="i">+}
+</a><a href="#h1-0-60" id="h1-0-60" class="i">+
+</a><a href="#h1-0-61" id="h1-0-61" class="i">+int cgit_diff_files(const unsigned char *old_sha1,
+</a><a href="#h1-0-62" id="h1-0-62" class="i">+		     const unsigned char *new_sha1,
+</a><a href="#h1-0-63" id="h1-0-63" class="i">+		     linediff_fn fn)
+</a><a href="#h1-0-64" id="h1-0-64" class="i">+{
+</a><a href="#h1-0-65" id="h1-0-65" class="i">+	mmfile_t file1, file2;
+</a><a href="#h1-0-66" id="h1-0-66" class="i">+	xpparam_t diff_params;
+</a><a href="#h1-0-67" id="h1-0-67" class="i">+	xdemitconf_t emit_params;
+</a><a href="#h1-0-68" id="h1-0-68" class="i">+	xdemitcb_t emit_cb;
+</a><a href="#h1-0-69" id="h1-0-69" class="i">+
+</a><a href="#h1-0-70" id="h1-0-70" class="i">+	if (!load_mmfile(&amp;file1, old_sha1) || !load_mmfile(&amp;file2, new_sha1))
+</a><a href="#h1-0-71" id="h1-0-71" class="i">+		return 1;
+</a><a href="#h1-0-72" id="h1-0-72" class="i">+
+</a><a href="#h1-0-73" id="h1-0-73" class="i">+	diff_params.flags = XDF_NEED_MINIMAL;
+</a><a href="#h1-0-74" id="h1-0-74" class="i">+	emit_params.ctxlen = 3;
+</a><a href="#h1-0-75" id="h1-0-75" class="i">+	emit_params.flags = XDL_EMIT_FUNCNAMES;
+</a><a href="#h1-0-76" id="h1-0-76" class="i">+	emit_cb.outf = filediff_cb;
+</a><a href="#h1-0-77" id="h1-0-77" class="i">+	emit_cb.priv = fn;
+</a><a href="#h1-0-78" id="h1-0-78" class="i">+	xdl_diff(&amp;file1, &amp;file2, &amp;diff_params, &amp;emit_params, &amp;emit_cb);
+</a><a href="#h1-0-79" id="h1-0-79" class="i">+	return 0;
+</a><a href="#h1-0-80" id="h1-0-80" class="i">+}
+</a><a href="#h1-0-81" id="h1-0-81" class="i">+
+</a> void cgit_diff_tree(const unsigned char *old_sha1,
+ 		    const unsigned char *new_sha1,
+ 		    filepair_fn fn)
+</pre>
+</div>
+</body>
+</html>

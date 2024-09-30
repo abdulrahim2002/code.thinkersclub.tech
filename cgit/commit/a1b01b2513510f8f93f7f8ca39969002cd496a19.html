@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ui-log: try to disambiguate ref names - cgit - Web based git repository viewer
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="cgit.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="cgit.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Source+Code+Pro:ital,wght@0,200..900;1,200..900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/base16/tender.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script> hljs.highlightAll() ;</script>
+<style>pre code.hljs {display: inline;padding: 0;} code.hljs {padding: 0;} .hljs {background: initial;} .hljs-comment{color: rgb(96, 96, 96);}</style></head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>cgit</h1><span class="desc">Web based git repository viewer
+</span></td></tr><tr><td></td><td>
+<br>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/.gitmodules.html">Submodules</a> | <a href="../file/README.html">README</a> | <a href="../file/COPYING.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/a1b01b2513510f8f93f7f8ca39969002cd496a19.html">a1b01b2513510f8f93f7f8ca39969002cd496a19</a>
+<b>parent</b> <a href="../commit/c7d1402b177f4cf835e81f962e2faa3c9e28c549.html">c7d1402b177f4cf835e81f962e2faa3c9e28c549</a>
+<b>Author:</b> Lars Hjemli &lt;<a href="mailto:hjemli@gmail.com">hjemli@gmail.com</a>&gt;
+<b>Date:</b>   Wed,  3 Dec 2008 17:34:23 +0100
+
+ui-log: try to disambiguate ref names
+
+The &#39;h&#39; querystring parameter in cgit is normally used to specify
+a branch (i.e. a ref below refs/heads/), but if a repository contains
+a tag with the same name as a branch the output from ui-log would use
+the tag as start-revision.
+
+This patch tries to fix the issue by checking if the specified ref is
+valid as a branch name; if so, the full refname is used in the call
+to setup_revisions().
+
+Noticed-by: Takamori Yamaguchi &lt;akschar@gmail.com&gt;
+Signed-off-by: Lars Hjemli &lt;hjemli@gmail.com&gt;
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">ui-log.c</a></td><td> | </td><td class="num">17</td><td><span class="i">+++++++++++++++</span><span class="d">--</span></td></tr>
+</table></pre><pre>1 file changed, 15 insertions(+), 2 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/ui-log.c.html">ui-log.c</a> b/<a href="../file/ui-log.c.html">ui-log.c</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -64,18 +64,31 @@ void print_commit(struct commit *commit)
+</a> 	cgit_free_commitinfo(info);
+ }
+ 
+<a href="#h0-0-3" id="h0-0-3" class="i">+static const char *disambiguate_ref(const char *ref)
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+{
+</a><a href="#h0-0-5" id="h0-0-5" class="i">+	unsigned char sha1[20];
+</a><a href="#h0-0-6" id="h0-0-6" class="i">+	const char *longref;
+</a><a href="#h0-0-7" id="h0-0-7" class="i">+
+</a><a href="#h0-0-8" id="h0-0-8" class="i">+	longref = fmt(&quot;refs/heads/%s&quot;, ref);
+</a><a href="#h0-0-9" id="h0-0-9" class="i">+	if (get_sha1(longref, sha1) == 0)
+</a><a href="#h0-0-10" id="h0-0-10" class="i">+		return longref;
+</a><a href="#h0-0-11" id="h0-0-11" class="i">+
+</a><a href="#h0-0-12" id="h0-0-12" class="i">+	return ref;
+</a><a href="#h0-0-13" id="h0-0-13" class="i">+}
+</a> 
+ void cgit_print_log(const char *tip, int ofs, int cnt, char *grep, char *pattern,
+ 		    char *path, int pager)
+ {
+ 	struct rev_info rev;
+ 	struct commit *commit;
+<a href="#h0-0-20" id="h0-0-20" class="d">-	const char *argv[] = {NULL, tip, NULL, NULL, NULL};
+</a><a href="#h0-0-21" id="h0-0-21" class="i">+	const char *argv[] = {NULL, NULL, NULL, NULL, NULL};
+</a> 	int argc = 2;
+ 	int i, columns = 3;
+ 
+ 	if (!tip)
+<a href="#h0-0-26" id="h0-0-26" class="d">-		argv[1] = ctx.qry.head;
+</a><a href="#h0-0-27" id="h0-0-27" class="i">+		tip = ctx.qry.head;
+</a><a href="#h0-0-28" id="h0-0-28" class="i">+
+</a><a href="#h0-0-29" id="h0-0-29" class="i">+	argv[1] = disambiguate_ref(tip);
+</a> 
+ 	if (grep &amp;&amp; pattern &amp;&amp; (!strcmp(grep, &quot;grep&quot;) ||
+ 				!strcmp(grep, &quot;author&quot;) ||
+</pre>
+</div>
+</body>
+</html>

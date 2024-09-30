@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>filter: allow for cleanup hook for filter types - cgit - Web based git repository viewer
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="cgit.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="cgit.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Source+Code+Pro:ital,wght@0,200..900;1,200..900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/base16/tender.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script> hljs.highlightAll() ;</script>
+<style>pre code.hljs {display: inline;padding: 0;} code.hljs {padding: 0;} .hljs {background: initial;} .hljs-comment{color: rgb(96, 96, 96);}</style></head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>cgit</h1><span class="desc">Web based git repository viewer
+</span></td></tr><tr><td></td><td>
+<br>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/.gitmodules.html">Submodules</a> | <a href="../file/README.html">README</a> | <a href="../file/COPYING.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/d750c7a2c9bb83cfc47c0d74fcee61f0a5042aa9.html">d750c7a2c9bb83cfc47c0d74fcee61f0a5042aa9</a>
+<b>parent</b> <a href="../commit/4bb87cbf17588ec91b46bf0ef0be01672e9be787.html">4bb87cbf17588ec91b46bf0ef0be01672e9be787</a>
+<b>Author:</b> Jason A. Donenfeld &lt;<a href="mailto:Jason@zx2c4.com">Jason@zx2c4.com</a>&gt;
+<b>Date:</b>   Sun, 12 Jan 2014 20:58:21 +0100
+
+filter: allow for cleanup hook for filter types
+
+At some point, we&#39;re going to want to do lazy deallocation of filters.
+For example, if we implement lua, we&#39;ll want to load the lua runtime
+once for each filter, even if that filter is called many times.
+Similarly, for persistent exec filters, we&#39;ll want to load it once,
+despite many open_filter and close_filter calls, and only reap the child
+process at the end of the cgit process. For this reason, we add here a
+cleanup function that is called at the end of cgit&#39;s main().
+
+Signed-off-by: Jason A. Donenfeld &lt;Jason@zx2c4.com&gt;
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">cgit.c</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">cgit.h</a></td><td> | </td><td class="num">2</td><td><span class="i">++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">filter.c</a></td><td> | </td><td class="num">90</td><td><span class="i">+++++++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d">------------------------</span></td></tr>
+</table></pre><pre>3 files changed, 66 insertions(+), 27 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/cgit.c.html">cgit.c</a> b/<a href="../file/cgit.c.html">cgit.c</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -951,6 +951,7 @@ int main(int argc, const char **argv)
+</a> 		ctx.cfg.cache_size = 0;
+ 	err = cache_process(ctx.cfg.cache_size, ctx.cfg.cache_root,
+ 			    ctx.qry.raw, ttl, process_request, &amp;ctx);
+<a href="#h0-0-3" id="h0-0-3" class="i">+	cgit_cleanup_filters();
+</a> 	if (err)
+ 		cgit_print_error(&quot;Error processing page: %s (%d)&quot;,
+ 				 strerror(err), err);
+<b>diff --git a/<a id="h1" href="../file/cgit.h.html">cgit.h</a> b/<a href="../file/cgit.h.html">cgit.h</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -60,6 +60,7 @@ struct cgit_filter {
+</a> 	int (*open)(struct cgit_filter *, va_list ap);
+ 	int (*close)(struct cgit_filter *);
+ 	void (*fprintf)(struct cgit_filter *, FILE *, const char *prefix);
+<a href="#h1-0-3" id="h1-0-3" class="i">+	void (*cleanup)(struct cgit_filter *);
+</a> };
+ 
+ struct cgit_exec_filter {
+<a href="#h1-1" id="h1-1" class="h">@@ -355,6 +356,7 @@ extern int cgit_close_filter(struct cgit_filter *filter);
+</a> extern void cgit_fprintf_filter(struct cgit_filter *filter, FILE *f, const char *prefix);
+ extern void cgit_exec_filter_init(struct cgit_exec_filter *filter, char *cmd, char **argv);
+ extern struct cgit_filter *cgit_new_filter(const char *cmd, filter_type filtertype);
+<a href="#h1-1-3" id="h1-1-3" class="i">+extern void cgit_cleanup_filters(void);
+</a> 
+ extern void cgit_prepare_repo_env(struct cgit_repo * repo);
+ 
+<b>diff --git a/<a id="h2" href="../file/filter.c.html">filter.c</a> b/<a href="../file/filter.c.html">filter.c</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -13,6 +13,25 @@
+</a> #include &lt;string.h&gt;
+ #include &lt;stdlib.h&gt;
+ 
+<a href="#h2-0-3" id="h2-0-3" class="i">+static inline void reap_filter(struct cgit_filter *filter)
+</a><a href="#h2-0-4" id="h2-0-4" class="i">+{
+</a><a href="#h2-0-5" id="h2-0-5" class="i">+	if (filter &amp;&amp; filter-&gt;cleanup)
+</a><a href="#h2-0-6" id="h2-0-6" class="i">+		filter-&gt;cleanup(filter);
+</a><a href="#h2-0-7" id="h2-0-7" class="i">+}
+</a><a href="#h2-0-8" id="h2-0-8" class="i">+
+</a><a href="#h2-0-9" id="h2-0-9" class="i">+void cgit_cleanup_filters(void)
+</a><a href="#h2-0-10" id="h2-0-10" class="i">+{
+</a><a href="#h2-0-11" id="h2-0-11" class="i">+	int i;
+</a><a href="#h2-0-12" id="h2-0-12" class="i">+	reap_filter(ctx.cfg.about_filter);
+</a><a href="#h2-0-13" id="h2-0-13" class="i">+	reap_filter(ctx.cfg.commit_filter);
+</a><a href="#h2-0-14" id="h2-0-14" class="i">+	reap_filter(ctx.cfg.source_filter);
+</a><a href="#h2-0-15" id="h2-0-15" class="i">+	for (i = 0; i &lt; cgit_repolist.count; ++i) {
+</a><a href="#h2-0-16" id="h2-0-16" class="i">+		reap_filter(cgit_repolist.repos[i].about_filter);
+</a><a href="#h2-0-17" id="h2-0-17" class="i">+		reap_filter(cgit_repolist.repos[i].commit_filter);
+</a><a href="#h2-0-18" id="h2-0-18" class="i">+		reap_filter(cgit_repolist.repos[i].source_filter);
+</a><a href="#h2-0-19" id="h2-0-19" class="i">+	}
+</a><a href="#h2-0-20" id="h2-0-20" class="i">+}
+</a><a href="#h2-0-21" id="h2-0-21" class="i">+
+</a> static int open_exec_filter(struct cgit_filter *base, va_list ap)
+ {
+ 	struct cgit_exec_filter *filter = (struct cgit_exec_filter *) base;
+<a href="#h2-1" id="h2-1" class="h">@@ -67,34 +86,17 @@ static void fprintf_exec_filter(struct cgit_filter *base, FILE *f, const char *p
+</a> 	fprintf(f, &quot;%sexec:%s\n&quot;, prefix, filter-&gt;cmd);
+ }
+ 
+<a href="#h2-1-3" id="h2-1-3" class="d">-int cgit_open_filter(struct cgit_filter *filter, ...)
+</a><a href="#h2-1-4" id="h2-1-4" class="d">-{
+</a><a href="#h2-1-5" id="h2-1-5" class="d">-	int result;
+</a><a href="#h2-1-6" id="h2-1-6" class="d">-	va_list ap;
+</a><a href="#h2-1-7" id="h2-1-7" class="d">-	va_start(ap, filter);
+</a><a href="#h2-1-8" id="h2-1-8" class="d">-	result = filter-&gt;open(filter, ap);
+</a><a href="#h2-1-9" id="h2-1-9" class="d">-	va_end(ap);
+</a><a href="#h2-1-10" id="h2-1-10" class="d">-	return result;
+</a><a href="#h2-1-11" id="h2-1-11" class="d">-}
+</a><a href="#h2-1-12" id="h2-1-12" class="d">-
+</a><a href="#h2-1-13" id="h2-1-13" class="d">-int cgit_close_filter(struct cgit_filter *filter)
+</a><a href="#h2-1-14" id="h2-1-14" class="d">-{
+</a><a href="#h2-1-15" id="h2-1-15" class="d">-	return filter-&gt;close(filter);
+</a><a href="#h2-1-16" id="h2-1-16" class="d">-}
+</a><a href="#h2-1-17" id="h2-1-17" class="d">-
+</a><a href="#h2-1-18" id="h2-1-18" class="d">-void cgit_fprintf_filter(struct cgit_filter *filter, FILE *f, const char *prefix)
+</a><a href="#h2-1-19" id="h2-1-19" class="d">-{
+</a><a href="#h2-1-20" id="h2-1-20" class="d">-	filter-&gt;fprintf(filter, f, prefix);
+</a><a href="#h2-1-21" id="h2-1-21" class="d">-}
+</a><a href="#h2-1-22" id="h2-1-22" class="d">-
+</a><a href="#h2-1-23" id="h2-1-23" class="d">-void cgit_exec_filter_init(struct cgit_exec_filter *filter, char *cmd, char **argv)
+</a><a href="#h2-1-24" id="h2-1-24" class="i">+static void cleanup_exec_filter(struct cgit_filter *base)
+</a> {
+<a href="#h2-1-26" id="h2-1-26" class="d">-	memset(filter, 0, sizeof(*filter));
+</a><a href="#h2-1-27" id="h2-1-27" class="d">-	filter-&gt;base.open = open_exec_filter;
+</a><a href="#h2-1-28" id="h2-1-28" class="d">-	filter-&gt;base.close = close_exec_filter;
+</a><a href="#h2-1-29" id="h2-1-29" class="d">-	filter-&gt;base.fprintf = fprintf_exec_filter;
+</a><a href="#h2-1-30" id="h2-1-30" class="d">-	filter-&gt;cmd = cmd;
+</a><a href="#h2-1-31" id="h2-1-31" class="d">-	filter-&gt;argv = argv;
+</a><a href="#h2-1-32" id="h2-1-32" class="i">+	struct cgit_exec_filter *filter = (struct cgit_exec_filter *) base;
+</a><a href="#h2-1-33" id="h2-1-33" class="i">+	if (filter-&gt;argv) {
+</a><a href="#h2-1-34" id="h2-1-34" class="i">+		free(filter-&gt;argv);
+</a><a href="#h2-1-35" id="h2-1-35" class="i">+		filter-&gt;argv = NULL;
+</a><a href="#h2-1-36" id="h2-1-36" class="i">+	}
+</a><a href="#h2-1-37" id="h2-1-37" class="i">+	if (filter-&gt;cmd) {
+</a><a href="#h2-1-38" id="h2-1-38" class="i">+		free(filter-&gt;cmd);
+</a><a href="#h2-1-39" id="h2-1-39" class="i">+		filter-&gt;cmd = NULL;
+</a><a href="#h2-1-40" id="h2-1-40" class="i">+	}
+</a> }
+ 
+ static struct cgit_filter *new_exec_filter(const char *cmd, filter_type filtertype)
+<a href="#h2-2" id="h2-2" class="h">@@ -125,6 +127,39 @@ static struct cgit_filter *new_exec_filter(const char *cmd, filter_type filterty
+</a> 	return &amp;f-&gt;base;
+ }
+ 
+<a href="#h2-2-3" id="h2-2-3" class="i">+void cgit_exec_filter_init(struct cgit_exec_filter *filter, char *cmd, char **argv)
+</a><a href="#h2-2-4" id="h2-2-4" class="i">+{
+</a><a href="#h2-2-5" id="h2-2-5" class="i">+	memset(filter, 0, sizeof(*filter));
+</a><a href="#h2-2-6" id="h2-2-6" class="i">+	filter-&gt;base.open = open_exec_filter;
+</a><a href="#h2-2-7" id="h2-2-7" class="i">+	filter-&gt;base.close = close_exec_filter;
+</a><a href="#h2-2-8" id="h2-2-8" class="i">+	filter-&gt;base.fprintf = fprintf_exec_filter;
+</a><a href="#h2-2-9" id="h2-2-9" class="i">+	filter-&gt;base.cleanup = cleanup_exec_filter;
+</a><a href="#h2-2-10" id="h2-2-10" class="i">+	filter-&gt;cmd = cmd;
+</a><a href="#h2-2-11" id="h2-2-11" class="i">+	filter-&gt;argv = argv;
+</a><a href="#h2-2-12" id="h2-2-12" class="i">+}
+</a><a href="#h2-2-13" id="h2-2-13" class="i">+
+</a><a href="#h2-2-14" id="h2-2-14" class="i">+int cgit_open_filter(struct cgit_filter *filter, ...)
+</a><a href="#h2-2-15" id="h2-2-15" class="i">+{
+</a><a href="#h2-2-16" id="h2-2-16" class="i">+	int result;
+</a><a href="#h2-2-17" id="h2-2-17" class="i">+	va_list ap;
+</a><a href="#h2-2-18" id="h2-2-18" class="i">+	va_start(ap, filter);
+</a><a href="#h2-2-19" id="h2-2-19" class="i">+	result = filter-&gt;open(filter, ap);
+</a><a href="#h2-2-20" id="h2-2-20" class="i">+	va_end(ap);
+</a><a href="#h2-2-21" id="h2-2-21" class="i">+	return result;
+</a><a href="#h2-2-22" id="h2-2-22" class="i">+}
+</a><a href="#h2-2-23" id="h2-2-23" class="i">+
+</a><a href="#h2-2-24" id="h2-2-24" class="i">+int cgit_close_filter(struct cgit_filter *filter)
+</a><a href="#h2-2-25" id="h2-2-25" class="i">+{
+</a><a href="#h2-2-26" id="h2-2-26" class="i">+	return filter-&gt;close(filter);
+</a><a href="#h2-2-27" id="h2-2-27" class="i">+}
+</a><a href="#h2-2-28" id="h2-2-28" class="i">+
+</a><a href="#h2-2-29" id="h2-2-29" class="i">+void cgit_fprintf_filter(struct cgit_filter *filter, FILE *f, const char *prefix)
+</a><a href="#h2-2-30" id="h2-2-30" class="i">+{
+</a><a href="#h2-2-31" id="h2-2-31" class="i">+	filter-&gt;fprintf(filter, f, prefix);
+</a><a href="#h2-2-32" id="h2-2-32" class="i">+}
+</a><a href="#h2-2-33" id="h2-2-33" class="i">+
+</a><a href="#h2-2-34" id="h2-2-34" class="i">+
+</a><a href="#h2-2-35" id="h2-2-35" class="i">+
+</a> static const struct {
+ 	const char *prefix;
+ 	struct cgit_filter *(*ctor)(const char *cmd, filter_type filtertype);
+<a href="#h2-3" id="h2-3" class="h">@@ -161,3 +196,4 @@ struct cgit_filter *cgit_new_filter(const char *cmd, filter_type filtertype)
+</a> 
+ 	die(&quot;Invalid filter type: %.*s&quot;, (int) len, cmd);
+ }
+<a href="#h2-3-3" id="h2-3-3" class="i">+
+</a></pre>
+</div>
+</body>
+</html>

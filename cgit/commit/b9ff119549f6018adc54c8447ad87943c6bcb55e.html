@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>shared: fix bad free in cgit_diff_tree - cgit - Web based git repository viewer
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="cgit.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="cgit.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Source+Code+Pro:ital,wght@0,200..900;1,200..900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/base16/tender.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script> hljs.highlightAll() ;</script>
+<style>pre code.hljs {display: inline;padding: 0;} code.hljs {padding: 0;} .hljs {background: initial;} .hljs-comment{color: rgb(96, 96, 96);}</style></head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>cgit</h1><span class="desc">Web based git repository viewer
+</span></td></tr><tr><td></td><td>
+<br>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/.gitmodules.html">Submodules</a> | <a href="../file/README.html">README</a> | <a href="../file/COPYING.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/b9ff119549f6018adc54c8447ad87943c6bcb55e.html">b9ff119549f6018adc54c8447ad87943c6bcb55e</a>
+<b>parent</b> <a href="../commit/bb02e24ec23d7f1893fc746c8199e88ab849cf86.html">bb02e24ec23d7f1893fc746c8199e88ab849cf86</a>
+<b>Author:</b> June McEnroe &lt;<a href="mailto:june@causal.agency">june@causal.agency</a>&gt;
+<b>Date:</b>   Tue, 17 May 2022 21:50:53 +0000
+
+shared: fix bad free in cgit_diff_tree
+
+Since git commit 244c27242f44e6b88e3a381c90bde08d134c274b,
+
+&gt; diff.[ch]: have diff_free() call clear_pathspec(opts.pathspec)
+
+calling diff_flush calls free(3) on opts.pathspec.items, so it can&#39;t
+be a pointer to a stack variable.
+
+Signed-off-by: Christian Hesse &lt;mail@eworm.de&gt;
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">shared.c</a></td><td> | </td><td class="num">12</td><td><span class="i">+++++</span><span class="d">-------</span></td></tr>
+</table></pre><pre>1 file changed, 5 insertions(+), 7 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/shared.c.html">shared.c</a> b/<a href="../file/shared.c.html">shared.c</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -341,9 +341,8 @@ void cgit_diff_tree(const struct object_id *old_oid,
+</a> 		    filepair_fn fn, const char *prefix, int ignorews)
+ {
+ 	struct diff_options opt;
+<a href="#h0-0-3" id="h0-0-3" class="d">-	struct pathspec_item item;
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+	struct pathspec_item *item;
+</a> 
+<a href="#h0-0-6" id="h0-0-6" class="d">-	memset(&amp;item, 0, sizeof(item));
+</a> 	diff_setup(&amp;opt);
+ 	opt.output_format = DIFF_FORMAT_CALLBACK;
+ 	opt.detect_rename = 1;
+<a href="#h0-1" id="h0-1" class="h">@@ -354,10 +353,11 @@ void cgit_diff_tree(const struct object_id *old_oid,
+</a> 	opt.format_callback = cgit_diff_tree_cb;
+ 	opt.format_callback_data = fn;
+ 	if (prefix) {
+<a href="#h0-1-3" id="h0-1-3" class="d">-		item.match = xstrdup(prefix);
+</a><a href="#h0-1-4" id="h0-1-4" class="d">-		item.len = strlen(prefix);
+</a><a href="#h0-1-5" id="h0-1-5" class="i">+		item = xcalloc(1, sizeof(*item));
+</a><a href="#h0-1-6" id="h0-1-6" class="i">+		item-&gt;match = xstrdup(prefix);
+</a><a href="#h0-1-7" id="h0-1-7" class="i">+		item-&gt;len = strlen(prefix);
+</a> 		opt.pathspec.nr = 1;
+<a href="#h0-1-9" id="h0-1-9" class="d">-		opt.pathspec.items = &amp;item;
+</a><a href="#h0-1-10" id="h0-1-10" class="i">+		opt.pathspec.items = item;
+</a> 	}
+ 	diff_setup_done(&amp;opt);
+ 
+<a href="#h0-2" id="h0-2" class="h">@@ -367,8 +367,6 @@ void cgit_diff_tree(const struct object_id *old_oid,
+</a> 		diff_root_tree_oid(new_oid, &quot;&quot;, &amp;opt);
+ 	diffcore_std(&amp;opt);
+ 	diff_flush(&amp;opt);
+<a href="#h0-2-3" id="h0-2-3" class="d">-
+</a><a href="#h0-2-4" id="h0-2-4" class="d">-	free(item.match);
+</a> }
+ 
+ void cgit_diff_commit(struct commit *commit, filepair_fn fn, const char *prefix)
+</pre>
+</div>
+</body>
+</html>

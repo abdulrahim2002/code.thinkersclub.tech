@@ -1,0 +1,836 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Redesign the caching layer - cgit - Web based git repository viewer
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="cgit.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="cgit.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Source+Code+Pro:ital,wght@0,200..900;1,200..900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/base16/tender.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script> hljs.highlightAll() ;</script>
+<style>pre code.hljs {display: inline;padding: 0;} code.hljs {padding: 0;} .hljs {background: initial;} .hljs-comment{color: rgb(96, 96, 96);}</style></head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>cgit</h1><span class="desc">Web based git repository viewer
+</span></td></tr><tr><td></td><td>
+<br>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/.gitmodules.html">Submodules</a> | <a href="../file/README.html">README</a> | <a href="../file/COPYING.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/939d32fda70ea66c9db51687beb3cea6da7b0599.html">939d32fda70ea66c9db51687beb3cea6da7b0599</a>
+<b>parent</b> <a href="../commit/9ec5cd7944a7099515b7d41107007d6332a2540e.html">9ec5cd7944a7099515b7d41107007d6332a2540e</a>
+<b>Author:</b> Lars Hjemli &lt;<a href="mailto:hjemli@gmail.com">hjemli@gmail.com</a>&gt;
+<b>Date:</b>   Mon, 28 Apr 2008 11:32:42 +0200
+
+Redesign the caching layer
+
+The original caching layer in cgit has no upper bound on the number of
+concurrent cache entries, so when cgit is traversed by a spider (like the
+googlebot), the cache might end up filling your disk. Also, if any error
+occurs in the cache layer, no content is returned to the client.
+
+This patch redesigns the caching layer to avoid these flaws by
+* giving the cache a bound number of slots
+* disabling the cache for the current request when errors occur
+
+The cache size limit is implemented by hashing the querystring (the cache
+lookup key) and generating a cache filename based on this hash modulo the
+cache size. In order to detect hash collisions, the full lookup key (i.e.
+the querystring) is stored in the cache file (separated from its associated
+content by ascii 0).
+
+The cache filename is the reversed 8-digit hexadecimal representation of
+
+  hash(key) % cache_size
+
+which should make the filesystem lookup pretty fast (if directory content
+is indexed/sorted); reversing the representation avoids the problem where
+all keys have equal prefix.
+
+There is a new config option, cache-size, which sets the upper bound for
+the cache. Default value for this option is 0, which has the same effect
+as setting nocache=1 (hence nocache is now deprecated).
+
+Included in this patch is also a new testfile which verifies that the
+new option works as intended.
+
+Signed-off-by: Lars Hjemli &lt;hjemli@gmail.com&gt;
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">cache.c</a></td><td> | </td><td class="num">359</td><td><span class="i">++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d">---------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">cache.h</a></td><td> | </td><td class="num">33</td><td><span class="i">+++++++++++++++++++++</span><span class="d">------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">cgit.c</a></td><td> | </td><td class="num">166</td><td><span class="i">++++++++++++++++++</span><span class="d">-------------------------------------------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">cgit.h</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h4">tests/setup.sh</a></td><td> | </td><td class="num">2</td><td><span class="i">+</span><span class="d">-</span></td></tr>
+<tr><td class="A">A</td><td><a href="#h5">tests/t0020-validate-cache.sh</a></td><td> | </td><td class="num">67</td><td><span class="i">+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d"></span></td></tr>
+</table></pre><pre>6 files changed, 418 insertions(+), 210 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/cache.c.html">cache.c</a> b/<a href="../file/cache.c.html">cache.c</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -4,117 +4,340 @@
+</a>  *
+  * Licensed under GNU General Public License v2
+  *   (see COPYING for full license text)
+<a href="#h0-0-3" id="h0-0-3" class="i">+ *
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+ *
+</a><a href="#h0-0-5" id="h0-0-5" class="i">+ * The cache is just a directory structure where each file is a cache slot,
+</a><a href="#h0-0-6" id="h0-0-6" class="i">+ * and each filename is based on the hash of some key (e.g. the cgit url).
+</a><a href="#h0-0-7" id="h0-0-7" class="i">+ * Each file contains the full key followed by the cached content for that
+</a><a href="#h0-0-8" id="h0-0-8" class="i">+ * key.
+</a><a href="#h0-0-9" id="h0-0-9" class="i">+ *
+</a>  */
+ 
+ #include &quot;cgit.h&quot;
+ #include &quot;cache.h&quot;
+ 
+<a href="#h0-0-15" id="h0-0-15" class="d">-const int NOLOCK = -1;
+</a><a href="#h0-0-16" id="h0-0-16" class="i">+#define CACHE_BUFSIZE (1024 * 4)
+</a><a href="#h0-0-17" id="h0-0-17" class="i">+
+</a><a href="#h0-0-18" id="h0-0-18" class="i">+struct cache_slot {
+</a><a href="#h0-0-19" id="h0-0-19" class="i">+	const char *key;
+</a><a href="#h0-0-20" id="h0-0-20" class="i">+	int keylen;
+</a><a href="#h0-0-21" id="h0-0-21" class="i">+	int ttl;
+</a><a href="#h0-0-22" id="h0-0-22" class="i">+	cache_fill_fn fn;
+</a><a href="#h0-0-23" id="h0-0-23" class="i">+	void *cbdata;
+</a><a href="#h0-0-24" id="h0-0-24" class="i">+	int cache_fd;
+</a><a href="#h0-0-25" id="h0-0-25" class="i">+	int lock_fd;
+</a><a href="#h0-0-26" id="h0-0-26" class="i">+	const char *cache_name;
+</a><a href="#h0-0-27" id="h0-0-27" class="i">+	const char *lock_name;
+</a><a href="#h0-0-28" id="h0-0-28" class="i">+	int match;
+</a><a href="#h0-0-29" id="h0-0-29" class="i">+	struct stat cache_st;
+</a><a href="#h0-0-30" id="h0-0-30" class="i">+	struct stat lock_st;
+</a><a href="#h0-0-31" id="h0-0-31" class="i">+	int bufsize;
+</a><a href="#h0-0-32" id="h0-0-32" class="i">+	char buf[CACHE_BUFSIZE];
+</a><a href="#h0-0-33" id="h0-0-33" class="i">+};
+</a> 
+<a href="#h0-0-35" id="h0-0-35" class="d">-char *cache_safe_filename(const char *unsafe)
+</a><a href="#h0-0-36" id="h0-0-36" class="i">+/* Open an existing cache slot and fill the cache buffer with
+</a><a href="#h0-0-37" id="h0-0-37" class="i">+ * (part of) the content of the cache file. Return 0 on success
+</a><a href="#h0-0-38" id="h0-0-38" class="i">+ * and errno otherwise.
+</a><a href="#h0-0-39" id="h0-0-39" class="i">+ */
+</a><a href="#h0-0-40" id="h0-0-40" class="i">+static int open_slot(struct cache_slot *slot)
+</a> {
+<a href="#h0-0-42" id="h0-0-42" class="d">-	static char buf[4][PATH_MAX];
+</a><a href="#h0-0-43" id="h0-0-43" class="d">-	static int bufidx;
+</a><a href="#h0-0-44" id="h0-0-44" class="d">-	char *s;
+</a><a href="#h0-0-45" id="h0-0-45" class="d">-	char c;
+</a><a href="#h0-0-46" id="h0-0-46" class="d">-
+</a><a href="#h0-0-47" id="h0-0-47" class="d">-	bufidx++;
+</a><a href="#h0-0-48" id="h0-0-48" class="d">-	bufidx &amp;= 3;
+</a><a href="#h0-0-49" id="h0-0-49" class="d">-	s = buf[bufidx];
+</a><a href="#h0-0-50" id="h0-0-50" class="d">-
+</a><a href="#h0-0-51" id="h0-0-51" class="d">-	while(unsafe &amp;&amp; (c = *unsafe++) != 0) {
+</a><a href="#h0-0-52" id="h0-0-52" class="d">-		if (c == &#39;/&#39; || c == &#39; &#39; || c == &#39;&amp;&#39; || c == &#39;|&#39; ||
+</a><a href="#h0-0-53" id="h0-0-53" class="d">-		    c == &#39;&gt;&#39; || c == &#39;&lt;&#39; || c == &#39;.&#39;)
+</a><a href="#h0-0-54" id="h0-0-54" class="d">-			c = &#39;_&#39;;
+</a><a href="#h0-0-55" id="h0-0-55" class="d">-		*s++ = c;
+</a><a href="#h0-0-56" id="h0-0-56" class="d">-	}
+</a><a href="#h0-0-57" id="h0-0-57" class="d">-	*s = &#39;\0&#39;;
+</a><a href="#h0-0-58" id="h0-0-58" class="d">-	return buf[bufidx];
+</a><a href="#h0-0-59" id="h0-0-59" class="i">+	char *bufz;
+</a><a href="#h0-0-60" id="h0-0-60" class="i">+	int bufkeylen = -1;
+</a><a href="#h0-0-61" id="h0-0-61" class="i">+
+</a><a href="#h0-0-62" id="h0-0-62" class="i">+	slot-&gt;cache_fd = open(slot-&gt;cache_name, O_RDONLY);
+</a><a href="#h0-0-63" id="h0-0-63" class="i">+	if (slot-&gt;cache_fd == -1)
+</a><a href="#h0-0-64" id="h0-0-64" class="i">+		return errno;
+</a><a href="#h0-0-65" id="h0-0-65" class="i">+
+</a><a href="#h0-0-66" id="h0-0-66" class="i">+	if (fstat(slot-&gt;cache_fd, &amp;slot-&gt;cache_st))
+</a><a href="#h0-0-67" id="h0-0-67" class="i">+		return errno;
+</a><a href="#h0-0-68" id="h0-0-68" class="i">+
+</a><a href="#h0-0-69" id="h0-0-69" class="i">+	slot-&gt;bufsize = read(slot-&gt;cache_fd, slot-&gt;buf, sizeof(slot-&gt;buf));
+</a><a href="#h0-0-70" id="h0-0-70" class="i">+	if (slot-&gt;bufsize == 0)
+</a><a href="#h0-0-71" id="h0-0-71" class="i">+		return errno;
+</a><a href="#h0-0-72" id="h0-0-72" class="i">+
+</a><a href="#h0-0-73" id="h0-0-73" class="i">+	bufz = memchr(slot-&gt;buf, 0, slot-&gt;bufsize);
+</a><a href="#h0-0-74" id="h0-0-74" class="i">+	if (bufz)
+</a><a href="#h0-0-75" id="h0-0-75" class="i">+		bufkeylen = bufz - slot-&gt;buf;
+</a><a href="#h0-0-76" id="h0-0-76" class="i">+
+</a><a href="#h0-0-77" id="h0-0-77" class="i">+	slot-&gt;match = bufkeylen == slot-&gt;keylen &amp;&amp;
+</a><a href="#h0-0-78" id="h0-0-78" class="i">+	    !memcmp(slot-&gt;key, slot-&gt;buf, bufkeylen + 1);
+</a><a href="#h0-0-79" id="h0-0-79" class="i">+
+</a><a href="#h0-0-80" id="h0-0-80" class="i">+	return 0;
+</a> }
+ 
+<a href="#h0-0-83" id="h0-0-83" class="d">-int cache_exist(struct cacheitem *item)
+</a><a href="#h0-0-84" id="h0-0-84" class="i">+/* Close the active cache slot */
+</a><a href="#h0-0-85" id="h0-0-85" class="i">+static void close_slot(struct cache_slot *slot)
+</a> {
+<a href="#h0-0-87" id="h0-0-87" class="d">-	if (stat(item-&gt;name, &amp;item-&gt;st)) {
+</a><a href="#h0-0-88" id="h0-0-88" class="d">-		item-&gt;st.st_mtime = 0;
+</a><a href="#h0-0-89" id="h0-0-89" class="d">-		return 0;
+</a><a href="#h0-0-90" id="h0-0-90" class="i">+	if (slot-&gt;cache_fd &gt; 0) {
+</a><a href="#h0-0-91" id="h0-0-91" class="i">+		close(slot-&gt;cache_fd);
+</a><a href="#h0-0-92" id="h0-0-92" class="i">+		slot-&gt;cache_fd = -1;
+</a> 	}
+<a href="#h0-0-94" id="h0-0-94" class="d">-	return 1;
+</a> }
+ 
+<a href="#h0-0-97" id="h0-0-97" class="d">-int cache_create_dirs()
+</a><a href="#h0-0-98" id="h0-0-98" class="i">+/* Print the content of the active cache slot (but skip the key). */
+</a><a href="#h0-0-99" id="h0-0-99" class="i">+static int print_slot(struct cache_slot *slot)
+</a> {
+<a href="#h0-0-101" id="h0-0-101" class="d">-	char *path;
+</a><a href="#h0-0-102" id="h0-0-102" class="i">+	ssize_t i, j = 0;
+</a><a href="#h0-0-103" id="h0-0-103" class="i">+
+</a><a href="#h0-0-104" id="h0-0-104" class="i">+	i = lseek(slot-&gt;cache_fd, slot-&gt;keylen + 1, SEEK_SET);
+</a><a href="#h0-0-105" id="h0-0-105" class="i">+	if (i != slot-&gt;keylen + 1)
+</a><a href="#h0-0-106" id="h0-0-106" class="i">+		return errno;
+</a> 
+<a href="#h0-0-108" id="h0-0-108" class="d">-	path = fmt(&quot;%s&quot;, ctx.cfg.cache_root);
+</a><a href="#h0-0-109" id="h0-0-109" class="d">-	if (mkdir(path, S_IRWXU) &amp;&amp; errno!=EEXIST)
+</a><a href="#h0-0-110" id="h0-0-110" class="i">+	while((i=read(slot-&gt;cache_fd, slot-&gt;buf, sizeof(slot-&gt;buf))) &gt; 0)
+</a><a href="#h0-0-111" id="h0-0-111" class="i">+		j = write(STDOUT_FILENO, slot-&gt;buf, i);
+</a><a href="#h0-0-112" id="h0-0-112" class="i">+
+</a><a href="#h0-0-113" id="h0-0-113" class="i">+	if (j &lt; 0)
+</a><a href="#h0-0-114" id="h0-0-114" class="i">+		return errno;
+</a><a href="#h0-0-115" id="h0-0-115" class="i">+	else
+</a> 		return 0;
+<a href="#h0-0-117" id="h0-0-117" class="i">+}
+</a> 
+<a href="#h0-0-119" id="h0-0-119" class="d">-	if (!ctx.repo)
+</a><a href="#h0-0-120" id="h0-0-120" class="i">+/* Check if the slot has expired */
+</a><a href="#h0-0-121" id="h0-0-121" class="i">+static int is_expired(struct cache_slot *slot)
+</a><a href="#h0-0-122" id="h0-0-122" class="i">+{
+</a><a href="#h0-0-123" id="h0-0-123" class="i">+	if (slot-&gt;ttl &lt; 0)
+</a> 		return 0;
+<a href="#h0-0-125" id="h0-0-125" class="i">+	else
+</a><a href="#h0-0-126" id="h0-0-126" class="i">+		return slot-&gt;cache_st.st_mtime + slot-&gt;ttl*60 &lt; time(NULL);
+</a><a href="#h0-0-127" id="h0-0-127" class="i">+}
+</a> 
+<a href="#h0-0-129" id="h0-0-129" class="d">-	path = fmt(&quot;%s/%s&quot;, ctx.cfg.cache_root,
+</a><a href="#h0-0-130" id="h0-0-130" class="d">-		   cache_safe_filename(ctx.repo-&gt;url));
+</a><a href="#h0-0-131" id="h0-0-131" class="i">+/* Check if the slot has been modified since we opened it.
+</a><a href="#h0-0-132" id="h0-0-132" class="i">+ * NB: If stat() fails, we pretend the file is modified.
+</a><a href="#h0-0-133" id="h0-0-133" class="i">+ */
+</a><a href="#h0-0-134" id="h0-0-134" class="i">+static int is_modified(struct cache_slot *slot)
+</a><a href="#h0-0-135" id="h0-0-135" class="i">+{
+</a><a href="#h0-0-136" id="h0-0-136" class="i">+	struct stat st;
+</a> 
+<a href="#h0-0-138" id="h0-0-138" class="d">-	if (mkdir(path, S_IRWXU) &amp;&amp; errno!=EEXIST)
+</a><a href="#h0-0-139" id="h0-0-139" class="d">-		return 0;
+</a><a href="#h0-0-140" id="h0-0-140" class="i">+	if (stat(slot-&gt;cache_name, &amp;st))
+</a><a href="#h0-0-141" id="h0-0-141" class="i">+		return 1;
+</a><a href="#h0-0-142" id="h0-0-142" class="i">+	return (st.st_ino != slot-&gt;cache_st.st_ino ||
+</a><a href="#h0-0-143" id="h0-0-143" class="i">+		st.st_mtime != slot-&gt;cache_st.st_mtime ||
+</a><a href="#h0-0-144" id="h0-0-144" class="i">+		st.st_size != slot-&gt;cache_st.st_size);
+</a><a href="#h0-0-145" id="h0-0-145" class="i">+}
+</a> 
+<a href="#h0-0-147" id="h0-0-147" class="d">-	if (ctx.qry.page) {
+</a><a href="#h0-0-148" id="h0-0-148" class="d">-		path = fmt(&quot;%s/%s/%s&quot;, ctx.cfg.cache_root,
+</a><a href="#h0-0-149" id="h0-0-149" class="d">-			   cache_safe_filename(ctx.repo-&gt;url),
+</a><a href="#h0-0-150" id="h0-0-150" class="d">-			   ctx.qry.page);
+</a><a href="#h0-0-151" id="h0-0-151" class="d">-		if (mkdir(path, S_IRWXU) &amp;&amp; errno!=EEXIST)
+</a><a href="#h0-0-152" id="h0-0-152" class="d">-			return 0;
+</a><a href="#h0-0-153" id="h0-0-153" class="i">+/* Close an open lockfile */
+</a><a href="#h0-0-154" id="h0-0-154" class="i">+static void close_lock(struct cache_slot *slot)
+</a><a href="#h0-0-155" id="h0-0-155" class="i">+{
+</a><a href="#h0-0-156" id="h0-0-156" class="i">+	if (slot-&gt;lock_fd &gt; 0) {
+</a><a href="#h0-0-157" id="h0-0-157" class="i">+		close(slot-&gt;lock_fd);
+</a><a href="#h0-0-158" id="h0-0-158" class="i">+		slot-&gt;lock_fd = -1;
+</a> 	}
+<a href="#h0-0-160" id="h0-0-160" class="d">-	return 1;
+</a> }
+ 
+<a href="#h0-0-163" id="h0-0-163" class="d">-int cache_refill_overdue(const char *lockfile)
+</a><a href="#h0-0-164" id="h0-0-164" class="i">+/* Create a lockfile used to store the generated content for a cache
+</a><a href="#h0-0-165" id="h0-0-165" class="i">+ * slot, and write the slot key + \0 into it.
+</a><a href="#h0-0-166" id="h0-0-166" class="i">+ * Returns 0 on success and errno otherwise.
+</a><a href="#h0-0-167" id="h0-0-167" class="i">+ */
+</a><a href="#h0-0-168" id="h0-0-168" class="i">+static int lock_slot(struct cache_slot *slot)
+</a> {
+<a href="#h0-0-170" id="h0-0-170" class="d">-	struct stat st;
+</a><a href="#h0-0-171" id="h0-0-171" class="i">+	slot-&gt;lock_fd = open(slot-&gt;lock_name, O_RDWR|O_CREAT|O_EXCL,
+</a><a href="#h0-0-172" id="h0-0-172" class="i">+			     S_IRUSR|S_IWUSR);
+</a><a href="#h0-0-173" id="h0-0-173" class="i">+	if (slot-&gt;lock_fd == -1)
+</a><a href="#h0-0-174" id="h0-0-174" class="i">+		return errno;
+</a><a href="#h0-0-175" id="h0-0-175" class="i">+	write(slot-&gt;lock_fd, slot-&gt;key, slot-&gt;keylen + 1);
+</a><a href="#h0-0-176" id="h0-0-176" class="i">+	return 0;
+</a><a href="#h0-0-177" id="h0-0-177" class="i">+}
+</a> 
+<a href="#h0-0-179" id="h0-0-179" class="d">-	if (stat(lockfile, &amp;st))
+</a><a href="#h0-0-180" id="h0-0-180" class="d">-		return 0;
+</a><a href="#h0-0-181" id="h0-0-181" class="i">+/* Release the current lockfile. If `replace_old_slot` is set the
+</a><a href="#h0-0-182" id="h0-0-182" class="i">+ * lockfile replaces the old cache slot, otherwise the lockfile is
+</a><a href="#h0-0-183" id="h0-0-183" class="i">+ * just deleted.
+</a><a href="#h0-0-184" id="h0-0-184" class="i">+ */
+</a><a href="#h0-0-185" id="h0-0-185" class="i">+static int unlock_slot(struct cache_slot *slot, int replace_old_slot)
+</a><a href="#h0-0-186" id="h0-0-186" class="i">+{
+</a><a href="#h0-0-187" id="h0-0-187" class="i">+	int err;
+</a><a href="#h0-0-188" id="h0-0-188" class="i">+
+</a><a href="#h0-0-189" id="h0-0-189" class="i">+	if (replace_old_slot)
+</a><a href="#h0-0-190" id="h0-0-190" class="i">+		err = rename(slot-&gt;lock_name, slot-&gt;cache_name);
+</a> 	else
+<a href="#h0-0-192" id="h0-0-192" class="d">-		return (time(NULL) - st.st_mtime &gt; ctx.cfg.cache_max_create_time);
+</a><a href="#h0-0-193" id="h0-0-193" class="i">+		err = unlink(slot-&gt;lock_name);
+</a><a href="#h0-0-194" id="h0-0-194" class="i">+	return err;
+</a> }
+ 
+<a href="#h0-0-197" id="h0-0-197" class="d">-int cache_lock(struct cacheitem *item)
+</a><a href="#h0-0-198" id="h0-0-198" class="i">+/* Generate the content for the current cache slot by redirecting
+</a><a href="#h0-0-199" id="h0-0-199" class="i">+ * stdout to the lock-fd and invoking the callback function
+</a><a href="#h0-0-200" id="h0-0-200" class="i">+ */
+</a><a href="#h0-0-201" id="h0-0-201" class="i">+static int fill_slot(struct cache_slot *slot)
+</a> {
+<a href="#h0-0-203" id="h0-0-203" class="d">-	int i = 0;
+</a><a href="#h0-0-204" id="h0-0-204" class="d">-	char *lockfile = xstrdup(fmt(&quot;%s.lock&quot;, item-&gt;name));
+</a><a href="#h0-0-205" id="h0-0-205" class="i">+	int tmp;
+</a> 
+<a href="#h0-0-207" id="h0-0-207" class="d">- top:
+</a><a href="#h0-0-208" id="h0-0-208" class="d">-	if (++i &gt; ctx.cfg.max_lock_attempts)
+</a><a href="#h0-0-209" id="h0-0-209" class="d">-		die(&quot;cache_lock: unable to lock %s: %s&quot;,
+</a><a href="#h0-0-210" id="h0-0-210" class="d">-		    item-&gt;name, strerror(errno));
+</a><a href="#h0-0-211" id="h0-0-211" class="i">+	/* Preserve stdout */
+</a><a href="#h0-0-212" id="h0-0-212" class="i">+	tmp = dup(STDOUT_FILENO);
+</a><a href="#h0-0-213" id="h0-0-213" class="i">+	if (tmp == -1)
+</a><a href="#h0-0-214" id="h0-0-214" class="i">+		return errno;
+</a> 
+<a href="#h0-0-216" id="h0-0-216" class="d">-       	item-&gt;fd = open(lockfile, O_WRONLY|O_CREAT|O_EXCL, S_IRUSR|S_IWUSR);
+</a><a href="#h0-0-217" id="h0-0-217" class="i">+	/* Redirect stdout to lockfile */
+</a><a href="#h0-0-218" id="h0-0-218" class="i">+	if (dup2(slot-&gt;lock_fd, STDOUT_FILENO) == -1)
+</a><a href="#h0-0-219" id="h0-0-219" class="i">+		return errno;
+</a> 
+<a href="#h0-0-221" id="h0-0-221" class="d">-	if (item-&gt;fd == NOLOCK &amp;&amp; errno == ENOENT &amp;&amp; cache_create_dirs())
+</a><a href="#h0-0-222" id="h0-0-222" class="d">-		goto top;
+</a><a href="#h0-0-223" id="h0-0-223" class="i">+	/* Generate cache content */
+</a><a href="#h0-0-224" id="h0-0-224" class="i">+	slot-&gt;fn(slot-&gt;cbdata);
+</a> 
+<a href="#h0-0-226" id="h0-0-226" class="d">-	if (item-&gt;fd == NOLOCK &amp;&amp; errno == EEXIST &amp;&amp;
+</a><a href="#h0-0-227" id="h0-0-227" class="d">-	    cache_refill_overdue(lockfile) &amp;&amp; !unlink(lockfile))
+</a><a href="#h0-0-228" id="h0-0-228" class="d">-			goto top;
+</a><a href="#h0-0-229" id="h0-0-229" class="i">+	/* Restore stdout */
+</a><a href="#h0-0-230" id="h0-0-230" class="i">+	if (dup2(tmp, STDOUT_FILENO) == -1)
+</a><a href="#h0-0-231" id="h0-0-231" class="i">+		return errno;
+</a> 
+<a href="#h0-0-233" id="h0-0-233" class="d">-	free(lockfile);
+</a><a href="#h0-0-234" id="h0-0-234" class="d">-	return (item-&gt;fd &gt; 0);
+</a><a href="#h0-0-235" id="h0-0-235" class="i">+	/* Close the temporary filedescriptor */
+</a><a href="#h0-0-236" id="h0-0-236" class="i">+	close(tmp);
+</a><a href="#h0-0-237" id="h0-0-237" class="i">+	return 0;
+</a> }
+ 
+<a href="#h0-0-240" id="h0-0-240" class="d">-int cache_unlock(struct cacheitem *item)
+</a><a href="#h0-0-241" id="h0-0-241" class="i">+/* Crude implementation of 32-bit FNV-1 hash algorithm,
+</a><a href="#h0-0-242" id="h0-0-242" class="i">+ * see http://www.isthe.com/chongo/tech/comp/fnv/ for details
+</a><a href="#h0-0-243" id="h0-0-243" class="i">+ * about the magic numbers.
+</a><a href="#h0-0-244" id="h0-0-244" class="i">+ */
+</a><a href="#h0-0-245" id="h0-0-245" class="i">+#define FNV_OFFSET 0x811c9dc5
+</a><a href="#h0-0-246" id="h0-0-246" class="i">+#define FNV_PRIME  0x01000193
+</a><a href="#h0-0-247" id="h0-0-247" class="i">+
+</a><a href="#h0-0-248" id="h0-0-248" class="i">+unsigned long hash_str(const char *str)
+</a> {
+<a href="#h0-0-250" id="h0-0-250" class="d">-	close(item-&gt;fd);
+</a><a href="#h0-0-251" id="h0-0-251" class="d">-	return (rename(fmt(&quot;%s.lock&quot;, item-&gt;name), item-&gt;name) == 0);
+</a><a href="#h0-0-252" id="h0-0-252" class="i">+	unsigned long h = FNV_OFFSET;
+</a><a href="#h0-0-253" id="h0-0-253" class="i">+	unsigned char *s = (unsigned char *)str;
+</a><a href="#h0-0-254" id="h0-0-254" class="i">+
+</a><a href="#h0-0-255" id="h0-0-255" class="i">+	if (!s)
+</a><a href="#h0-0-256" id="h0-0-256" class="i">+		return h;
+</a><a href="#h0-0-257" id="h0-0-257" class="i">+
+</a><a href="#h0-0-258" id="h0-0-258" class="i">+	while(*s) {
+</a><a href="#h0-0-259" id="h0-0-259" class="i">+		h *= FNV_PRIME;
+</a><a href="#h0-0-260" id="h0-0-260" class="i">+		h ^= *s++;
+</a><a href="#h0-0-261" id="h0-0-261" class="i">+	}
+</a><a href="#h0-0-262" id="h0-0-262" class="i">+	return h;
+</a> }
+ 
+<a href="#h0-0-265" id="h0-0-265" class="d">-int cache_cancel_lock(struct cacheitem *item)
+</a><a href="#h0-0-266" id="h0-0-266" class="i">+static int process_slot(struct cache_slot *slot)
+</a> {
+<a href="#h0-0-268" id="h0-0-268" class="d">-	return (unlink(fmt(&quot;%s.lock&quot;, item-&gt;name)) == 0);
+</a><a href="#h0-0-269" id="h0-0-269" class="i">+	int err;
+</a><a href="#h0-0-270" id="h0-0-270" class="i">+
+</a><a href="#h0-0-271" id="h0-0-271" class="i">+	err = open_slot(slot);
+</a><a href="#h0-0-272" id="h0-0-272" class="i">+	if (!err &amp;&amp; slot-&gt;match) {
+</a><a href="#h0-0-273" id="h0-0-273" class="i">+		if (is_expired(slot)) {
+</a><a href="#h0-0-274" id="h0-0-274" class="i">+			if (!lock_slot(slot)) {
+</a><a href="#h0-0-275" id="h0-0-275" class="i">+				/* If the cachefile has been replaced between
+</a><a href="#h0-0-276" id="h0-0-276" class="i">+				 * `open_slot` and `lock_slot`, we&#39;ll just
+</a><a href="#h0-0-277" id="h0-0-277" class="i">+				 * serve the stale content from the original
+</a><a href="#h0-0-278" id="h0-0-278" class="i">+				 * cachefile. This way we avoid pruning the
+</a><a href="#h0-0-279" id="h0-0-279" class="i">+				 * newly generated slot. The same code-path
+</a><a href="#h0-0-280" id="h0-0-280" class="i">+				 * is chosen if fill_slot() fails for some
+</a><a href="#h0-0-281" id="h0-0-281" class="i">+				 * reason.
+</a><a href="#h0-0-282" id="h0-0-282" class="i">+				 *
+</a><a href="#h0-0-283" id="h0-0-283" class="i">+				 * TODO? check if the new slot contains the
+</a><a href="#h0-0-284" id="h0-0-284" class="i">+				 * same key as the old one, since we would
+</a><a href="#h0-0-285" id="h0-0-285" class="i">+				 * prefer to serve the newest content.
+</a><a href="#h0-0-286" id="h0-0-286" class="i">+				 * This will require us to open yet another
+</a><a href="#h0-0-287" id="h0-0-287" class="i">+				 * file-descriptor and read and compare the
+</a><a href="#h0-0-288" id="h0-0-288" class="i">+				 * key from the new file, so for now we&#39;re
+</a><a href="#h0-0-289" id="h0-0-289" class="i">+				 * lazy and just ignore the new file.
+</a><a href="#h0-0-290" id="h0-0-290" class="i">+				 */
+</a><a href="#h0-0-291" id="h0-0-291" class="i">+				if (is_modified(slot) || fill_slot(slot)) {
+</a><a href="#h0-0-292" id="h0-0-292" class="i">+					unlock_slot(slot, 0);
+</a><a href="#h0-0-293" id="h0-0-293" class="i">+					close_lock(slot);
+</a><a href="#h0-0-294" id="h0-0-294" class="i">+				} else {
+</a><a href="#h0-0-295" id="h0-0-295" class="i">+					close_slot(slot);
+</a><a href="#h0-0-296" id="h0-0-296" class="i">+					unlock_slot(slot, 1);
+</a><a href="#h0-0-297" id="h0-0-297" class="i">+					slot-&gt;cache_fd = slot-&gt;lock_fd;
+</a><a href="#h0-0-298" id="h0-0-298" class="i">+				}
+</a><a href="#h0-0-299" id="h0-0-299" class="i">+			}
+</a><a href="#h0-0-300" id="h0-0-300" class="i">+		}
+</a><a href="#h0-0-301" id="h0-0-301" class="i">+		print_slot(slot);
+</a><a href="#h0-0-302" id="h0-0-302" class="i">+		close_slot(slot);
+</a><a href="#h0-0-303" id="h0-0-303" class="i">+		return 0;
+</a><a href="#h0-0-304" id="h0-0-304" class="i">+	}
+</a><a href="#h0-0-305" id="h0-0-305" class="i">+
+</a><a href="#h0-0-306" id="h0-0-306" class="i">+	/* If the cache slot does not exist (or its key doesn&#39;t match the
+</a><a href="#h0-0-307" id="h0-0-307" class="i">+	 * current key), lets try to create a new cache slot for this
+</a><a href="#h0-0-308" id="h0-0-308" class="i">+	 * request. If this fails (for whatever reason), lets just generate
+</a><a href="#h0-0-309" id="h0-0-309" class="i">+	 * the content without caching it and fool the caller to belive
+</a><a href="#h0-0-310" id="h0-0-310" class="i">+	 * everything worked out (but print a warning on stdout).
+</a><a href="#h0-0-311" id="h0-0-311" class="i">+	 */
+</a><a href="#h0-0-312" id="h0-0-312" class="i">+
+</a><a href="#h0-0-313" id="h0-0-313" class="i">+	close_slot(slot);
+</a><a href="#h0-0-314" id="h0-0-314" class="i">+	if ((err = lock_slot(slot)) != 0) {
+</a><a href="#h0-0-315" id="h0-0-315" class="i">+		cache_log(&quot;[cgit] Unable to lock slot %s: %s (%d)\n&quot;,
+</a><a href="#h0-0-316" id="h0-0-316" class="i">+			  slot-&gt;lock_name, strerror(err), err);
+</a><a href="#h0-0-317" id="h0-0-317" class="i">+		slot-&gt;fn(slot-&gt;cbdata);
+</a><a href="#h0-0-318" id="h0-0-318" class="i">+		return 0;
+</a><a href="#h0-0-319" id="h0-0-319" class="i">+	}
+</a><a href="#h0-0-320" id="h0-0-320" class="i">+
+</a><a href="#h0-0-321" id="h0-0-321" class="i">+	if ((err = fill_slot(slot)) != 0) {
+</a><a href="#h0-0-322" id="h0-0-322" class="i">+		cache_log(&quot;[cgit] Unable to fill slot %s: %s (%d)\n&quot;,
+</a><a href="#h0-0-323" id="h0-0-323" class="i">+			  slot-&gt;lock_name, strerror(err), err);
+</a><a href="#h0-0-324" id="h0-0-324" class="i">+		unlock_slot(slot, 0);
+</a><a href="#h0-0-325" id="h0-0-325" class="i">+		close_lock(slot);
+</a><a href="#h0-0-326" id="h0-0-326" class="i">+		slot-&gt;fn(slot-&gt;cbdata);
+</a><a href="#h0-0-327" id="h0-0-327" class="i">+		return 0;
+</a><a href="#h0-0-328" id="h0-0-328" class="i">+	}
+</a><a href="#h0-0-329" id="h0-0-329" class="i">+	// We&#39;ve got a valid cache slot in the lock file, which
+</a><a href="#h0-0-330" id="h0-0-330" class="i">+	// is about to replace the old cache slot. But if we
+</a><a href="#h0-0-331" id="h0-0-331" class="i">+	// release the lockfile and then try to open the new cache
+</a><a href="#h0-0-332" id="h0-0-332" class="i">+	// slot, we might get a race condition with a concurrent
+</a><a href="#h0-0-333" id="h0-0-333" class="i">+	// writer for the same cache slot (with a different key).
+</a><a href="#h0-0-334" id="h0-0-334" class="i">+	// Lets avoid such a race by just printing the content of
+</a><a href="#h0-0-335" id="h0-0-335" class="i">+	// the lock file.
+</a><a href="#h0-0-336" id="h0-0-336" class="i">+	slot-&gt;cache_fd = slot-&gt;lock_fd;
+</a><a href="#h0-0-337" id="h0-0-337" class="i">+	unlock_slot(slot, 1);
+</a><a href="#h0-0-338" id="h0-0-338" class="i">+	err = print_slot(slot);
+</a><a href="#h0-0-339" id="h0-0-339" class="i">+	close_slot(slot);
+</a><a href="#h0-0-340" id="h0-0-340" class="i">+	return err;
+</a> }
+ 
+<a href="#h0-0-343" id="h0-0-343" class="d">-int cache_expired(struct cacheitem *item)
+</a><a href="#h0-0-344" id="h0-0-344" class="i">+/* Print cached content to stdout, generate the content if necessary. */
+</a><a href="#h0-0-345" id="h0-0-345" class="i">+int cache_process(int size, const char *path, const char *key, int ttl,
+</a><a href="#h0-0-346" id="h0-0-346" class="i">+		  cache_fill_fn fn, void *cbdata)
+</a> {
+<a href="#h0-0-348" id="h0-0-348" class="d">-	if (item-&gt;ttl &lt; 0)
+</a><a href="#h0-0-349" id="h0-0-349" class="i">+	unsigned long hash;
+</a><a href="#h0-0-350" id="h0-0-350" class="i">+	int len, i;
+</a><a href="#h0-0-351" id="h0-0-351" class="i">+	char filename[1024];
+</a><a href="#h0-0-352" id="h0-0-352" class="i">+	char lockname[1024 + 5];  /* 5 = &quot;.lock&quot; */
+</a><a href="#h0-0-353" id="h0-0-353" class="i">+	struct cache_slot slot;
+</a><a href="#h0-0-354" id="h0-0-354" class="i">+
+</a><a href="#h0-0-355" id="h0-0-355" class="i">+	/* If the cache is disabled, just generate the content */
+</a><a href="#h0-0-356" id="h0-0-356" class="i">+	if (size &lt;= 0) {
+</a><a href="#h0-0-357" id="h0-0-357" class="i">+		fn(cbdata);
+</a> 		return 0;
+<a href="#h0-0-359" id="h0-0-359" class="d">-	return item-&gt;st.st_mtime + item-&gt;ttl * 60 &lt; time(NULL);
+</a><a href="#h0-0-360" id="h0-0-360" class="i">+	}
+</a><a href="#h0-0-361" id="h0-0-361" class="i">+
+</a><a href="#h0-0-362" id="h0-0-362" class="i">+	/* Verify input, calculate filenames */
+</a><a href="#h0-0-363" id="h0-0-363" class="i">+	if (!path) {
+</a><a href="#h0-0-364" id="h0-0-364" class="i">+		cache_log(&quot;[cgit] Cache path not specified, caching is disabled\n&quot;);
+</a><a href="#h0-0-365" id="h0-0-365" class="i">+		fn(cbdata);
+</a><a href="#h0-0-366" id="h0-0-366" class="i">+		return 0;
+</a><a href="#h0-0-367" id="h0-0-367" class="i">+	}
+</a><a href="#h0-0-368" id="h0-0-368" class="i">+	len = strlen(path);
+</a><a href="#h0-0-369" id="h0-0-369" class="i">+	if (len &gt; sizeof(filename) - 10) { /* 10 = &quot;/01234567\0&quot; */
+</a><a href="#h0-0-370" id="h0-0-370" class="i">+		cache_log(&quot;[cgit] Cache path too long, caching is disabled: %s\n&quot;,
+</a><a href="#h0-0-371" id="h0-0-371" class="i">+			  path);
+</a><a href="#h0-0-372" id="h0-0-372" class="i">+		fn(cbdata);
+</a><a href="#h0-0-373" id="h0-0-373" class="i">+		return 0;
+</a><a href="#h0-0-374" id="h0-0-374" class="i">+	}
+</a><a href="#h0-0-375" id="h0-0-375" class="i">+	if (!key)
+</a><a href="#h0-0-376" id="h0-0-376" class="i">+		key = &quot;&quot;;
+</a><a href="#h0-0-377" id="h0-0-377" class="i">+	hash = hash_str(key) % size;
+</a><a href="#h0-0-378" id="h0-0-378" class="i">+	strcpy(filename, path);
+</a><a href="#h0-0-379" id="h0-0-379" class="i">+	if (filename[len - 1] != &#39;/&#39;)
+</a><a href="#h0-0-380" id="h0-0-380" class="i">+		filename[len++] = &#39;/&#39;;
+</a><a href="#h0-0-381" id="h0-0-381" class="i">+	for(i = 0; i &lt; 8; i++) {
+</a><a href="#h0-0-382" id="h0-0-382" class="i">+		sprintf(filename + len++, &quot;%x&quot;,
+</a><a href="#h0-0-383" id="h0-0-383" class="i">+			(unsigned char)(hash &amp; 0xf));
+</a><a href="#h0-0-384" id="h0-0-384" class="i">+		hash &gt;&gt;= 4;
+</a><a href="#h0-0-385" id="h0-0-385" class="i">+	}
+</a><a href="#h0-0-386" id="h0-0-386" class="i">+	filename[len] = &#39;\0&#39;;
+</a><a href="#h0-0-387" id="h0-0-387" class="i">+	strcpy(lockname, filename);
+</a><a href="#h0-0-388" id="h0-0-388" class="i">+	strcpy(lockname + len, &quot;.lock&quot;);
+</a><a href="#h0-0-389" id="h0-0-389" class="i">+	slot.fn = fn;
+</a><a href="#h0-0-390" id="h0-0-390" class="i">+	slot.cbdata = cbdata;
+</a><a href="#h0-0-391" id="h0-0-391" class="i">+	slot.ttl = ttl;
+</a><a href="#h0-0-392" id="h0-0-392" class="i">+	slot.cache_name = filename;
+</a><a href="#h0-0-393" id="h0-0-393" class="i">+	slot.lock_name = lockname;
+</a><a href="#h0-0-394" id="h0-0-394" class="i">+	slot.key = key;
+</a><a href="#h0-0-395" id="h0-0-395" class="i">+	slot.keylen = strlen(key);
+</a><a href="#h0-0-396" id="h0-0-396" class="i">+	return process_slot(&amp;slot);
+</a> }
+<a href="#h0-0-398" id="h0-0-398" class="i">+
+</a><a href="#h0-0-399" id="h0-0-399" class="i">+/* Print a message to stdout */
+</a><a href="#h0-0-400" id="h0-0-400" class="i">+void cache_log(const char *format, ...)
+</a><a href="#h0-0-401" id="h0-0-401" class="i">+{
+</a><a href="#h0-0-402" id="h0-0-402" class="i">+	va_list args;
+</a><a href="#h0-0-403" id="h0-0-403" class="i">+	va_start(args, format);
+</a><a href="#h0-0-404" id="h0-0-404" class="i">+	vfprintf(stderr, format, args);
+</a><a href="#h0-0-405" id="h0-0-405" class="i">+	va_end(args);
+</a><a href="#h0-0-406" id="h0-0-406" class="i">+}
+</a><a href="#h0-0-407" id="h0-0-407" class="i">+
+</a><b>diff --git a/<a id="h1" href="../file/cache.h.html">cache.h</a> b/<a href="../file/cache.h.html">cache.h</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -6,18 +6,27 @@
+</a> #ifndef CGIT_CACHE_H
+ #define CGIT_CACHE_H
+ 
+<a href="#h1-0-3" id="h1-0-3" class="d">-struct cacheitem {
+</a><a href="#h1-0-4" id="h1-0-4" class="d">-	char *name;
+</a><a href="#h1-0-5" id="h1-0-5" class="d">-	struct stat st;
+</a><a href="#h1-0-6" id="h1-0-6" class="d">-	int ttl;
+</a><a href="#h1-0-7" id="h1-0-7" class="d">-	int fd;
+</a><a href="#h1-0-8" id="h1-0-8" class="d">-};
+</a><a href="#h1-0-9" id="h1-0-9" class="i">+typedef void (*cache_fill_fn)(void *cbdata);
+</a> 
+<a href="#h1-0-11" id="h1-0-11" class="d">-extern char *cache_safe_filename(const char *unsafe);
+</a><a href="#h1-0-12" id="h1-0-12" class="d">-extern int cache_lock(struct cacheitem *item);
+</a><a href="#h1-0-13" id="h1-0-13" class="d">-extern int cache_unlock(struct cacheitem *item);
+</a><a href="#h1-0-14" id="h1-0-14" class="d">-extern int cache_cancel_lock(struct cacheitem *item);
+</a><a href="#h1-0-15" id="h1-0-15" class="d">-extern int cache_exist(struct cacheitem *item);
+</a><a href="#h1-0-16" id="h1-0-16" class="d">-extern int cache_expired(struct cacheitem *item);
+</a><a href="#h1-0-17" id="h1-0-17" class="i">+
+</a><a href="#h1-0-18" id="h1-0-18" class="i">+/* Print cached content to stdout, generate the content if necessary.
+</a><a href="#h1-0-19" id="h1-0-19" class="i">+ *
+</a><a href="#h1-0-20" id="h1-0-20" class="i">+ * Parameters
+</a><a href="#h1-0-21" id="h1-0-21" class="i">+ *   size    max number of cache files
+</a><a href="#h1-0-22" id="h1-0-22" class="i">+ *   path    directory used to store cache files
+</a><a href="#h1-0-23" id="h1-0-23" class="i">+ *   key     the key used to lookup cache files
+</a><a href="#h1-0-24" id="h1-0-24" class="i">+ *   ttl     max cache time in seconds for this key
+</a><a href="#h1-0-25" id="h1-0-25" class="i">+ *   fn      content generator function for this key
+</a><a href="#h1-0-26" id="h1-0-26" class="i">+ *   cbdata  user-supplied data to the content generator function
+</a><a href="#h1-0-27" id="h1-0-27" class="i">+ *
+</a><a href="#h1-0-28" id="h1-0-28" class="i">+ * Return value
+</a><a href="#h1-0-29" id="h1-0-29" class="i">+ *   0 indicates success, everyting else is an error
+</a><a href="#h1-0-30" id="h1-0-30" class="i">+ */
+</a><a href="#h1-0-31" id="h1-0-31" class="i">+extern int cache_process(int size, const char *path, const char *key, int ttl,
+</a><a href="#h1-0-32" id="h1-0-32" class="i">+			 cache_fill_fn fn, void *cbdata);
+</a><a href="#h1-0-33" id="h1-0-33" class="i">+
+</a><a href="#h1-0-34" id="h1-0-34" class="i">+
+</a><a href="#h1-0-35" id="h1-0-35" class="i">+/* Print a message to stdout */
+</a><a href="#h1-0-36" id="h1-0-36" class="i">+extern void cache_log(const char *format, ...);
+</a> 
+ #endif /* CGIT_CACHE_H */
+<b>diff --git a/<a id="h2" href="../file/cgit.c.html">cgit.c</a> b/<a href="../file/cgit.c.html">cgit.c</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -45,6 +45,8 @@ void config_cb(const char *name, const char *value)
+</a> 		ctx.cfg.enable_log_filecount = atoi(value);
+ 	else if (!strcmp(name, &quot;enable-log-linecount&quot;))
+ 		ctx.cfg.enable_log_linecount = atoi(value);
+<a href="#h2-0-3" id="h2-0-3" class="i">+	else if (!strcmp(name, &quot;cache-size&quot;))
+</a><a href="#h2-0-4" id="h2-0-4" class="i">+		ctx.cfg.cache_size = atoi(value);
+</a> 	else if (!strcmp(name, &quot;cache-root&quot;))
+ 		ctx.cfg.cache_root = xstrdup(value);
+ 	else if (!strcmp(name, &quot;cache-root-ttl&quot;))
+<a href="#h2-1" id="h2-1" class="h">@@ -143,6 +145,8 @@ static void prepare_context(struct cgit_context *ctx)
+</a> {
+ 	memset(ctx, 0, sizeof(ctx));
+ 	ctx-&gt;cfg.agefile = &quot;info/web/last-modified&quot;;
+<a href="#h2-1-3" id="h2-1-3" class="i">+	ctx-&gt;cfg.nocache = 0;
+</a><a href="#h2-1-4" id="h2-1-4" class="i">+	ctx-&gt;cfg.cache_size = 0;
+</a> 	ctx-&gt;cfg.cache_dynamic_ttl = 5;
+ 	ctx-&gt;cfg.cache_max_create_time = 5;
+ 	ctx-&gt;cfg.cache_repo_ttl = 5;
+<a href="#h2-2" id="h2-2" class="h">@@ -163,47 +167,8 @@ static void prepare_context(struct cgit_context *ctx)
+</a> 	ctx-&gt;page.mimetype = &quot;text/html&quot;;
+ 	ctx-&gt;page.charset = PAGE_ENCODING;
+ 	ctx-&gt;page.filename = NULL;
+<a href="#h2-2-3" id="h2-2-3" class="d">-}
+</a><a href="#h2-2-4" id="h2-2-4" class="d">-
+</a><a href="#h2-2-5" id="h2-2-5" class="d">-static int cgit_prepare_cache(struct cacheitem *item)
+</a><a href="#h2-2-6" id="h2-2-6" class="d">-{
+</a><a href="#h2-2-7" id="h2-2-7" class="d">-	if (!ctx.repo &amp;&amp; ctx.qry.repo) {
+</a><a href="#h2-2-8" id="h2-2-8" class="d">-		ctx.page.title = fmt(&quot;%s - %s&quot;, ctx.cfg.root_title,
+</a><a href="#h2-2-9" id="h2-2-9" class="d">-				      &quot;Bad request&quot;);
+</a><a href="#h2-2-10" id="h2-2-10" class="d">-		cgit_print_http_headers(&amp;ctx);
+</a><a href="#h2-2-11" id="h2-2-11" class="d">-		cgit_print_docstart(&amp;ctx);
+</a><a href="#h2-2-12" id="h2-2-12" class="d">-		cgit_print_pageheader(&amp;ctx);
+</a><a href="#h2-2-13" id="h2-2-13" class="d">-		cgit_print_error(fmt(&quot;Unknown repo: %s&quot;, ctx.qry.repo));
+</a><a href="#h2-2-14" id="h2-2-14" class="d">-		cgit_print_docend();
+</a><a href="#h2-2-15" id="h2-2-15" class="d">-		return 0;
+</a><a href="#h2-2-16" id="h2-2-16" class="d">-	}
+</a><a href="#h2-2-17" id="h2-2-17" class="d">-
+</a><a href="#h2-2-18" id="h2-2-18" class="d">-	if (!ctx.repo) {
+</a><a href="#h2-2-19" id="h2-2-19" class="d">-		item-&gt;name = xstrdup(fmt(&quot;%s/index.%s.html&quot;,
+</a><a href="#h2-2-20" id="h2-2-20" class="d">-					 ctx.cfg.cache_root,
+</a><a href="#h2-2-21" id="h2-2-21" class="d">-					 cache_safe_filename(ctx.qry.raw)));
+</a><a href="#h2-2-22" id="h2-2-22" class="d">-		item-&gt;ttl = ctx.cfg.cache_root_ttl;
+</a><a href="#h2-2-23" id="h2-2-23" class="d">-		return 1;
+</a><a href="#h2-2-24" id="h2-2-24" class="d">-	}
+</a><a href="#h2-2-25" id="h2-2-25" class="d">-
+</a><a href="#h2-2-26" id="h2-2-26" class="d">-	if (!ctx.qry.page) {
+</a><a href="#h2-2-27" id="h2-2-27" class="d">-		item-&gt;name = xstrdup(fmt(&quot;%s/%s/index.%s.html&quot;, ctx.cfg.cache_root,
+</a><a href="#h2-2-28" id="h2-2-28" class="d">-					 cache_safe_filename(ctx.repo-&gt;url),
+</a><a href="#h2-2-29" id="h2-2-29" class="d">-					 cache_safe_filename(ctx.qry.raw)));
+</a><a href="#h2-2-30" id="h2-2-30" class="d">-		item-&gt;ttl = ctx.cfg.cache_repo_ttl;
+</a><a href="#h2-2-31" id="h2-2-31" class="d">-	} else {
+</a><a href="#h2-2-32" id="h2-2-32" class="d">-		item-&gt;name = xstrdup(fmt(&quot;%s/%s/%s/%s.html&quot;, ctx.cfg.cache_root,
+</a><a href="#h2-2-33" id="h2-2-33" class="d">-					 cache_safe_filename(ctx.repo-&gt;url),
+</a><a href="#h2-2-34" id="h2-2-34" class="d">-					 ctx.qry.page,
+</a><a href="#h2-2-35" id="h2-2-35" class="d">-					 cache_safe_filename(ctx.qry.raw)));
+</a><a href="#h2-2-36" id="h2-2-36" class="d">-		if (ctx.qry.has_symref)
+</a><a href="#h2-2-37" id="h2-2-37" class="d">-			item-&gt;ttl = ctx.cfg.cache_dynamic_ttl;
+</a><a href="#h2-2-38" id="h2-2-38" class="d">-		else if (ctx.qry.has_sha1)
+</a><a href="#h2-2-39" id="h2-2-39" class="d">-			item-&gt;ttl = ctx.cfg.cache_static_ttl;
+</a><a href="#h2-2-40" id="h2-2-40" class="d">-		else
+</a><a href="#h2-2-41" id="h2-2-41" class="d">-			item-&gt;ttl = ctx.cfg.cache_repo_ttl;
+</a><a href="#h2-2-42" id="h2-2-42" class="d">-	}
+</a><a href="#h2-2-43" id="h2-2-43" class="d">-	return 1;
+</a><a href="#h2-2-44" id="h2-2-44" class="i">+	ctx-&gt;page.modified = time(NULL);
+</a><a href="#h2-2-45" id="h2-2-45" class="i">+	ctx-&gt;page.expires = ctx-&gt;page.modified;
+</a> }
+ 
+ struct refmatch {
+<a href="#h2-3" id="h2-3" class="h">@@ -288,8 +253,9 @@ static int prepare_repo_cmd(struct cgit_context *ctx)
+</a> 	return 0;
+ }
+ 
+<a href="#h2-3-3" id="h2-3-3" class="d">-static void process_request(struct cgit_context *ctx)
+</a><a href="#h2-3-4" id="h2-3-4" class="i">+static void process_request(void *cbdata)
+</a> {
+<a href="#h2-3-6" id="h2-3-6" class="i">+	struct cgit_context *ctx = cbdata;
+</a> 	struct cgit_cmd *cmd;
+ 
+ 	cmd = cgit_get_cmd(ctx);
+<a href="#h2-4" id="h2-4" class="h">@@ -319,82 +285,6 @@ static void process_request(struct cgit_context *ctx)
+</a> 		cgit_print_docend();
+ }
+ 
+<a href="#h2-4-3" id="h2-4-3" class="d">-static long ttl_seconds(long ttl)
+</a><a href="#h2-4-4" id="h2-4-4" class="d">-{
+</a><a href="#h2-4-5" id="h2-4-5" class="d">-	if (ttl&lt;0)
+</a><a href="#h2-4-6" id="h2-4-6" class="d">-		return 60 * 60 * 24 * 365;
+</a><a href="#h2-4-7" id="h2-4-7" class="d">-	else
+</a><a href="#h2-4-8" id="h2-4-8" class="d">-		return ttl * 60;
+</a><a href="#h2-4-9" id="h2-4-9" class="d">-}
+</a><a href="#h2-4-10" id="h2-4-10" class="d">-
+</a><a href="#h2-4-11" id="h2-4-11" class="d">-static void cgit_fill_cache(struct cacheitem *item, int use_cache)
+</a><a href="#h2-4-12" id="h2-4-12" class="d">-{
+</a><a href="#h2-4-13" id="h2-4-13" class="d">-	int stdout2;
+</a><a href="#h2-4-14" id="h2-4-14" class="d">-
+</a><a href="#h2-4-15" id="h2-4-15" class="d">-	if (use_cache) {
+</a><a href="#h2-4-16" id="h2-4-16" class="d">-		stdout2 = chk_positive(dup(STDOUT_FILENO),
+</a><a href="#h2-4-17" id="h2-4-17" class="d">-				       &quot;Preserving STDOUT&quot;);
+</a><a href="#h2-4-18" id="h2-4-18" class="d">-		chk_zero(close(STDOUT_FILENO), &quot;Closing STDOUT&quot;);
+</a><a href="#h2-4-19" id="h2-4-19" class="d">-		chk_positive(dup2(item-&gt;fd, STDOUT_FILENO), &quot;Dup2(cachefile)&quot;);
+</a><a href="#h2-4-20" id="h2-4-20" class="d">-	}
+</a><a href="#h2-4-21" id="h2-4-21" class="d">-
+</a><a href="#h2-4-22" id="h2-4-22" class="d">-	ctx.page.modified = time(NULL);
+</a><a href="#h2-4-23" id="h2-4-23" class="d">-	ctx.page.expires = ctx.page.modified + ttl_seconds(item-&gt;ttl);
+</a><a href="#h2-4-24" id="h2-4-24" class="d">-	process_request(&amp;ctx);
+</a><a href="#h2-4-25" id="h2-4-25" class="d">-
+</a><a href="#h2-4-26" id="h2-4-26" class="d">-	if (use_cache) {
+</a><a href="#h2-4-27" id="h2-4-27" class="d">-		chk_zero(close(STDOUT_FILENO), &quot;Close redirected STDOUT&quot;);
+</a><a href="#h2-4-28" id="h2-4-28" class="d">-		chk_positive(dup2(stdout2, STDOUT_FILENO),
+</a><a href="#h2-4-29" id="h2-4-29" class="d">-			     &quot;Restoring original STDOUT&quot;);
+</a><a href="#h2-4-30" id="h2-4-30" class="d">-		chk_zero(close(stdout2), &quot;Closing temporary STDOUT&quot;);
+</a><a href="#h2-4-31" id="h2-4-31" class="d">-	}
+</a><a href="#h2-4-32" id="h2-4-32" class="d">-}
+</a><a href="#h2-4-33" id="h2-4-33" class="d">-
+</a><a href="#h2-4-34" id="h2-4-34" class="d">-static void cgit_check_cache(struct cacheitem *item)
+</a><a href="#h2-4-35" id="h2-4-35" class="d">-{
+</a><a href="#h2-4-36" id="h2-4-36" class="d">-	int i = 0;
+</a><a href="#h2-4-37" id="h2-4-37" class="d">-
+</a><a href="#h2-4-38" id="h2-4-38" class="d">- top:
+</a><a href="#h2-4-39" id="h2-4-39" class="d">-	if (++i &gt; ctx.cfg.max_lock_attempts) {
+</a><a href="#h2-4-40" id="h2-4-40" class="d">-		die(&quot;cgit_refresh_cache: unable to lock %s: %s&quot;,
+</a><a href="#h2-4-41" id="h2-4-41" class="d">-		    item-&gt;name, strerror(errno));
+</a><a href="#h2-4-42" id="h2-4-42" class="d">-	}
+</a><a href="#h2-4-43" id="h2-4-43" class="d">-	if (!cache_exist(item)) {
+</a><a href="#h2-4-44" id="h2-4-44" class="d">-		if (!cache_lock(item)) {
+</a><a href="#h2-4-45" id="h2-4-45" class="d">-			sleep(1);
+</a><a href="#h2-4-46" id="h2-4-46" class="d">-			goto top;
+</a><a href="#h2-4-47" id="h2-4-47" class="d">-		}
+</a><a href="#h2-4-48" id="h2-4-48" class="d">-		if (!cache_exist(item)) {
+</a><a href="#h2-4-49" id="h2-4-49" class="d">-			cgit_fill_cache(item, 1);
+</a><a href="#h2-4-50" id="h2-4-50" class="d">-			cache_unlock(item);
+</a><a href="#h2-4-51" id="h2-4-51" class="d">-		} else {
+</a><a href="#h2-4-52" id="h2-4-52" class="d">-			cache_cancel_lock(item);
+</a><a href="#h2-4-53" id="h2-4-53" class="d">-		}
+</a><a href="#h2-4-54" id="h2-4-54" class="d">-	} else if (cache_expired(item) &amp;&amp; cache_lock(item)) {
+</a><a href="#h2-4-55" id="h2-4-55" class="d">-		if (cache_expired(item)) {
+</a><a href="#h2-4-56" id="h2-4-56" class="d">-			cgit_fill_cache(item, 1);
+</a><a href="#h2-4-57" id="h2-4-57" class="d">-			cache_unlock(item);
+</a><a href="#h2-4-58" id="h2-4-58" class="d">-		} else {
+</a><a href="#h2-4-59" id="h2-4-59" class="d">-			cache_cancel_lock(item);
+</a><a href="#h2-4-60" id="h2-4-60" class="d">-		}
+</a><a href="#h2-4-61" id="h2-4-61" class="d">-	}
+</a><a href="#h2-4-62" id="h2-4-62" class="d">-}
+</a><a href="#h2-4-63" id="h2-4-63" class="d">-
+</a><a href="#h2-4-64" id="h2-4-64" class="d">-static void cgit_print_cache(struct cacheitem *item)
+</a><a href="#h2-4-65" id="h2-4-65" class="d">-{
+</a><a href="#h2-4-66" id="h2-4-66" class="d">-	static char buf[4096];
+</a><a href="#h2-4-67" id="h2-4-67" class="d">-	ssize_t i;
+</a><a href="#h2-4-68" id="h2-4-68" class="d">-
+</a><a href="#h2-4-69" id="h2-4-69" class="d">-	int fd = open(item-&gt;name, O_RDONLY);
+</a><a href="#h2-4-70" id="h2-4-70" class="d">-	if (fd&lt;0)
+</a><a href="#h2-4-71" id="h2-4-71" class="d">-		die(&quot;Unable to open cached file %s&quot;, item-&gt;name);
+</a><a href="#h2-4-72" id="h2-4-72" class="d">-
+</a><a href="#h2-4-73" id="h2-4-73" class="d">-	while((i=read(fd, buf, sizeof(buf))) &gt; 0)
+</a><a href="#h2-4-74" id="h2-4-74" class="d">-		write(STDOUT_FILENO, buf, i);
+</a><a href="#h2-4-75" id="h2-4-75" class="d">-
+</a><a href="#h2-4-76" id="h2-4-76" class="d">-	close(fd);
+</a><a href="#h2-4-77" id="h2-4-77" class="d">-}
+</a><a href="#h2-4-78" id="h2-4-78" class="d">-
+</a> static void cgit_parse_args(int argc, const char **argv)
+ {
+ 	int i;
+<a href="#h2-5" id="h2-5" class="h">@@ -429,13 +319,29 @@ static void cgit_parse_args(int argc, const char **argv)
+</a> 	}
+ }
+ 
+<a href="#h2-5-3" id="h2-5-3" class="i">+static int calc_ttl()
+</a><a href="#h2-5-4" id="h2-5-4" class="i">+{
+</a><a href="#h2-5-5" id="h2-5-5" class="i">+	if (!ctx.repo)
+</a><a href="#h2-5-6" id="h2-5-6" class="i">+		return ctx.cfg.cache_root_ttl;
+</a><a href="#h2-5-7" id="h2-5-7" class="i">+
+</a><a href="#h2-5-8" id="h2-5-8" class="i">+	if (!ctx.qry.page)
+</a><a href="#h2-5-9" id="h2-5-9" class="i">+		return ctx.cfg.cache_repo_ttl;
+</a><a href="#h2-5-10" id="h2-5-10" class="i">+
+</a><a href="#h2-5-11" id="h2-5-11" class="i">+	if (ctx.qry.has_symref)
+</a><a href="#h2-5-12" id="h2-5-12" class="i">+		return ctx.cfg.cache_dynamic_ttl;
+</a><a href="#h2-5-13" id="h2-5-13" class="i">+
+</a><a href="#h2-5-14" id="h2-5-14" class="i">+	if (ctx.qry.has_sha1)
+</a><a href="#h2-5-15" id="h2-5-15" class="i">+		return ctx.cfg.cache_static_ttl;
+</a><a href="#h2-5-16" id="h2-5-16" class="i">+
+</a><a href="#h2-5-17" id="h2-5-17" class="i">+	return ctx.cfg.cache_repo_ttl;
+</a><a href="#h2-5-18" id="h2-5-18" class="i">+}
+</a><a href="#h2-5-19" id="h2-5-19" class="i">+
+</a> int main(int argc, const char **argv)
+ {
+<a href="#h2-5-22" id="h2-5-22" class="d">-	struct cacheitem item;
+</a> 	const char *cgit_config_env = getenv(&quot;CGIT_CONFIG&quot;);
+<a href="#h2-5-24" id="h2-5-24" class="i">+	int err, ttl;
+</a> 
+ 	prepare_context(&amp;ctx);
+<a href="#h2-5-27" id="h2-5-27" class="d">-	item.st.st_mtime = time(NULL);
+</a> 	cgit_repolist.length = 0;
+ 	cgit_repolist.count = 0;
+ 	cgit_repolist.repos = NULL;
+<a href="#h2-6" id="h2-6" class="h">@@ -449,13 +355,15 @@ int main(int argc, const char **argv)
+</a> 		ctx.qry.raw = xstrdup(getenv(&quot;QUERY_STRING&quot;));
+ 	cgit_parse_args(argc, argv);
+ 	http_parse_querystring(ctx.qry.raw, querystring_cb);
+<a href="#h2-6-3" id="h2-6-3" class="d">-	if (!cgit_prepare_cache(&amp;item))
+</a><a href="#h2-6-4" id="h2-6-4" class="d">-		return 0;
+</a><a href="#h2-6-5" id="h2-6-5" class="d">-	if (ctx.cfg.nocache) {
+</a><a href="#h2-6-6" id="h2-6-6" class="d">-		cgit_fill_cache(&amp;item, 0);
+</a><a href="#h2-6-7" id="h2-6-7" class="d">-	} else {
+</a><a href="#h2-6-8" id="h2-6-8" class="d">-		cgit_check_cache(&amp;item);
+</a><a href="#h2-6-9" id="h2-6-9" class="d">-		cgit_print_cache(&amp;item);
+</a><a href="#h2-6-10" id="h2-6-10" class="d">-	}
+</a><a href="#h2-6-11" id="h2-6-11" class="d">-	return 0;
+</a><a href="#h2-6-12" id="h2-6-12" class="i">+
+</a><a href="#h2-6-13" id="h2-6-13" class="i">+	ttl = calc_ttl();
+</a><a href="#h2-6-14" id="h2-6-14" class="i">+	ctx.page.expires += ttl*60;
+</a><a href="#h2-6-15" id="h2-6-15" class="i">+	if (ctx.cfg.nocache)
+</a><a href="#h2-6-16" id="h2-6-16" class="i">+		ctx.cfg.cache_size = 0;
+</a><a href="#h2-6-17" id="h2-6-17" class="i">+	err = cache_process(ctx.cfg.cache_size, ctx.cfg.cache_root,
+</a><a href="#h2-6-18" id="h2-6-18" class="i">+			    ctx.qry.raw, ttl, process_request, &amp;ctx);
+</a><a href="#h2-6-19" id="h2-6-19" class="i">+	if (err)
+</a><a href="#h2-6-20" id="h2-6-20" class="i">+		cache_log(&quot;[cgit] error %d - %s\n&quot;,
+</a><a href="#h2-6-21" id="h2-6-21" class="i">+			  err, strerror(err));
+</a><a href="#h2-6-22" id="h2-6-22" class="i">+	return err;
+</a> }
+<b>diff --git a/<a id="h3" href="../file/cgit.h.html">cgit.h</a> b/<a href="../file/cgit.h.html">cgit.h</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -134,6 +134,7 @@ struct cgit_config {
+</a> 	char *root_title;
+ 	char *script_name;
+ 	char *virtual_root;
+<a href="#h3-0-3" id="h3-0-3" class="i">+	int cache_size;
+</a> 	int cache_dynamic_ttl;
+ 	int cache_max_create_time;
+ 	int cache_repo_ttl;
+<b>diff --git a/<a id="h4" href="../file/tests/setup.sh.html">tests/setup.sh</a> b/<a href="../file/tests/setup.sh.html">tests/setup.sh</a></b>
+<a href="#h4-0" id="h4-0" class="h">@@ -44,7 +44,7 @@ setup_repos()
+</a> virtual-root=/
+ cache-root=$PWD/trash/cache
+ 
+<a href="#h4-0-3" id="h4-0-3" class="d">-nocache=0
+</a><a href="#h4-0-4" id="h4-0-4" class="i">+cache-size=1021
+</a> snapshots=tar.gz tar.bz zip
+ enable-log-filecount=1
+ enable-log-linecount=1
+<b>diff --git a/<a id="h5" href="../file/tests/t0020-validate-cache.sh.html">tests/t0020-validate-cache.sh</a> b/<a href="../file/tests/t0020-validate-cache.sh.html">tests/t0020-validate-cache.sh</a></b>
+<a href="#h5-0" id="h5-0" class="h">@@ -0,0 +1,67 @@
+</a><a href="#h5-0-0" id="h5-0-0" class="i">+#!/bin/sh
+</a><a href="#h5-0-1" id="h5-0-1" class="i">+
+</a><a href="#h5-0-2" id="h5-0-2" class="i">+. ./setup.sh
+</a><a href="#h5-0-3" id="h5-0-3" class="i">+
+</a><a href="#h5-0-4" id="h5-0-4" class="i">+prepare_tests &#39;Validate cache&#39;
+</a><a href="#h5-0-5" id="h5-0-5" class="i">+
+</a><a href="#h5-0-6" id="h5-0-6" class="i">+run_test &#39;verify cache-size=0&#39; &#39;
+</a><a href="#h5-0-7" id="h5-0-7" class="i">+
+</a><a href="#h5-0-8" id="h5-0-8" class="i">+	rm -f trash/cache/* &amp;&amp;
+</a><a href="#h5-0-9" id="h5-0-9" class="i">+	sed -i -e &quot;s/cache-size=1021$/cache-size=0/&quot; trash/cgitrc &amp;&amp;
+</a><a href="#h5-0-10" id="h5-0-10" class="i">+	cgit_url &quot;&quot; &amp;&amp;
+</a><a href="#h5-0-11" id="h5-0-11" class="i">+	cgit_url &quot;foo&quot; &amp;&amp;
+</a><a href="#h5-0-12" id="h5-0-12" class="i">+	cgit_url &quot;foo/refs&quot; &amp;&amp;
+</a><a href="#h5-0-13" id="h5-0-13" class="i">+	cgit_url &quot;foo/tree&quot; &amp;&amp;
+</a><a href="#h5-0-14" id="h5-0-14" class="i">+	cgit_url &quot;foo/log&quot; &amp;&amp;
+</a><a href="#h5-0-15" id="h5-0-15" class="i">+	cgit_url &quot;foo/diff&quot; &amp;&amp;
+</a><a href="#h5-0-16" id="h5-0-16" class="i">+	cgit_url &quot;foo/patch&quot; &amp;&amp;
+</a><a href="#h5-0-17" id="h5-0-17" class="i">+	cgit_url &quot;bar&quot; &amp;&amp;
+</a><a href="#h5-0-18" id="h5-0-18" class="i">+	cgit_url &quot;bar/refs&quot; &amp;&amp;
+</a><a href="#h5-0-19" id="h5-0-19" class="i">+	cgit_url &quot;bar/tree&quot; &amp;&amp;
+</a><a href="#h5-0-20" id="h5-0-20" class="i">+	cgit_url &quot;bar/log&quot; &amp;&amp;
+</a><a href="#h5-0-21" id="h5-0-21" class="i">+	cgit_url &quot;bar/diff&quot; &amp;&amp;
+</a><a href="#h5-0-22" id="h5-0-22" class="i">+	cgit_url &quot;bar/patch&quot; &amp;&amp;
+</a><a href="#h5-0-23" id="h5-0-23" class="i">+	test 0 -eq $(ls trash/cache | wc -l)
+</a><a href="#h5-0-24" id="h5-0-24" class="i">+&#39;
+</a><a href="#h5-0-25" id="h5-0-25" class="i">+
+</a><a href="#h5-0-26" id="h5-0-26" class="i">+run_test &#39;verify cache-size=1&#39; &#39;
+</a><a href="#h5-0-27" id="h5-0-27" class="i">+
+</a><a href="#h5-0-28" id="h5-0-28" class="i">+	rm -f trash/cache/* &amp;&amp;
+</a><a href="#h5-0-29" id="h5-0-29" class="i">+	sed -i -e &quot;s/cache-size=0$/cache-size=1/&quot; trash/cgitrc &amp;&amp;
+</a><a href="#h5-0-30" id="h5-0-30" class="i">+	cgit_url &quot;&quot; &amp;&amp;
+</a><a href="#h5-0-31" id="h5-0-31" class="i">+	cgit_url &quot;foo&quot; &amp;&amp;
+</a><a href="#h5-0-32" id="h5-0-32" class="i">+	cgit_url &quot;foo/refs&quot; &amp;&amp;
+</a><a href="#h5-0-33" id="h5-0-33" class="i">+	cgit_url &quot;foo/tree&quot; &amp;&amp;
+</a><a href="#h5-0-34" id="h5-0-34" class="i">+	cgit_url &quot;foo/log&quot; &amp;&amp;
+</a><a href="#h5-0-35" id="h5-0-35" class="i">+	cgit_url &quot;foo/diff&quot; &amp;&amp;
+</a><a href="#h5-0-36" id="h5-0-36" class="i">+	cgit_url &quot;foo/patch&quot; &amp;&amp;
+</a><a href="#h5-0-37" id="h5-0-37" class="i">+	cgit_url &quot;bar&quot; &amp;&amp;
+</a><a href="#h5-0-38" id="h5-0-38" class="i">+	cgit_url &quot;bar/refs&quot; &amp;&amp;
+</a><a href="#h5-0-39" id="h5-0-39" class="i">+	cgit_url &quot;bar/tree&quot; &amp;&amp;
+</a><a href="#h5-0-40" id="h5-0-40" class="i">+	cgit_url &quot;bar/log&quot; &amp;&amp;
+</a><a href="#h5-0-41" id="h5-0-41" class="i">+	cgit_url &quot;bar/diff&quot; &amp;&amp;
+</a><a href="#h5-0-42" id="h5-0-42" class="i">+	cgit_url &quot;bar/patch&quot; &amp;&amp;
+</a><a href="#h5-0-43" id="h5-0-43" class="i">+	test 1 -eq $(ls trash/cache | wc -l)
+</a><a href="#h5-0-44" id="h5-0-44" class="i">+&#39;
+</a><a href="#h5-0-45" id="h5-0-45" class="i">+
+</a><a href="#h5-0-46" id="h5-0-46" class="i">+run_test &#39;verify cache-size=1021&#39; &#39;
+</a><a href="#h5-0-47" id="h5-0-47" class="i">+
+</a><a href="#h5-0-48" id="h5-0-48" class="i">+	rm -f trash/cache/* &amp;&amp;
+</a><a href="#h5-0-49" id="h5-0-49" class="i">+	sed -i -e &quot;s/cache-size=1$/cache-size=1021/&quot; trash/cgitrc &amp;&amp;
+</a><a href="#h5-0-50" id="h5-0-50" class="i">+	cgit_url &quot;&quot; &amp;&amp;
+</a><a href="#h5-0-51" id="h5-0-51" class="i">+	cgit_url &quot;foo&quot; &amp;&amp;
+</a><a href="#h5-0-52" id="h5-0-52" class="i">+	cgit_url &quot;foo/refs&quot; &amp;&amp;
+</a><a href="#h5-0-53" id="h5-0-53" class="i">+	cgit_url &quot;foo/tree&quot; &amp;&amp;
+</a><a href="#h5-0-54" id="h5-0-54" class="i">+	cgit_url &quot;foo/log&quot; &amp;&amp;
+</a><a href="#h5-0-55" id="h5-0-55" class="i">+	cgit_url &quot;foo/diff&quot; &amp;&amp;
+</a><a href="#h5-0-56" id="h5-0-56" class="i">+	cgit_url &quot;foo/patch&quot; &amp;&amp;
+</a><a href="#h5-0-57" id="h5-0-57" class="i">+	cgit_url &quot;bar&quot; &amp;&amp;
+</a><a href="#h5-0-58" id="h5-0-58" class="i">+	cgit_url &quot;bar/refs&quot; &amp;&amp;
+</a><a href="#h5-0-59" id="h5-0-59" class="i">+	cgit_url &quot;bar/tree&quot; &amp;&amp;
+</a><a href="#h5-0-60" id="h5-0-60" class="i">+	cgit_url &quot;bar/log&quot; &amp;&amp;
+</a><a href="#h5-0-61" id="h5-0-61" class="i">+	cgit_url &quot;bar/diff&quot; &amp;&amp;
+</a><a href="#h5-0-62" id="h5-0-62" class="i">+	cgit_url &quot;bar/patch&quot; &amp;&amp;
+</a><a href="#h5-0-63" id="h5-0-63" class="i">+	test 13 -eq $(ls trash/cache | wc -l)
+</a><a href="#h5-0-64" id="h5-0-64" class="i">+&#39;
+</a><a href="#h5-0-65" id="h5-0-65" class="i">+
+</a><a href="#h5-0-66" id="h5-0-66" class="i">+tests_done
+</a></pre>
+</div>
+</body>
+</html>

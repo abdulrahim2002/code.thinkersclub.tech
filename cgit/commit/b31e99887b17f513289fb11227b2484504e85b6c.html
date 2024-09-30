@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>cache: close race window when unlocking slots - cgit - Web based git repository viewer
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="cgit.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="cgit.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Source+Code+Pro:ital,wght@0,200..900;1,200..900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/base16/tender.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script> hljs.highlightAll() ;</script>
+<style>pre code.hljs {display: inline;padding: 0;} code.hljs {padding: 0;} .hljs {background: initial;} .hljs-comment{color: rgb(96, 96, 96);}</style></head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>cgit</h1><span class="desc">Web based git repository viewer
+</span></td></tr><tr><td></td><td>
+<br>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/.gitmodules.html">Submodules</a> | <a href="../file/README.html">README</a> | <a href="../file/COPYING.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/b31e99887b17f513289fb11227b2484504e85b6c.html">b31e99887b17f513289fb11227b2484504e85b6c</a>
+<b>parent</b> <a href="../commit/255b78ff5291cef79978b025c9872f801de89e23.html">255b78ff5291cef79978b025c9872f801de89e23</a>
+<b>Author:</b> John Keeping &lt;<a href="mailto:john@keeping.me.uk">john@keeping.me.uk</a>&gt;
+<b>Date:</b>   Wed, 20 Jun 2018 07:29:14 +0200
+
+cache: close race window when unlocking slots
+
+We use POSIX advisory record locks to control access to cache slots, but
+these have an unhelpful behaviour in that they are released when any
+file descriptor referencing the file is closed by this process.
+
+Mostly this is okay, since we know we won&#39;t be opening the lock file
+anywhere else, but there is one place that it does matter: when we
+restore stdout we dup2() over a file descriptor referring to the file,
+thus closing that descriptor.
+
+Since we restore stdout before unlocking the slot, this creates a window
+during which the slot content can be overwritten.  The fix is reasonably
+straightforward: simply restore stdout after unlocking the slot, but the
+diff is a bit bigger because this requires us to move the temporary
+stdout FD into struct cache_slot.
+
+Signed-off-by: John Keeping &lt;john@keeping.me.uk&gt;
+Reviewed-by: Christian Hesse &lt;mail@eworm.de&gt;
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">cache.c</a></td><td> | </td><td class="num">37</td><td><span class="i">++++++++++++++</span><span class="d">-----------------------</span></td></tr>
+</table></pre><pre>1 file changed, 14 insertions(+), 23 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/cache.c.html">cache.c</a> b/<a href="../file/cache.c.html">cache.c</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -29,6 +29,7 @@ struct cache_slot {
+</a> 	cache_fill_fn fn;
+ 	int cache_fd;
+ 	int lock_fd;
+<a href="#h0-0-3" id="h0-0-3" class="i">+	int stdout_fd;
+</a> 	const char *cache_name;
+ 	const char *lock_name;
+ 	int match;
+<a href="#h0-1" id="h0-1" class="h">@@ -197,6 +198,13 @@ static int unlock_slot(struct cache_slot *slot, int replace_old_slot)
+</a> 	else
+ 		err = unlink(slot-&gt;lock_name);
+ 
+<a href="#h0-1-3" id="h0-1-3" class="i">+	/* Restore stdout and close the temporary FD. */
+</a><a href="#h0-1-4" id="h0-1-4" class="i">+	if (slot-&gt;stdout_fd &gt;= 0) {
+</a><a href="#h0-1-5" id="h0-1-5" class="i">+		dup2(slot-&gt;stdout_fd, STDOUT_FILENO);
+</a><a href="#h0-1-6" id="h0-1-6" class="i">+		close(slot-&gt;stdout_fd);
+</a><a href="#h0-1-7" id="h0-1-7" class="i">+		slot-&gt;stdout_fd = -1;
+</a><a href="#h0-1-8" id="h0-1-8" class="i">+	}
+</a><a href="#h0-1-9" id="h0-1-9" class="i">+
+</a> 	if (err)
+ 		return errno;
+ 
+<a href="#h0-2" id="h0-2" class="h">@@ -208,42 +216,24 @@ static int unlock_slot(struct cache_slot *slot, int replace_old_slot)
+</a>  */
+ static int fill_slot(struct cache_slot *slot)
+ {
+<a href="#h0-2-3" id="h0-2-3" class="d">-	int tmp;
+</a><a href="#h0-2-4" id="h0-2-4" class="d">-
+</a> 	/* Preserve stdout */
+<a href="#h0-2-6" id="h0-2-6" class="d">-	tmp = dup(STDOUT_FILENO);
+</a><a href="#h0-2-7" id="h0-2-7" class="d">-	if (tmp == -1)
+</a><a href="#h0-2-8" id="h0-2-8" class="i">+	slot-&gt;stdout_fd = dup(STDOUT_FILENO);
+</a><a href="#h0-2-9" id="h0-2-9" class="i">+	if (slot-&gt;stdout_fd == -1)
+</a> 		return errno;
+ 
+ 	/* Redirect stdout to lockfile */
+<a href="#h0-2-13" id="h0-2-13" class="d">-	if (dup2(slot-&gt;lock_fd, STDOUT_FILENO) == -1) {
+</a><a href="#h0-2-14" id="h0-2-14" class="d">-		close(tmp);
+</a><a href="#h0-2-15" id="h0-2-15" class="i">+	if (dup2(slot-&gt;lock_fd, STDOUT_FILENO) == -1)
+</a> 		return errno;
+<a href="#h0-2-17" id="h0-2-17" class="d">-	}
+</a> 
+ 	/* Generate cache content */
+ 	slot-&gt;fn();
+ 
+ 	/* Make sure any buffered data is flushed to the file */
+<a href="#h0-2-23" id="h0-2-23" class="d">-	if (fflush(stdout)) {
+</a><a href="#h0-2-24" id="h0-2-24" class="d">-		close(tmp);
+</a><a href="#h0-2-25" id="h0-2-25" class="i">+	if (fflush(stdout))
+</a> 		return errno;
+<a href="#h0-2-27" id="h0-2-27" class="d">-	}
+</a> 
+ 	/* update stat info */
+<a href="#h0-2-30" id="h0-2-30" class="d">-	if (fstat(slot-&gt;lock_fd, &amp;slot-&gt;cache_st)) {
+</a><a href="#h0-2-31" id="h0-2-31" class="d">-		close(tmp);
+</a><a href="#h0-2-32" id="h0-2-32" class="d">-		return errno;
+</a><a href="#h0-2-33" id="h0-2-33" class="d">-	}
+</a><a href="#h0-2-34" id="h0-2-34" class="d">-
+</a><a href="#h0-2-35" id="h0-2-35" class="d">-	/* Restore stdout */
+</a><a href="#h0-2-36" id="h0-2-36" class="d">-	if (dup2(tmp, STDOUT_FILENO) == -1) {
+</a><a href="#h0-2-37" id="h0-2-37" class="d">-		close(tmp);
+</a><a href="#h0-2-38" id="h0-2-38" class="d">-		return errno;
+</a><a href="#h0-2-39" id="h0-2-39" class="d">-	}
+</a><a href="#h0-2-40" id="h0-2-40" class="d">-
+</a><a href="#h0-2-41" id="h0-2-41" class="d">-	/* Close the temporary filedescriptor */
+</a><a href="#h0-2-42" id="h0-2-42" class="d">-	if (close(tmp))
+</a><a href="#h0-2-43" id="h0-2-43" class="i">+	if (fstat(slot-&gt;lock_fd, &amp;slot-&gt;cache_st))
+</a> 		return errno;
+ 
+ 	return 0;
+<a href="#h0-3" id="h0-3" class="h">@@ -393,6 +383,7 @@ int cache_process(int size, const char *path, const char *key, int ttl,
+</a> 	strbuf_addstr(&amp;lockname, &quot;.lock&quot;);
+ 	slot.fn = fn;
+ 	slot.ttl = ttl;
+<a href="#h0-3-3" id="h0-3-3" class="i">+	slot.stdout_fd = -1;
+</a> 	slot.cache_name = filename.buf;
+ 	slot.lock_name = lockname.buf;
+ 	slot.key = key;
+</pre>
+</div>
+</body>
+</html>

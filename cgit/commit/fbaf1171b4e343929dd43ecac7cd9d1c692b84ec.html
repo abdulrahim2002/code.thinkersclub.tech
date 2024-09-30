@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Don&#39;t truncate valid cachefiles - cgit - Web based git repository viewer
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="cgit.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="cgit.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Source+Code+Pro:ital,wght@0,200..900;1,200..900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/base16/tender.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script> hljs.highlightAll() ;</script>
+<style>pre code.hljs {display: inline;padding: 0;} code.hljs {padding: 0;} .hljs {background: initial;} .hljs-comment{color: rgb(96, 96, 96);}</style></head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>cgit</h1><span class="desc">Web based git repository viewer
+</span></td></tr><tr><td></td><td>
+<br>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/.gitmodules.html">Submodules</a> | <a href="../file/README.html">README</a> | <a href="../file/COPYING.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/fbaf1171b4e343929dd43ecac7cd9d1c692b84ec.html">fbaf1171b4e343929dd43ecac7cd9d1c692b84ec</a>
+<b>parent</b> <a href="../commit/44923f8953c66dc9b852316b655ab3b5aec9478e.html">44923f8953c66dc9b852316b655ab3b5aec9478e</a>
+<b>Author:</b> Lars Hjemli &lt;<a href="mailto:hjemli@gmail.com">hjemli@gmail.com</a>&gt;
+<b>Date:</b>   Mon, 11 Dec 2006 22:53:50 +0100
+
+Don&#39;t truncate valid cachefiles
+
+An embarrassing thinko in cgit_check_cache() would truncate valid cachefiles
+in the following situation:
+  1) process A notices a missing/expired cachefile
+  2) process B gets scheduled, locks, fills and unlocks the cachefile
+  3) process A gets scheduled, locks the cachefile, notices that the cachefile
+     now exist/is not expired anymore, and continues to overwrite it with an
+     empty lockfile.
+
+Thanks to Linus for noticing (again).
+
+Signed-off-by: Lars Hjemli &lt;hjemli@gmail.com&gt;
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">cache.c</a></td><td> | </td><td class="num">5</td><td><span class="i">+++++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">cgit.c</a></td><td> | </td><td class="num">14</td><td><span class="i">++++++++++</span><span class="d">----</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">cgit.h</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+</table></pre><pre>3 files changed, 16 insertions(+), 4 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/cache.c.html">cache.c</a> b/<a href="../file/cache.c.html">cache.c</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -99,6 +99,11 @@ int cache_unlock(struct cacheitem *item)
+</a> 	return (rename(fmt(&quot;%s.lock&quot;, item-&gt;name), item-&gt;name) == 0);
+ }
+ 
+<a href="#h0-0-3" id="h0-0-3" class="i">+int cache_cancel_lock(struct cacheitem *item)
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+{
+</a><a href="#h0-0-5" id="h0-0-5" class="i">+	return (unlink(fmt(&quot;%s.lock&quot;, item-&gt;name)) == 0);
+</a><a href="#h0-0-6" id="h0-0-6" class="i">+}
+</a><a href="#h0-0-7" id="h0-0-7" class="i">+
+</a> int cache_expired(struct cacheitem *item)
+ {
+ 	if (item-&gt;ttl &lt; 0)
+<b>diff --git a/<a id="h1" href="../file/cgit.c.html">cgit.c</a> b/<a href="../file/cgit.c.html">cgit.c</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -61,13 +61,19 @@ static void cgit_check_cache(struct cacheitem *item)
+</a> 			sleep(1);
+ 			goto top;
+ 		}
+<a href="#h1-0-3" id="h1-0-3" class="d">-		if (!cache_exist(item))
+</a><a href="#h1-0-4" id="h1-0-4" class="i">+		if (!cache_exist(item)) {
+</a> 			cgit_fill_cache(item);
+<a href="#h1-0-6" id="h1-0-6" class="d">-		cache_unlock(item);
+</a><a href="#h1-0-7" id="h1-0-7" class="i">+			cache_unlock(item);
+</a><a href="#h1-0-8" id="h1-0-8" class="i">+		} else {
+</a><a href="#h1-0-9" id="h1-0-9" class="i">+			cache_cancel_lock(item);
+</a><a href="#h1-0-10" id="h1-0-10" class="i">+		}
+</a> 	} else if (cache_expired(item) &amp;&amp; cache_lock(item)) {
+<a href="#h1-0-12" id="h1-0-12" class="d">-		if (cache_expired(item))
+</a><a href="#h1-0-13" id="h1-0-13" class="i">+		if (cache_expired(item)) {
+</a> 			cgit_fill_cache(item);
+<a href="#h1-0-15" id="h1-0-15" class="d">-		cache_unlock(item);
+</a><a href="#h1-0-16" id="h1-0-16" class="i">+			cache_unlock(item);
+</a><a href="#h1-0-17" id="h1-0-17" class="i">+		} else {
+</a><a href="#h1-0-18" id="h1-0-18" class="i">+			cache_cancel_lock(item);
+</a><a href="#h1-0-19" id="h1-0-19" class="i">+		}
+</a> 	}
+ }
+ 
+<b>diff --git a/<a id="h2" href="../file/cgit.h.html">cgit.h</a> b/<a href="../file/cgit.h.html">cgit.h</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -66,6 +66,7 @@ extern int cgit_parse_query(char *txt, configfn fn);
+</a> extern void cache_prepare(struct cacheitem *item);
+ extern int cache_lock(struct cacheitem *item);
+ extern int cache_unlock(struct cacheitem *item);
+<a href="#h2-0-3" id="h2-0-3" class="i">+extern int cache_cancel_lock(struct cacheitem *item);
+</a> extern int cache_exist(struct cacheitem *item);
+ extern int cache_expired(struct cacheitem *item);
+ 
+</pre>
+</div>
+</body>
+</html>

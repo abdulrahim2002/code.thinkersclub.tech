@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>auth-filters: generate secret securely - cgit - Web based git repository viewer
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="cgit.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="cgit.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Source+Code+Pro:ital,wght@0,200..900;1,200..900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/base16/tender.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script> hljs.highlightAll() ;</script>
+<style>pre code.hljs {display: inline;padding: 0;} code.hljs {padding: 0;} .hljs {background: initial;} .hljs-comment{color: rgb(96, 96, 96);}</style></head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>cgit</h1><span class="desc">Web based git repository viewer
+</span></td></tr><tr><td></td><td>
+<br>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/.gitmodules.html">Submodules</a> | <a href="../file/README.html">README</a> | <a href="../file/COPYING.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/b73df8098f261ecbd4bc5ba689f9766a1a75f9a0.html">b73df8098f261ecbd4bc5ba689f9766a1a75f9a0</a>
+<b>parent</b> <a href="../commit/c4d23d02ec5a26d09d389dcf7b8928ecd5798ccc.html">c4d23d02ec5a26d09d389dcf7b8928ecd5798ccc</a>
+<b>Author:</b> Jason A. Donenfeld &lt;<a href="mailto:Jason@zx2c4.com">Jason@zx2c4.com</a>&gt;
+<b>Date:</b>   Sun, 15 Jul 2018 03:22:12 +0200
+
+auth-filters: generate secret securely
+
+This is much better than having the user generate it themselves.
+
+Signed-off-by: Jason A. Donenfeld &lt;Jason@zx2c4.com&gt;
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">filters/gentoo-ldap-authentication.lua</a></td><td> | </td><td class="num">53</td><td><span class="i">+++++++++++++++++++++++++++++++++++++++++++</span><span class="d">----------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">filters/simple-authentication.lua</a></td><td> | </td><td class="num">50</td><td><span class="i">++++++++++++++++++++++++++++++++++++++++++</span><span class="d">--------</span></td></tr>
+</table></pre><pre>2 files changed, 85 insertions(+), 18 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/filters/gentoo-ldap-authentication.lua.html">filters/gentoo-ldap-authentication.lua</a> b/<a href="../file/filters/gentoo-ldap-authentication.lua.html">filters/gentoo-ldap-authentication.lua</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -5,7 +5,13 @@
+</a> -- 	&lt;http://mkottman.github.io/luacrypto/&gt;
+ -- 	lualdap &gt;= 1.2
+ -- 	&lt;https://git.zx2c4.com/lualdap/about/&gt;
+<a href="#h0-0-3" id="h0-0-3" class="i">+-- 	luaposix
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+-- 	&lt;https://github.com/luaposix/luaposix&gt;
+</a> --
+<a href="#h0-0-6" id="h0-0-6" class="i">+local sysstat = require(&quot;posix.sys.stat&quot;)
+</a><a href="#h0-0-7" id="h0-0-7" class="i">+local unistd = require(&quot;posix.unistd&quot;)
+</a><a href="#h0-0-8" id="h0-0-8" class="i">+local crypto = require(&quot;crypto&quot;)
+</a><a href="#h0-0-9" id="h0-0-9" class="i">+local lualdap = require(&quot;lualdap&quot;)
+</a> 
+ 
+ --
+<a href="#h0-1" id="h0-1" class="h">@@ -21,11 +27,9 @@ local protected_repos = {
+</a> 	portage = &quot;dev&quot;
+ }
+ 
+<a href="#h0-1-3" id="h0-1-3" class="d">-
+</a><a href="#h0-1-4" id="h0-1-4" class="d">--- All cookies will be authenticated based on this secret. Make it something
+</a><a href="#h0-1-5" id="h0-1-5" class="d">--- totally random and impossible to guess. It should be large.
+</a><a href="#h0-1-6" id="h0-1-6" class="d">-local secret = &quot;BE SURE TO CUSTOMIZE THIS STRING TO SOMETHING BIG AND RANDOM&quot;
+</a><a href="#h0-1-7" id="h0-1-7" class="d">-
+</a><a href="#h0-1-8" id="h0-1-8" class="i">+-- Set this to a path this script can write to for storing a persistent
+</a><a href="#h0-1-9" id="h0-1-9" class="i">+-- cookie secret, which should be guarded.
+</a><a href="#h0-1-10" id="h0-1-10" class="i">+local secret_filename = &quot;/var/cache/cgit/auth-secret&quot;
+</a> 
+ 
+ --
+<a href="#h0-2" id="h0-2" class="h">@@ -102,8 +106,6 @@ end
+</a> --
+ --
+ 
+<a href="#h0-2-3" id="h0-2-3" class="d">-local lualdap = require(&quot;lualdap&quot;)
+</a><a href="#h0-2-4" id="h0-2-4" class="d">-
+</a> function gentoo_ldap_user_groups(username, password)
+ 	-- Ensure the user is alphanumeric
+ 	if username == nil or username:match(&quot;%W&quot;) then
+<a href="#h0-3" id="h0-3" class="h">@@ -231,7 +233,38 @@ end
+</a> --
+ --
+ 
+<a href="#h0-3-3" id="h0-3-3" class="d">-local crypto = require(&quot;crypto&quot;)
+</a><a href="#h0-3-4" id="h0-3-4" class="i">+local secret = nil
+</a><a href="#h0-3-5" id="h0-3-5" class="i">+
+</a><a href="#h0-3-6" id="h0-3-6" class="i">+-- Loads a secret from a file, creates a secret, or returns one from memory.
+</a><a href="#h0-3-7" id="h0-3-7" class="i">+function get_secret()
+</a><a href="#h0-3-8" id="h0-3-8" class="i">+	if secret ~= nil then
+</a><a href="#h0-3-9" id="h0-3-9" class="i">+		return secret
+</a><a href="#h0-3-10" id="h0-3-10" class="i">+	end
+</a><a href="#h0-3-11" id="h0-3-11" class="i">+	local secret_file = io.open(secret_filename, &quot;r&quot;)
+</a><a href="#h0-3-12" id="h0-3-12" class="i">+	if secret_file == nil then
+</a><a href="#h0-3-13" id="h0-3-13" class="i">+		local old_umask = sysstat.umask(63)
+</a><a href="#h0-3-14" id="h0-3-14" class="i">+		local temporary_filename = secret_filename .. &quot;.tmp.&quot; .. crypto.hex(crypto.rand.bytes(16))
+</a><a href="#h0-3-15" id="h0-3-15" class="i">+		local temporary_file = io.open(temporary_filename, &quot;w&quot;)
+</a><a href="#h0-3-16" id="h0-3-16" class="i">+		if temporary_file == nil then
+</a><a href="#h0-3-17" id="h0-3-17" class="i">+			os.exit(177)
+</a><a href="#h0-3-18" id="h0-3-18" class="i">+		end
+</a><a href="#h0-3-19" id="h0-3-19" class="i">+		temporary_file:write(crypto.hex(crypto.rand.bytes(32)))
+</a><a href="#h0-3-20" id="h0-3-20" class="i">+		temporary_file:close()
+</a><a href="#h0-3-21" id="h0-3-21" class="i">+		unistd.link(temporary_filename, secret_filename) -- Intentionally fails in the case that another process is doing the same.
+</a><a href="#h0-3-22" id="h0-3-22" class="i">+		unistd.unlink(temporary_filename)
+</a><a href="#h0-3-23" id="h0-3-23" class="i">+		sysstat.umask(old_umask)
+</a><a href="#h0-3-24" id="h0-3-24" class="i">+		secret_file = io.open(secret_filename, &quot;r&quot;)
+</a><a href="#h0-3-25" id="h0-3-25" class="i">+	end
+</a><a href="#h0-3-26" id="h0-3-26" class="i">+	if secret_file == nil then
+</a><a href="#h0-3-27" id="h0-3-27" class="i">+		os.exit(177)
+</a><a href="#h0-3-28" id="h0-3-28" class="i">+	end
+</a><a href="#h0-3-29" id="h0-3-29" class="i">+	secret = secret_file:read()
+</a><a href="#h0-3-30" id="h0-3-30" class="i">+	secret_file:close()
+</a><a href="#h0-3-31" id="h0-3-31" class="i">+	if secret:len() ~= 64 then
+</a><a href="#h0-3-32" id="h0-3-32" class="i">+		os.exit(177)
+</a><a href="#h0-3-33" id="h0-3-33" class="i">+	end
+</a><a href="#h0-3-34" id="h0-3-34" class="i">+	return secret
+</a><a href="#h0-3-35" id="h0-3-35" class="i">+end
+</a> 
+ -- Returns value of cookie if cookie is valid. Otherwise returns nil.
+ function validate_value(expected_field, cookie)
+<a href="#h0-4" id="h0-4" class="h">@@ -271,7 +304,7 @@ function validate_value(expected_field, cookie)
+</a> 	end
+ 
+ 	-- Lua hashes strings, so these comparisons are time invariant.
+<a href="#h0-4-3" id="h0-4-3" class="d">-	if hmac ~= crypto.hmac.digest(&quot;sha256&quot;, field .. &quot;|&quot; .. value .. &quot;|&quot; .. tostring(expiration) .. &quot;|&quot; .. salt, secret) then
+</a><a href="#h0-4-4" id="h0-4-4" class="i">+	if hmac ~= crypto.hmac.digest(&quot;sha256&quot;, field .. &quot;|&quot; .. value .. &quot;|&quot; .. tostring(expiration) .. &quot;|&quot; .. salt, get_secret()) then
+</a> 		return nil
+ 	end
+ 
+<a href="#h0-5" id="h0-5" class="h">@@ -296,7 +329,7 @@ function secure_value(field, value, expiration)
+</a> 	value = url_encode(value)
+ 	field = url_encode(field)
+ 	authstr = field .. &quot;|&quot; .. value .. &quot;|&quot; .. tostring(expiration) .. &quot;|&quot; .. salt
+<a href="#h0-5-3" id="h0-5-3" class="d">-	authstr = authstr .. &quot;|&quot; .. crypto.hmac.digest(&quot;sha256&quot;, authstr, secret)
+</a><a href="#h0-5-4" id="h0-5-4" class="i">+	authstr = authstr .. &quot;|&quot; .. crypto.hmac.digest(&quot;sha256&quot;, authstr, get_secret())
+</a> 	return authstr
+ end
+ 
+<b>diff --git a/<a id="h1" href="../file/filters/simple-authentication.lua.html">filters/simple-authentication.lua</a> b/<a href="../file/filters/simple-authentication.lua.html">filters/simple-authentication.lua</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -3,7 +3,12 @@
+</a> -- Requirements:
+ -- 	luacrypto &gt;= 0.3
+ -- 	&lt;http://mkottman.github.io/luacrypto/&gt;
+<a href="#h1-0-3" id="h1-0-3" class="i">+-- 	luaposix
+</a><a href="#h1-0-4" id="h1-0-4" class="i">+-- 	&lt;https://github.com/luaposix/luaposix&gt;
+</a> --
+<a href="#h1-0-6" id="h1-0-6" class="i">+local sysstat = require(&quot;posix.sys.stat&quot;)
+</a><a href="#h1-0-7" id="h1-0-7" class="i">+local unistd = require(&quot;posix.unistd&quot;)
+</a><a href="#h1-0-8" id="h1-0-8" class="i">+local crypto = require(&quot;crypto&quot;)
+</a> 
+ 
+ --
+<a href="#h1-1" id="h1-1" class="h">@@ -31,11 +36,9 @@ local users = {
+</a> 	bob		= &quot;ilikelua&quot;
+ }
+ 
+<a href="#h1-1-3" id="h1-1-3" class="d">--- All cookies will be authenticated based on this secret. Make it something
+</a><a href="#h1-1-4" id="h1-1-4" class="d">--- totally random and impossible to guess. It should be large.
+</a><a href="#h1-1-5" id="h1-1-5" class="d">-local secret = &quot;BE SURE TO CUSTOMIZE THIS STRING TO SOMETHING BIG AND RANDOM&quot;
+</a><a href="#h1-1-6" id="h1-1-6" class="d">-
+</a><a href="#h1-1-7" id="h1-1-7" class="d">-
+</a><a href="#h1-1-8" id="h1-1-8" class="i">+-- Set this to a path this script can write to for storing a persistent
+</a><a href="#h1-1-9" id="h1-1-9" class="i">+-- cookie secret, which should be guarded.
+</a><a href="#h1-1-10" id="h1-1-10" class="i">+local secret_filename = &quot;/var/cache/cgit/auth-secret&quot;
+</a> 
+ --
+ --
+<a href="#h1-2" id="h1-2" class="h">@@ -191,7 +194,38 @@ end
+</a> --
+ --
+ 
+<a href="#h1-2-3" id="h1-2-3" class="d">-local crypto = require(&quot;crypto&quot;)
+</a><a href="#h1-2-4" id="h1-2-4" class="i">+local secret = nil
+</a><a href="#h1-2-5" id="h1-2-5" class="i">+
+</a><a href="#h1-2-6" id="h1-2-6" class="i">+-- Loads a secret from a file, creates a secret, or returns one from memory.
+</a><a href="#h1-2-7" id="h1-2-7" class="i">+function get_secret()
+</a><a href="#h1-2-8" id="h1-2-8" class="i">+	if secret ~= nil then
+</a><a href="#h1-2-9" id="h1-2-9" class="i">+		return secret
+</a><a href="#h1-2-10" id="h1-2-10" class="i">+	end
+</a><a href="#h1-2-11" id="h1-2-11" class="i">+	local secret_file = io.open(secret_filename, &quot;r&quot;)
+</a><a href="#h1-2-12" id="h1-2-12" class="i">+	if secret_file == nil then
+</a><a href="#h1-2-13" id="h1-2-13" class="i">+		local old_umask = sysstat.umask(63)
+</a><a href="#h1-2-14" id="h1-2-14" class="i">+		local temporary_filename = secret_filename .. &quot;.tmp.&quot; .. crypto.hex(crypto.rand.bytes(16))
+</a><a href="#h1-2-15" id="h1-2-15" class="i">+		local temporary_file = io.open(temporary_filename, &quot;w&quot;)
+</a><a href="#h1-2-16" id="h1-2-16" class="i">+		if temporary_file == nil then
+</a><a href="#h1-2-17" id="h1-2-17" class="i">+			os.exit(177)
+</a><a href="#h1-2-18" id="h1-2-18" class="i">+		end
+</a><a href="#h1-2-19" id="h1-2-19" class="i">+		temporary_file:write(crypto.hex(crypto.rand.bytes(32)))
+</a><a href="#h1-2-20" id="h1-2-20" class="i">+		temporary_file:close()
+</a><a href="#h1-2-21" id="h1-2-21" class="i">+		unistd.link(temporary_filename, secret_filename) -- Intentionally fails in the case that another process is doing the same.
+</a><a href="#h1-2-22" id="h1-2-22" class="i">+		unistd.unlink(temporary_filename)
+</a><a href="#h1-2-23" id="h1-2-23" class="i">+		sysstat.umask(old_umask)
+</a><a href="#h1-2-24" id="h1-2-24" class="i">+		secret_file = io.open(secret_filename, &quot;r&quot;)
+</a><a href="#h1-2-25" id="h1-2-25" class="i">+	end
+</a><a href="#h1-2-26" id="h1-2-26" class="i">+	if secret_file == nil then
+</a><a href="#h1-2-27" id="h1-2-27" class="i">+		os.exit(177)
+</a><a href="#h1-2-28" id="h1-2-28" class="i">+	end
+</a><a href="#h1-2-29" id="h1-2-29" class="i">+	secret = secret_file:read()
+</a><a href="#h1-2-30" id="h1-2-30" class="i">+	secret_file:close()
+</a><a href="#h1-2-31" id="h1-2-31" class="i">+	if secret:len() ~= 64 then
+</a><a href="#h1-2-32" id="h1-2-32" class="i">+		os.exit(177)
+</a><a href="#h1-2-33" id="h1-2-33" class="i">+	end
+</a><a href="#h1-2-34" id="h1-2-34" class="i">+	return secret
+</a><a href="#h1-2-35" id="h1-2-35" class="i">+end
+</a> 
+ -- Returns value of cookie if cookie is valid. Otherwise returns nil.
+ function validate_value(expected_field, cookie)
+<a href="#h1-3" id="h1-3" class="h">@@ -231,7 +265,7 @@ function validate_value(expected_field, cookie)
+</a> 	end
+ 
+ 	-- Lua hashes strings, so these comparisons are time invariant.
+<a href="#h1-3-3" id="h1-3-3" class="d">-	if hmac ~= crypto.hmac.digest(&quot;sha256&quot;, field .. &quot;|&quot; .. value .. &quot;|&quot; .. tostring(expiration) .. &quot;|&quot; .. salt, secret) then
+</a><a href="#h1-3-4" id="h1-3-4" class="i">+	if hmac ~= crypto.hmac.digest(&quot;sha256&quot;, field .. &quot;|&quot; .. value .. &quot;|&quot; .. tostring(expiration) .. &quot;|&quot; .. salt, get_secret()) then
+</a> 		return nil
+ 	end
+ 
+<a href="#h1-4" id="h1-4" class="h">@@ -256,7 +290,7 @@ function secure_value(field, value, expiration)
+</a> 	value = url_encode(value)
+ 	field = url_encode(field)
+ 	authstr = field .. &quot;|&quot; .. value .. &quot;|&quot; .. tostring(expiration) .. &quot;|&quot; .. salt
+<a href="#h1-4-3" id="h1-4-3" class="d">-	authstr = authstr .. &quot;|&quot; .. crypto.hmac.digest(&quot;sha256&quot;, authstr, secret)
+</a><a href="#h1-4-4" id="h1-4-4" class="i">+	authstr = authstr .. &quot;|&quot; .. crypto.hmac.digest(&quot;sha256&quot;, authstr, get_secret())
+</a> 	return authstr
+ end
+ 
+</pre>
+</div>
+</body>
+</html>

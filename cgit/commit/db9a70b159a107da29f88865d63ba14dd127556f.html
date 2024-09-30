@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>cache: use F_SETLK to avoid stale lock files - cgit - Web based git repository viewer
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="cgit.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="cgit.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Source+Code+Pro:ital,wght@0,200..900;1,200..900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/base16/tender.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script> hljs.highlightAll() ;</script>
+<style>pre code.hljs {display: inline;padding: 0;} code.hljs {padding: 0;} .hljs {background: initial;} .hljs-comment{color: rgb(96, 96, 96);}</style></head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>cgit</h1><span class="desc">Web based git repository viewer
+</span></td></tr><tr><td></td><td>
+<br>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/.gitmodules.html">Submodules</a> | <a href="../file/README.html">README</a> | <a href="../file/COPYING.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/db9a70b159a107da29f88865d63ba14dd127556f.html">db9a70b159a107da29f88865d63ba14dd127556f</a>
+<b>parent</b> <a href="../commit/2e4a41e84029cbfa70c654fe5dfb35747f2dfbba.html">2e4a41e84029cbfa70c654fe5dfb35747f2dfbba</a>
+<b>Author:</b> John Keeping &lt;<a href="mailto:john@keeping.me.uk">john@keeping.me.uk</a>&gt;
+<b>Date:</b>   Tue,  3 Mar 2015 19:22:31 +0000
+
+cache: use F_SETLK to avoid stale lock files
+
+If CGit is killed while it holds a lock on a cache slot (for example
+because it is taking too long to generate a page), the lock file will be
+left in place.  This prevents any future attempt to use the same slot
+since it will fail to exclusively create the lock file.
+
+Since CGit is the only program that should be manipulating lock files,
+we can use advisory locking to detect whether another process is
+actually using the lock file or if it is now stale.
+
+I have confirmed that this works on Linux by setting a short TTL in a
+custom cgitrc and running the following with CGit patched to print a
+message to stderr if the fcntl(2) fails:
+
+	$ export CGIT_CONFIG=$PWD/cgitrc
+	$ export QUERY_STRING=url=cgit/tree/ui-shared.c
+	$ ./cgit |
+		grep -v -e &#39;^&lt;div class=.footer.&gt;&#39; \
+			-e &#39;^Last-Modified: &#39; \
+			-e ^&#39;Expires: &#39; &gt;expect
+	$ seq 50000 | dd bs=8192 |
+		parallel -j200 &quot;diff -u expect &lt;(./cgit |
+			grep -v -e &#39;^&lt;div class=.footer.&gt;&#39; \
+				-e &#39;^Last-Modified: &#39; \
+				-e ^&#39;Expires: &#39;) || echo BAD&quot;
+
+This printed the fail message several times without ever printing &quot;BAD&quot;.
+
+Signed-off-by: John Keeping &lt;john@keeping.me.uk&gt;
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">cache.c</a></td><td> | </td><td class="num">15</td><td><span class="i">++++++++++++++</span><span class="d">-</span></td></tr>
+</table></pre><pre>1 file changed, 14 insertions(+), 1 deletion(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/cache.c.html">cache.c</a> b/<a href="../file/cache.c.html">cache.c</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -161,10 +161,23 @@ static int close_lock(struct cache_slot *slot)
+</a>  */
+ static int lock_slot(struct cache_slot *slot)
+ {
+<a href="#h0-0-3" id="h0-0-3" class="d">-	slot-&gt;lock_fd = open(slot-&gt;lock_name, O_RDWR | O_CREAT | O_EXCL,
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+	struct flock lock = {
+</a><a href="#h0-0-5" id="h0-0-5" class="i">+		.l_type = F_WRLCK,
+</a><a href="#h0-0-6" id="h0-0-6" class="i">+		.l_whence = SEEK_SET,
+</a><a href="#h0-0-7" id="h0-0-7" class="i">+		.l_start = 0,
+</a><a href="#h0-0-8" id="h0-0-8" class="i">+		.l_len = 0,
+</a><a href="#h0-0-9" id="h0-0-9" class="i">+	};
+</a><a href="#h0-0-10" id="h0-0-10" class="i">+
+</a><a href="#h0-0-11" id="h0-0-11" class="i">+	slot-&gt;lock_fd = open(slot-&gt;lock_name, O_RDWR | O_CREAT,
+</a> 			     S_IRUSR | S_IWUSR);
+ 	if (slot-&gt;lock_fd == -1)
+ 		return errno;
+<a href="#h0-0-15" id="h0-0-15" class="i">+	if (fcntl(slot-&gt;lock_fd, F_SETLK, &amp;lock) &lt; 0) {
+</a><a href="#h0-0-16" id="h0-0-16" class="i">+		int saved_errno = errno;
+</a><a href="#h0-0-17" id="h0-0-17" class="i">+		close(slot-&gt;lock_fd);
+</a><a href="#h0-0-18" id="h0-0-18" class="i">+		slot-&gt;lock_fd = -1;
+</a><a href="#h0-0-19" id="h0-0-19" class="i">+		return saved_errno;
+</a><a href="#h0-0-20" id="h0-0-20" class="i">+	}
+</a> 	if (xwrite(slot-&gt;lock_fd, slot-&gt;key, slot-&gt;keylen + 1) &lt; 0)
+ 		return errno;
+ 	return 0;
+</pre>
+</div>
+</body>
+</html>

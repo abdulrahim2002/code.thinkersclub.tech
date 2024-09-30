@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>do not write outside heap buffer - cgit - Web based git repository viewer
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="cgit.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="cgit.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Source+Code+Pro:ital,wght@0,200..900;1,200..900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/base16/tender.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script> hljs.highlightAll() ;</script>
+<style>pre code.hljs {display: inline;padding: 0;} code.hljs {padding: 0;} .hljs {background: initial;} .hljs-comment{color: rgb(96, 96, 96);}</style></head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>cgit</h1><span class="desc">Web based git repository viewer
+</span></td></tr><tr><td></td><td>
+<br>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/.gitmodules.html">Submodules</a> | <a href="../file/README.html">README</a> | <a href="../file/COPYING.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/61d4147ea2d58c9d129a084be13ccec6ae18b4d5.html">61d4147ea2d58c9d129a084be13ccec6ae18b4d5</a>
+<b>parent</b> <a href="../commit/055e092a330098f6b9177266facf43029dbe1883.html">055e092a330098f6b9177266facf43029dbe1883</a>
+<b>Author:</b> Jim Meyering &lt;<a href="mailto:meyering@redhat.com">meyering@redhat.com</a>&gt;
+<b>Date:</b>   Mon, 23 Apr 2012 22:06:35 +0200
+
+do not write outside heap buffer
+
+* parsing.c (substr): Handle tail &lt; head.
+
+This started when I noticed some cgit segfaults on savannah.gnu.org.
+Finding the offending URL/commit and then constructing a stand-alone
+reproducer were far more time-consuming than writing the actual patch.
+
+The problem arises with a commit like this, in which the user name
+part of the &quot;Author&quot; field is empty:
+
+    $ git log -1
+    commit 6f3f41d73393278f3ede68a2cb1e7a2a23fa3421
+    Author: &lt;T at h.or&gt;
+    Date:   Mon Apr 23 22:29:16 2012 +0200
+
+Here&#39;s what happens:
+
+(this is due to buf=malloc(0); strncpy (buf, head, -1);
+ where &quot;head&quot; may point to plenty of attacker-specified non-NUL bytes,
+ so we can overwrite a zero-length heap buffer with arbitrary data)
+
+ Invalid write of size 1
+    at 0x4A09361: strncpy (mc_replace_strmem.c:463)
+    by 0x408977: substr (parsing.c:61)
+    by 0x4089EF: parse_user (parsing.c:73)
+    by 0x408D10: cgit_parse_commit (parsing.c:153)
+    by 0x40A540: cgit_mk_refinfo (shared.c:171)
+    by 0x40A581: cgit_refs_cb (shared.c:181)
+    by 0x43DEB3: do_for_each_ref (refs.c:690)
+    by 0x41075E: cgit_print_branches (ui-refs.c:191)
+    by 0x416EF2: cgit_print_summary (ui-summary.c:56)
+    by 0x40780A: summary_fn (cmd.c:120)
+    by 0x40667A: process_request (cgit.c:544)
+    by 0x404078: cache_process (cache.c:322)
+  Address 0x4c718d0 is 0 bytes after a block of size 0 alloc&#39;d
+    at 0x4A0884D: malloc (vg_replace_malloc.c:263)
+    by 0x455C85: xmalloc (wrapper.c:35)
+    by 0x40894C: substr (parsing.c:60)
+    by 0x4089EF: parse_user (parsing.c:73)
+    by 0x408D10: cgit_parse_commit (parsing.c:153)
+    by 0x40A540: cgit_mk_refinfo (shared.c:171)
+    by 0x40A581: cgit_refs_cb (shared.c:181)
+    by 0x43DEB3: do_for_each_ref (refs.c:690)
+    by 0x41075E: cgit_print_branches (ui-refs.c:191)
+    by 0x416EF2: cgit_print_summary (ui-summary.c:56)
+    by 0x40780A: summary_fn (cmd.c:120)
+    by 0x40667A: process_request (cgit.c:544)
+
+ Invalid write of size 1
+    at 0x4A09400: strncpy (mc_replace_strmem.c:463)
+    by 0x408977: substr (parsing.c:61)
+    by 0x4089EF: parse_user (parsing.c:73)
+    by 0x408D10: cgit_parse_commit (parsing.c:153)
+    by 0x40A540: cgit_mk_refinfo (shared.c:171)
+    by 0x40A581: cgit_refs_cb (shared.c:181)
+    by 0x43DEB3: do_for_each_ref (refs.c:690)
+    by 0x41075E: cgit_print_branches (ui-refs.c:191)
+    by 0x416EF2: cgit_print_summary (ui-summary.c:56)
+    by 0x40780A: summary_fn (cmd.c:120)
+    by 0x40667A: process_request (cgit.c:544)
+    by 0x404078: cache_process (cache.c:322)
+  Address 0x4c7192b is not stack&#39;d, malloc&#39;d or (recently) free&#39;d
+
+ Invalid write of size 1
+    at 0x4A0940E: strncpy (mc_replace_strmem.c:463)
+    by 0x408977: substr (parsing.c:61)
+    by 0x4089EF: parse_user (parsing.c:73)
+    by 0x408D10: cgit_parse_commit (parsing.c:153)
+    by 0x40A540: cgit_mk_refinfo (shared.c:171)
+    by 0x40A581: cgit_refs_cb (shared.c:181)
+    by 0x43DEB3: do_for_each_ref (refs.c:690)
+    by 0x41075E: cgit_print_branches (ui-refs.c:191)
+    by 0x416EF2: cgit_print_summary (ui-summary.c:56)
+    by 0x40780A: summary_fn (cmd.c:120)
+    by 0x40667A: process_request (cgit.c:544)
+    by 0x404078: cache_process (cache.c:322)
+  Address 0x4c7192d is not stack&#39;d, malloc&#39;d or (recently) free&#39;d
+
+ Process terminating with default action of signal 11 (SIGSEGV)
+  Access not within mapped region at address 0x502F000
+    at 0x4A09400: strncpy (mc_replace_strmem.c:463)
+    by 0x408977: substr (parsing.c:61)
+    by 0x4089EF: parse_user (parsing.c:73)
+    by 0x408D10: cgit_parse_commit (parsing.c:153)
+    by 0x40A540: cgit_mk_refinfo (shared.c:171)
+    by 0x40A581: cgit_refs_cb (shared.c:181)
+    by 0x43DEB3: do_for_each_ref (refs.c:690)
+    by 0x41075E: cgit_print_branches (ui-refs.c:191)
+    by 0x416EF2: cgit_print_summary (ui-summary.c:56)
+    by 0x40780A: summary_fn (cmd.c:120)
+    by 0x40667A: process_request (cgit.c:544)
+    by 0x404078: cache_process (cache.c:322)
+
+This happens when tail - head == -1 here:
+(parsing.c)
+
+  char *substr(const char *head, const char *tail)
+  {
+          char *buf;
+
+          buf = xmalloc(tail - head + 1);
+          strncpy(buf, head, tail - head);
+          buf[tail - head] = &#39;\0&#39;;
+          return buf;
+  }
+
+  char *parse_user(char *t, char **name, char **email, unsigned long *date)
+  {
+          char *p = t;
+          int mode = 1;
+
+          while (p &amp;&amp; *p) {
+                  if (mode == 1 &amp;&amp; *p == &#39;&lt;&#39;) {
+                          *name = substr(t, p - 1);
+                          t = p;
+                          mode++;
+                  } else if (mode == 1 &amp;&amp; *p == &#39;\n&#39;) {
+
+The fix is to handle the case of (tail &lt; head) before calling xmalloc,
+thus avoiding passing an invalid value to xmalloc.
+
+And here&#39;s the reproducer:
+It was tricky to reproduce, because git prohibits use of an empty &quot;name&quot;
+in a commit ID.  To construct the offending commit, I had to resort to
+using &quot;git hash-object&quot;.
+
+git init -q foo &amp;&amp;
+( cd foo &amp;&amp;
+  echo a &gt; j &amp;&amp; git add . &amp;&amp; git ci -q --author=&#39;au &lt;T at h.or&gt;&#39; -m. . &amp;&amp;
+  h=$(git cat-file commit HEAD|sed &#39;s/au //&#39; \
+    |git hash-object -t commit -w --stdin) &amp;&amp;
+  git co -q -b test $h &amp;&amp;
+  git br -q -D master &amp;&amp;
+  git br -q -m test master)
+git clone -q --bare foo foo.git
+
+cat &lt;&lt;EOF &gt; in
+repo.url=foo.git
+repo.path=foo.git
+EOF
+CGIT_CONFIG=in QUERY_STRING=url=foo.git valgrind ./cgit
+
+The valgrind output is what you see above.
+
+AFAICS, this is not exploitable thanks (ironically) to the use of strncpy.
+Since that -1 translates to SIZE_MAX and this is strncpy, not only does it
+copy whatever is in &quot;head&quot; (up to first NUL), but it also writes
+SIZE_MAX - strlen(head) NUL bytes into the destination buffer, and that
+latter is guaranteed to evoke a segfault.  Since cgit is single-threaded,
+AFAICS, there is no way that the buffer clobbering can be turned into
+an exploit.
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">parsing.c</a></td><td> | </td><td class="num">2</td><td><span class="i">++</span><span class="d"></span></td></tr>
+</table></pre><pre>1 file changed, 2 insertions(+), 0 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/parsing.c.html">parsing.c</a> b/<a href="../file/parsing.c.html">parsing.c</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -56,6 +56,8 @@ char *substr(const char *head, const char *tail)
+</a> {
+ 	char *buf;
+ 
+<a href="#h0-0-3" id="h0-0-3" class="i">+	if (tail &lt; head)
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+		return xstrdup(&quot;&quot;);
+</a> 	buf = xmalloc(tail - head + 1);
+ 	strncpy(buf, head, tail - head);
+ 	buf[tail - head] = &#39;\0&#39;;
+</pre>
+</div>
+</body>
+</html>

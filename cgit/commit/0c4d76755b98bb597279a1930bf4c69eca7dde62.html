@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>filter: don&#39;t use dlsym unnecessarily - cgit - Web based git repository viewer
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="cgit.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="cgit.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Source+Code+Pro:ital,wght@0,200..900;1,200..900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/base16/tender.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script> hljs.highlightAll() ;</script>
+<style>pre code.hljs {display: inline;padding: 0;} code.hljs {padding: 0;} .hljs {background: initial;} .hljs-comment{color: rgb(96, 96, 96);}</style></head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>cgit</h1><span class="desc">Web based git repository viewer
+</span></td></tr><tr><td></td><td>
+<br>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/.gitmodules.html">Submodules</a> | <a href="../file/README.html">README</a> | <a href="../file/COPYING.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/0c4d76755b98bb597279a1930bf4c69eca7dde62.html">0c4d76755b98bb597279a1930bf4c69eca7dde62</a>
+<b>parent</b> <a href="../commit/7105a78b17b118866aee77735e26cffcd1fd08fd.html">7105a78b17b118866aee77735e26cffcd1fd08fd</a>
+<b>Author:</b> John Keeping &lt;<a href="mailto:john@keeping.me.uk">john@keeping.me.uk</a>&gt;
+<b>Date:</b>   Thu, 13 Aug 2015 12:14:20 +0100
+
+filter: don&#39;t use dlsym unnecessarily
+
+We only need to hook write() if Lua filter&#39;s are in use.  If support has
+been disabled, remove the dependency on dlsym().
+
+Signed-off-by: John Keeping &lt;john@keeping.me.uk&gt;
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">filter.c</a></td><td> | </td><td class="num">78</td><td><span class="i">++++++++++++++++++++++++++++++++++++++++++</span><span class="d">------------------------------------</span></td></tr>
+</table></pre><pre>1 file changed, 42 insertions(+), 36 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/filter.c.html">filter.c</a> b/<a href="../file/filter.c.html">filter.c</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -8,17 +8,13 @@
+</a> 
+ #include &quot;cgit.h&quot;
+ #include &quot;html.h&quot;
+<a href="#h0-0-3" id="h0-0-3" class="d">-#include &lt;dlfcn.h&gt;
+</a> #ifndef NO_LUA
+<a href="#h0-0-5" id="h0-0-5" class="i">+#include &lt;dlfcn.h&gt;
+</a> #include &lt;lua.h&gt;
+ #include &lt;lualib.h&gt;
+ #include &lt;lauxlib.h&gt;
+ #endif
+ 
+<a href="#h0-0-11" id="h0-0-11" class="d">-static ssize_t (*libc_write)(int fd, const void *buf, size_t count);
+</a><a href="#h0-0-12" id="h0-0-12" class="d">-static ssize_t (*filter_write)(struct cgit_filter *base, const void *buf, size_t count) = NULL;
+</a><a href="#h0-0-13" id="h0-0-13" class="d">-static struct cgit_filter *current_write_filter = NULL;
+</a><a href="#h0-0-14" id="h0-0-14" class="d">-
+</a> static inline void reap_filter(struct cgit_filter *filter)
+ {
+ 	if (filter &amp;&amp; filter-&gt;cleanup)
+<a href="#h0-1" id="h0-1" class="h">@@ -43,37 +39,6 @@ void cgit_cleanup_filters(void)
+</a> 	}
+ }
+ 
+<a href="#h0-1-3" id="h0-1-3" class="d">-void cgit_init_filters(void)
+</a><a href="#h0-1-4" id="h0-1-4" class="d">-{
+</a><a href="#h0-1-5" id="h0-1-5" class="d">-	libc_write = dlsym(RTLD_NEXT, &quot;write&quot;);
+</a><a href="#h0-1-6" id="h0-1-6" class="d">-	if (!libc_write)
+</a><a href="#h0-1-7" id="h0-1-7" class="d">-		die(&quot;Could not locate libc&#39;s write function&quot;);
+</a><a href="#h0-1-8" id="h0-1-8" class="d">-}
+</a><a href="#h0-1-9" id="h0-1-9" class="d">-
+</a><a href="#h0-1-10" id="h0-1-10" class="d">-ssize_t write(int fd, const void *buf, size_t count)
+</a><a href="#h0-1-11" id="h0-1-11" class="d">-{
+</a><a href="#h0-1-12" id="h0-1-12" class="d">-	if (fd != STDOUT_FILENO || !filter_write)
+</a><a href="#h0-1-13" id="h0-1-13" class="d">-		return libc_write(fd, buf, count);
+</a><a href="#h0-1-14" id="h0-1-14" class="d">-	return filter_write(current_write_filter, buf, count);
+</a><a href="#h0-1-15" id="h0-1-15" class="d">-}
+</a><a href="#h0-1-16" id="h0-1-16" class="d">-
+</a><a href="#h0-1-17" id="h0-1-17" class="d">-static inline void hook_write(struct cgit_filter *filter, ssize_t (*new_write)(struct cgit_filter *base, const void *buf, size_t count))
+</a><a href="#h0-1-18" id="h0-1-18" class="d">-{
+</a><a href="#h0-1-19" id="h0-1-19" class="d">-	/* We want to avoid buggy nested patterns. */
+</a><a href="#h0-1-20" id="h0-1-20" class="d">-	assert(filter_write == NULL);
+</a><a href="#h0-1-21" id="h0-1-21" class="d">-	assert(current_write_filter == NULL);
+</a><a href="#h0-1-22" id="h0-1-22" class="d">-	current_write_filter = filter;
+</a><a href="#h0-1-23" id="h0-1-23" class="d">-	filter_write = new_write;
+</a><a href="#h0-1-24" id="h0-1-24" class="d">-}
+</a><a href="#h0-1-25" id="h0-1-25" class="d">-
+</a><a href="#h0-1-26" id="h0-1-26" class="d">-static inline void unhook_write(void)
+</a><a href="#h0-1-27" id="h0-1-27" class="d">-{
+</a><a href="#h0-1-28" id="h0-1-28" class="d">-	assert(filter_write != NULL);
+</a><a href="#h0-1-29" id="h0-1-29" class="d">-	assert(current_write_filter != NULL);
+</a><a href="#h0-1-30" id="h0-1-30" class="d">-	filter_write = NULL;
+</a><a href="#h0-1-31" id="h0-1-31" class="d">-	current_write_filter = NULL;
+</a><a href="#h0-1-32" id="h0-1-32" class="d">-}
+</a><a href="#h0-1-33" id="h0-1-33" class="d">-
+</a> static int open_exec_filter(struct cgit_filter *base, va_list ap)
+ {
+ 	struct cgit_exec_filter *filter = (struct cgit_exec_filter *)base;
+<a href="#h0-2" id="h0-2" class="h">@@ -170,7 +135,48 @@ void cgit_exec_filter_init(struct cgit_exec_filter *filter, char *cmd, char **ar
+</a> 	filter-&gt;base.argument_count = 0;
+ }
+ 
+<a href="#h0-2-3" id="h0-2-3" class="i">+#ifdef NO_LUA
+</a><a href="#h0-2-4" id="h0-2-4" class="i">+void cgit_init_filters(void)
+</a><a href="#h0-2-5" id="h0-2-5" class="i">+{
+</a><a href="#h0-2-6" id="h0-2-6" class="i">+}
+</a><a href="#h0-2-7" id="h0-2-7" class="i">+#endif
+</a><a href="#h0-2-8" id="h0-2-8" class="i">+
+</a> #ifndef NO_LUA
+<a href="#h0-2-10" id="h0-2-10" class="i">+static ssize_t (*libc_write)(int fd, const void *buf, size_t count);
+</a><a href="#h0-2-11" id="h0-2-11" class="i">+static ssize_t (*filter_write)(struct cgit_filter *base, const void *buf, size_t count) = NULL;
+</a><a href="#h0-2-12" id="h0-2-12" class="i">+static struct cgit_filter *current_write_filter = NULL;
+</a><a href="#h0-2-13" id="h0-2-13" class="i">+
+</a><a href="#h0-2-14" id="h0-2-14" class="i">+void cgit_init_filters(void)
+</a><a href="#h0-2-15" id="h0-2-15" class="i">+{
+</a><a href="#h0-2-16" id="h0-2-16" class="i">+	libc_write = dlsym(RTLD_NEXT, &quot;write&quot;);
+</a><a href="#h0-2-17" id="h0-2-17" class="i">+	if (!libc_write)
+</a><a href="#h0-2-18" id="h0-2-18" class="i">+		die(&quot;Could not locate libc&#39;s write function&quot;);
+</a><a href="#h0-2-19" id="h0-2-19" class="i">+}
+</a><a href="#h0-2-20" id="h0-2-20" class="i">+
+</a><a href="#h0-2-21" id="h0-2-21" class="i">+ssize_t write(int fd, const void *buf, size_t count)
+</a><a href="#h0-2-22" id="h0-2-22" class="i">+{
+</a><a href="#h0-2-23" id="h0-2-23" class="i">+	if (fd != STDOUT_FILENO || !filter_write)
+</a><a href="#h0-2-24" id="h0-2-24" class="i">+		return libc_write(fd, buf, count);
+</a><a href="#h0-2-25" id="h0-2-25" class="i">+	return filter_write(current_write_filter, buf, count);
+</a><a href="#h0-2-26" id="h0-2-26" class="i">+}
+</a><a href="#h0-2-27" id="h0-2-27" class="i">+
+</a><a href="#h0-2-28" id="h0-2-28" class="i">+static inline void hook_write(struct cgit_filter *filter, ssize_t (*new_write)(struct cgit_filter *base, const void *buf, size_t count))
+</a><a href="#h0-2-29" id="h0-2-29" class="i">+{
+</a><a href="#h0-2-30" id="h0-2-30" class="i">+	/* We want to avoid buggy nested patterns. */
+</a><a href="#h0-2-31" id="h0-2-31" class="i">+	assert(filter_write == NULL);
+</a><a href="#h0-2-32" id="h0-2-32" class="i">+	assert(current_write_filter == NULL);
+</a><a href="#h0-2-33" id="h0-2-33" class="i">+	current_write_filter = filter;
+</a><a href="#h0-2-34" id="h0-2-34" class="i">+	filter_write = new_write;
+</a><a href="#h0-2-35" id="h0-2-35" class="i">+}
+</a><a href="#h0-2-36" id="h0-2-36" class="i">+
+</a><a href="#h0-2-37" id="h0-2-37" class="i">+static inline void unhook_write(void)
+</a><a href="#h0-2-38" id="h0-2-38" class="i">+{
+</a><a href="#h0-2-39" id="h0-2-39" class="i">+	assert(filter_write != NULL);
+</a><a href="#h0-2-40" id="h0-2-40" class="i">+	assert(current_write_filter != NULL);
+</a><a href="#h0-2-41" id="h0-2-41" class="i">+	filter_write = NULL;
+</a><a href="#h0-2-42" id="h0-2-42" class="i">+	current_write_filter = NULL;
+</a><a href="#h0-2-43" id="h0-2-43" class="i">+}
+</a><a href="#h0-2-44" id="h0-2-44" class="i">+
+</a> struct lua_filter {
+ 	struct cgit_filter base;
+ 	char *script_file;
+</pre>
+</div>
+</body>
+</html>

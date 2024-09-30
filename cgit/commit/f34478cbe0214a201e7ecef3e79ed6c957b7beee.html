@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Refactor snapshot support - cgit - Web based git repository viewer
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="cgit.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="cgit.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Source+Code+Pro:ital,wght@0,200..900;1,200..900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/base16/tender.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script> hljs.highlightAll() ;</script>
+<style>pre code.hljs {display: inline;padding: 0;} code.hljs {padding: 0;} .hljs {background: initial;} .hljs-comment{color: rgb(96, 96, 96);}</style></head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>cgit</h1><span class="desc">Web based git repository viewer
+</span></td></tr><tr><td></td><td>
+<br>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/.gitmodules.html">Submodules</a> | <a href="../file/README.html">README</a> | <a href="../file/COPYING.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/f34478cbe0214a201e7ecef3e79ed6c957b7beee.html">f34478cbe0214a201e7ecef3e79ed6c957b7beee</a>
+<b>parent</b> <a href="../commit/e0e4478e7b4812f822d60a13a33525f8e529e1e8.html">e0e4478e7b4812f822d60a13a33525f8e529e1e8</a>
+<b>Author:</b> Lars Hjemli &lt;<a href="mailto:hjemli@gmail.com">hjemli@gmail.com</a>&gt;
+<b>Date:</b>   Mon, 24 Mar 2008 16:00:27 +0100
+
+Refactor snapshot support
+
+The snapshot support needs to be split between output- and config-related
+functions to get the layering between shared.c and ui-*.c right. There
+is also some codestyle-issues which needs fixing to make the snapshot
+functions more similar to the rest of the cgit code.
+
+Signed-off-by: Lars Hjemli &lt;hjemli@gmail.com&gt;
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">cgit.h</a></td><td> | </td><td class="num">8</td><td><span class="i">++++++++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">shared.c</a></td><td> | </td><td class="num">27</td><td><span class="i">+++++++++++++++++++++++++++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">ui-shared.c</a></td><td> | </td><td class="num">17</td><td><span class="i">++++++++++++++++</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">ui-snapshot.c</a></td><td> | </td><td class="num">124</td><td><span class="i">+++++++++++++++++++++++++</span><span class="d">------------------------------------------------------</span></td></tr>
+</table></pre><pre>4 files changed, 90 insertions(+), 86 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/cgit.h.html">cgit.h</a> b/<a href="../file/cgit.h.html">cgit.h</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -177,10 +177,18 @@ struct cgit_context {
+</a> 	struct cgit_page page;
+ };
+ 
+<a href="#h0-0-3" id="h0-0-3" class="i">+struct cgit_snapshot_format {
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+	const char *suffix;
+</a><a href="#h0-0-5" id="h0-0-5" class="i">+	const char *mimetype;
+</a><a href="#h0-0-6" id="h0-0-6" class="i">+	write_archive_fn_t write_func;
+</a><a href="#h0-0-7" id="h0-0-7" class="i">+	int bit;
+</a><a href="#h0-0-8" id="h0-0-8" class="i">+};
+</a><a href="#h0-0-9" id="h0-0-9" class="i">+
+</a> extern const char *cgit_version;
+ 
+ extern struct cgit_repolist cgit_repolist;
+ extern struct cgit_context ctx;
+<a href="#h0-0-14" id="h0-0-14" class="i">+extern const struct cgit_snapshot_format cgit_snapshot_formats[];
+</a> extern int cgit_cmd;
+ 
+ extern void cgit_prepare_context(struct cgit_context *ctx);
+<b>diff --git a/<a id="h1" href="../file/shared.c.html">shared.c</a> b/<a href="../file/shared.c.html">shared.c</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -479,3 +479,30 @@ void cgit_diff_commit(struct commit *commit, filepair_fn fn)
+</a> 		old_sha1 = commit-&gt;parents-&gt;item-&gt;object.sha1;
+ 	cgit_diff_tree(old_sha1, commit-&gt;object.sha1, fn, NULL);
+ }
+<a href="#h1-0-3" id="h1-0-3" class="i">+
+</a><a href="#h1-0-4" id="h1-0-4" class="i">+int cgit_parse_snapshots_mask(const char *str)
+</a><a href="#h1-0-5" id="h1-0-5" class="i">+{
+</a><a href="#h1-0-6" id="h1-0-6" class="i">+	const struct cgit_snapshot_format *f;
+</a><a href="#h1-0-7" id="h1-0-7" class="i">+	static const char *delim = &quot; \t,:/|;&quot;;
+</a><a href="#h1-0-8" id="h1-0-8" class="i">+	int tl, sl, rv = 0;
+</a><a href="#h1-0-9" id="h1-0-9" class="i">+
+</a><a href="#h1-0-10" id="h1-0-10" class="i">+	/* favor legacy setting */
+</a><a href="#h1-0-11" id="h1-0-11" class="i">+	if(atoi(str))
+</a><a href="#h1-0-12" id="h1-0-12" class="i">+		return 1;
+</a><a href="#h1-0-13" id="h1-0-13" class="i">+	for(;;) {
+</a><a href="#h1-0-14" id="h1-0-14" class="i">+		str += strspn(str,delim);
+</a><a href="#h1-0-15" id="h1-0-15" class="i">+		tl = strcspn(str,delim);
+</a><a href="#h1-0-16" id="h1-0-16" class="i">+		if (!tl)
+</a><a href="#h1-0-17" id="h1-0-17" class="i">+			break;
+</a><a href="#h1-0-18" id="h1-0-18" class="i">+		for (f = cgit_snapshot_formats; f-&gt;suffix; f++) {
+</a><a href="#h1-0-19" id="h1-0-19" class="i">+			sl = strlen(f-&gt;suffix);
+</a><a href="#h1-0-20" id="h1-0-20" class="i">+			if((tl == sl &amp;&amp; !strncmp(f-&gt;suffix, str, tl)) ||
+</a><a href="#h1-0-21" id="h1-0-21" class="i">+			   (tl == sl-1 &amp;&amp; !strncmp(f-&gt;suffix+1, str, tl-1))) {
+</a><a href="#h1-0-22" id="h1-0-22" class="i">+				rv |= f-&gt;bit;
+</a><a href="#h1-0-23" id="h1-0-23" class="i">+				break;
+</a><a href="#h1-0-24" id="h1-0-24" class="i">+			}
+</a><a href="#h1-0-25" id="h1-0-25" class="i">+		}
+</a><a href="#h1-0-26" id="h1-0-26" class="i">+		str += tl;
+</a><a href="#h1-0-27" id="h1-0-27" class="i">+	}
+</a><a href="#h1-0-28" id="h1-0-28" class="i">+	return rv;
+</a><a href="#h1-0-29" id="h1-0-29" class="i">+}
+</a><b>diff --git a/<a id="h2" href="../file/ui-shared.c.html">ui-shared.c</a> b/<a href="../file/ui-shared.c.html">ui-shared.c</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -573,4 +573,19 @@ void cgit_print_filemode(unsigned short mode)
+</a> 	html_fileperm(mode);
+ }
+ 
+<a href="#h2-0-3" id="h2-0-3" class="d">-/* vim:set sw=8: */
+</a><a href="#h2-0-4" id="h2-0-4" class="i">+void cgit_print_snapshot_links(const char *repo, const char *head,
+</a><a href="#h2-0-5" id="h2-0-5" class="i">+			       const char *hex, int snapshots)
+</a><a href="#h2-0-6" id="h2-0-6" class="i">+{
+</a><a href="#h2-0-7" id="h2-0-7" class="i">+	const struct cgit_snapshot_format* f;
+</a><a href="#h2-0-8" id="h2-0-8" class="i">+    	char *filename;
+</a><a href="#h2-0-9" id="h2-0-9" class="i">+
+</a><a href="#h2-0-10" id="h2-0-10" class="i">+	for (f = cgit_snapshot_formats; f-&gt;suffix; f++) {
+</a><a href="#h2-0-11" id="h2-0-11" class="i">+		if (!(snapshots &amp; f-&gt;bit))
+</a><a href="#h2-0-12" id="h2-0-12" class="i">+			continue;
+</a><a href="#h2-0-13" id="h2-0-13" class="i">+		filename = fmt(&quot;%s-%s%s&quot;, cgit_repobasename(repo), hex,
+</a><a href="#h2-0-14" id="h2-0-14" class="i">+			       f-&gt;suffix);
+</a><a href="#h2-0-15" id="h2-0-15" class="i">+		cgit_snapshot_link(filename, NULL, NULL, (char *)head,
+</a><a href="#h2-0-16" id="h2-0-16" class="i">+				   (char *)hex, filename);
+</a><a href="#h2-0-17" id="h2-0-17" class="i">+		html(&quot;&lt;br/&gt;&quot;);
+</a><a href="#h2-0-18" id="h2-0-18" class="i">+	}
+</a><a href="#h2-0-19" id="h2-0-19" class="i">+}
+</a><b>diff --git a/<a id="h3" href="../file/ui-snapshot.c.html">ui-snapshot.c</a> b/<a href="../file/ui-snapshot.c.html">ui-snapshot.c</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -55,105 +55,59 @@ static int write_tar_bzip2_archive(struct archiver_args *args)
+</a> 	return write_compressed_tar_archive(args,&quot;bzip2&quot;);
+ }
+ 
+<a href="#h3-0-3" id="h3-0-3" class="d">-static const struct snapshot_archive_t {
+</a><a href="#h3-0-4" id="h3-0-4" class="d">-    	const char *suffix;
+</a><a href="#h3-0-5" id="h3-0-5" class="d">-	const char *mimetype;
+</a><a href="#h3-0-6" id="h3-0-6" class="d">-	write_archive_fn_t write_func;
+</a><a href="#h3-0-7" id="h3-0-7" class="d">-	int bit;
+</a><a href="#h3-0-8" id="h3-0-8" class="d">-}	snapshot_archives[] = {
+</a><a href="#h3-0-9" id="h3-0-9" class="i">+const struct cgit_snapshot_format cgit_snapshot_formats[] = {
+</a> 	{ &quot;.zip&quot;, &quot;application/x-zip&quot;, write_zip_archive, 0x1 },
+ 	{ &quot;.tar.gz&quot;, &quot;application/x-tar&quot;, write_tar_gzip_archive, 0x2 },
+ 	{ &quot;.tar.bz2&quot;, &quot;application/x-tar&quot;, write_tar_bzip2_archive, 0x4 },
+<a href="#h3-0-13" id="h3-0-13" class="d">-	{ &quot;.tar&quot;, &quot;application/x-tar&quot;, write_tar_archive, 0x8 }
+</a><a href="#h3-0-14" id="h3-0-14" class="i">+	{ &quot;.tar&quot;, &quot;application/x-tar&quot;, write_tar_archive, 0x8 },
+</a><a href="#h3-0-15" id="h3-0-15" class="i">+	{}
+</a> };
+ 
+<a href="#h3-0-18" id="h3-0-18" class="d">-#define snapshot_archives_len (sizeof(snapshot_archives) / sizeof(*snapshot_archives))
+</a><a href="#h3-0-19" id="h3-0-19" class="d">-
+</a><a href="#h3-0-20" id="h3-0-20" class="d">-void cgit_print_snapshot(const char *head, const char *hex, const char *prefix,
+</a><a href="#h3-0-21" id="h3-0-21" class="d">-			 const char *filename, int snapshots)
+</a><a href="#h3-0-22" id="h3-0-22" class="i">+static int make_snapshot(const struct cgit_snapshot_format *format,
+</a><a href="#h3-0-23" id="h3-0-23" class="i">+			 const char *hex, const char *prefix,
+</a><a href="#h3-0-24" id="h3-0-24" class="i">+			 const char *filename)
+</a> {
+<a href="#h3-0-26" id="h3-0-26" class="d">-	const struct snapshot_archive_t* sat;
+</a> 	struct archiver_args args;
+ 	struct commit *commit;
+ 	unsigned char sha1[20];
+<a href="#h3-0-30" id="h3-0-30" class="d">-	int f, sl, fnl = strlen(filename);
+</a> 
+<a href="#h3-0-32" id="h3-0-32" class="d">-	for(f=0; f&lt;snapshot_archives_len; f++) {
+</a><a href="#h3-0-33" id="h3-0-33" class="d">-		sat = &amp;snapshot_archives[f];
+</a><a href="#h3-0-34" id="h3-0-34" class="d">-		if(!(snapshots &amp; sat-&gt;bit))
+</a><a href="#h3-0-35" id="h3-0-35" class="d">-			continue;
+</a><a href="#h3-0-36" id="h3-0-36" class="d">-		sl = strlen(sat-&gt;suffix);
+</a><a href="#h3-0-37" id="h3-0-37" class="d">-		if(fnl&lt;sl || strcmp(&amp;filename[fnl-sl],sat-&gt;suffix))
+</a><a href="#h3-0-38" id="h3-0-38" class="d">-			continue;
+</a><a href="#h3-0-39" id="h3-0-39" class="d">-		if (!hex)
+</a><a href="#h3-0-40" id="h3-0-40" class="d">-			hex = head;
+</a><a href="#h3-0-41" id="h3-0-41" class="d">-		if(get_sha1(hex, sha1)) {
+</a><a href="#h3-0-42" id="h3-0-42" class="d">-			cgit_print_error(fmt(&quot;Bad object id: %s&quot;, hex));
+</a><a href="#h3-0-43" id="h3-0-43" class="d">-			return;
+</a><a href="#h3-0-44" id="h3-0-44" class="d">-		}
+</a><a href="#h3-0-45" id="h3-0-45" class="d">-		commit = lookup_commit_reference(sha1);
+</a><a href="#h3-0-46" id="h3-0-46" class="d">-		if(!commit) {
+</a><a href="#h3-0-47" id="h3-0-47" class="d">-			cgit_print_error(fmt(&quot;Not a commit reference: %s&quot;, hex));
+</a><a href="#h3-0-48" id="h3-0-48" class="d">-			return;;
+</a><a href="#h3-0-49" id="h3-0-49" class="d">-		}
+</a><a href="#h3-0-50" id="h3-0-50" class="d">-		memset(&amp;args,0,sizeof(args));
+</a><a href="#h3-0-51" id="h3-0-51" class="d">-		args.base = fmt(&quot;%s/&quot;, prefix);
+</a><a href="#h3-0-52" id="h3-0-52" class="d">-		args.tree = commit-&gt;tree;
+</a><a href="#h3-0-53" id="h3-0-53" class="d">-		args.time = commit-&gt;date;
+</a><a href="#h3-0-54" id="h3-0-54" class="d">-		ctx.page.mimetype = xstrdup(sat-&gt;mimetype);
+</a><a href="#h3-0-55" id="h3-0-55" class="d">-		ctx.page.filename = xstrdup(filename);
+</a><a href="#h3-0-56" id="h3-0-56" class="d">-		cgit_print_http_headers(&amp;ctx);
+</a><a href="#h3-0-57" id="h3-0-57" class="d">-		(*sat-&gt;write_func)(&amp;args);
+</a><a href="#h3-0-58" id="h3-0-58" class="d">-		return;
+</a><a href="#h3-0-59" id="h3-0-59" class="i">+	if(get_sha1(hex, sha1)) {
+</a><a href="#h3-0-60" id="h3-0-60" class="i">+		cgit_print_error(fmt(&quot;Bad object id: %s&quot;, hex));
+</a><a href="#h3-0-61" id="h3-0-61" class="i">+		return 1;
+</a> 	}
+<a href="#h3-0-63" id="h3-0-63" class="d">-	cgit_print_error(fmt(&quot;Unsupported snapshot format: %s&quot;, filename));
+</a><a href="#h3-0-64" id="h3-0-64" class="d">-}
+</a><a href="#h3-0-65" id="h3-0-65" class="d">-
+</a><a href="#h3-0-66" id="h3-0-66" class="d">-void cgit_print_snapshot_links(const char *repo, const char *head,
+</a><a href="#h3-0-67" id="h3-0-67" class="d">-			       const char *hex, int snapshots)
+</a><a href="#h3-0-68" id="h3-0-68" class="d">-{
+</a><a href="#h3-0-69" id="h3-0-69" class="d">-	const struct snapshot_archive_t* sat;
+</a><a href="#h3-0-70" id="h3-0-70" class="d">-    	char *filename;
+</a><a href="#h3-0-71" id="h3-0-71" class="d">-	int f;
+</a><a href="#h3-0-72" id="h3-0-72" class="d">-
+</a><a href="#h3-0-73" id="h3-0-73" class="d">-	for(f=0; f&lt;snapshot_archives_len; f++) {
+</a><a href="#h3-0-74" id="h3-0-74" class="d">-		sat = &amp;snapshot_archives[f];
+</a><a href="#h3-0-75" id="h3-0-75" class="d">-		if(!(snapshots &amp; sat-&gt;bit))
+</a><a href="#h3-0-76" id="h3-0-76" class="d">-			continue;
+</a><a href="#h3-0-77" id="h3-0-77" class="d">-		filename = fmt(&quot;%s-%s%s&quot;, cgit_repobasename(repo), hex,
+</a><a href="#h3-0-78" id="h3-0-78" class="d">-			       sat-&gt;suffix);
+</a><a href="#h3-0-79" id="h3-0-79" class="d">-		cgit_snapshot_link(filename, NULL, NULL, (char *)head,
+</a><a href="#h3-0-80" id="h3-0-80" class="d">-				   (char *)hex, filename);
+</a><a href="#h3-0-81" id="h3-0-81" class="d">-		html(&quot;&lt;br/&gt;&quot;);
+</a><a href="#h3-0-82" id="h3-0-82" class="i">+	commit = lookup_commit_reference(sha1);
+</a><a href="#h3-0-83" id="h3-0-83" class="i">+	if(!commit) {
+</a><a href="#h3-0-84" id="h3-0-84" class="i">+		cgit_print_error(fmt(&quot;Not a commit reference: %s&quot;, hex));
+</a><a href="#h3-0-85" id="h3-0-85" class="i">+		return 1;
+</a> 	}
+<a href="#h3-0-87" id="h3-0-87" class="i">+	memset(&amp;args, 0, sizeof(args));
+</a><a href="#h3-0-88" id="h3-0-88" class="i">+	args.base = fmt(&quot;%s/&quot;, prefix);
+</a><a href="#h3-0-89" id="h3-0-89" class="i">+	args.tree = commit-&gt;tree;
+</a><a href="#h3-0-90" id="h3-0-90" class="i">+	args.time = commit-&gt;date;
+</a><a href="#h3-0-91" id="h3-0-91" class="i">+	ctx.page.mimetype = xstrdup(format-&gt;mimetype);
+</a><a href="#h3-0-92" id="h3-0-92" class="i">+	ctx.page.filename = xstrdup(filename);
+</a><a href="#h3-0-93" id="h3-0-93" class="i">+	cgit_print_http_headers(&amp;ctx);
+</a><a href="#h3-0-94" id="h3-0-94" class="i">+	format-&gt;write_func(&amp;args);
+</a><a href="#h3-0-95" id="h3-0-95" class="i">+	return 0;
+</a> }
+ 
+<a href="#h3-0-98" id="h3-0-98" class="d">-int cgit_parse_snapshots_mask(const char *str)
+</a><a href="#h3-0-99" id="h3-0-99" class="i">+void cgit_print_snapshot(const char *head, const char *hex, const char *prefix,
+</a><a href="#h3-0-100" id="h3-0-100" class="i">+			 const char *filename, int snapshots)
+</a> {
+<a href="#h3-0-102" id="h3-0-102" class="d">-	const struct snapshot_archive_t* sat;
+</a><a href="#h3-0-103" id="h3-0-103" class="d">-	static const char *delim = &quot; \t,:/|;&quot;;
+</a><a href="#h3-0-104" id="h3-0-104" class="d">-	int f, tl, sl, rv = 0;
+</a><a href="#h3-0-105" id="h3-0-105" class="d">-
+</a><a href="#h3-0-106" id="h3-0-106" class="d">-	/* favor legacy setting */
+</a><a href="#h3-0-107" id="h3-0-107" class="d">-	if(atoi(str))
+</a><a href="#h3-0-108" id="h3-0-108" class="d">-		return 1;
+</a><a href="#h3-0-109" id="h3-0-109" class="d">-	for(;;) {
+</a><a href="#h3-0-110" id="h3-0-110" class="d">-		str += strspn(str,delim);
+</a><a href="#h3-0-111" id="h3-0-111" class="d">-		tl = strcspn(str,delim);
+</a><a href="#h3-0-112" id="h3-0-112" class="d">-		if(!tl)
+</a><a href="#h3-0-113" id="h3-0-113" class="d">-			break;
+</a><a href="#h3-0-114" id="h3-0-114" class="d">-		for(f=0; f&lt;snapshot_archives_len; f++) {
+</a><a href="#h3-0-115" id="h3-0-115" class="d">-			sat = &amp;snapshot_archives[f];
+</a><a href="#h3-0-116" id="h3-0-116" class="d">-			sl = strlen(sat-&gt;suffix);
+</a><a href="#h3-0-117" id="h3-0-117" class="d">-			if((tl == sl &amp;&amp; !strncmp(sat-&gt;suffix, str, tl)) ||
+</a><a href="#h3-0-118" id="h3-0-118" class="d">-			   (tl == sl-1 &amp;&amp; !strncmp(sat-&gt;suffix+1, str, tl-1))) {
+</a><a href="#h3-0-119" id="h3-0-119" class="d">-				rv |= sat-&gt;bit;
+</a><a href="#h3-0-120" id="h3-0-120" class="d">-				break;
+</a><a href="#h3-0-121" id="h3-0-121" class="d">-			}
+</a><a href="#h3-0-122" id="h3-0-122" class="d">-		}
+</a><a href="#h3-0-123" id="h3-0-123" class="d">-		str += tl;
+</a><a href="#h3-0-124" id="h3-0-124" class="i">+	const struct cgit_snapshot_format* f;
+</a><a href="#h3-0-125" id="h3-0-125" class="i">+	int sl, fnl;
+</a><a href="#h3-0-126" id="h3-0-126" class="i">+
+</a><a href="#h3-0-127" id="h3-0-127" class="i">+	fnl = strlen(filename);
+</a><a href="#h3-0-128" id="h3-0-128" class="i">+	if (!hex)
+</a><a href="#h3-0-129" id="h3-0-129" class="i">+		hex = head;
+</a><a href="#h3-0-130" id="h3-0-130" class="i">+	for (f = cgit_snapshot_formats; f-&gt;suffix; f++) {
+</a><a href="#h3-0-131" id="h3-0-131" class="i">+		if (!(snapshots &amp; f-&gt;bit))
+</a><a href="#h3-0-132" id="h3-0-132" class="i">+			continue;
+</a><a href="#h3-0-133" id="h3-0-133" class="i">+		sl = strlen(f-&gt;suffix);
+</a><a href="#h3-0-134" id="h3-0-134" class="i">+		if(fnl &lt; sl || strcmp(&amp;filename[fnl-sl], f-&gt;suffix))
+</a><a href="#h3-0-135" id="h3-0-135" class="i">+			continue;
+</a><a href="#h3-0-136" id="h3-0-136" class="i">+		make_snapshot(f, hex, prefix, filename);
+</a><a href="#h3-0-137" id="h3-0-137" class="i">+		return;
+</a> 	}
+<a href="#h3-0-139" id="h3-0-139" class="d">-	return rv;
+</a><a href="#h3-0-140" id="h3-0-140" class="i">+	cgit_print_error(fmt(&quot;Unsupported snapshot format: %s&quot;, filename));
+</a> }
+<a href="#h3-0-142" id="h3-0-142" class="d">-
+</a><a href="#h3-0-143" id="h3-0-143" class="d">-/* vim:set sw=8: */
+</a></pre>
+</div>
+</body>
+</html>

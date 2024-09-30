@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>filter: pass extra arguments via cgit_open_filter - cgit - Web based git repository viewer
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="cgit.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="cgit.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Source+Code+Pro:ital,wght@0,200..900;1,200..900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/base16/tender.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script> hljs.highlightAll() ;</script>
+<style>pre code.hljs {display: inline;padding: 0;} code.hljs {padding: 0;} .hljs {background: initial;} .hljs-comment{color: rgb(96, 96, 96);}</style></head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>cgit</h1><span class="desc">Web based git repository viewer
+</span></td></tr><tr><td></td><td>
+<br>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/.gitmodules.html">Submodules</a> | <a href="../file/README.html">README</a> | <a href="../file/COPYING.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/3d8a6507ca542881a5e8b30ad6b7068a9c4fdeea.html">3d8a6507ca542881a5e8b30ad6b7068a9c4fdeea</a>
+<b>parent</b> <a href="../commit/da218fcd9eb554a8405ca72e84bcc0feb371194f.html">da218fcd9eb554a8405ca72e84bcc0feb371194f</a>
+<b>Author:</b> John Keeping &lt;<a href="mailto:john@keeping.me.uk">john@keeping.me.uk</a>&gt;
+<b>Date:</b>   Sun, 12 Jan 2014 17:13:50 +0000
+
+filter: pass extra arguments via cgit_open_filter
+
+This avoids poking into the filter data structure at various points in
+the code.  We rely on the fact that the number of arguments is fixed
+based on the filter type (set in cgit_new_filter) and that the call
+sites all know which filter type they&#39;re using.
+
+Signed-off-by: John Keeping &lt;john@keeping.me.uk&gt;
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">cgit.h</a></td><td> | </td><td class="num">3</td><td><span class="i">++</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">filter.c</a></td><td> | </td><td class="num">35</td><td><span class="i">++++++++++++++++++++++++</span><span class="d">-----------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">ui-repolist.c</a></td><td> | </td><td class="num">10</td><td><span class="i">+++</span><span class="d">-------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">ui-summary.c</a></td><td> | </td><td class="num">13</td><td><span class="i">++++++</span><span class="d">-------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h4">ui-tree.c</a></td><td> | </td><td class="num">7</td><td><span class="i">+++</span><span class="d">----</span></td></tr>
+</table></pre><pre>5 files changed, 38 insertions(+), 30 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/cgit.h.html">cgit.h</a> b/<a href="../file/cgit.h.html">cgit.h</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -59,6 +59,7 @@ typedef enum {
+</a> struct cgit_filter {
+ 	char *cmd;
+ 	char **argv;
+<a href="#h0-0-3" id="h0-0-3" class="i">+	int extra_args;
+</a> 	int old_stdout;
+ 	int pipe_fh[2];
+ 	int pid;
+<a href="#h0-1" id="h0-1" class="h">@@ -342,7 +343,7 @@ extern const char *cgit_repobasename(const char *reponame);
+</a> 
+ extern int cgit_parse_snapshots_mask(const char *str);
+ 
+<a href="#h0-1-3" id="h0-1-3" class="d">-extern int cgit_open_filter(struct cgit_filter *filter);
+</a><a href="#h0-1-4" id="h0-1-4" class="i">+extern int cgit_open_filter(struct cgit_filter *filter, ...);
+</a> extern int cgit_close_filter(struct cgit_filter *filter);
+ extern struct cgit_filter *cgit_new_filter(const char *cmd, filter_type filtertype);
+ 
+<b>diff --git a/<a id="h1" href="../file/filter.c.html">filter.c</a> b/<a href="../file/filter.c.html">filter.c</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -13,8 +13,16 @@
+</a> #include &lt;string.h&gt;
+ #include &lt;stdlib.h&gt;
+ 
+<a href="#h1-0-3" id="h1-0-3" class="d">-int cgit_open_filter(struct cgit_filter *filter)
+</a><a href="#h1-0-4" id="h1-0-4" class="i">+int cgit_open_filter(struct cgit_filter *filter, ...)
+</a> {
+<a href="#h1-0-6" id="h1-0-6" class="i">+	int i;
+</a><a href="#h1-0-7" id="h1-0-7" class="i">+	va_list ap;
+</a><a href="#h1-0-8" id="h1-0-8" class="i">+
+</a><a href="#h1-0-9" id="h1-0-9" class="i">+	va_start(ap, filter);
+</a><a href="#h1-0-10" id="h1-0-10" class="i">+	for (i = 0; i &lt; filter-&gt;extra_args; i++)
+</a><a href="#h1-0-11" id="h1-0-11" class="i">+		filter-&gt;argv[i+1] = va_arg(ap, char *);
+</a><a href="#h1-0-12" id="h1-0-12" class="i">+	va_end(ap);
+</a><a href="#h1-0-13" id="h1-0-13" class="i">+
+</a> 	filter-&gt;old_stdout = chk_positive(dup(STDOUT_FILENO),
+ 		&quot;Unable to duplicate STDOUT&quot;);
+ 	chk_zero(pipe(filter-&gt;pipe_fh), &quot;Unable to create pipe to subprocess&quot;);
+<a href="#h1-1" id="h1-1" class="h">@@ -36,45 +44,50 @@ int cgit_open_filter(struct cgit_filter *filter)
+</a> 
+ int cgit_close_filter(struct cgit_filter *filter)
+ {
+<a href="#h1-1-3" id="h1-1-3" class="d">-	int exit_status;
+</a><a href="#h1-1-4" id="h1-1-4" class="i">+	int i, exit_status;
+</a> 
+ 	chk_non_negative(dup2(filter-&gt;old_stdout, STDOUT_FILENO),
+ 		&quot;Unable to restore STDOUT&quot;);
+ 	close(filter-&gt;old_stdout);
+ 	if (filter-&gt;pid &lt; 0)
+<a href="#h1-1-10" id="h1-1-10" class="d">-		return 0;
+</a><a href="#h1-1-11" id="h1-1-11" class="i">+		goto done;
+</a> 	waitpid(filter-&gt;pid, &amp;exit_status, 0);
+ 	if (WIFEXITED(exit_status) &amp;&amp; !WEXITSTATUS(exit_status))
+<a href="#h1-1-14" id="h1-1-14" class="d">-		return 0;
+</a><a href="#h1-1-15" id="h1-1-15" class="i">+		goto done;
+</a> 	die(&quot;Subprocess %s exited abnormally&quot;, filter-&gt;cmd);
+<a href="#h1-1-17" id="h1-1-17" class="i">+
+</a><a href="#h1-1-18" id="h1-1-18" class="i">+done:
+</a><a href="#h1-1-19" id="h1-1-19" class="i">+	for (i = 0; i &lt; filter-&gt;extra_args; i++)
+</a><a href="#h1-1-20" id="h1-1-20" class="i">+		filter-&gt;argv[i+1] = NULL;
+</a><a href="#h1-1-21" id="h1-1-21" class="i">+	return 0;
+</a><a href="#h1-1-22" id="h1-1-22" class="i">+
+</a> }
+ 
+ struct cgit_filter *cgit_new_filter(const char *cmd, filter_type filtertype)
+ {
+ 	struct cgit_filter *f;
+ 	int args_size = 0;
+<a href="#h1-1-29" id="h1-1-29" class="d">-	int extra_args;
+</a> 
+ 	if (!cmd || !cmd[0])
+ 		return NULL;
+ 
+<a href="#h1-1-34" id="h1-1-34" class="i">+	f = xmalloc(sizeof(struct cgit_filter));
+</a><a href="#h1-1-35" id="h1-1-35" class="i">+	memset(f, 0, sizeof(struct cgit_filter));
+</a><a href="#h1-1-36" id="h1-1-36" class="i">+
+</a> 	switch (filtertype) {
+ 		case SOURCE:
+ 		case ABOUT:
+<a href="#h1-1-40" id="h1-1-40" class="d">-			extra_args = 1;
+</a><a href="#h1-1-41" id="h1-1-41" class="i">+			f-&gt;extra_args = 1;
+</a> 			break;
+ 
+ 		case COMMIT:
+ 		default:
+<a href="#h1-1-46" id="h1-1-46" class="d">-			extra_args = 0;
+</a><a href="#h1-1-47" id="h1-1-47" class="i">+			f-&gt;extra_args = 0;
+</a> 			break;
+ 	}
+<a href="#h1-1-50" id="h1-1-50" class="d">-	
+</a><a href="#h1-1-51" id="h1-1-51" class="d">-	f = xmalloc(sizeof(struct cgit_filter));
+</a><a href="#h1-1-52" id="h1-1-52" class="d">-	memset(f, 0, sizeof(struct cgit_filter));
+</a> 
+ 	f-&gt;cmd = xstrdup(cmd);
+<a href="#h1-1-55" id="h1-1-55" class="d">-	args_size = (2 + extra_args) * sizeof(char *);
+</a><a href="#h1-1-56" id="h1-1-56" class="i">+	args_size = (2 + f-&gt;extra_args) * sizeof(char *);
+</a> 	f-&gt;argv = xmalloc(args_size);
+ 	memset(f-&gt;argv, 0, args_size);
+ 	f-&gt;argv[0] = f-&gt;cmd;
+<b>diff --git a/<a id="h2" href="../file/ui-repolist.c.html">ui-repolist.c</a> b/<a href="../file/ui-repolist.c.html">ui-repolist.c</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -331,13 +331,9 @@ void cgit_print_site_readme()
+</a> {
+ 	if (!ctx.cfg.root_readme)
+ 		return;
+<a href="#h2-0-3" id="h2-0-3" class="d">-	if (ctx.cfg.about_filter) {
+</a><a href="#h2-0-4" id="h2-0-4" class="d">-		ctx.cfg.about_filter-&gt;argv[1] = ctx.cfg.root_readme;
+</a><a href="#h2-0-5" id="h2-0-5" class="d">-		cgit_open_filter(ctx.cfg.about_filter);
+</a><a href="#h2-0-6" id="h2-0-6" class="d">-	}
+</a><a href="#h2-0-7" id="h2-0-7" class="i">+	if (ctx.cfg.about_filter)
+</a><a href="#h2-0-8" id="h2-0-8" class="i">+		cgit_open_filter(ctx.cfg.about_filter, ctx.cfg.root_readme);
+</a> 	html_include(ctx.cfg.root_readme);
+<a href="#h2-0-10" id="h2-0-10" class="d">-	if (ctx.cfg.about_filter) {
+</a><a href="#h2-0-11" id="h2-0-11" class="i">+	if (ctx.cfg.about_filter)
+</a> 		cgit_close_filter(ctx.cfg.about_filter);
+<a href="#h2-0-13" id="h2-0-13" class="d">-		ctx.cfg.about_filter-&gt;argv[1] = NULL;
+</a><a href="#h2-0-14" id="h2-0-14" class="d">-	}
+</a> }
+<b>diff --git a/<a id="h3" href="../file/ui-summary.c.html">ui-summary.c</a> b/<a href="../file/ui-summary.c.html">ui-summary.c</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -151,18 +151,17 @@ void cgit_print_repo_readme(char *path)
+</a> 	 * filesystem, while applying the about-filter.
+ 	 */
+ 	html(&quot;&lt;div id=&#39;summary&#39;&gt;&quot;);
+<a href="#h3-0-3" id="h3-0-3" class="d">-	if (ctx.repo-&gt;about_filter) {
+</a><a href="#h3-0-4" id="h3-0-4" class="d">-		ctx.repo-&gt;about_filter-&gt;argv[1] = filename;
+</a><a href="#h3-0-5" id="h3-0-5" class="d">-		cgit_open_filter(ctx.repo-&gt;about_filter);
+</a><a href="#h3-0-6" id="h3-0-6" class="d">-	}
+</a><a href="#h3-0-7" id="h3-0-7" class="i">+	if (ctx.repo-&gt;about_filter)
+</a><a href="#h3-0-8" id="h3-0-8" class="i">+		cgit_open_filter(ctx.repo-&gt;about_filter, filename);
+</a><a href="#h3-0-9" id="h3-0-9" class="i">+
+</a> 	if (ref)
+ 		cgit_print_file(filename, ref, 1);
+ 	else
+ 		html_include(filename);
+<a href="#h3-0-14" id="h3-0-14" class="d">-	if (ctx.repo-&gt;about_filter) {
+</a><a href="#h3-0-15" id="h3-0-15" class="i">+
+</a><a href="#h3-0-16" id="h3-0-16" class="i">+	if (ctx.repo-&gt;about_filter)
+</a> 		cgit_close_filter(ctx.repo-&gt;about_filter);
+<a href="#h3-0-18" id="h3-0-18" class="d">-		ctx.repo-&gt;about_filter-&gt;argv[1] = NULL;
+</a><a href="#h3-0-19" id="h3-0-19" class="d">-	}
+</a><a href="#h3-0-20" id="h3-0-20" class="i">+
+</a> 	html(&quot;&lt;/div&gt;&quot;);
+ 	if (free_filename)
+ 		free(filename);
+<b>diff --git a/<a id="h4" href="../file/ui-tree.c.html">ui-tree.c</a> b/<a href="../file/ui-tree.c.html">ui-tree.c</a></b>
+<a href="#h4-0" id="h4-0" class="h">@@ -45,13 +45,12 @@ static void print_text_buffer(const char *name, char *buf, unsigned long size)
+</a> 	}
+ 
+ 	if (ctx.repo-&gt;source_filter) {
+<a href="#h4-0-3" id="h4-0-3" class="i">+		char *filter_arg = xstrdup(name);
+</a> 		html(&quot;&lt;td class=&#39;lines&#39;&gt;&lt;pre&gt;&lt;code&gt;&quot;);
+<a href="#h4-0-5" id="h4-0-5" class="d">-		ctx.repo-&gt;source_filter-&gt;argv[1] = xstrdup(name);
+</a><a href="#h4-0-6" id="h4-0-6" class="d">-		cgit_open_filter(ctx.repo-&gt;source_filter);
+</a><a href="#h4-0-7" id="h4-0-7" class="i">+		cgit_open_filter(ctx.repo-&gt;source_filter, filter_arg);
+</a> 		html_raw(buf, size);
+ 		cgit_close_filter(ctx.repo-&gt;source_filter);
+<a href="#h4-0-10" id="h4-0-10" class="d">-		free(ctx.repo-&gt;source_filter-&gt;argv[1]);
+</a><a href="#h4-0-11" id="h4-0-11" class="d">-		ctx.repo-&gt;source_filter-&gt;argv[1] = NULL;
+</a><a href="#h4-0-12" id="h4-0-12" class="i">+		free(filter_arg);
+</a> 		html(&quot;&lt;/code&gt;&lt;/pre&gt;&lt;/td&gt;&lt;/tr&gt;&lt;/table&gt;\n&quot;);
+ 		return;
+ 	}
+</pre>
+</div>
+</body>
+</html>

@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>readme: Accept multiple candidates and test them. - cgit - Web based git repository viewer
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="cgit.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="cgit.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Source+Code+Pro:ital,wght@0,200..900;1,200..900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/base16/tender.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script> hljs.highlightAll() ;</script>
+<style>pre code.hljs {display: inline;padding: 0;} code.hljs {padding: 0;} .hljs {background: initial;} .hljs-comment{color: rgb(96, 96, 96);}</style></head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>cgit</h1><span class="desc">Web based git repository viewer
+</span></td></tr><tr><td></td><td>
+<br>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/.gitmodules.html">Submodules</a> | <a href="../file/README.html">README</a> | <a href="../file/COPYING.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/cd4c77d989983778432363061e99219f034c3717.html">cd4c77d989983778432363061e99219f034c3717</a>
+<b>parent</b> <a href="../commit/c0dfaf1c281d0697ce43131343d7a9f170a61ff9.html">c0dfaf1c281d0697ce43131343d7a9f170a61ff9</a>
+<b>Author:</b> Jason A. Donenfeld &lt;<a href="mailto:Jason@zx2c4.com">Jason@zx2c4.com</a>&gt;
+<b>Date:</b>   Sat, 25 May 2013 16:32:37 +0200
+
+readme: Accept multiple candidates and test them.
+
+The readme variable may now contain multiple space deliminated entries,
+which per usual are either a filepath or a git ref filepath. If multiple
+are specified, cgit will now select the first one in the list that
+exists. This is to make it easier to specify multiple default readme
+types in the main cgitrc file and have them automatically get applied to
+each repo based on what exists.
+
+Signed-off-by: Jason A. Donenfeld &lt;Jason@zx2c4.com&gt;
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">cgit.c</a></td><td> | </td><td class="num">35</td><td><span class="i">+++++++++++++++++++++++++++++++++++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">ui-blob.c</a></td><td> | </td><td class="num">28</td><td><span class="i">+++++++++++++++++++++++++++</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">ui-blob.h</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">ui-summary.c</a></td><td> | </td><td class="num">61</td><td><span class="i">+++++++++++++++++++++++++++++++</span><span class="d">------------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h4">ui-summary.h</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+</table></pre><pre>5 files changed, 95 insertions(+), 31 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/cgit.c.html">cgit.c</a> b/<a href="../file/cgit.c.html">cgit.c</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -14,6 +14,8 @@
+</a> #include &quot;html.h&quot;
+ #include &quot;ui-shared.h&quot;
+ #include &quot;ui-stats.h&quot;
+<a href="#h0-0-3" id="h0-0-3" class="i">+#include &quot;ui-blob.h&quot;
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+#include &quot;ui-summary.h&quot;
+</a> #include &quot;scan-tree.h&quot;
+ 
+ const char *cgit_version = CGIT_VERSION;
+<a href="#h0-1" id="h0-1" class="h">@@ -469,6 +471,38 @@ static char *guess_defbranch(void)
+</a> 	return xstrdup(ref + 11);
+ }
+ 
+<a href="#h0-1-3" id="h0-1-3" class="i">+static void choose_readme(struct cgit_repo *repo)
+</a><a href="#h0-1-4" id="h0-1-4" class="i">+{
+</a><a href="#h0-1-5" id="h0-1-5" class="i">+	char *entry, *filename, *ref;
+</a><a href="#h0-1-6" id="h0-1-6" class="i">+
+</a><a href="#h0-1-7" id="h0-1-7" class="i">+	/* If there&#39;s no space, we skip the possibly expensive
+</a><a href="#h0-1-8" id="h0-1-8" class="i">+	 * selection process. */
+</a><a href="#h0-1-9" id="h0-1-9" class="i">+	if (!repo-&gt;readme || !strchr(repo-&gt;readme, &#39; &#39;))
+</a><a href="#h0-1-10" id="h0-1-10" class="i">+		return;
+</a><a href="#h0-1-11" id="h0-1-11" class="i">+
+</a><a href="#h0-1-12" id="h0-1-12" class="i">+	for (entry = strtok(repo-&gt;readme, &quot; &quot;); entry; entry = strtok(NULL, &quot; &quot;)) {
+</a><a href="#h0-1-13" id="h0-1-13" class="i">+		cgit_parse_readme(entry, NULL, &amp;filename, &amp;ref, repo);
+</a><a href="#h0-1-14" id="h0-1-14" class="i">+		if (!(*filename)) {
+</a><a href="#h0-1-15" id="h0-1-15" class="i">+			free(filename);
+</a><a href="#h0-1-16" id="h0-1-16" class="i">+			free(ref);
+</a><a href="#h0-1-17" id="h0-1-17" class="i">+			continue;
+</a><a href="#h0-1-18" id="h0-1-18" class="i">+		}
+</a><a href="#h0-1-19" id="h0-1-19" class="i">+		if (*ref &amp;&amp; cgit_ref_path_exists(filename, ref)) {
+</a><a href="#h0-1-20" id="h0-1-20" class="i">+			free(filename);
+</a><a href="#h0-1-21" id="h0-1-21" class="i">+			free(ref);
+</a><a href="#h0-1-22" id="h0-1-22" class="i">+			break;
+</a><a href="#h0-1-23" id="h0-1-23" class="i">+		}
+</a><a href="#h0-1-24" id="h0-1-24" class="i">+		if (!access(filename, R_OK)) {
+</a><a href="#h0-1-25" id="h0-1-25" class="i">+			free(filename);
+</a><a href="#h0-1-26" id="h0-1-26" class="i">+			free(ref);
+</a><a href="#h0-1-27" id="h0-1-27" class="i">+			break;
+</a><a href="#h0-1-28" id="h0-1-28" class="i">+		}
+</a><a href="#h0-1-29" id="h0-1-29" class="i">+		free(filename);
+</a><a href="#h0-1-30" id="h0-1-30" class="i">+		free(ref);
+</a><a href="#h0-1-31" id="h0-1-31" class="i">+	}
+</a><a href="#h0-1-32" id="h0-1-32" class="i">+	repo-&gt;readme = entry;
+</a><a href="#h0-1-33" id="h0-1-33" class="i">+}
+</a><a href="#h0-1-34" id="h0-1-34" class="i">+
+</a> static int prepare_repo_cmd(struct cgit_context *ctx)
+ {
+ 	unsigned char sha1[20];
+<a href="#h0-2" id="h0-2" class="h">@@ -537,6 +571,7 @@ static int prepare_repo_cmd(struct cgit_context *ctx)
+</a> 	}
+ 	sort_string_list(&amp;ctx-&gt;repo-&gt;submodules);
+ 	cgit_prepare_repo_env(ctx-&gt;repo);
+<a href="#h0-2-3" id="h0-2-3" class="i">+	choose_readme(ctx-&gt;repo);
+</a> 	return 0;
+ }
+ 
+<b>diff --git a/<a id="h1" href="../file/ui-blob.c.html">ui-blob.c</a> b/<a href="../file/ui-blob.c.html">ui-blob.c</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -13,7 +13,7 @@
+</a> #include &quot;ui-shared.h&quot;
+ 
+ struct walk_tree_context {
+<a href="#h1-0-3" id="h1-0-3" class="d">-	char *match_path;
+</a><a href="#h1-0-4" id="h1-0-4" class="i">+	const char *match_path;
+</a> 	unsigned char *matched_sha1;
+ 	int found_path;
+ };
+<a href="#h1-1" id="h1-1" class="h">@@ -31,6 +31,32 @@ static int walk_tree(const unsigned char *sha1, const char *base, int baselen,
+</a> 	return 0;
+ }
+ 
+<a href="#h1-1-3" id="h1-1-3" class="i">+int cgit_ref_path_exists(const char *path, const char *ref)
+</a><a href="#h1-1-4" id="h1-1-4" class="i">+{
+</a><a href="#h1-1-5" id="h1-1-5" class="i">+        unsigned char sha1[20];
+</a><a href="#h1-1-6" id="h1-1-6" class="i">+        unsigned long size;
+</a><a href="#h1-1-7" id="h1-1-7" class="i">+        struct pathspec_item path_items = {
+</a><a href="#h1-1-8" id="h1-1-8" class="i">+                .match = path,
+</a><a href="#h1-1-9" id="h1-1-9" class="i">+                .len = strlen(path)
+</a><a href="#h1-1-10" id="h1-1-10" class="i">+        };
+</a><a href="#h1-1-11" id="h1-1-11" class="i">+        struct pathspec paths = {
+</a><a href="#h1-1-12" id="h1-1-12" class="i">+                .nr = 1,
+</a><a href="#h1-1-13" id="h1-1-13" class="i">+                .items = &amp;path_items
+</a><a href="#h1-1-14" id="h1-1-14" class="i">+        };
+</a><a href="#h1-1-15" id="h1-1-15" class="i">+        struct walk_tree_context walk_tree_ctx = {
+</a><a href="#h1-1-16" id="h1-1-16" class="i">+                .match_path = path,
+</a><a href="#h1-1-17" id="h1-1-17" class="i">+                .matched_sha1 = sha1,
+</a><a href="#h1-1-18" id="h1-1-18" class="i">+                .found_path = 0
+</a><a href="#h1-1-19" id="h1-1-19" class="i">+        };
+</a><a href="#h1-1-20" id="h1-1-20" class="i">+
+</a><a href="#h1-1-21" id="h1-1-21" class="i">+        if (get_sha1(ref, sha1))
+</a><a href="#h1-1-22" id="h1-1-22" class="i">+                return 0;
+</a><a href="#h1-1-23" id="h1-1-23" class="i">+        if (sha1_object_info(sha1, &amp;size) != OBJ_COMMIT) 
+</a><a href="#h1-1-24" id="h1-1-24" class="i">+                return 0;
+</a><a href="#h1-1-25" id="h1-1-25" class="i">+        read_tree_recursive(lookup_commit_reference(sha1)-&gt;tree, &quot;&quot;, 0, 0, &amp;paths, walk_tree, &amp;walk_tree_ctx);
+</a><a href="#h1-1-26" id="h1-1-26" class="i">+        return walk_tree_ctx.found_path;
+</a><a href="#h1-1-27" id="h1-1-27" class="i">+}
+</a><a href="#h1-1-28" id="h1-1-28" class="i">+
+</a> int cgit_print_file(char *path, const char *head)
+ {
+ 	unsigned char sha1[20];
+<b>diff --git a/<a id="h2" href="../file/ui-blob.h.html">ui-blob.h</a> b/<a href="../file/ui-blob.h.html">ui-blob.h</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -1,6 +1,7 @@
+</a> #ifndef UI_BLOB_H
+ #define UI_BLOB_H
+ 
+<a href="#h2-0-3" id="h2-0-3" class="i">+extern int cgit_ref_path_exists(const char *path, const char *ref);
+</a> extern int cgit_print_file(char *path, const char *head);
+ extern void cgit_print_blob(const char *hex, char *path, const char *head);
+ 
+<b>diff --git a/<a id="h3" href="../file/ui-summary.c.html">ui-summary.c</a> b/<a href="../file/ui-summary.c.html">ui-summary.c</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -95,70 +95,71 @@ void cgit_print_summary()
+</a> 	html(&quot;&lt;/table&gt;&quot;);
+ }
+ 
+<a href="#h3-0-3" id="h3-0-3" class="d">-void cgit_print_repo_readme(char *path)
+</a><a href="#h3-0-4" id="h3-0-4" class="i">+/* The caller must free filename and ref after calling this. */
+</a><a href="#h3-0-5" id="h3-0-5" class="i">+void cgit_parse_readme(const char *readme, const char *path, char **filename, char **ref, struct cgit_repo *repo)
+</a> {
+<a href="#h3-0-7" id="h3-0-7" class="d">-	char *slash, *tmp, *colon, *ref;
+</a><a href="#h3-0-8" id="h3-0-8" class="d">-	int free_filename = 0;
+</a><a href="#h3-0-9" id="h3-0-9" class="i">+	const char *slash, *colon;
+</a> 
+<a href="#h3-0-11" id="h3-0-11" class="d">-	if (!ctx.repo-&gt;readme || !(*ctx.repo-&gt;readme))
+</a><a href="#h3-0-12" id="h3-0-12" class="d">-		return;
+</a><a href="#h3-0-13" id="h3-0-13" class="i">+	*filename = NULL;
+</a><a href="#h3-0-14" id="h3-0-14" class="i">+	*ref = NULL;
+</a> 
+<a href="#h3-0-16" id="h3-0-16" class="d">-	ref = NULL;
+</a><a href="#h3-0-17" id="h3-0-17" class="i">+	if (!readme || !(*readme))
+</a><a href="#h3-0-18" id="h3-0-18" class="i">+		return;
+</a> 
+ 	/* Check if the readme is tracked in the git repo. */
+<a href="#h3-0-21" id="h3-0-21" class="d">-	colon = strchr(ctx.repo-&gt;readme, &#39;:&#39;);
+</a><a href="#h3-0-22" id="h3-0-22" class="i">+	colon = strchr(readme, &#39;:&#39;);
+</a> 	if (colon &amp;&amp; strlen(colon) &gt; 1) {
+<a href="#h3-0-24" id="h3-0-24" class="d">-		*colon = &#39;\0&#39;;
+</a> 		/* If it starts with a colon, we want to use
+ 		 * the default branch */
+<a href="#h3-0-27" id="h3-0-27" class="d">-		if (colon == ctx.repo-&gt;readme &amp;&amp; ctx.repo-&gt;defbranch)
+</a><a href="#h3-0-28" id="h3-0-28" class="d">-			ref = ctx.repo-&gt;defbranch;
+</a><a href="#h3-0-29" id="h3-0-29" class="i">+		if (colon == readme &amp;&amp; repo-&gt;defbranch)
+</a><a href="#h3-0-30" id="h3-0-30" class="i">+			*ref = xstrdup(repo-&gt;defbranch);
+</a> 		else
+<a href="#h3-0-32" id="h3-0-32" class="d">-			ref = ctx.repo-&gt;readme;
+</a><a href="#h3-0-33" id="h3-0-33" class="d">-		ctx.repo-&gt;readme = colon + 1;
+</a><a href="#h3-0-34" id="h3-0-34" class="d">-		if (!(*ctx.repo-&gt;readme))
+</a><a href="#h3-0-35" id="h3-0-35" class="d">-			return;
+</a><a href="#h3-0-36" id="h3-0-36" class="i">+			*ref = xstrndup(readme, colon - readme);
+</a><a href="#h3-0-37" id="h3-0-37" class="i">+		readme = colon + 1;
+</a> 	}
+ 
+ 	/* Prepend repo path to relative readme path unless tracked. */
+<a href="#h3-0-41" id="h3-0-41" class="d">-	if (!ref &amp;&amp; *ctx.repo-&gt;readme != &#39;/&#39;)
+</a><a href="#h3-0-42" id="h3-0-42" class="d">-		ctx.repo-&gt;readme = fmtalloc(&quot;%s/%s&quot;, ctx.repo-&gt;path,
+</a><a href="#h3-0-43" id="h3-0-43" class="d">-						ctx.repo-&gt;readme);
+</a><a href="#h3-0-44" id="h3-0-44" class="i">+	if (!(*ref) &amp;&amp; *readme != &#39;/&#39;)
+</a><a href="#h3-0-45" id="h3-0-45" class="i">+		readme = fmtalloc(&quot;%s/%s&quot;, repo-&gt;path, readme);
+</a> 
+ 	/* If a subpath is specified for the about page, make it relative
+<a href="#h3-0-48" id="h3-0-48" class="d">-	 * to the directory containing the configured readme.
+</a><a href="#h3-0-49" id="h3-0-49" class="d">-	 */
+</a><a href="#h3-0-50" id="h3-0-50" class="i">+	 * to the directory containing the configured readme. */
+</a> 	if (path) {
+<a href="#h3-0-52" id="h3-0-52" class="d">-		slash = strrchr(ctx.repo-&gt;readme, &#39;/&#39;);
+</a><a href="#h3-0-53" id="h3-0-53" class="i">+		slash = strrchr(readme, &#39;/&#39;);
+</a> 		if (!slash) {
+ 			if (!colon)
+ 				return;
+ 			slash = colon;
+ 		}
+<a href="#h3-0-59" id="h3-0-59" class="d">-		free_filename = 1;
+</a><a href="#h3-0-60" id="h3-0-60" class="d">-		tmp = xmalloc(slash - ctx.repo-&gt;readme + 1 + strlen(path) + 1);
+</a><a href="#h3-0-61" id="h3-0-61" class="d">-		strncpy(tmp, ctx.repo-&gt;readme, slash - ctx.repo-&gt;readme + 1);
+</a><a href="#h3-0-62" id="h3-0-62" class="d">-		strcpy(tmp + (slash - ctx.repo-&gt;readme + 1), path);
+</a><a href="#h3-0-63" id="h3-0-63" class="i">+		*filename = xmalloc(slash - readme + 1 + strlen(path) + 1);
+</a><a href="#h3-0-64" id="h3-0-64" class="i">+		strncpy(*filename, readme, slash - readme + 1);
+</a><a href="#h3-0-65" id="h3-0-65" class="i">+		strcpy(*filename + (slash - readme + 1), path);
+</a> 	} else
+<a href="#h3-0-67" id="h3-0-67" class="d">-		tmp = ctx.repo-&gt;readme;
+</a><a href="#h3-0-68" id="h3-0-68" class="i">+		*filename = xstrdup(readme);
+</a><a href="#h3-0-69" id="h3-0-69" class="i">+}
+</a><a href="#h3-0-70" id="h3-0-70" class="i">+
+</a><a href="#h3-0-71" id="h3-0-71" class="i">+void cgit_print_repo_readme(char *path)
+</a><a href="#h3-0-72" id="h3-0-72" class="i">+{
+</a><a href="#h3-0-73" id="h3-0-73" class="i">+	char *filename, *ref;
+</a><a href="#h3-0-74" id="h3-0-74" class="i">+	cgit_parse_readme(ctx.repo-&gt;readme, path, &amp;filename, &amp;ref, ctx.repo);
+</a> 
+ 	/* Print the calculated readme, either from the git repo or from the
+ 	 * filesystem, while applying the about-filter.
+ 	 */
+ 	html(&quot;&lt;div id=&#39;summary&#39;&gt;&quot;);
+ 	if (ctx.repo-&gt;about_filter) {
+<a href="#h3-0-81" id="h3-0-81" class="d">-		ctx.repo-&gt;about_filter-&gt;argv[1] = tmp;
+</a><a href="#h3-0-82" id="h3-0-82" class="i">+		ctx.repo-&gt;about_filter-&gt;argv[1] = filename;
+</a> 		cgit_open_filter(ctx.repo-&gt;about_filter);
+ 	}
+ 	if (ref)
+<a href="#h3-0-86" id="h3-0-86" class="d">-		cgit_print_file(tmp, ref);
+</a><a href="#h3-0-87" id="h3-0-87" class="i">+		cgit_print_file(filename, ref);
+</a> 	else
+<a href="#h3-0-89" id="h3-0-89" class="d">-		html_include(tmp);
+</a><a href="#h3-0-90" id="h3-0-90" class="i">+		html_include(filename);
+</a> 	if (ctx.repo-&gt;about_filter) {
+ 		cgit_close_filter(ctx.repo-&gt;about_filter);
+ 		ctx.repo-&gt;about_filter-&gt;argv[1] = NULL;
+ 	}
+ 	html(&quot;&lt;/div&gt;&quot;);
+<a href="#h3-0-96" id="h3-0-96" class="d">-	if (free_filename)
+</a><a href="#h3-0-97" id="h3-0-97" class="d">-		free(tmp);
+</a><a href="#h3-0-98" id="h3-0-98" class="i">+	free(filename);
+</a><a href="#h3-0-99" id="h3-0-99" class="i">+	free(ref);
+</a> }
+<b>diff --git a/<a id="h4" href="../file/ui-summary.h.html">ui-summary.h</a> b/<a href="../file/ui-summary.h.html">ui-summary.h</a></b>
+<a href="#h4-0" id="h4-0" class="h">@@ -1,6 +1,7 @@
+</a> #ifndef UI_SUMMARY_H
+ #define UI_SUMMARY_H
+ 
+<a href="#h4-0-3" id="h4-0-3" class="i">+extern void cgit_parse_readme(const char *readme, const char *path, char **filename, char **ref, struct cgit_repo *repo);
+</a> extern void cgit_print_summary();
+ extern void cgit_print_repo_readme(char *path);
+ 
+</pre>
+</div>
+</body>
+</html>

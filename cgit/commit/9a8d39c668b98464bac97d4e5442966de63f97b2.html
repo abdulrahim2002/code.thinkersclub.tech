@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ui-log: Implement support for commit graphs - cgit - Web based git repository viewer
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="cgit.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="cgit.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Source+Code+Pro:ital,wght@0,200..900;1,200..900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/base16/tender.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script> hljs.highlightAll() ;</script>
+<style>pre code.hljs {display: inline;padding: 0;} code.hljs {padding: 0;} .hljs {background: initial;} .hljs-comment{color: rgb(96, 96, 96);}</style></head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>cgit</h1><span class="desc">Web based git repository viewer
+</span></td></tr><tr><td></td><td>
+<br>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/.gitmodules.html">Submodules</a> | <a href="../file/README.html">README</a> | <a href="../file/COPYING.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/9a8d39c668b98464bac97d4e5442966de63f97b2.html">9a8d39c668b98464bac97d4e5442966de63f97b2</a>
+<b>parent</b> <a href="../commit/5a36c2a291a00b59b8ec2f112453e117797c2fe5.html">5a36c2a291a00b59b8ec2f112453e117797c2fe5</a>
+<b>Author:</b> Johan Herland &lt;<a href="mailto:johan@herland.net">johan@herland.net</a>&gt;
+<b>Date:</b>   Mon, 15 Nov 2010 18:39:50 +0100
+
+ui-log: Implement support for commit graphs
+
+Teach CGit to print an ASCII art commit graph to the left of the commit
+message, similar to &#39;git log --graph&#39;. The graph adds extra lines (table
+rows) to the log when needed to add/remove/shuffle edges in the graph.
+
+When &#39;showmsg&#39; is enabled, the graph is automatically padded to account
+for the extra lines added by the commit message/notes.
+
+This feature is controlled by a new config variable: &quot;enable-commit-graph&quot;
+(disabled by default), and individual repos can control it by setting
+&quot;repo.enable-commit-graph&quot;.
+
+Signed-off-by: Johan Herland &lt;johan@herland.net&gt;
+Signed-off-by: Lars Hjemli &lt;hjemli@gmail.com&gt;
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">cgit.c</a></td><td> | </td><td class="num">6</td><td><span class="i">++++++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">cgit.css</a></td><td> | </td><td class="num">8</td><td><span class="i">++++++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">cgit.h</a></td><td> | </td><td class="num">3</td><td><span class="i">+++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">cgitrc.5.txt</a></td><td> | </td><td class="num">15</td><td><span class="i">++++++++++++++</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h4">shared.c</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h5">ui-log.c</a></td><td> | </td><td class="num">103</td><td><span class="i">+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++</span><span class="d">----------------</span></td></tr>
+</table></pre><pre>6 files changed, 112 insertions(+), 24 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/cgit.c.html">cgit.c</a> b/<a href="../file/cgit.c.html">cgit.c</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -57,6 +57,8 @@ void repo_config(struct cgit_repo *repo, const char *name, const char *value)
+</a> 		repo-&gt;defbranch = xstrdup(value);
+ 	else if (!strcmp(name, &quot;snapshots&quot;))
+ 		repo-&gt;snapshots = ctx.cfg.snapshots &amp; cgit_parse_snapshots_mask(value);
+<a href="#h0-0-3" id="h0-0-3" class="i">+	else if (!strcmp(name, &quot;enable-commit-graph&quot;))
+</a><a href="#h0-0-4" id="h0-0-4" class="i">+		repo-&gt;enable_commit_graph = ctx.cfg.enable_commit_graph * atoi(value);
+</a> 	else if (!strcmp(name, &quot;enable-log-filecount&quot;))
+ 		repo-&gt;enable_log_filecount = ctx.cfg.enable_log_filecount * atoi(value);
+ 	else if (!strcmp(name, &quot;enable-log-linecount&quot;))
+<a href="#h0-1" id="h0-1" class="h">@@ -141,6 +143,8 @@ void config_cb(const char *name, const char *value)
+</a> 		ctx.cfg.enable_gitweb_owner = atoi(value);
+ 	else if (!strcmp(name, &quot;enable-index-links&quot;))
+ 		ctx.cfg.enable_index_links = atoi(value);
+<a href="#h0-1-3" id="h0-1-3" class="i">+	else if (!strcmp(name, &quot;enable-commit-graph&quot;))
+</a><a href="#h0-1-4" id="h0-1-4" class="i">+		ctx.cfg.enable_commit_graph = atoi(value);
+</a> 	else if (!strcmp(name, &quot;enable-log-filecount&quot;))
+ 		ctx.cfg.enable_log_filecount = atoi(value);
+ 	else if (!strcmp(name, &quot;enable-log-linecount&quot;))
+<a href="#h0-2" id="h0-2" class="h">@@ -540,6 +544,8 @@ void print_repo(FILE *f, struct cgit_repo *repo)
+</a> 		fprintf(f, &quot;repo.section=%s\n&quot;, repo-&gt;section);
+ 	if (repo-&gt;clone_url)
+ 		fprintf(f, &quot;repo.clone-url=%s\n&quot;, repo-&gt;clone_url);
+<a href="#h0-2-3" id="h0-2-3" class="i">+	fprintf(f, &quot;repo.enable-commit-graph=%d\n&quot;,
+</a><a href="#h0-2-4" id="h0-2-4" class="i">+	        repo-&gt;enable_commit_graph);
+</a> 	fprintf(f, &quot;repo.enable-log-filecount=%d\n&quot;,
+ 	        repo-&gt;enable_log_filecount);
+ 	fprintf(f, &quot;repo.enable-log-linecount=%d\n&quot;,
+<b>diff --git a/<a id="h1" href="../file/cgit.css.html">cgit.css</a> b/<a href="../file/cgit.css.html">cgit.css</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -153,6 +153,11 @@ table.list td {
+</a> 	padding: 0.1em 0.5em 0.1em 0.5em;
+ }
+ 
+<a href="#h1-0-3" id="h1-0-3" class="i">+table.list td.commitgraph {
+</a><a href="#h1-0-4" id="h1-0-4" class="i">+	font-family: monospace;
+</a><a href="#h1-0-5" id="h1-0-5" class="i">+	white-space: pre;
+</a><a href="#h1-0-6" id="h1-0-6" class="i">+}
+</a><a href="#h1-0-7" id="h1-0-7" class="i">+
+</a> table.list td.logsubject {
+ 	font-family: monospace;
+ 	font-weight: bold;
+<a href="#h1-1" id="h1-1" class="h">@@ -731,4 +736,4 @@ table.ssdiff td.space {
+</a> 
+ table.ssdiff td.space div {
+ 	min-height: 3em;
+<a href="#h1-1-3" id="h1-1-3" class="d">-}
+</a><a href="#h1-1-4" id="h1-1-4" class="d">-\ No newline at end of file
+</a><a href="#h1-1-5" id="h1-1-5" class="i">+}
+</a><b>diff --git a/<a id="h2" href="../file/cgit.h.html">cgit.h</a> b/<a href="../file/cgit.h.html">cgit.h</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -20,6 +20,7 @@
+</a> #include &lt;xdiff/xdiff.h&gt;
+ #include &lt;utf8.h&gt;
+ #include &lt;notes.h&gt;
+<a href="#h2-0-3" id="h2-0-3" class="i">+#include &lt;graph.h&gt;
+</a> 
+ 
+ /*
+<a href="#h2-1" id="h2-1" class="h">@@ -71,6 +72,7 @@ struct cgit_repo {
+</a> 	char *section;
+ 	char *clone_url;
+ 	int snapshots;
+<a href="#h2-1-3" id="h2-1-3" class="i">+	int enable_commit_graph;
+</a> 	int enable_log_filecount;
+ 	int enable_log_linecount;
+ 	int enable_remote_branches;
+<a href="#h2-2" id="h2-2" class="h">@@ -188,6 +190,7 @@ struct cgit_config {
+</a> 	int enable_filter_overrides;
+ 	int enable_gitweb_owner;
+ 	int enable_index_links;
+<a href="#h2-2-3" id="h2-2-3" class="i">+	int enable_commit_graph;
+</a> 	int enable_log_filecount;
+ 	int enable_log_linecount;
+ 	int enable_remote_branches;
+<b>diff --git a/<a id="h3" href="../file/cgitrc.5.txt.html">cgitrc.5.txt</a> b/<a href="../file/cgitrc.5.txt.html">cgitrc.5.txt</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -90,7 +90,12 @@ embedded::
+</a> 	Flag which, when set to &quot;1&quot;, will make cgit generate a html fragment
+ 	suitable for embedding in other html pages. Default value: none. See
+ 	also: &quot;noheader&quot;.
+<a href="#h3-0-3" id="h3-0-3" class="d">-	
+</a><a href="#h3-0-4" id="h3-0-4" class="i">+
+</a><a href="#h3-0-5" id="h3-0-5" class="i">+enable-commit-graph::
+</a><a href="#h3-0-6" id="h3-0-6" class="i">+	Flag which, when set to &quot;1&quot;, will make cgit print an ASCII-art commit
+</a><a href="#h3-0-7" id="h3-0-7" class="i">+	history graph to the left of the commit messages in the repository
+</a><a href="#h3-0-8" id="h3-0-8" class="i">+	log page. Default value: &quot;0&quot;.
+</a><a href="#h3-0-9" id="h3-0-9" class="i">+
+</a> enable-filter-overrides::
+ 	Flag which, when set to &quot;1&quot;, allows all filter settings to be
+ 	overridden in repository-specific cgitrc files. Default value: none.
+<a href="#h3-1" id="h3-1" class="h">@@ -354,6 +359,10 @@ repo.defbranch::
+</a> repo.desc::
+ 	The value to show as repository description. Default value: none.
+ 
+<a href="#h3-1-3" id="h3-1-3" class="i">+repo.enable-commit-graph::
+</a><a href="#h3-1-4" id="h3-1-4" class="i">+	A flag which can be used to disable the global setting
+</a><a href="#h3-1-5" id="h3-1-5" class="i">+	`enable-commit-graph&#39;. Default value: none.
+</a><a href="#h3-1-6" id="h3-1-6" class="i">+
+</a> repo.enable-log-filecount::
+ 	A flag which can be used to disable the global setting
+ 	`enable-log-filecount&#39;. Default value: none.
+<a href="#h3-2" id="h3-2" class="h">@@ -441,6 +450,10 @@ css=/css/cgit.css
+</a> enable-index-links=1
+ 
+ 
+<a href="#h3-2-3" id="h3-2-3" class="i">+# Enable ASCII art commit history graph on the log pages
+</a><a href="#h3-2-4" id="h3-2-4" class="i">+enable-commit-graph=1
+</a><a href="#h3-2-5" id="h3-2-5" class="i">+
+</a><a href="#h3-2-6" id="h3-2-6" class="i">+
+</a> # Show number of affected files per commit on the log pages
+ enable-log-filecount=1
+ 
+<b>diff --git a/<a id="h4" href="../file/shared.c.html">shared.c</a> b/<a href="../file/shared.c.html">shared.c</a></b>
+<a href="#h4-0" id="h4-0" class="h">@@ -56,6 +56,7 @@ struct cgit_repo *cgit_add_repo(const char *url)
+</a> 	ret-&gt;section = ctx.cfg.section;
+ 	ret-&gt;defbranch = &quot;master&quot;;
+ 	ret-&gt;snapshots = ctx.cfg.snapshots;
+<a href="#h4-0-3" id="h4-0-3" class="i">+	ret-&gt;enable_commit_graph = ctx.cfg.enable_commit_graph;
+</a> 	ret-&gt;enable_log_filecount = ctx.cfg.enable_log_filecount;
+ 	ret-&gt;enable_log_linecount = ctx.cfg.enable_log_linecount;
+ 	ret-&gt;enable_remote_branches = ctx.cfg.enable_remote_branches;
+<b>diff --git a/<a id="h5" href="../file/ui-log.c.html">ui-log.c</a> b/<a href="../file/ui-log.c.html">ui-log.c</a></b>
+<a href="#h5-0" id="h5-0" class="h">@@ -77,11 +77,30 @@ void show_commit_decorations(struct commit *commit)
+</a> 	}
+ }
+ 
+<a href="#h5-0-3" id="h5-0-3" class="d">-void print_commit(struct commit *commit)
+</a><a href="#h5-0-4" id="h5-0-4" class="i">+void print_commit(struct commit *commit, struct rev_info *revs)
+</a> {
+ 	struct commitinfo *info;
+ 	char *tmp;
+ 	int cols = 2;
+<a href="#h5-0-9" id="h5-0-9" class="i">+	struct strbuf graphbuf = STRBUF_INIT;
+</a><a href="#h5-0-10" id="h5-0-10" class="i">+
+</a><a href="#h5-0-11" id="h5-0-11" class="i">+	if (ctx.repo-&gt;enable_log_filecount) {
+</a><a href="#h5-0-12" id="h5-0-12" class="i">+		cols++;
+</a><a href="#h5-0-13" id="h5-0-13" class="i">+		if (ctx.repo-&gt;enable_log_linecount)
+</a><a href="#h5-0-14" id="h5-0-14" class="i">+			cols++;
+</a><a href="#h5-0-15" id="h5-0-15" class="i">+	}
+</a><a href="#h5-0-16" id="h5-0-16" class="i">+
+</a><a href="#h5-0-17" id="h5-0-17" class="i">+	if (revs-&gt;graph) {
+</a><a href="#h5-0-18" id="h5-0-18" class="i">+		/* Advance graph until current commit */
+</a><a href="#h5-0-19" id="h5-0-19" class="i">+		while (!graph_next_line(revs-&gt;graph, &amp;graphbuf)) {
+</a><a href="#h5-0-20" id="h5-0-20" class="i">+			/* Print graph segment in otherwise empty table row */
+</a><a href="#h5-0-21" id="h5-0-21" class="i">+			html(&quot;&lt;tr class=&#39;nohover&#39;&gt;&lt;td/&gt;&lt;td class=&#39;commitgraph&#39;&gt;&quot;);
+</a><a href="#h5-0-22" id="h5-0-22" class="i">+			html(graphbuf.buf);
+</a><a href="#h5-0-23" id="h5-0-23" class="i">+			htmlf(&quot;&lt;/td&gt;&lt;td colspan=&#39;%d&#39; /&gt;&lt;/tr&gt;\n&quot;, cols);
+</a><a href="#h5-0-24" id="h5-0-24" class="i">+			strbuf_setlen(&amp;graphbuf, 0);
+</a><a href="#h5-0-25" id="h5-0-25" class="i">+		}
+</a><a href="#h5-0-26" id="h5-0-26" class="i">+		/* Current commit&#39;s graph segment is now ready in graphbuf */
+</a><a href="#h5-0-27" id="h5-0-27" class="i">+	}
+</a> 
+ 	info = cgit_parse_commit(commit);
+ 	htmlf(&quot;&lt;tr%s&gt;&lt;td&gt;&quot;,
+<a href="#h5-1" id="h5-1" class="h">@@ -91,8 +110,17 @@ void print_commit(struct commit *commit)
+</a> 	html_link_open(tmp, NULL, NULL);
+ 	cgit_print_age(commit-&gt;date, TM_WEEK * 2, FMT_SHORTDATE);
+ 	html_link_close();
+<a href="#h5-1-3" id="h5-1-3" class="d">-	htmlf(&quot;&lt;/td&gt;&lt;td%s&gt;&quot;,
+</a><a href="#h5-1-4" id="h5-1-4" class="d">-		ctx.qry.showmsg ? &quot; class=&#39;logsubject&#39;&quot; : &quot;&quot;);
+</a><a href="#h5-1-5" id="h5-1-5" class="i">+	html(&quot;&lt;/td&gt;&quot;);
+</a><a href="#h5-1-6" id="h5-1-6" class="i">+
+</a><a href="#h5-1-7" id="h5-1-7" class="i">+	if (revs-&gt;graph) {
+</a><a href="#h5-1-8" id="h5-1-8" class="i">+		/* Print graph segment for current commit */
+</a><a href="#h5-1-9" id="h5-1-9" class="i">+		html(&quot;&lt;td class=&#39;commitgraph&#39;&gt;&quot;);
+</a><a href="#h5-1-10" id="h5-1-10" class="i">+		html(graphbuf.buf);
+</a><a href="#h5-1-11" id="h5-1-11" class="i">+		html(&quot;&lt;/td&gt;&quot;);
+</a><a href="#h5-1-12" id="h5-1-12" class="i">+		strbuf_setlen(&amp;graphbuf, 0);
+</a><a href="#h5-1-13" id="h5-1-13" class="i">+	}
+</a><a href="#h5-1-14" id="h5-1-14" class="i">+
+</a><a href="#h5-1-15" id="h5-1-15" class="i">+	htmlf(&quot;&lt;td%s&gt;&quot;, ctx.qry.showmsg ? &quot; class=&#39;logsubject&#39;&quot; : &quot;&quot;);
+</a> 	cgit_commit_link(info-&gt;subject, NULL, NULL, ctx.qry.head,
+ 			 sha1_to_hex(commit-&gt;object.sha1), ctx.qry.vpath, 0);
+ 	show_commit_decorations(commit);
+<a href="#h5-2" id="h5-2" class="h">@@ -112,32 +140,59 @@ void print_commit(struct commit *commit)
+</a> 	}
+ 	html(&quot;&lt;/td&gt;&lt;/tr&gt;\n&quot;);
+ 
+<a href="#h5-2-3" id="h5-2-3" class="d">-	if (ctx.qry.showmsg) { /* Print message + notes in a second table row */
+</a><a href="#h5-2-4" id="h5-2-4" class="d">-		/* Concatenate commit message and notes in msgbuf */
+</a><a href="#h5-2-5" id="h5-2-5" class="i">+	if (revs-&gt;graph || ctx.qry.showmsg) { /* Print a second table row */
+</a> 		struct strbuf msgbuf = STRBUF_INIT;
+<a href="#h5-2-7" id="h5-2-7" class="d">-		if (info-&gt;msg &amp;&amp; *(info-&gt;msg)) {
+</a><a href="#h5-2-8" id="h5-2-8" class="d">-			strbuf_addstr(&amp;msgbuf, info-&gt;msg);
+</a><a href="#h5-2-9" id="h5-2-9" class="i">+		html(&quot;&lt;tr class=&#39;nohover&#39;&gt;&lt;td/&gt;&quot;); /* Empty &#39;Age&#39; column */
+</a><a href="#h5-2-10" id="h5-2-10" class="i">+
+</a><a href="#h5-2-11" id="h5-2-11" class="i">+		if (ctx.qry.showmsg) {
+</a><a href="#h5-2-12" id="h5-2-12" class="i">+			/* Concatenate commit message + notes in msgbuf */
+</a><a href="#h5-2-13" id="h5-2-13" class="i">+			if (info-&gt;msg &amp;&amp; *(info-&gt;msg)) {
+</a><a href="#h5-2-14" id="h5-2-14" class="i">+				strbuf_addstr(&amp;msgbuf, info-&gt;msg);
+</a><a href="#h5-2-15" id="h5-2-15" class="i">+				strbuf_addch(&amp;msgbuf, &#39;\n&#39;);
+</a><a href="#h5-2-16" id="h5-2-16" class="i">+			}
+</a><a href="#h5-2-17" id="h5-2-17" class="i">+			format_note(NULL, commit-&gt;object.sha1, &amp;msgbuf,
+</a><a href="#h5-2-18" id="h5-2-18" class="i">+			            PAGE_ENCODING,
+</a><a href="#h5-2-19" id="h5-2-19" class="i">+			            NOTES_SHOW_HEADER | NOTES_INDENT);
+</a> 			strbuf_addch(&amp;msgbuf, &#39;\n&#39;);
+<a href="#h5-2-21" id="h5-2-21" class="i">+			strbuf_ltrim(&amp;msgbuf);
+</a> 		}
+<a href="#h5-2-23" id="h5-2-23" class="d">-		format_note(NULL, commit-&gt;object.sha1, &amp;msgbuf, PAGE_ENCODING,
+</a><a href="#h5-2-24" id="h5-2-24" class="d">-		            NOTES_SHOW_HEADER | NOTES_INDENT);
+</a><a href="#h5-2-25" id="h5-2-25" class="d">-		strbuf_addch(&amp;msgbuf, &#39;\n&#39;);
+</a><a href="#h5-2-26" id="h5-2-26" class="d">-		strbuf_ltrim(&amp;msgbuf);
+</a> 
+<a href="#h5-2-28" id="h5-2-28" class="d">-		if (ctx.repo-&gt;enable_log_filecount) {
+</a><a href="#h5-2-29" id="h5-2-29" class="d">-			cols++;
+</a><a href="#h5-2-30" id="h5-2-30" class="d">-			if (ctx.repo-&gt;enable_log_linecount)
+</a><a href="#h5-2-31" id="h5-2-31" class="d">-				cols++;
+</a><a href="#h5-2-32" id="h5-2-32" class="i">+		if (revs-&gt;graph) {
+</a><a href="#h5-2-33" id="h5-2-33" class="i">+			int lines = 0;
+</a><a href="#h5-2-34" id="h5-2-34" class="i">+
+</a><a href="#h5-2-35" id="h5-2-35" class="i">+			/* Calculate graph padding */
+</a><a href="#h5-2-36" id="h5-2-36" class="i">+			if (ctx.qry.showmsg) {
+</a><a href="#h5-2-37" id="h5-2-37" class="i">+				/* Count #lines in commit message + notes */
+</a><a href="#h5-2-38" id="h5-2-38" class="i">+				const char *p = msgbuf.buf;
+</a><a href="#h5-2-39" id="h5-2-39" class="i">+				lines = 1;
+</a><a href="#h5-2-40" id="h5-2-40" class="i">+				while ((p = strchr(p, &#39;\n&#39;))) {
+</a><a href="#h5-2-41" id="h5-2-41" class="i">+					p++;
+</a><a href="#h5-2-42" id="h5-2-42" class="i">+					lines++;
+</a><a href="#h5-2-43" id="h5-2-43" class="i">+				}
+</a><a href="#h5-2-44" id="h5-2-44" class="i">+			}
+</a><a href="#h5-2-45" id="h5-2-45" class="i">+
+</a><a href="#h5-2-46" id="h5-2-46" class="i">+			/* Print graph padding */
+</a><a href="#h5-2-47" id="h5-2-47" class="i">+			html(&quot;&lt;td class=&#39;commitgraph&#39;&gt;&quot;);
+</a><a href="#h5-2-48" id="h5-2-48" class="i">+			while (lines &gt; 0 || !graph_is_commit_finished(revs-&gt;graph)) {
+</a><a href="#h5-2-49" id="h5-2-49" class="i">+				if (graphbuf.len)
+</a><a href="#h5-2-50" id="h5-2-50" class="i">+					html(&quot;\n&quot;);
+</a><a href="#h5-2-51" id="h5-2-51" class="i">+				strbuf_setlen(&amp;graphbuf, 0);
+</a><a href="#h5-2-52" id="h5-2-52" class="i">+				graph_next_line(revs-&gt;graph, &amp;graphbuf);
+</a><a href="#h5-2-53" id="h5-2-53" class="i">+				html(graphbuf.buf);
+</a><a href="#h5-2-54" id="h5-2-54" class="i">+				lines--;
+</a><a href="#h5-2-55" id="h5-2-55" class="i">+			}
+</a><a href="#h5-2-56" id="h5-2-56" class="i">+			html(&quot;&lt;/td&gt;\n&quot;);
+</a> 		}
+ 
+<a href="#h5-2-59" id="h5-2-59" class="d">-		/* Create second table row containing msgbuf */
+</a><a href="#h5-2-60" id="h5-2-60" class="d">-		htmlf(&quot;&lt;tr class=&#39;nohover&#39;&gt;&lt;td/&gt;&lt;td colspan=&#39;%d&#39; class=&#39;logmsg&#39;&gt;&quot;,
+</a><a href="#h5-2-61" id="h5-2-61" class="d">-			cols);
+</a><a href="#h5-2-62" id="h5-2-62" class="i">+		/* Print msgbuf into remainder of table row */
+</a><a href="#h5-2-63" id="h5-2-63" class="i">+		htmlf(&quot;&lt;td colspan=&#39;%d&#39;%s&gt;\n&quot;, cols,
+</a><a href="#h5-2-64" id="h5-2-64" class="i">+			ctx.qry.showmsg ? &quot; class=&#39;logmsg&#39;&quot; : &quot;&quot;);
+</a> 		html_txt(msgbuf.buf);
+ 		html(&quot;&lt;/td&gt;&lt;/tr&gt;\n&quot;);
+ 		strbuf_release(&amp;msgbuf);
+ 	}
+ 
+<a href="#h5-2-70" id="h5-2-70" class="i">+	strbuf_release(&amp;graphbuf);
+</a> 	cgit_free_commitinfo(info);
+ }
+ 
+<a href="#h5-3" id="h5-3" class="h">@@ -216,6 +271,10 @@ void cgit_print_log(const char *tip, int ofs, int cnt, char *grep, char *pattern
+</a> 			}
+ 		}
+ 	}
+<a href="#h5-3-3" id="h5-3-3" class="i">+	if (ctx.repo-&gt;enable_commit_graph) {
+</a><a href="#h5-3-4" id="h5-3-4" class="i">+		static const char *graph_arg = &quot;--graph&quot;;
+</a><a href="#h5-3-5" id="h5-3-5" class="i">+		vector_push(&amp;vec, &amp;graph_arg, 0);
+</a><a href="#h5-3-6" id="h5-3-6" class="i">+	}
+</a> 
+ 	if (path) {
+ 		arg = &quot;--&quot;;
+<a href="#h5-4" id="h5-4" class="h">@@ -242,8 +301,10 @@ void cgit_print_log(const char *tip, int ofs, int cnt, char *grep, char *pattern
+</a> 	if (pager)
+ 		html(&quot;&lt;table class=&#39;list nowrap&#39;&gt;&quot;);
+ 
+<a href="#h5-4-3" id="h5-4-3" class="d">-	html(&quot;&lt;tr class=&#39;nohover&#39;&gt;&lt;th class=&#39;left&#39;&gt;Age&lt;/th&gt;&quot;
+</a><a href="#h5-4-4" id="h5-4-4" class="d">-	      &quot;&lt;th class=&#39;left&#39;&gt;Commit message&quot;);
+</a><a href="#h5-4-5" id="h5-4-5" class="i">+	html(&quot;&lt;tr class=&#39;nohover&#39;&gt;&lt;th class=&#39;left&#39;&gt;Age&lt;/th&gt;&quot;);
+</a><a href="#h5-4-6" id="h5-4-6" class="i">+	if (ctx.repo-&gt;enable_commit_graph)
+</a><a href="#h5-4-7" id="h5-4-7" class="i">+		html(&quot;&lt;th&gt;&lt;/th&gt;&quot;);
+</a><a href="#h5-4-8" id="h5-4-8" class="i">+	html(&quot;&lt;th class=&#39;left&#39;&gt;Commit message&quot;);
+</a> 	if (pager) {
+ 		html(&quot; (&quot;);
+ 		cgit_log_link(ctx.qry.showmsg ? &quot;Collapse&quot; : &quot;Expand&quot;, NULL,
+<a href="#h5-5" id="h5-5" class="h">@@ -274,7 +335,7 @@ void cgit_print_log(const char *tip, int ofs, int cnt, char *grep, char *pattern
+</a> 	}
+ 
+ 	for (i = 0; i &lt; cnt &amp;&amp; (commit = get_revision(&amp;rev)) != NULL; i++) {
+<a href="#h5-5-3" id="h5-5-3" class="d">-		print_commit(commit);
+</a><a href="#h5-5-4" id="h5-5-4" class="i">+		print_commit(commit, &amp;rev);
+</a> 		free(commit-&gt;buffer);
+ 		commit-&gt;buffer = NULL;
+ 		free_commit_list(commit-&gt;parents);
+</pre>
+</div>
+</body>
+</html>

@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Add and use a common readfile() function - cgit - Web based git repository viewer
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="cgit.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="cgit.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Source+Code+Pro:ital,wght@0,200..900;1,200..900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/base16/tender.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script> hljs.highlightAll() ;</script>
+<style>pre code.hljs {display: inline;padding: 0;} code.hljs {padding: 0;} .hljs {background: initial;} .hljs-comment{color: rgb(96, 96, 96);}</style></head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>cgit</h1><span class="desc">Web based git repository viewer
+</span></td></tr><tr><td></td><td>
+<br>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/.gitmodules.html">Submodules</a> | <a href="../file/README.html">README</a> | <a href="../file/COPYING.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/e16f1783346a090e4ea1194dcaae7f03e813f6a2.html">e16f1783346a090e4ea1194dcaae7f03e813f6a2</a>
+<b>parent</b> <a href="../commit/523c133e2e5f7089a3d18ac23f2074b60991a7f0.html">523c133e2e5f7089a3d18ac23f2074b60991a7f0</a>
+<b>Author:</b> Lars Hjemli &lt;<a href="mailto:hjemli@gmail.com">hjemli@gmail.com</a>&gt;
+<b>Date:</b>   Tue, 18 Aug 2009 17:17:41 +0200
+
+Add and use a common readfile() function
+
+This function is used to read the full content of a textfile into a
+newly allocated buffer (with zerotermination).
+
+It replaces the earlier readfile() in scan-tree.c (which was rather
+error-prone[1]), and is reused by read_agefile() in ui-repolist.c.
+
+1: No checks for EINTR and EAGAIN, fixed-size buffer
+
+Signed-off-by: Lars Hjemli &lt;hjemli@gmail.com&gt;
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">cgit.h</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">scan-tree.c</a></td><td> | </td><td class="num">16</td><td><span class="i">++</span><span class="d">--------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">shared.c</a></td><td> | </td><td class="num">21</td><td><span class="i">+++++++++++++++++++++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">ui-repolist.c</a></td><td> | </td><td class="num">19</td><td><span class="i">++++++++++</span><span class="d">---------</span></td></tr>
+</table></pre><pre>4 files changed, 34 insertions(+), 23 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/cgit.h.html">cgit.h</a> b/<a href="../file/cgit.h.html">cgit.h</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -283,5 +283,6 @@ extern int cgit_parse_snapshots_mask(const char *str);
+</a> extern int cgit_open_filter(struct cgit_filter *filter);
+ extern int cgit_close_filter(struct cgit_filter *filter);
+ 
+<a href="#h0-0-3" id="h0-0-3" class="i">+extern int readfile(const char *path, char **buf, size_t *size);
+</a> 
+ #endif /* CGIT_H */
+<b>diff --git a/<a id="h1" href="../file/scan-tree.c.html">scan-tree.c</a> b/<a href="../file/scan-tree.c.html">scan-tree.c</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -35,25 +35,13 @@ static int is_git_dir(const char *path)
+</a> 	return 1;
+ }
+ 
+<a href="#h1-0-3" id="h1-0-3" class="d">-char *readfile(const char *path)
+</a><a href="#h1-0-4" id="h1-0-4" class="d">-{
+</a><a href="#h1-0-5" id="h1-0-5" class="d">-	FILE *f;
+</a><a href="#h1-0-6" id="h1-0-6" class="d">-	static char buf[MAX_PATH];
+</a><a href="#h1-0-7" id="h1-0-7" class="d">-
+</a><a href="#h1-0-8" id="h1-0-8" class="d">-	if (!(f = fopen(path, &quot;r&quot;)))
+</a><a href="#h1-0-9" id="h1-0-9" class="d">-		return NULL;
+</a><a href="#h1-0-10" id="h1-0-10" class="d">-	buf[0] = 0;
+</a><a href="#h1-0-11" id="h1-0-11" class="d">-	fgets(buf, MAX_PATH, f);
+</a><a href="#h1-0-12" id="h1-0-12" class="d">-	fclose(f);
+</a><a href="#h1-0-13" id="h1-0-13" class="d">-	return buf;
+</a><a href="#h1-0-14" id="h1-0-14" class="d">-}
+</a><a href="#h1-0-15" id="h1-0-15" class="d">-
+</a> static void add_repo(const char *base, const char *path)
+ {
+ 	struct cgit_repo *repo;
+ 	struct stat st;
+ 	struct passwd *pwd;
+ 	char *p;
+<a href="#h1-0-22" id="h1-0-22" class="i">+	size_t size;
+</a> 
+ 	if (stat(path, &amp;st)) {
+ 		fprintf(stderr, &quot;Error accessing %s: %s (%d)\n&quot;,
+<a href="#h1-1" id="h1-1" class="h">@@ -80,7 +68,7 @@ static void add_repo(const char *base, const char *path)
+</a> 
+ 	p = fmt(&quot;%s/description&quot;, path);
+ 	if (!stat(p, &amp;st))
+<a href="#h1-1-3" id="h1-1-3" class="d">-		repo-&gt;desc = xstrdup(readfile(p));
+</a><a href="#h1-1-4" id="h1-1-4" class="i">+		readfile(p, &amp;repo-&gt;desc, &amp;size);
+</a> 
+ 	p = fmt(&quot;%s/README.html&quot;, path);
+ 	if (!stat(p, &amp;st))
+<b>diff --git a/<a id="h2" href="../file/shared.c.html">shared.c</a> b/<a href="../file/shared.c.html">shared.c</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -393,3 +393,24 @@ int cgit_close_filter(struct cgit_filter *filter)
+</a> 		return 0;
+ 	die(&quot;Subprocess %s exited abnormally&quot;, filter-&gt;cmd);
+ }
+<a href="#h2-0-3" id="h2-0-3" class="i">+
+</a><a href="#h2-0-4" id="h2-0-4" class="i">+/* Read the content of the specified file into a newly allocated buffer,
+</a><a href="#h2-0-5" id="h2-0-5" class="i">+ * zeroterminate the buffer and return 0 on success, errno otherwise.
+</a><a href="#h2-0-6" id="h2-0-6" class="i">+ */
+</a><a href="#h2-0-7" id="h2-0-7" class="i">+int readfile(const char *path, char **buf, size_t *size)
+</a><a href="#h2-0-8" id="h2-0-8" class="i">+{
+</a><a href="#h2-0-9" id="h2-0-9" class="i">+	int fd;
+</a><a href="#h2-0-10" id="h2-0-10" class="i">+	struct stat st;
+</a><a href="#h2-0-11" id="h2-0-11" class="i">+
+</a><a href="#h2-0-12" id="h2-0-12" class="i">+	fd = open(path, O_RDONLY);
+</a><a href="#h2-0-13" id="h2-0-13" class="i">+	if (fd == -1)
+</a><a href="#h2-0-14" id="h2-0-14" class="i">+		return errno;
+</a><a href="#h2-0-15" id="h2-0-15" class="i">+	if (fstat(fd, &amp;st))
+</a><a href="#h2-0-16" id="h2-0-16" class="i">+		return errno;
+</a><a href="#h2-0-17" id="h2-0-17" class="i">+	if (!S_ISREG(st.st_mode))
+</a><a href="#h2-0-18" id="h2-0-18" class="i">+		return EISDIR;
+</a><a href="#h2-0-19" id="h2-0-19" class="i">+	*buf = xmalloc(st.st_size + 1);
+</a><a href="#h2-0-20" id="h2-0-20" class="i">+	*size = read_in_full(fd, *buf, st.st_size);
+</a><a href="#h2-0-21" id="h2-0-21" class="i">+	(*buf)[*size] = &#39;\0&#39;;
+</a><a href="#h2-0-22" id="h2-0-22" class="i">+	return (*size == st.st_size ? 0 : errno);
+</a><a href="#h2-0-23" id="h2-0-23" class="i">+}
+</a><b>diff --git a/<a id="h3" href="../file/ui-repolist.c.html">ui-repolist.c</a> b/<a href="../file/ui-repolist.c.html">ui-repolist.c</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -18,19 +18,20 @@
+</a> 
+ time_t read_agefile(char *path)
+ {
+<a href="#h3-0-3" id="h3-0-3" class="d">-	FILE *f;
+</a><a href="#h3-0-4" id="h3-0-4" class="d">-	static char buf[64], buf2[64];
+</a><a href="#h3-0-5" id="h3-0-5" class="i">+	time_t result;
+</a><a href="#h3-0-6" id="h3-0-6" class="i">+	size_t size;
+</a><a href="#h3-0-7" id="h3-0-7" class="i">+	char *buf;
+</a><a href="#h3-0-8" id="h3-0-8" class="i">+	static char buf2[64];
+</a> 
+<a href="#h3-0-10" id="h3-0-10" class="d">-	if (!(f = fopen(path, &quot;r&quot;)))
+</a><a href="#h3-0-11" id="h3-0-11" class="i">+	if (readfile(path, &amp;buf, &amp;size))
+</a> 		return -1;
+<a href="#h3-0-13" id="h3-0-13" class="d">-	buf[0] = 0;
+</a><a href="#h3-0-14" id="h3-0-14" class="d">-	if (fgets(buf, sizeof(buf), f) == NULL)
+</a><a href="#h3-0-15" id="h3-0-15" class="d">-		return -1;
+</a><a href="#h3-0-16" id="h3-0-16" class="d">-	fclose(f);
+</a><a href="#h3-0-17" id="h3-0-17" class="i">+
+</a> 	if (parse_date(buf, buf2, sizeof(buf2)))
+<a href="#h3-0-19" id="h3-0-19" class="d">-		return strtoul(buf2, NULL, 10);
+</a><a href="#h3-0-20" id="h3-0-20" class="i">+		result = strtoul(buf2, NULL, 10);
+</a> 	else
+<a href="#h3-0-22" id="h3-0-22" class="d">-		return 0;
+</a><a href="#h3-0-23" id="h3-0-23" class="i">+		result = 0;
+</a><a href="#h3-0-24" id="h3-0-24" class="i">+	free(buf);
+</a><a href="#h3-0-25" id="h3-0-25" class="i">+	return result;
+</a> }
+ 
+ static int get_repo_modtime(const struct cgit_repo *repo, time_t *mtime)
+</pre>
+</div>
+</body>
+</html>

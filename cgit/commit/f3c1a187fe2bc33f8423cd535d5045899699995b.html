@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Add struct cgit_page to cgit_context - cgit - Web based git repository viewer
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="cgit.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="cgit.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Source+Code+Pro:ital,wght@0,200..900;1,200..900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/base16/tender.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script> hljs.highlightAll() ;</script>
+<style>pre code.hljs {display: inline;padding: 0;} code.hljs {padding: 0;} .hljs {background: initial;} .hljs-comment{color: rgb(96, 96, 96);}</style></head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>cgit</h1><span class="desc">Web based git repository viewer
+</span></td></tr><tr><td></td><td>
+<br>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/.gitmodules.html">Submodules</a> | <a href="../file/README.html">README</a> | <a href="../file/COPYING.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/f3c1a187fe2bc33f8423cd535d5045899699995b.html">f3c1a187fe2bc33f8423cd535d5045899699995b</a>
+<b>parent</b> <a href="../commit/b1f9b9c1459cb9a30ebf80721aff6ef788d1f891.html">b1f9b9c1459cb9a30ebf80721aff6ef788d1f891</a>
+<b>Author:</b> Lars Hjemli &lt;<a href="mailto:hjemli@gmail.com">hjemli@gmail.com</a>&gt;
+<b>Date:</b>   Mon, 24 Mar 2008 00:51:19 +0100
+
+Add struct cgit_page to cgit_context
+
+This struct is used when generating http headers, and as such is another
+small step towards the goal of the whole cleanup series; to invoke each
+page/view function with a function pointer.
+
+Signed-off-by: Lars Hjemli &lt;hjemli@gmail.com&gt;
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">cgit.c</a></td><td> | </td><td class="num">50</td><td><span class="i">+++++++++++++++++++++++++++++++++</span><span class="d">-----------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">cgit.h</a></td><td> | </td><td class="num">18</td><td><span class="i">+++++++++++++</span><span class="d">-----</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">shared.c</a></td><td> | </td><td class="num">3</td><td><span class="i">+++</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h3">ui-blob.c</a></td><td> | </td><td class="num">4</td><td><span class="i">+++</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h4">ui-patch.c</a></td><td> | </td><td class="num">4</td><td><span class="i">+++</span><span class="d">-</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h5">ui-repolist.c</a></td><td> | </td><td class="num">6</td><td><span class="i">++++</span><span class="d">--</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h6">ui-shared.c</a></td><td> | </td><td class="num">112</td><td><span class="i">++++++++++++++++++++++++++++++++++++</span><span class="d">-------------------------------------------</span></td></tr>
+<tr><td class="M">M</td><td><a href="#h7">ui-snapshot.c</a></td><td> | </td><td class="num">4</td><td><span class="i">+++</span><span class="d">-</span></td></tr>
+</table></pre><pre>8 files changed, 113 insertions(+), 88 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/cgit.c.html">cgit.c</a> b/<a href="../file/cgit.c.html">cgit.c</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -7,13 +7,16 @@
+</a>  */
+ 
+ #include &quot;cgit.h&quot;
+<a href="#h0-0-3" id="h0-0-3" class="i">+#include &quot;cmd.h&quot;
+</a> 
+ static int cgit_prepare_cache(struct cacheitem *item)
+ {
+ 	if (!ctx.repo &amp;&amp; ctx.qry.repo) {
+<a href="#h0-0-8" id="h0-0-8" class="d">-		char *title = fmt(&quot;%s - %s&quot;, ctx.cfg.root_title, &quot;Bad request&quot;);
+</a><a href="#h0-0-9" id="h0-0-9" class="d">-		cgit_print_docstart(title, item);
+</a><a href="#h0-0-10" id="h0-0-10" class="d">-		cgit_print_pageheader(title, 0);
+</a><a href="#h0-0-11" id="h0-0-11" class="i">+		ctx.page.title = fmt(&quot;%s - %s&quot;, ctx.cfg.root_title,
+</a><a href="#h0-0-12" id="h0-0-12" class="i">+				      &quot;Bad request&quot;);
+</a><a href="#h0-0-13" id="h0-0-13" class="i">+		cgit_print_http_headers(&amp;ctx);
+</a><a href="#h0-0-14" id="h0-0-14" class="i">+		cgit_print_docstart(&amp;ctx);
+</a><a href="#h0-0-15" id="h0-0-15" class="i">+		cgit_print_pageheader(&amp;ctx);
+</a> 		cgit_print_error(fmt(&quot;Unknown repo: %s&quot;, ctx.qry.repo));
+ 		cgit_print_docend();
+ 		return 0;
+<a href="#h0-1" id="h0-1" class="h">@@ -80,7 +83,7 @@ char *find_default_branch(struct cgit_repo *repo)
+</a> 
+ static void cgit_print_repo_page(struct cacheitem *item)
+ {
+<a href="#h0-1-3" id="h0-1-3" class="d">-	char *title, *tmp;
+</a><a href="#h0-1-4" id="h0-1-4" class="i">+	char *tmp;
+</a> 	int show_search;
+ 	unsigned char sha1[20];
+ 	int nongit = 0;
+<a href="#h0-2" id="h0-2" class="h">@@ -88,17 +91,19 @@ static void cgit_print_repo_page(struct cacheitem *item)
+</a> 	setenv(&quot;GIT_DIR&quot;, ctx.repo-&gt;path, 1);
+ 	setup_git_directory_gently(&amp;nongit);
+ 	if (nongit) {
+<a href="#h0-2-3" id="h0-2-3" class="d">-		title = fmt(&quot;%s - %s&quot;, ctx.cfg.root_title, &quot;config error&quot;);
+</a><a href="#h0-2-4" id="h0-2-4" class="i">+		ctx.page.title = fmt(&quot;%s - %s&quot;, ctx.cfg.root_title,
+</a><a href="#h0-2-5" id="h0-2-5" class="i">+				     &quot;config error&quot;);
+</a> 		tmp = fmt(&quot;Not a git repository: &#39;%s&#39;&quot;, ctx.repo-&gt;path);
+ 		ctx.repo = NULL;
+<a href="#h0-2-8" id="h0-2-8" class="d">-		cgit_print_docstart(title, item);
+</a><a href="#h0-2-9" id="h0-2-9" class="d">-		cgit_print_pageheader(title, 0);
+</a><a href="#h0-2-10" id="h0-2-10" class="i">+		cgit_print_http_headers(&amp;ctx);
+</a><a href="#h0-2-11" id="h0-2-11" class="i">+		cgit_print_docstart(&amp;ctx);
+</a><a href="#h0-2-12" id="h0-2-12" class="i">+		cgit_print_pageheader(&amp;ctx);
+</a> 		cgit_print_error(tmp);
+ 		cgit_print_docend();
+ 		return;
+ 	}
+ 
+<a href="#h0-2-18" id="h0-2-18" class="d">-	title = fmt(&quot;%s - %s&quot;, ctx.repo-&gt;name, ctx.repo-&gt;desc);
+</a><a href="#h0-2-19" id="h0-2-19" class="i">+	ctx.page.title = fmt(&quot;%s - %s&quot;, ctx.repo-&gt;name, ctx.repo-&gt;desc);
+</a> 	show_search = 0;
+ 
+ 	if (!ctx.qry.head) {
+<a href="#h0-3" id="h0-3" class="h">@@ -107,8 +112,9 @@ static void cgit_print_repo_page(struct cacheitem *item)
+</a> 	}
+ 
+ 	if (!ctx.qry.head) {
+<a href="#h0-3-3" id="h0-3-3" class="d">-		cgit_print_docstart(title, item);
+</a><a href="#h0-3-4" id="h0-3-4" class="d">-		cgit_print_pageheader(title, 0);
+</a><a href="#h0-3-5" id="h0-3-5" class="i">+		cgit_print_http_headers(&amp;ctx);
+</a><a href="#h0-3-6" id="h0-3-6" class="i">+		cgit_print_docstart(&amp;ctx);
+</a><a href="#h0-3-7" id="h0-3-7" class="i">+		cgit_print_pageheader(&amp;ctx);
+</a> 		cgit_print_error(&quot;Repository seems to be empty&quot;);
+ 		cgit_print_docend();
+ 		return;
+<a href="#h0-4" id="h0-4" class="h">@@ -117,8 +123,9 @@ static void cgit_print_repo_page(struct cacheitem *item)
+</a> 	if (get_sha1(ctx.qry.head, sha1)) {
+ 		tmp = xstrdup(ctx.qry.head);
+ 		ctx.qry.head = ctx.repo-&gt;defbranch;
+<a href="#h0-4-3" id="h0-4-3" class="d">-		cgit_print_docstart(title, item);
+</a><a href="#h0-4-4" id="h0-4-4" class="d">-		cgit_print_pageheader(title, 0);
+</a><a href="#h0-4-5" id="h0-4-5" class="i">+		cgit_print_http_headers(&amp;ctx);
+</a><a href="#h0-4-6" id="h0-4-6" class="i">+		cgit_print_docstart(&amp;ctx);
+</a><a href="#h0-4-7" id="h0-4-7" class="i">+		cgit_print_pageheader(&amp;ctx);
+</a> 		cgit_print_error(fmt(&quot;Invalid branch: %s&quot;, tmp));
+ 		cgit_print_docend();
+ 		return;
+<a href="#h0-5" id="h0-5" class="h">@@ -143,15 +150,16 @@ static void cgit_print_repo_page(struct cacheitem *item)
+</a> 	}
+ 
+ 	show_search = (cgit_cmd == CMD_LOG);
+<a href="#h0-5-3" id="h0-5-3" class="d">-	cgit_print_docstart(title, item);
+</a><a href="#h0-5-4" id="h0-5-4" class="i">+	cgit_print_http_headers(&amp;ctx);
+</a><a href="#h0-5-5" id="h0-5-5" class="i">+	cgit_print_docstart(&amp;ctx);
+</a> 	if (!cgit_cmd) {
+<a href="#h0-5-7" id="h0-5-7" class="d">-		cgit_print_pageheader(&quot;summary&quot;, show_search);
+</a><a href="#h0-5-8" id="h0-5-8" class="i">+		cgit_print_pageheader(&amp;ctx);
+</a> 		cgit_print_summary();
+ 		cgit_print_docend();
+ 		return;
+ 	}
+ 
+<a href="#h0-5-14" id="h0-5-14" class="d">-	cgit_print_pageheader(ctx.qry.page, show_search);
+</a><a href="#h0-5-15" id="h0-5-15" class="i">+	cgit_print_pageheader(&amp;ctx);
+</a> 
+ 	switch(cgit_cmd) {
+ 	case CMD_LOG:
+<a href="#h0-6" id="h0-6" class="h">@@ -180,12 +188,18 @@ static void cgit_print_repo_page(struct cacheitem *item)
+</a> 	cgit_print_docend();
+ }
+ 
+<a href="#h0-6-3" id="h0-6-3" class="i">+static long ttl_seconds(long ttl)
+</a><a href="#h0-6-4" id="h0-6-4" class="i">+{
+</a><a href="#h0-6-5" id="h0-6-5" class="i">+	if (ttl&lt;0)
+</a><a href="#h0-6-6" id="h0-6-6" class="i">+		return 60 * 60 * 24 * 365;
+</a><a href="#h0-6-7" id="h0-6-7" class="i">+	else
+</a><a href="#h0-6-8" id="h0-6-8" class="i">+		return ttl * 60;
+</a><a href="#h0-6-9" id="h0-6-9" class="i">+}
+</a><a href="#h0-6-10" id="h0-6-10" class="i">+
+</a> static void cgit_fill_cache(struct cacheitem *item, int use_cache)
+ {
+ 	int stdout2;
+ 
+<a href="#h0-6-15" id="h0-6-15" class="d">-	item-&gt;st.st_mtime = time(NULL);
+</a><a href="#h0-6-16" id="h0-6-16" class="d">-
+</a> 	if (use_cache) {
+ 		stdout2 = chk_positive(dup(STDOUT_FILENO),
+ 				       &quot;Preserving STDOUT&quot;);
+<a href="#h0-7" id="h0-7" class="h">@@ -193,6 +207,8 @@ static void cgit_fill_cache(struct cacheitem *item, int use_cache)
+</a> 		chk_positive(dup2(item-&gt;fd, STDOUT_FILENO), &quot;Dup2(cachefile)&quot;);
+ 	}
+ 
+<a href="#h0-7-3" id="h0-7-3" class="i">+	ctx.page.modified = time(NULL);
+</a><a href="#h0-7-4" id="h0-7-4" class="i">+	ctx.page.expires = ctx.page.modified + ttl_seconds(item-&gt;ttl);
+</a> 	if (ctx.repo)
+ 		cgit_print_repo_page(item);
+ 	else
+<b>diff --git a/<a id="h1" href="../file/cgit.h.html">cgit.h</a> b/<a href="../file/cgit.h.html">cgit.h</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -174,10 +174,20 @@ struct cgit_config {
+</a> 	int summary_tags;
+ };
+ 
+<a href="#h1-0-3" id="h1-0-3" class="i">+struct cgit_page {
+</a><a href="#h1-0-4" id="h1-0-4" class="i">+	time_t modified;
+</a><a href="#h1-0-5" id="h1-0-5" class="i">+	time_t expires;
+</a><a href="#h1-0-6" id="h1-0-6" class="i">+	char *mimetype;
+</a><a href="#h1-0-7" id="h1-0-7" class="i">+	char *charset;
+</a><a href="#h1-0-8" id="h1-0-8" class="i">+	char *filename;
+</a><a href="#h1-0-9" id="h1-0-9" class="i">+	char *title;
+</a><a href="#h1-0-10" id="h1-0-10" class="i">+};
+</a><a href="#h1-0-11" id="h1-0-11" class="i">+
+</a> struct cgit_context {
+ 	struct cgit_query qry;
+ 	struct cgit_config cfg;
+ 	struct cgit_repo *repo;
+<a href="#h1-0-16" id="h1-0-16" class="i">+	struct cgit_page page;
+</a> };
+ 
+ extern const char *cgit_version;
+<a href="#h1-1" id="h1-1" class="h">@@ -260,12 +270,10 @@ extern void cgit_object_link(struct object *obj);
+</a> extern void cgit_print_error(char *msg);
+ extern void cgit_print_date(time_t secs, char *format);
+ extern void cgit_print_age(time_t t, time_t max_relative, char *format);
+<a href="#h1-1-3" id="h1-1-3" class="d">-extern void cgit_print_docstart(char *title, struct cacheitem *item);
+</a><a href="#h1-1-4" id="h1-1-4" class="i">+extern void cgit_print_http_headers(struct cgit_context *ctx);
+</a><a href="#h1-1-5" id="h1-1-5" class="i">+extern void cgit_print_docstart(struct cgit_context *ctx);
+</a> extern void cgit_print_docend();
+<a href="#h1-1-7" id="h1-1-7" class="d">-extern void cgit_print_pageheader(char *title, int show_search);
+</a><a href="#h1-1-8" id="h1-1-8" class="d">-extern void cgit_print_snapshot_start(const char *mimetype,
+</a><a href="#h1-1-9" id="h1-1-9" class="d">-				      const char *filename,
+</a><a href="#h1-1-10" id="h1-1-10" class="d">-				      struct cacheitem *item);
+</a><a href="#h1-1-11" id="h1-1-11" class="i">+extern void cgit_print_pageheader(struct cgit_context *ctx);
+</a> extern void cgit_print_filemode(unsigned short mode);
+ extern void cgit_print_branches(int maxcount);
+ extern void cgit_print_tags(int maxcount);
+<b>diff --git a/<a id="h2" href="../file/shared.c.html">shared.c</a> b/<a href="../file/shared.c.html">shared.c</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -35,6 +35,9 @@ void cgit_prepare_context(struct cgit_context *ctx)
+</a> 	ctx-&gt;cfg.robots = &quot;index, nofollow&quot;;
+ 	ctx-&gt;cfg.root_title = &quot;Git repository browser&quot;;
+ 	ctx-&gt;cfg.script_name = CGIT_SCRIPT_NAME;
+<a href="#h2-0-3" id="h2-0-3" class="i">+	ctx-&gt;page.mimetype = &quot;text/html&quot;;
+</a><a href="#h2-0-4" id="h2-0-4" class="i">+	ctx-&gt;page.charset = PAGE_ENCODING;
+</a><a href="#h2-0-5" id="h2-0-5" class="i">+	ctx-&gt;page.filename = NULL;
+</a> }
+ 
+ int cgit_get_cmd_index(const char *cmd)
+<b>diff --git a/<a id="h3" href="../file/ui-blob.c.html">ui-blob.c</a> b/<a href="../file/ui-blob.c.html">ui-blob.c</a></b>
+<a href="#h3-0" id="h3-0" class="h">@@ -35,6 +35,8 @@ void cgit_print_blob(struct cacheitem *item, const char *hex, char *path)
+</a> 	}
+ 
+ 	buf[size] = &#39;\0&#39;;
+<a href="#h3-0-3" id="h3-0-3" class="d">-	cgit_print_snapshot_start(&quot;text/plain&quot;, path, item);
+</a><a href="#h3-0-4" id="h3-0-4" class="i">+	ctx.page.mimetype = &quot;text/plain&quot;;
+</a><a href="#h3-0-5" id="h3-0-5" class="i">+	ctx.page.filename = path;
+</a><a href="#h3-0-6" id="h3-0-6" class="i">+	cgit_print_http_headers(&amp;ctx);
+</a> 	write(htmlfd, buf, size);
+ }
+<b>diff --git a/<a id="h4" href="../file/ui-patch.c.html">ui-patch.c</a> b/<a href="../file/ui-patch.c.html">ui-patch.c</a></b>
+<a href="#h4-0" id="h4-0" class="h">@@ -92,7 +92,9 @@ void cgit_print_patch(char *hex, struct cacheitem *item)
+</a> 	hashcpy(old_sha1, commit-&gt;parents-&gt;item-&gt;object.sha1);
+ 
+ 	patchname = fmt(&quot;%s.patch&quot;, sha1_to_hex(sha1));
+<a href="#h4-0-3" id="h4-0-3" class="d">-	cgit_print_snapshot_start(&quot;text/plain&quot;, patchname, item);
+</a><a href="#h4-0-4" id="h4-0-4" class="i">+	ctx.page.mimetype = &quot;text/plain&quot;;
+</a><a href="#h4-0-5" id="h4-0-5" class="i">+	ctx.page.filename = patchname;
+</a><a href="#h4-0-6" id="h4-0-6" class="i">+	cgit_print_http_headers(&amp;ctx);
+</a> 	htmlf(&quot;From %s Mon Sep 17 00:00:00 2001\n&quot;, sha1_to_hex(sha1));
+ 	htmlf(&quot;From: %s%s\n&quot;, info-&gt;author, info-&gt;author_email);
+ 	html(&quot;Date: &quot;);
+<b>diff --git a/<a id="h5" href="../file/ui-repolist.c.html">ui-repolist.c</a> b/<a href="../file/ui-repolist.c.html">ui-repolist.c</a></b>
+<a href="#h5-0" id="h5-0" class="h">@@ -51,8 +51,10 @@ void cgit_print_repolist(struct cacheitem *item)
+</a> 	if (ctx.cfg.enable_index_links)
+ 		columns++;
+ 
+<a href="#h5-0-3" id="h5-0-3" class="d">-	cgit_print_docstart(ctx.cfg.root_title, item);
+</a><a href="#h5-0-4" id="h5-0-4" class="d">-	cgit_print_pageheader(ctx.cfg.root_title, 0);
+</a><a href="#h5-0-5" id="h5-0-5" class="i">+	ctx.page.title = ctx.cfg.root_title;
+</a><a href="#h5-0-6" id="h5-0-6" class="i">+	cgit_print_http_headers(&amp;ctx);
+</a><a href="#h5-0-7" id="h5-0-7" class="i">+	cgit_print_docstart(&amp;ctx);
+</a><a href="#h5-0-8" id="h5-0-8" class="i">+	cgit_print_pageheader(&amp;ctx);
+</a> 
+ 	html(&quot;&lt;table summary=&#39;repository list&#39; class=&#39;list nowrap&#39;&gt;&quot;);
+ 	if (ctx.cfg.index_header) {
+<b>diff --git a/<a id="h6" href="../file/ui-shared.c.html">ui-shared.c</a> b/<a href="../file/ui-shared.c.html">ui-shared.c</a></b>
+<a href="#h6-0" id="h6-0" class="h">@@ -26,14 +26,6 @@ static char *http_date(time_t t)
+</a> 		   tm-&gt;tm_hour, tm-&gt;tm_min, tm-&gt;tm_sec);
+ }
+ 
+<a href="#h6-0-3" id="h6-0-3" class="d">-static long ttl_seconds(long ttl)
+</a><a href="#h6-0-4" id="h6-0-4" class="d">-{
+</a><a href="#h6-0-5" id="h6-0-5" class="d">-	if (ttl&lt;0)
+</a><a href="#h6-0-6" id="h6-0-6" class="d">-		return 60 * 60 * 24 * 365;
+</a><a href="#h6-0-7" id="h6-0-7" class="d">-	else
+</a><a href="#h6-0-8" id="h6-0-8" class="d">-		return ttl * 60;
+</a><a href="#h6-0-9" id="h6-0-9" class="d">-}
+</a><a href="#h6-0-10" id="h6-0-10" class="d">-
+</a> void cgit_print_error(char *msg)
+ {
+ 	html(&quot;&lt;div class=&#39;error&#39;&gt;&quot;);
+<a href="#h6-1" id="h6-1" class="h">@@ -361,24 +353,34 @@ void cgit_print_age(time_t t, time_t max_relative, char *format)
+</a> 	      secs * 1.0 / TM_YEAR);
+ }
+ 
+<a href="#h6-1-3" id="h6-1-3" class="d">-void cgit_print_docstart(char *title, struct cacheitem *item)
+</a><a href="#h6-1-4" id="h6-1-4" class="i">+void cgit_print_http_headers(struct cgit_context *ctx)
+</a> {
+<a href="#h6-1-6" id="h6-1-6" class="d">-	html(&quot;Content-Type: text/html; charset=&quot; PAGE_ENCODING &quot;\n&quot;);
+</a><a href="#h6-1-7" id="h6-1-7" class="d">-	htmlf(&quot;Last-Modified: %s\n&quot;, http_date(item-&gt;st.st_mtime));
+</a><a href="#h6-1-8" id="h6-1-8" class="d">-	htmlf(&quot;Expires: %s\n&quot;, http_date(item-&gt;st.st_mtime +
+</a><a href="#h6-1-9" id="h6-1-9" class="d">-					 ttl_seconds(item-&gt;ttl)));
+</a><a href="#h6-1-10" id="h6-1-10" class="i">+	if (ctx-&gt;page.mimetype &amp;&amp; ctx-&gt;page.charset)
+</a><a href="#h6-1-11" id="h6-1-11" class="i">+		htmlf(&quot;Content-Type: %s; charset=%s\n&quot;, ctx-&gt;page.mimetype,
+</a><a href="#h6-1-12" id="h6-1-12" class="i">+		      ctx-&gt;page.charset);
+</a><a href="#h6-1-13" id="h6-1-13" class="i">+	else if (ctx-&gt;page.mimetype)
+</a><a href="#h6-1-14" id="h6-1-14" class="i">+		htmlf(&quot;Content-Type: %s\n&quot;, ctx-&gt;page.mimetype);
+</a><a href="#h6-1-15" id="h6-1-15" class="i">+	if (ctx-&gt;page.filename)
+</a><a href="#h6-1-16" id="h6-1-16" class="i">+		htmlf(&quot;Content-Disposition: inline; filename=\&quot;%s\&quot;\n&quot;,
+</a><a href="#h6-1-17" id="h6-1-17" class="i">+		      ctx-&gt;page.filename);
+</a><a href="#h6-1-18" id="h6-1-18" class="i">+	htmlf(&quot;Last-Modified: %s\n&quot;, http_date(ctx-&gt;page.modified));
+</a><a href="#h6-1-19" id="h6-1-19" class="i">+	htmlf(&quot;Expires: %s\n&quot;, http_date(ctx-&gt;page.expires));
+</a> 	html(&quot;\n&quot;);
+<a href="#h6-1-21" id="h6-1-21" class="i">+}
+</a><a href="#h6-1-22" id="h6-1-22" class="i">+
+</a><a href="#h6-1-23" id="h6-1-23" class="i">+void cgit_print_docstart(struct cgit_context *ctx)
+</a><a href="#h6-1-24" id="h6-1-24" class="i">+{
+</a> 	html(cgit_doctype);
+ 	html(&quot;&lt;html xmlns=&#39;http://www.w3.org/1999/xhtml&#39; xml:lang=&#39;en&#39; lang=&#39;en&#39;&gt;\n&quot;);
+ 	html(&quot;&lt;head&gt;\n&quot;);
+ 	html(&quot;&lt;title&gt;&quot;);
+<a href="#h6-1-29" id="h6-1-29" class="d">-	html_txt(title);
+</a><a href="#h6-1-30" id="h6-1-30" class="i">+	html_txt(ctx-&gt;page.title);
+</a> 	html(&quot;&lt;/title&gt;\n&quot;);
+ 	htmlf(&quot;&lt;meta name=&#39;generator&#39; content=&#39;cgit %s&#39;/&gt;\n&quot;, cgit_version);
+<a href="#h6-1-33" id="h6-1-33" class="d">-	if (ctx.cfg.robots &amp;&amp; *ctx.cfg.robots)
+</a><a href="#h6-1-34" id="h6-1-34" class="d">-		htmlf(&quot;&lt;meta name=&#39;robots&#39; content=&#39;%s&#39;/&gt;\n&quot;, ctx.cfg.robots);
+</a><a href="#h6-1-35" id="h6-1-35" class="i">+	if (ctx-&gt;cfg.robots &amp;&amp; *ctx-&gt;cfg.robots)
+</a><a href="#h6-1-36" id="h6-1-36" class="i">+		htmlf(&quot;&lt;meta name=&#39;robots&#39; content=&#39;%s&#39;/&gt;\n&quot;, ctx-&gt;cfg.robots);
+</a> 	html(&quot;&lt;link rel=&#39;stylesheet&#39; type=&#39;text/css&#39; href=&#39;&quot;);
+<a href="#h6-1-38" id="h6-1-38" class="d">-	html_attr(ctx.cfg.css);
+</a><a href="#h6-1-39" id="h6-1-39" class="i">+	html_attr(ctx-&gt;cfg.css);
+</a> 	html(&quot;&#39;/&gt;\n&quot;);
+ 	html(&quot;&lt;/head&gt;\n&quot;);
+ 	html(&quot;&lt;body&gt;\n&quot;);
+<a href="#h6-2" id="h6-2" class="h">@@ -463,7 +465,7 @@ void add_hidden_formfields(int incl_head, int incl_search, char *page)
+</a> 	}
+ }
+ 
+<a href="#h6-2-3" id="h6-2-3" class="d">-void cgit_print_pageheader(char *title, int show_search)
+</a><a href="#h6-2-4" id="h6-2-4" class="i">+void cgit_print_pageheader(struct cgit_context *ctx)
+</a> {
+ 	static const char *default_info = &quot;This is cgit, a fast webinterface for git repositories&quot;;
+ 	int header = 0;
+<a href="#h6-3" id="h6-3" class="h">@@ -475,40 +477,40 @@ void cgit_print_pageheader(char *title, int show_search)
+</a> 	html(&quot;&lt;tr&gt;&lt;td class=&#39;sidebar&#39;&gt;\n&lt;a href=&#39;&quot;);
+ 	html_attr(cgit_rooturl());
+ 	htmlf(&quot;&#39;&gt;&lt;img src=&#39;%s&#39; alt=&#39;cgit&#39;/&gt;&lt;/a&gt;\n&quot;,
+<a href="#h6-3-3" id="h6-3-3" class="d">-	      ctx.cfg.logo);
+</a><a href="#h6-3-4" id="h6-3-4" class="i">+	      ctx-&gt;cfg.logo);
+</a> 	html(&quot;&lt;/td&gt;&lt;/tr&gt;\n&lt;tr&gt;&lt;td class=&#39;sidebar&#39;&gt;\n&quot;);
+<a href="#h6-3-6" id="h6-3-6" class="d">-	if (ctx.repo) {
+</a><a href="#h6-3-7" id="h6-3-7" class="i">+	if (ctx-&gt;repo) {
+</a> 		html(&quot;&lt;h1 class=&#39;first&#39;&gt;&quot;);
+<a href="#h6-3-9" id="h6-3-9" class="d">-		html_txt(strrpart(ctx.repo-&gt;name, 20));
+</a><a href="#h6-3-10" id="h6-3-10" class="i">+		html_txt(strrpart(ctx-&gt;repo-&gt;name, 20));
+</a> 		html(&quot;&lt;/h1&gt;\n&quot;);
+<a href="#h6-3-12" id="h6-3-12" class="d">-		html_txt(ctx.repo-&gt;desc);
+</a><a href="#h6-3-13" id="h6-3-13" class="d">-		if (ctx.repo-&gt;owner) {
+</a><a href="#h6-3-14" id="h6-3-14" class="i">+		html_txt(ctx-&gt;repo-&gt;desc);
+</a><a href="#h6-3-15" id="h6-3-15" class="i">+		if (ctx-&gt;repo-&gt;owner) {
+</a> 			html(&quot;&lt;h1&gt;owner&lt;/h1&gt;\n&quot;);
+<a href="#h6-3-17" id="h6-3-17" class="d">-			html_txt(ctx.repo-&gt;owner);
+</a><a href="#h6-3-18" id="h6-3-18" class="i">+			html_txt(ctx-&gt;repo-&gt;owner);
+</a> 		}
+ 		html(&quot;&lt;h1&gt;navigate&lt;/h1&gt;\n&quot;);
+<a href="#h6-3-21" id="h6-3-21" class="d">-		reporevlink(NULL, &quot;summary&quot;, NULL, &quot;menu&quot;, ctx.qry.head,
+</a><a href="#h6-3-22" id="h6-3-22" class="i">+		reporevlink(NULL, &quot;summary&quot;, NULL, &quot;menu&quot;, ctx-&gt;qry.head,
+</a> 			    NULL, NULL);
+<a href="#h6-3-24" id="h6-3-24" class="d">-		cgit_log_link(&quot;log&quot;, NULL, &quot;menu&quot;, ctx.qry.head, NULL, NULL,
+</a><a href="#h6-3-25" id="h6-3-25" class="i">+		cgit_log_link(&quot;log&quot;, NULL, &quot;menu&quot;, ctx-&gt;qry.head, NULL, NULL,
+</a> 			      0, NULL, NULL);
+<a href="#h6-3-27" id="h6-3-27" class="d">-		cgit_tree_link(&quot;tree&quot;, NULL, &quot;menu&quot;, ctx.qry.head,
+</a><a href="#h6-3-28" id="h6-3-28" class="d">-			       ctx.qry.sha1, NULL);
+</a><a href="#h6-3-29" id="h6-3-29" class="d">-		cgit_commit_link(&quot;commit&quot;, NULL, &quot;menu&quot;, ctx.qry.head,
+</a><a href="#h6-3-30" id="h6-3-30" class="d">-			      ctx.qry.sha1);
+</a><a href="#h6-3-31" id="h6-3-31" class="d">-		cgit_diff_link(&quot;diff&quot;, NULL, &quot;menu&quot;, ctx.qry.head,
+</a><a href="#h6-3-32" id="h6-3-32" class="d">-			       ctx.qry.sha1, ctx.qry.sha2, NULL);
+</a><a href="#h6-3-33" id="h6-3-33" class="d">-		cgit_patch_link(&quot;patch&quot;, NULL, &quot;menu&quot;, ctx.qry.head,
+</a><a href="#h6-3-34" id="h6-3-34" class="d">-				ctx.qry.sha1);
+</a><a href="#h6-3-35" id="h6-3-35" class="i">+		cgit_tree_link(&quot;tree&quot;, NULL, &quot;menu&quot;, ctx-&gt;qry.head,
+</a><a href="#h6-3-36" id="h6-3-36" class="i">+			       ctx-&gt;qry.sha1, NULL);
+</a><a href="#h6-3-37" id="h6-3-37" class="i">+		cgit_commit_link(&quot;commit&quot;, NULL, &quot;menu&quot;, ctx-&gt;qry.head,
+</a><a href="#h6-3-38" id="h6-3-38" class="i">+			      ctx-&gt;qry.sha1);
+</a><a href="#h6-3-39" id="h6-3-39" class="i">+		cgit_diff_link(&quot;diff&quot;, NULL, &quot;menu&quot;, ctx-&gt;qry.head,
+</a><a href="#h6-3-40" id="h6-3-40" class="i">+			       ctx-&gt;qry.sha1, ctx-&gt;qry.sha2, NULL);
+</a><a href="#h6-3-41" id="h6-3-41" class="i">+		cgit_patch_link(&quot;patch&quot;, NULL, &quot;menu&quot;, ctx-&gt;qry.head,
+</a><a href="#h6-3-42" id="h6-3-42" class="i">+				ctx-&gt;qry.sha1);
+</a> 
+ 		for_each_ref(print_archive_ref, &amp;header);
+ 
+<a href="#h6-3-46" id="h6-3-46" class="d">-		if (ctx.repo-&gt;clone_url || ctx.cfg.clone_prefix) {
+</a><a href="#h6-3-47" id="h6-3-47" class="i">+		if (ctx-&gt;repo-&gt;clone_url || ctx-&gt;cfg.clone_prefix) {
+</a> 			html(&quot;&lt;h1&gt;clone&lt;/h1&gt;\n&quot;);
+<a href="#h6-3-49" id="h6-3-49" class="d">-			if (ctx.repo-&gt;clone_url)
+</a><a href="#h6-3-50" id="h6-3-50" class="d">-				url = ctx.repo-&gt;clone_url;
+</a><a href="#h6-3-51" id="h6-3-51" class="i">+			if (ctx-&gt;repo-&gt;clone_url)
+</a><a href="#h6-3-52" id="h6-3-52" class="i">+				url = ctx-&gt;repo-&gt;clone_url;
+</a> 			else
+<a href="#h6-3-54" id="h6-3-54" class="d">-				url = fmt(&quot;%s%s&quot;, ctx.cfg.clone_prefix,
+</a><a href="#h6-3-55" id="h6-3-55" class="d">-					  ctx.repo-&gt;url);
+</a><a href="#h6-3-56" id="h6-3-56" class="i">+				url = fmt(&quot;%s%s&quot;, ctx-&gt;cfg.clone_prefix,
+</a><a href="#h6-3-57" id="h6-3-57" class="i">+					  ctx-&gt;repo-&gt;url);
+</a> 			html(&quot;&lt;a class=&#39;menu&#39; href=&#39;&quot;);
+ 			html_attr(url);
+ 			html(&quot;&#39; title=&#39;&quot;);
+<a href="#h6-4" id="h6-4" class="h">@@ -520,10 +522,10 @@ void cgit_print_pageheader(char *title, int show_search)
+</a> 
+ 		html(&quot;&lt;h1&gt;branch&lt;/h1&gt;\n&quot;);
+ 		html(&quot;&lt;form method=&#39;get&#39; action=&#39;&#39;&gt;\n&quot;);
+<a href="#h6-4-3" id="h6-4-3" class="d">-		add_hidden_formfields(0, 1, ctx.qry.page);
+</a><a href="#h6-4-4" id="h6-4-4" class="i">+		add_hidden_formfields(0, 1, ctx-&gt;qry.page);
+</a> //		html(&quot;&lt;table summary=&#39;branch selector&#39; class=&#39;grid&#39;&gt;&lt;tr&gt;&lt;td id=&#39;branch-dropdown-cell&#39;&gt;&quot;);
+ 		html(&quot;&lt;select name=&#39;h&#39; onchange=&#39;this.form.submit();&#39;&gt;\n&quot;);
+<a href="#h6-4-7" id="h6-4-7" class="d">-		for_each_branch_ref(print_branch_option, ctx.qry.head);
+</a><a href="#h6-4-8" id="h6-4-8" class="i">+		for_each_branch_ref(print_branch_option, ctx-&gt;qry.head);
+</a> 		html(&quot;&lt;/select&gt;\n&quot;);
+ //		html(&quot;&lt;/td&gt;&lt;td&gt;&quot;);
+ 		html(&quot;&lt;noscript&gt;&lt;input type=&#39;submit&#39; id=&#39;switch-btn&#39; value=&#39;switch&#39;/&gt;&lt;/noscript&gt;\n&quot;);
+<a href="#h6-5" id="h6-5" class="h">@@ -532,22 +534,22 @@ void cgit_print_pageheader(char *title, int show_search)
+</a> 
+ 		html(&quot;&lt;h1&gt;search&lt;/h1&gt;\n&quot;);
+ 		html(&quot;&lt;form method=&#39;get&#39; action=&#39;&quot;);
+<a href="#h6-5-3" id="h6-5-3" class="d">-		if (ctx.cfg.virtual_root)
+</a><a href="#h6-5-4" id="h6-5-4" class="d">-			html_attr(cgit_fileurl(ctx.qry.repo, &quot;log&quot;,
+</a><a href="#h6-5-5" id="h6-5-5" class="d">-					       ctx.qry.path, NULL));
+</a><a href="#h6-5-6" id="h6-5-6" class="i">+		if (ctx-&gt;cfg.virtual_root)
+</a><a href="#h6-5-7" id="h6-5-7" class="i">+			html_attr(cgit_fileurl(ctx-&gt;qry.repo, &quot;log&quot;,
+</a><a href="#h6-5-8" id="h6-5-8" class="i">+					       ctx-&gt;qry.path, NULL));
+</a> 		html(&quot;&#39;&gt;\n&quot;);
+ 		add_hidden_formfields(1, 0, &quot;log&quot;);
+ 		html(&quot;&lt;select name=&#39;qt&#39;&gt;\n&quot;);
+<a href="#h6-5-12" id="h6-5-12" class="d">-		html_option(&quot;grep&quot;, &quot;log msg&quot;, ctx.qry.grep);
+</a><a href="#h6-5-13" id="h6-5-13" class="d">-		html_option(&quot;author&quot;, &quot;author&quot;, ctx.qry.grep);
+</a><a href="#h6-5-14" id="h6-5-14" class="d">-		html_option(&quot;committer&quot;, &quot;committer&quot;, ctx.qry.grep);
+</a><a href="#h6-5-15" id="h6-5-15" class="i">+		html_option(&quot;grep&quot;, &quot;log msg&quot;, ctx-&gt;qry.grep);
+</a><a href="#h6-5-16" id="h6-5-16" class="i">+		html_option(&quot;author&quot;, &quot;author&quot;, ctx-&gt;qry.grep);
+</a><a href="#h6-5-17" id="h6-5-17" class="i">+		html_option(&quot;committer&quot;, &quot;committer&quot;, ctx-&gt;qry.grep);
+</a> 		html(&quot;&lt;/select&gt;\n&quot;);
+ 		html(&quot;&lt;input class=&#39;txt&#39; type=&#39;text&#39; name=&#39;q&#39; value=&#39;&quot;);
+<a href="#h6-5-20" id="h6-5-20" class="d">-		html_attr(ctx.qry.search);
+</a><a href="#h6-5-21" id="h6-5-21" class="i">+		html_attr(ctx-&gt;qry.search);
+</a> 		html(&quot;&#39;/&gt;\n&quot;);
+ 		html(&quot;&lt;/form&gt;\n&quot;);
+ 	} else {
+<a href="#h6-5-25" id="h6-5-25" class="d">-		if (!ctx.cfg.index_info || html_include(ctx.cfg.index_info))
+</a><a href="#h6-5-26" id="h6-5-26" class="i">+		if (!ctx-&gt;cfg.index_info || html_include(ctx-&gt;cfg.index_info))
+</a> 			html(default_info);
+ 	}
+ 
+<a href="#h6-6" id="h6-6" class="h">@@ -556,18 +558,6 @@ void cgit_print_pageheader(char *title, int show_search)
+</a> 	html(&quot;&lt;td id=&#39;content&#39;&gt;\n&quot;);
+ }
+ 
+<a href="#h6-6-3" id="h6-6-3" class="d">-
+</a><a href="#h6-6-4" id="h6-6-4" class="d">-void cgit_print_snapshot_start(const char *mimetype, const char *filename,
+</a><a href="#h6-6-5" id="h6-6-5" class="d">-			       struct cacheitem *item)
+</a><a href="#h6-6-6" id="h6-6-6" class="d">-{
+</a><a href="#h6-6-7" id="h6-6-7" class="d">-	htmlf(&quot;Content-Type: %s\n&quot;, mimetype);
+</a><a href="#h6-6-8" id="h6-6-8" class="d">-	htmlf(&quot;Content-Disposition: inline; filename=\&quot;%s\&quot;\n&quot;, filename);
+</a><a href="#h6-6-9" id="h6-6-9" class="d">-	htmlf(&quot;Last-Modified: %s\n&quot;, http_date(item-&gt;st.st_mtime));
+</a><a href="#h6-6-10" id="h6-6-10" class="d">-	htmlf(&quot;Expires: %s\n&quot;, http_date(item-&gt;st.st_mtime +
+</a><a href="#h6-6-11" id="h6-6-11" class="d">-					 ttl_seconds(item-&gt;ttl)));
+</a><a href="#h6-6-12" id="h6-6-12" class="d">-	html(&quot;\n&quot;);
+</a><a href="#h6-6-13" id="h6-6-13" class="d">-}
+</a><a href="#h6-6-14" id="h6-6-14" class="d">-
+</a> void cgit_print_filemode(unsigned short mode)
+ {
+ 	if (S_ISDIR(mode))
+<b>diff --git a/<a id="h7" href="../file/ui-snapshot.c.html">ui-snapshot.c</a> b/<a href="../file/ui-snapshot.c.html">ui-snapshot.c</a></b>
+<a href="#h7-0" id="h7-0" class="h">@@ -101,7 +101,9 @@ void cgit_print_snapshot(struct cacheitem *item, const char *head,
+</a> 		args.base = fmt(&quot;%s/&quot;, prefix);
+ 		args.tree = commit-&gt;tree;
+ 		args.time = commit-&gt;date;
+<a href="#h7-0-3" id="h7-0-3" class="d">-		cgit_print_snapshot_start(sat-&gt;mimetype, filename, item);
+</a><a href="#h7-0-4" id="h7-0-4" class="i">+		ctx.page.mimetype = xstrdup(sat-&gt;mimetype);
+</a><a href="#h7-0-5" id="h7-0-5" class="i">+		ctx.page.filename = xstrdup(filename);
+</a><a href="#h7-0-6" id="h7-0-6" class="i">+		cgit_print_http_headers(&amp;ctx);
+</a> 		(*sat-&gt;write_func)(&amp;args);
+ 		return;
+ 	}
+</pre>
+</div>
+</body>
+</html>

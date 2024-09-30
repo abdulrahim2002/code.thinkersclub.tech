@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ui-repolist: implement lazy caching of repo-&gt;mtime - cgit - Web based git repository viewer
+</title>
+<link rel="icon" type="image/png" href="../favicon.png" />
+<link rel="alternate" type="application/atom+xml" title="cgit.git Atom Feed" href="../atom.xml" />
+<link rel="alternate" type="application/atom+xml" title="cgit.git Atom Feed (tags)" href="../tags.xml" />
+<link rel="stylesheet" type="text/css" href="../style.css" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Source+Code+Pro:ital,wght@0,200..900;1,200..900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/base16/tender.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+<script> hljs.highlightAll() ;</script>
+<style>pre code.hljs {display: inline;padding: 0;} code.hljs {padding: 0;} .hljs {background: initial;} .hljs-comment{color: rgb(96, 96, 96);}</style></head>
+<body>
+<table><tr><td><a href="../../"><img src="../logo.png" alt="" width="32" height="32" /></a></td><td><h1>cgit</h1><span class="desc">Web based git repository viewer
+</span></td></tr><tr><td></td><td>
+<br>
+<a href="../log.html">Log</a> | <a href="../files.html">Files</a> | <a href="../refs.html">Refs</a> | <a href="../file/.gitmodules.html">Submodules</a> | <a href="../file/README.html">README</a> | <a href="../file/COPYING.html">LICENSE</a></td></tr></table>
+<hr/>
+<div id="content">
+<pre><b>commit</b> <a href="../commit/8813170390f3c3a0f4743afbc92ede42953fa3b0.html">8813170390f3c3a0f4743afbc92ede42953fa3b0</a>
+<b>parent</b> <a href="../commit/54272e60965ec6a98b49cbf67d72a4b1f5adc55b.html">54272e60965ec6a98b49cbf67d72a4b1f5adc55b</a>
+<b>Author:</b> Lars Hjemli &lt;<a href="mailto:hjemli@gmail.com">hjemli@gmail.com</a>&gt;
+<b>Date:</b>   Sat, 29 Nov 2008 16:46:37 +0100
+
+ui-repolist: implement lazy caching of repo-&gt;mtime
+
+When sorting the list of repositories by their last modification time,
+cgit would (in the worst case) invoke fstat(3) four times and open(3)
+twice for each callback from qsort(3). This obviously scales very badly.
+
+Now, the calculated modtime for each repo is saved in repo-&gt;mtime, thus
+keeping the number of stat/open invocations identical for sorted and
+unsorted repo-listings.
+
+Signed-off-by: Lars Hjemli &lt;hjemli@gmail.com&gt;
+
+<b>Diffstat:</b>
+<table><tr><td class="M">M</td><td><a href="#h0">cgit.h</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h1">shared.c</a></td><td> | </td><td class="num">1</td><td><span class="i">+</span><span class="d"></span></td></tr>
+<tr><td class="M">M</td><td><a href="#h2">ui-repolist.c</a></td><td> | </td><td class="num">16</td><td><span class="i">++++++++++++</span><span class="d">----</span></td></tr>
+</table></pre><pre>3 files changed, 14 insertions(+), 4 deletions(-)
+<hr/><b>diff --git a/<a id="h0" href="../file/cgit.h.html">cgit.h</a> b/<a href="../file/cgit.h.html">cgit.h</a></b>
+<a href="#h0-0" id="h0-0" class="h">@@ -61,6 +61,7 @@ struct cgit_repo {
+</a> 	int snapshots;
+ 	int enable_log_filecount;
+ 	int enable_log_linecount;
+<a href="#h0-0-3" id="h0-0-3" class="i">+	time_t mtime;
+</a> };
+ 
+ struct cgit_repolist {
+<b>diff --git a/<a id="h1" href="../file/shared.c.html">shared.c</a> b/<a href="../file/shared.c.html">shared.c</a></b>
+<a href="#h1-0" id="h1-0" class="h">@@ -60,6 +60,7 @@ struct cgit_repo *cgit_add_repo(const char *url)
+</a> 	ret-&gt;enable_log_linecount = ctx.cfg.enable_log_linecount;
+ 	ret-&gt;module_link = ctx.cfg.module_link;
+ 	ret-&gt;readme = NULL;
+<a href="#h1-0-3" id="h1-0-3" class="i">+	ret-&gt;mtime = -1;
+</a> 	return ret;
+ }
+ 
+<b>diff --git a/<a id="h2" href="../file/ui-repolist.c.html">ui-repolist.c</a> b/<a href="../file/ui-repolist.c.html">ui-repolist.c</a></b>
+<a href="#h2-0" id="h2-0" class="h">@@ -32,19 +32,27 @@ static int get_repo_modtime(const struct cgit_repo *repo, time_t *mtime)
+</a> {
+ 	char *path;
+ 	struct stat s;
+<a href="#h2-0-3" id="h2-0-3" class="i">+	struct cgit_repo *r = (struct cgit_repo *)repo;
+</a> 
+<a href="#h2-0-5" id="h2-0-5" class="i">+	if (repo-&gt;mtime != -1) {
+</a><a href="#h2-0-6" id="h2-0-6" class="i">+		*mtime = repo-&gt;mtime;
+</a><a href="#h2-0-7" id="h2-0-7" class="i">+		return 1;
+</a><a href="#h2-0-8" id="h2-0-8" class="i">+	}
+</a> 	path = fmt(&quot;%s/%s&quot;, repo-&gt;path, ctx.cfg.agefile);
+ 	if (stat(path, &amp;s) == 0) {
+ 		*mtime = read_agefile(path);
+<a href="#h2-0-12" id="h2-0-12" class="i">+		r-&gt;mtime = *mtime;
+</a> 		return 1;
+ 	}
+ 
+ 	path = fmt(&quot;%s/refs/heads/%s&quot;, repo-&gt;path, repo-&gt;defbranch);
+<a href="#h2-0-17" id="h2-0-17" class="d">-	if (stat(path, &amp;s) == 0) {
+</a><a href="#h2-0-18" id="h2-0-18" class="i">+	if (stat(path, &amp;s) == 0)
+</a> 		*mtime = s.st_mtime;
+<a href="#h2-0-20" id="h2-0-20" class="d">-		return 1;
+</a><a href="#h2-0-21" id="h2-0-21" class="d">-	}
+</a><a href="#h2-0-22" id="h2-0-22" class="d">-	return 0;
+</a><a href="#h2-0-23" id="h2-0-23" class="i">+	else
+</a><a href="#h2-0-24" id="h2-0-24" class="i">+		*mtime = 0;
+</a><a href="#h2-0-25" id="h2-0-25" class="i">+
+</a><a href="#h2-0-26" id="h2-0-26" class="i">+	r-&gt;mtime = *mtime;
+</a><a href="#h2-0-27" id="h2-0-27" class="i">+	return (r-&gt;mtime != 0);
+</a> }
+ 
+ static void print_modtime(struct cgit_repo *repo)
+</pre>
+</div>
+</body>
+</html>
