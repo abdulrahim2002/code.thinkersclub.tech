@@ -1,4 +1,3 @@
-#!/bin/sh
 # - Makes index for repositories in a single directory.
 # - Makes static pages for each repository directory.
 #
@@ -30,18 +29,21 @@ ifneq ($(shell echo $(repodir) | rev | cut -c1),/)
 $(error  Please append "/" to $(repodir))
 endif
 
-curdir="$(PWD)"
+curdir=$(PWD)
+outdir?=$(curdir)
+$(info $(outdir))
 
 all:
-	## make index.
-	stagit-index "${repodir}/"*/ > "${curdir}/index.html"
+	## make index.	
+	mkdir -p $(outdir)
+	stagit-index "${repodir}/"*/ > "${outdir}/index.html"
 	# make files per repo
 	for dir in $(shell echo ${repodir}*/); do \
 		r=$$(basename "$${dir}"); \
 		d=$$(basename "$${dir}" .git); \
 		echo "$${d}..."; \
-		mkdir -p "${curdir}/$${d}"; \
-		cd "${curdir}/$${d}" && \
+		mkdir -p "${outdir}/$${d}"; \
+		cd "${outdir}/$${d}" && \
 		stagit -c ".cache" -u "https://code.thinkersclub.tech/$${d}/" "${repodir}/$${r}" && \
 		ln -sf log.html index.html && \
 		ln -sf ../style.css style.css && \
