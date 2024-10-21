@@ -25,7 +25,11 @@ $(error stagit-index is not found)
 endif
 
 # path must be absolute.
-repodir="/var/www/domains/"
+repodir?="/var/www/domains/"
+ifneq ($(shell echo $(repodir) | rev | cut -c1),/)
+$(error  Please append "/" to $(repodir))
+endif
+
 curdir="$(PWD)"
 
 all:
